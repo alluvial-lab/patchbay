@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, protocol, foundation, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Define canonical command, session, and failure state machines

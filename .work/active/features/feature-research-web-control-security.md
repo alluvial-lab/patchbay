@@ -5,6 +5,10 @@ stage: drafting
 tags: [research, security]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 research_dials:
   scope_authority: pre-registered
   verification_rigor: standard

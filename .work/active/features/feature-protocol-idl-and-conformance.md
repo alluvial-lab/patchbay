@@ -5,6 +5,10 @@ stage: drafting
 tags: [protocol, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-verification-contract-authority, feature-session-identity-adapter-contract]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Author v0 protocol IDL and conformance vectors

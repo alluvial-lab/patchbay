@@ -21,6 +21,10 @@ kind: epic | feature | story
 stage: drafting | implementing | review | done
 tags: []
 depends_on: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+gate_origin: null | security | tests | cruft | docs | patterns | refactor
+release_binding: null | <version>
 ```
 
 Optional fields:
@@ -29,7 +33,6 @@ Optional fields:
 parent: <item-id>
 research_refs: []
 research_origin: <slug>
-release_binding: <version>
 research_dials:
   scope_authority: in-engagement-judgment | pre-registered | mixed
   verification_rigor: floor | standard | full
@@ -57,7 +60,7 @@ research_dials:
 
 ## Release mapping
 
-Patchbay has no release process yet. Leave `release_binding` absent until release conventions are explicitly designed.
+Patchbay has no release process yet. Keep `release_binding: null` until release conventions are explicitly designed.
 
 ## Query tool
 

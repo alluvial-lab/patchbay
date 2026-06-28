@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [story-bootstrap-substrates]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Define the v0 walking skeleton

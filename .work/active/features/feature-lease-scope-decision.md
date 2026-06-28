@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-security-threat-model]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Decide lease scope for v0

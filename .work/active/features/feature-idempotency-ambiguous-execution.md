@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-session-identity-adapter-contract]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Refine idempotency and ambiguous execution semantics

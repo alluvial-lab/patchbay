@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-session-identity-adapter-contract]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Define Pi migration and parity checklist

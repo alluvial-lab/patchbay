@@ -1,10 +1,14 @@
 ---
 id: story-bootstrap-substrates
 kind: story
-stage: review
+stage: done
 tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: []
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Story: Bootstrap work and research substrates
@@ -30,3 +34,13 @@ Created:
 ## Review focus
 
 Confirm the substrate shape is adequate for a greenfield repo and that the conversion/adoption guidance correctly keeps agile-workflow operational state separate from agentic-research source-grounded artifacts.
+
+## Review (2026-06-28)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: none
+
+**Notes**: Substrate fast-lane review. Verified `.work/bin/work-view --version` and `.work/bin/work-view --ready --paths` run successfully; inspected `.work/`, `.research/`, `.agents/rules/`, and conventions. The substrate split is adequate for a greenfield repo and keeps operational state in `.work/` separate from source-grounded research in `.research/`.

@@ -5,6 +5,10 @@ stage: drafting
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Author seed formal models

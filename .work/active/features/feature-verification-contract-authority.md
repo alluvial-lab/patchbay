@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-persistence-snapshot-model, feature-security-threat-model, feature-research-contract-tooling]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Define verification, contract, and authority order

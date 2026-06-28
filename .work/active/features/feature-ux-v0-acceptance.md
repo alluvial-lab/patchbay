@@ -5,6 +5,10 @@ stage: drafting
 tags: [prose, ux, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
+created: 2026-06-28
+updated: 2026-06-28
+gate_origin: null
+release_binding: null
 ---
 
 # Feature: Define v0 web cockpit UX acceptance criteria
