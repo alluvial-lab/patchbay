@@ -17,6 +17,31 @@ Patchbay starts with:
 
 Patchbay does not start with a native mobile app, swarm orchestration, project-management assumptions, or hard dependency on a specific harness.
 
+## V0 walking skeleton
+
+The first executable Patchbay milestone is deliberately narrow: one operator controls Pi-backed runtime sessions through a responsive web cockpit, with a CLI available for setup, administration, debugging, and scripted inspection.
+
+V0 includes:
+
+- **Operator scope:** one human operator. The model keeps actor, endpoint, grant, and audit concepts explicit so future multi-human coordination is possible, but v0 does not provision multiple humans or shared authority domains.
+- **Deployment topology:** one authoritative coordination core process. Adapters and control surfaces may run in separate processes, but v0 does not provide high availability, clustering, split-brain resolution, or multiple authoritative cores.
+- **Persistence:** a local durable event and snapshot store behind ports. The first backend may be embedded and file- or database-backed, but domain semantics must not depend on a specific storage engine.
+- **First adapter:** Pi. Patchbay exposes Pi sessions through adapter-declared capabilities rather than making Pi concepts part of the core ontology.
+- **Initial command kinds:** send message/prompt, cancel or interrupt where the adapter supports it, request status/snapshot refresh, and receive correlated replies/events. Broader command families wait until the protocol registry and conformance vectors exist.
+- **Control surfaces:** responsive web cockpit first, with CLI support for administration, debugging, and scripted access. Native mobile, desktop, notifications, and third-party surfaces are future work.
+- **Verification floor:** protocol contracts and at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority before those semantics are treated as product behavior.
+
+V0 explicitly excludes:
+
+- native mobile or Expo app delivery;
+- multi-operator provisioning, handoff workflows, shared authority administration, or third-party human coordination;
+- high availability, replicated cores, or split-brain recovery;
+- arbitrary adapter ecosystem support beyond the Pi adapter seam;
+- general project-management or workflow-substrate features;
+- lease-backed exclusive coordination unless a later foundation feature explicitly promotes leases into the first executable slice.
+
+Follow-on work is inside v0 only when it is required to make this slice usable, verifiable, and recoverable. Work that broadens operators, adapters, deployment topology, surfaces, or coordination modes is outside v0 unless it preserves an explicit seam without implementing the broader capability.
+
 ## Deployment assumptions
 
 Patchbay components may run wherever the operator chooses:
@@ -87,4 +112,4 @@ Adapters do not define Patchbay's core ontology.
 
 ## Non-goals
 
-Patchbay does not verify LLM output quality, replace cryptographic primitives, guarantee OS background execution, or impose a project/workflow substrate. Those concerns belong to adapters, deployment configuration, or separate tools.
+Patchbay does not verify LLM output quality, replace cryptographic primitives, guarantee OS background execution, impose a project/workflow substrate, ship native mobile in v0, support multiple human operators in v0, or provide HA/multi-core coordination in v0. Those concerns belong to adapters, deployment configuration, separate tools, or later milestones.

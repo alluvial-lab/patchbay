@@ -8,9 +8,9 @@ Patchbay starts with a **responsive web cockpit** and a **Pi-first adapter targe
 
 ## Current status
 
-Patchbay is in the **foundation/design phase**.
+Patchbay is in the **foundation/design phase** with the v0 walking skeleton now defined.
 
-This repository currently contains project definition documents only. There is no daemon, web app, adapter, package, or installable release yet. The first implementation work should follow the docs rather than inventing product semantics ad hoc.
+This repository currently contains project definition documents only. There is no daemon, web app, adapter, package, or installable release yet. The first implementation milestone is a narrow single-operator slice: responsive web cockpit + CLI admin/debug surface + one authoritative coordination core + local durable event/snapshot store + Pi adapter. The first implementation work should follow that slice rather than inventing product semantics ad hoc.
 
 ## Why Patchbay exists
 
@@ -48,7 +48,7 @@ Patchbay coordination core
       └── future tool/project adapters
 ```
 
-The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity.
+The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. V0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity.
 
 ## Core ideas
 
@@ -64,6 +64,20 @@ Patchbay separates examples from architecture through explicit planes:
 - **Coordination plane** — leases, ownership claims, locks, handoffs.
 - **Deployment plane** — daemon, container, VM, local service, sidecar, split deployment.
 - **Verification plane** — formal specs, contracts, conformance vectors, property tests.
+
+## V0 walking skeleton
+
+V0 proves the smallest useful control loop:
+
+- one human operator;
+- responsive web cockpit as the primary surface;
+- CLI for setup, administration, debugging, and scripted access;
+- one authoritative coordination core;
+- local durable event and snapshot persistence behind ports;
+- Pi adapter as the first runtime integration;
+- initial commands for message/prompt delivery, cancel/interrupt where supported, status/snapshot refresh, and correlated replies/events.
+
+V0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a narrow lease use case.
 
 ## Design commitments
 

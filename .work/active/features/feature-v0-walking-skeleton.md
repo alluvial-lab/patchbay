@@ -1,7 +1,7 @@
 ---
 id: feature-v0-walking-skeleton
 kind: feature
-stage: implementing
+stage: review
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [story-bootstrap-substrates]
@@ -51,3 +51,11 @@ V0 decisions to encode:
 ## Related parked ideas
 
 - `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.
+
+## Implementation notes
+
+- Files changed: `docs/SPEC.md`, `docs/ARCHITECTURE.md`, `README.md`.
+- Tests added: none; docs-only prose feature.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: proofread changed sections in context; verified `story-bootstrap-substrates` is done; checked required v0 terms and exclusions are present with `rg`.

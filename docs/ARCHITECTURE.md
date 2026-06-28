@@ -88,6 +88,47 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
 └──────────────┘ └─────────────┘        └──────────────────┘
 ```
 
+## V0 component slice
+
+The v0 executable slice is a single-authority deployment that proves the core control loop without implementing the whole future platform.
+
+```text
+┌────────────────────────────┐   ┌────────────────────────────┐
+│ Responsive web cockpit     │   │ CLI                         │
+│ session list, composer,    │   │ setup, admin, debugging,    │
+│ delivery states            │   │ scripted access             │
+└──────────────┬─────────────┘   └──────────────┬─────────────┘
+               │ shared TypeScript protocol     │ same protocol semantics
+               └───────────────┬────────────────┘
+                               ▼
+┌──────────────────────────────────────────────────────────┐
+│ Single Patchbay coordination core                        │
+│  actor/session registry                                  │
+│  command acceptance + idempotency                        │
+│  authority checks                                        │
+│  durable event log + snapshots                           │
+└──────────────────────────────┬───────────────────────────┘
+                               │ adapter capability boundary
+                               ▼
+┌──────────────────────────────────────────────────────────┐
+│ Pi adapter                                                │
+│  session discovery/status                                 │
+│  message/prompt delivery                                  │
+│  cancel/interrupt where supported                         │
+│  replies/events/snapshots                                 │
+└──────────────────────────────────────────────────────────┘
+```
+
+V0 architecture decisions:
+
+- The coordination core is singular and authoritative. Split deployments may place the web surface, CLI, core, and adapter processes on different machines, but there is no HA core or multi-writer state in v0.
+- Persistence is local and durable through a storage port owned by the core. The first backend can be embedded, but event and snapshot semantics must remain independent of the backend.
+- The Pi adapter is the only required runtime adapter. Other adapters remain future examples and must not shape the v0 core ontology.
+- The web cockpit is the first operator surface. The CLI exists for setup, administration, debugging, and scripted access, not as a second independent product surface with divergent semantics.
+- Leases remain in the architecture and verification vocabulary, but are not required for the v0 executable skeleton unless a later scoped feature promotes a specific lease-backed workflow.
+
+Future architecture planes remain valid direction, but v0 implementation should prefer seams over breadth: define the port, registry, or capability boundary needed for later growth without implementing native mobile, HA, multi-operator coordination, or arbitrary adapters.
+
 ## Data flow
 
 1. A control surface submits operator intent through the shared TypeScript client.
