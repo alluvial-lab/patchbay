@@ -1,7 +1,7 @@
 ---
 id: feature-v0-walking-skeleton
 kind: feature
-stage: drafting
+stage: implementing
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [story-bootstrap-substrates]
@@ -23,6 +23,23 @@ The foundation docs currently describe the Patchbay platform direction but not t
 - First adapter and command kinds.
 - Required control surfaces for v0: web, CLI, or both.
 - Explicit exclusions: native mobile, HA, multi-operator provisioning, arbitrary adapters, leases if deferred.
+
+## Outline
+
+Target files:
+
+- `docs/SPEC.md` — add a concrete v0 walking skeleton section and reconcile starting scope/non-goals.
+- `docs/ARCHITECTURE.md` — add a v0 component slice separate from the future architecture planes.
+- `README.md` — update current status and first milestone language.
+
+V0 decisions to encode:
+
+- One human operator for v0; multi-human coordination is explicitly deferred but not foreclosed.
+- Single authoritative coordination core for v0; split/HA deployments are deferred.
+- Local durable event/snapshot store for v0; backend is abstracted behind ports so the first implementation does not leak storage assumptions into domain logic.
+- Pi adapter first; initial command kinds cover message/prompt send, cancel/interrupt where supported, and snapshot/status refresh.
+- Responsive web cockpit first, CLI for admin/debug/scripted control; no native mobile app in v0.
+- Leases are not in the v0 executable skeleton unless a later feature explicitly promotes them; lease semantics remain modeled for future coordination.
 
 ## Acceptance criteria
 
