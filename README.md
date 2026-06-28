@@ -77,7 +77,7 @@ V0 proves the smallest useful control loop:
 - Pi adapter as the first runtime integration;
 - initial commands for message/prompt delivery, cancel/interrupt where supported, status/snapshot refresh, and correlated replies/events.
 
-V0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a narrow lease use case.
+V0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a specific lease-backed workflow.
 
 ## Design commitments
 

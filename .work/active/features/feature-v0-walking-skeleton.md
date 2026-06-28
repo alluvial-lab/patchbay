@@ -1,7 +1,7 @@
 ---
 id: feature-v0-walking-skeleton
 kind: feature
-stage: review
+stage: done
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [story-bootstrap-substrates]
@@ -54,8 +54,18 @@ V0 decisions to encode:
 
 ## Implementation notes
 
-- Files changed: `docs/SPEC.md`, `docs/ARCHITECTURE.md`, `README.md`.
+- Files changed: `docs/SPEC.md`, `docs/ARCHITECTURE.md`, `docs/VERIFICATION.md`, `docs/GLOSSARY.md`, `README.md`.
 - Tests added: none; docs-only prose feature.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
-- Verification: proofread changed sections in context; verified `story-bootstrap-substrates` is done; checked required v0 terms and exclusions are present with `rg`.
+- Verification: proofread changed sections in context; verified `story-bootstrap-substrates` is done; checked required v0 terms and exclusions are present with `rg`; fresh-context review found no blockers and review follow-ups were addressed inline.
+
+## Review (2026-06-28)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**: none outstanding; fresh-context review identified undefined `authority domain` and lease/v0 verification-scope ambiguity, both addressed inline in `docs/GLOSSARY.md`, `docs/SPEC.md`, and `docs/VERIFICATION.md`.
+**Nits**: README lease wording was aligned with SPEC/ARCHITECTURE; duplicate README milestone summaries remain acceptable for README orientation.
+
+**Notes**: Deep substrate review using fresh-context sub-agent (`umans/umans-glm-5.2`). Acceptance criteria met: SPEC defines the v0 walking skeleton and non-goals, ARCHITECTURE separates the v0 component slice, README reflects status and milestone, and follow-on work has an inside/outside-v0 rule.

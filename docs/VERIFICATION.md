@@ -85,6 +85,8 @@ Properties:
 
 ### Lease safety
 
+Lease safety remains a required model area before any lease-backed product behavior ships. It is not part of the v0 executable walking skeleton unless later foundation work explicitly promotes a specific lease-backed workflow.
+
 Properties:
 
 - Two actors cannot simultaneously hold the same exclusive live lease in one authority domain.

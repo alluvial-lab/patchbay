@@ -29,7 +29,7 @@ V0 includes:
 - **First adapter:** Pi. Patchbay exposes Pi sessions through adapter-declared capabilities rather than making Pi concepts part of the core ontology.
 - **Initial command kinds:** send message/prompt, cancel or interrupt where the adapter supports it, request status/snapshot refresh, and receive correlated replies/events. Broader command families wait until the protocol registry and conformance vectors exist.
 - **Control surfaces:** responsive web cockpit first, with CLI support for administration, debugging, and scripted access. Native mobile, desktop, notifications, and third-party surfaces are future work.
-- **Verification floor:** protocol contracts and at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority before those semantics are treated as product behavior.
+- **Verification floor:** protocol contracts and at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority before those semantics are treated as product behavior. Lease modeling remains required before lease-backed behavior ships, but leases are outside the v0 executable skeleton unless explicitly promoted.
 
 V0 explicitly excludes:
 

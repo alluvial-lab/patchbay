@@ -8,6 +8,10 @@ A boundary component that connects Patchbay to an external runtime, harness, too
 
 A represented participant in Patchbay: operator, agent, adapter, daemon, service, or control-surface endpoint.
 
+## Authority domain
+
+A bounded Patchbay control context within which grants, revocation, routing authority, and any exclusive coordination claims are evaluated against one authoritative core state. V0 has one operator and one authority domain; future multi-human or federated deployments must define how authority domains are created, joined, delegated, audited, and isolated.
+
 ## Command
 
 Operator intent that may cause action. Commands require target identity, authority, validation, and idempotency semantics.
