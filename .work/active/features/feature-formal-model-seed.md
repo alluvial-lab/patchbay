@@ -25,3 +25,7 @@ Patchbay's verification posture requires checked models before implementation tr
 - `docs/VERIFICATION.md` references the seed models and their promotion status.
 - The models check the v0 command/session semantics defined by `feature-command-state-ssot` rather than inventing new terminology.
 - A future implementation item can derive property/conformance-test obligations from the model artifacts.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

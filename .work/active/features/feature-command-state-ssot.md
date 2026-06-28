@@ -25,3 +25,7 @@ Review found command, session, and presentation states duplicated across README,
 - `docs/UX.md`, `docs/ARCHITECTURE.md`, and `docs/VERIFICATION.md` reference rather than redefine them.
 - `docs/GLOSSARY.md` defines ambiguous terms such as `superseded`, `unknown`, and `running`.
 - The state machines are concrete enough to become TLA+/Quint variables and generated TS/Rust enums.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

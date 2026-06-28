@@ -28,3 +28,7 @@ The docs name Claude-app-style continuity as a quality bar, but the first web co
 - `docs/UX.md` defines v0 required screens and visible fields.
 - UX text references canonical protocol states rather than maintaining a divergent state list.
 - The web cockpit can be designed without guessing what must be visible before sending a command.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

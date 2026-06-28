@@ -25,3 +25,7 @@ Patchbay can deduplicate accepted commands at the coordination boundary, but ada
 - `docs/PROTOCOL.md` no longer overclaims end-to-end idempotency.
 - `docs/UX.md` explains retry affordances using precise execution state.
 - `docs/VERIFICATION.md` scopes the formal guarantee to Patchbay acceptance unless adapter capability declares stronger semantics.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

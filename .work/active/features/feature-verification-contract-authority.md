@@ -24,3 +24,7 @@ The docs currently say prose, formal models, generated contracts, and conformanc
 - `docs/VERIFICATION.md` states artifact authority order and traceability rules.
 - `docs/SPEC.md` states the v0 contract source or explicitly blocks durable protocol implementation until the spike resolves.
 - `docs/PROTOCOL.md` distinguishes semantic authority from wire encoding authority.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

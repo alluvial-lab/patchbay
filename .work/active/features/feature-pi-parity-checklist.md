@@ -25,3 +25,7 @@ Pi is the first adapter because it lets the operator migrate from current Remote
 - Add a Pi parity checklist to `docs/SPEC.md`, `docs/ARCHITECTURE.md`, or a dedicated adapter doc.
 - The checklist is sufficient to decide when the operator can switch workflows.
 - Pi-specific operations are represented as adapter capabilities, not core protocol states.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

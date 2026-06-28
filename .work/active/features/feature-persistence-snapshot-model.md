@@ -27,3 +27,7 @@ Durable acceptance and snapshot recovery are core Patchbay promises, but the doc
 - `docs/PROTOCOL.md` defines revision/cursor semantics for events and snapshots.
 - `docs/UX.md` can describe reconnect behavior without relying on wall-clock freshness alone.
 - `docs/VERIFICATION.md` has enough state variables to model snapshot convergence.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.

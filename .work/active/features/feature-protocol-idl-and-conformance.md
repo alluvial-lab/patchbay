@@ -25,3 +25,7 @@ Patchbay's generated-contract posture requires actual schema/IDL artifacts, gene
 - Rust and TypeScript generation targets are documented, even if generated code packages are created in later implementation work.
 - Conformance vectors exist in a stable location and are referenced from `docs/VERIFICATION.md`.
 - No hand-written DTO set is introduced as the durable source of truth.
+
+## Extension pressure test
+
+- Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.
