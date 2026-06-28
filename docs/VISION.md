@@ -1,0 +1,89 @@
+# Patchbay Vision
+
+Patchbay is a deployment-neutral human control plane for operating agent sessions across machines.
+
+Patchbay gives an operator a reliable cockpit for discovering sessions, sending intent, receiving correlated replies, approving or interrupting work, and recovering state after disconnection. It starts with a Pi adapter because Pi is the first workflow target, but Pi is an adapter, not the architecture.
+
+## Why Patchbay exists
+
+Headless and remote agent work needs more than chat transport. An operator often works from several human surfaces — phone, laptop, desktop, web, CLI — while agents and runtimes live wherever the operator chooses: a VM, container, local workstation, home server, cloud host, or future deployment target.
+
+The control surface must answer these questions reliably:
+
+- Which sessions exist?
+- Which machine, project, adapter, and runtime does each session belong to?
+- Is a session live, working, idle, stale, offline, or unknown?
+- Was my command accepted?
+- Did it reach the intended session?
+- Can I retry safely?
+- What state is authoritative after reconnect?
+- Who is allowed to control this session or resource?
+
+Patchbay exists so accepted operator intent cannot disappear silently or mutate the wrong session.
+
+## Product center
+
+Patchbay leads with the human control surface.
+
+The first operator experience is a responsive web cockpit backed by a shared TypeScript operator domain. The same domain supports an Expo mobile app later without changing protocol semantics.
+
+```text
+human control surfaces
+  web cockpit
+  CLI
+  future Expo app
+      │
+      ▼
+shared operator domain + protocol client
+      │
+      ▼
+Patchbay coordination core
+      │
+      ├── Pi adapter
+      ├── shell/job adapters
+      ├── future harness adapters
+      └── future project/tool adapters
+```
+
+## What Patchbay is
+
+Patchbay is:
+
+- a human-operated control plane for headless and distributed agent sessions;
+- a durable message, command, snapshot, and authority layer;
+- an adapter-neutral protocol and daemon model;
+- a web-first cockpit with mobile-quality ergonomics;
+- a formally specified coordination system where safety properties are modeled before they are treated as product semantics.
+
+## What Patchbay is not
+
+Patchbay is not:
+
+- a Pi-specific mobile remote app;
+- a replacement for any one harness;
+- an LLM orchestrator that decides what work should happen;
+- a project-management system;
+- a workflow substrate tied to one repo convention;
+- a UI-only dashboard without durable delivery semantics.
+
+Adapters may integrate with Pi, Claude, Codex, shell jobs, project trackers, or workflow substrates. Those integrations remain edges around a neutral core.
+
+## Success criteria
+
+Patchbay is successful when an operator can move among phone, laptop, desktop, and CLI while controlling remote/headless agent sessions with clear delivery state, durable history, and recoverable snapshots.
+
+A useful Patchbay session has these properties:
+
+- accepted commands are durable and visible until delivered, rejected, expired, or failed;
+- retries are idempotent unless the operator explicitly duplicates an action;
+- replies correlate to the command or message they answer;
+- session identity is stable enough that late replies cannot affect the wrong session;
+- stale state is displayed as stale rather than live;
+- authority grants are checked before commands execute;
+- adapters can fail without hiding the failure from the operator.
+
+## Quality benchmark
+
+Patchbay targets the confidence and continuity of a mature first-party remote agent app while preserving self-hosted, adapter-neutral, formally specified infrastructure.
+
+Remote Pi is the immediate migration bridge. Claude-app-style remote control is the UX quality benchmark.
