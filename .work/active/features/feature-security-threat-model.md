@@ -4,7 +4,7 @@ kind: feature
 stage: drafting
 tags: [prose, security, foundation]
 parent: epic-foundation-hardening
-depends_on: [feature-v0-walking-skeleton]
+depends_on: [feature-v0-walking-skeleton, feature-research-web-control-security]
 ---
 
 # Feature: Define v0 security, principal, and threat model
