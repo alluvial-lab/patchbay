@@ -26,3 +26,7 @@ The foundation docs currently describe the Patchbay platform direction but not t
 - `docs/ARCHITECTURE.md` shows the v0 component slice separately from future architecture.
 - `README.md` accurately reflects current status and v0 milestone.
 - Follow-on work can tell whether it is inside or outside v0.
+
+## Related parked ideas
+
+- `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.

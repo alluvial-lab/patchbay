@@ -24,3 +24,7 @@ Review noted that Patchbay should help the operator answer why a command did not
 - Foundation docs identify observability as v0 or post-v0 with clear scope.
 - The v0 control surface or CLI has enough diagnostic expectations to debug failed delivery.
 - Security docs cover what must not be logged.
+
+## Related parked ideas
+
+- `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.

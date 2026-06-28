@@ -27,3 +27,7 @@ Wrong-session prevention cannot rely on optional adapter metadata. Patchbay need
 - `docs/ARCHITECTURE.md` describes adapter registration and lifecycle.
 - `docs/GLOSSARY.md` defines generation/epoch, endpoint, adapter capability, and correlation context.
 - The Pi adapter can map its capabilities without redefining Patchbay core identity.
+
+## Related parked ideas
+
+- `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.

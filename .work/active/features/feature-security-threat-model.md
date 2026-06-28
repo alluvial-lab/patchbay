@@ -27,3 +27,7 @@ Patchbay controls remote/headless agents and potentially shell/job adapters. The
 - `docs/PROTOCOL.md` defines grants and revocation using the same terminology.
 - `docs/VERIFICATION.md` can map authority safety to concrete variables.
 - Browser/web cockpit security expectations are stated for v0.
+
+## Related parked ideas
+
+- `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.

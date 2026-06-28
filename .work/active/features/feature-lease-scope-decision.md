@@ -24,3 +24,7 @@ Leases appear as core concepts in the current docs, but review questioned whethe
 - `docs/PROTOCOL.md` no longer presents underspecified lease safety as an immediate guarantee.
 - `docs/GLOSSARY.md` defines `authority domain` if the term remains.
 - `docs/VERIFICATION.md` models only lease properties that are in scope.
+
+## Related parked ideas
+
+- `idea-multi-human-coordination` — v0 remains single-operator unless this feature decides otherwise, but the foundation should not foreclose future multi-human authority domains, grants, audit, handoffs, or third-party coordination surfaces.
