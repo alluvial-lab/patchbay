@@ -1,7 +1,7 @@
 ---
 id: feature-design-terminal-commit-race
 kind: feature
-stage: review
+stage: done
 tags: [protocol, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot]
@@ -206,3 +206,16 @@ There is no implementation code yet. Verification for this design is by document
 - Tests added: none; this is foundation-doc implementation with future conformance-vector cases recorded for `feature-protocol-idl-and-conformance`.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+
+## Review (2026-06-29)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**: none
+**Nits**:
+- `docs/VERIFICATION.md` could restate the pre-append nondeterminism caveat from `docs/PROTOCOL.md` so the normative-model source is self-sufficient.
+- `docs/VERIFICATION.md` could carry the invariant names proposed in the feature body (`TerminalFinality`, `LsnDeterminesTerminalWinner`) for future Quint/TLA+ authors.
+- `docs/UX.md` could cross-reference the protocol race-semantics section from the terminal-race timeline wording.
+
+**Notes**: Deep substrate feature review performed by one fresh-context cross-model reviewer on `umans/umans-glm-5.2` per operator request. Reviewer inspected the implementation commit `a6be63a`, changed docs, foundation context, and substrate item. No foundation-doc drift, no marker hygiene issues, no state-machine contradiction, and no required follow-up items. Session-note stale wording was identified as historical/non-authoritative and not a review finding.
