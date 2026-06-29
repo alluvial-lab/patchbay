@@ -1,7 +1,7 @@
 ---
 id: feature-design-grant-shape
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-security-threat-model]
@@ -216,3 +216,18 @@ There is no implementation code yet. Verification for this design is by document
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
 - Verification: confirmed via `rg` that `parent_grant_id`/`delegated-by` appears only in "intentionally absent" explanatory notes (not as a live field); delegation property moved to a clearly labeled precondition section; grant-shape under-design-review marker removed while `feature-session-identity-adapter-contract` and the four `story-review-provisional-semantics` markers remain intact; adapter-capability display-vs-delivery wording is consistent across all three docs.
+
+## Review (2026-06-29)
+
+**Verdict**: Approve with comments
+
+**Blockers** (resolved in review stride):
+- `docs/PROTOCOL.md` `SubmissionOutcome = rejected` and the failure-vocabulary `unsupported_command` row still implied a core/submission-layer capability gate, contradicting the new canonical-command-kind + adapter-delivery-authority split. Fixed: submission-layer now cites "unknown-to-Patchbay command kind" (`validation_failed`); `unsupported_command` row is delivery-layer only and notes the core does not gate on cached adapter capability.
+
+**Important** (resolved in review stride):
+- `docs/SECURITY.md` rejected-direction line conflated missing grant with missing adapter capability ("best-effort hidden delivery when a grant or adapter capability is absent"). Fixed: now "when a grant is absent" only, since adapter capability is advisory.
+
+**Nits** (applied):
+- Grant-definition phrasing tightened from "an actor or endpoint" to "a subject (an actor, optionally narrowed to an endpoint or endpoint class)" in `docs/PROTOCOL.md`, `docs/SECURITY.md`, and `docs/GLOSSARY.md`.
+
+**Notes**: Deep substrate feature review performed by one fresh-context cross-model reviewer on `openai-codex/gpt-5.5` per operator request (implementor was GLM 5.2). Reviewer identified one blocker and one important finding, both genuine contradictions between the new capability distinction and pre-existing failure-vocabulary / rejected-direction wording. All findings were applied in the review stride per the nit-triage convention; no follow-up items filed. Re-verification confirmed `unsupported_command` is now delivery-layer only across PROTOCOL and VERIFICATION, and no `actor or endpoint` grant-definition phrasing remains.

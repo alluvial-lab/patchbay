@@ -101,7 +101,7 @@ A submission is the request to create or retrieve a command record. Not every su
 | Outcome | Meaning |
 |---|---|
 | `accepted` | Patchbay created or found a durable command record. The returned command id has `CommandState = accepted` or the existing deduplicated command state. |
-| `rejected` | Patchbay refused the submission before creating a command record, such as validation failure, authorization denial, unsupported command at the core boundary, or invalid target known before acceptance. |
+| `rejected` | Patchbay refused the submission before creating a command record, such as validation failure, authorization denial, an unknown-to-Patchbay command kind, or invalid target known before acceptance. |
 | `failed` | Patchbay could not complete the submission attempt due to service or transport failure. The client must not infer acceptance. |
 | `unknown` | The client cannot determine whether Patchbay accepted the submission and must reconcile by idempotency key or snapshot. |
 
@@ -180,7 +180,7 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 | `validation_failed` | submission | Patchbay rejected the payload shape, command kind, target shape, or required field before acceptance. | `SubmissionOutcome = rejected`; no `CommandState` |
 | `authorization_denied` | submission | The actor/endpoint lacks a valid grant for the command. | `SubmissionOutcome = rejected`; no `CommandState` |
 | `target_not_found` | submission/delivery | The addressed actor/session/resource does not exist in the relevant authority/session context. | submission `rejected` before acceptance, or command `rejected`/`failed` after acceptance by policy |
-| `unsupported_command` | submission/delivery | The core or adapter does not support the declared command kind/capability. | submission `rejected` before acceptance, or command `rejected` after acceptance |
+| `unsupported_command` | delivery | The adapter does not support the declared command kind at delivery time. (An unknown-to-Patchbay command kind is `validation_failed` at submission, before a grant is evaluated; the core does not gate delivery on cached adapter capability.) | command `rejected` after acceptance |
 | `target_offline` | delivery | The target is known unavailable. | `failed` or `expired`, depending on command policy |
 | `adapter_unavailable` | delivery | The adapter required for delivery is unavailable. | `failed` or remains `accepted` until retry/expiration policy resolves |
 | `transport_timeout` | submission/delivery | A transport layer did not answer within its timeout. Timeout never implies success or denial. | local `unknown`/`submit_failed`, or durable `failed`/continued `accepted` by policy |
@@ -273,7 +273,7 @@ V0 does not require WAL replication, remote replication, point-in-time cloning, 
 
 ## Authority grants
 
-A grant authorizes an actor or endpoint to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
+A grant authorizes a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
 
 A v0 grant records:
 

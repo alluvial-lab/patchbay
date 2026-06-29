@@ -46,7 +46,7 @@ A durable record of an accepted state transition.
 
 ## Grant
 
-An authority relationship permitting an actor or endpoint to perform specific actions on a target.
+An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific command kinds against a target.
 
 ## Idempotency key
 

@@ -32,7 +32,7 @@ The model keeps these concepts explicit:
 - **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor on a device.
 - **Operator session** — an authenticated browser or CLI session for the operator, backed by a server-side session record.
 - **Runtime session** — an adapter-reported control target, such as a Pi session.
-- **Grant** — an authority relationship permitting an actor or endpoint to perform command kinds against a target scope.
+- **Grant** — an authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform command kinds against a target scope.
 - **Authority domain** — the single core-owned context in which grants, revocation, routing authority, and audit are evaluated.
 
 Future multi-operator coordination remains a reserved extension seam. V0 data structures should not assume there can only ever be one operator, but v0 UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
@@ -258,5 +258,5 @@ Rejected v0 directions:
 - UI-only authorization;
 - long-lived JavaScript-readable browser bearer tokens as the primary session model;
 - Pi-specific principals or Pi-specific permission names in core protocol;
-- best-effort hidden delivery when a grant or adapter capability is absent;
+- best-effort hidden delivery when a grant is absent;
 - logging raw secrets or prompt bodies by default.
