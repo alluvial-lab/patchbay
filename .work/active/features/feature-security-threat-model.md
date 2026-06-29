@@ -1,7 +1,7 @@
 ---
 id: feature-security-threat-model
 kind: feature
-stage: implementing
+stage: review
 tags: [prose, security, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-research-web-control-security]
@@ -39,3 +39,11 @@ Patchbay controls remote/headless agents and potentially shell/job adapters. The
 ## Extension pressure test
 
 - Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.
+
+## Implementation notes
+
+- Files changed: `docs/SECURITY.md`, `docs/PROTOCOL.md`, `docs/VERIFICATION.md`, `docs/GLOSSARY.md`, `.work/active/features/feature-security-threat-model.md`.
+- Tests added: none; prose/foundation documentation change.
+- Verification performed: proofread changed docs in context; checked dependencies are done with `work-view`; verified security terminology is reflected in protocol, verification, and glossary docs.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

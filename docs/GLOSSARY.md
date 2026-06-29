@@ -44,9 +44,17 @@ A time-bounded exclusive claim over a resource or coordination role.
 
 The human using Patchbay to inspect, control, approve, or coordinate agent sessions and runtime work.
 
+## Operator session
+
+An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an endpoint. It is the continuity mechanism for a control surface, not a substitute for command grants.
+
 ## Patchbay core
 
 The coordination layer that owns actor/session registry, durable events, command state, authority checks, snapshots, and leases.
+
+## Revocation
+
+A policy action that prevents future authority for an operator session, endpoint, grant, adapter, or target scope. Revocation does not erase command history; already accepted commands follow the relevant revocation policy.
 
 ## Running
 
@@ -55,6 +63,10 @@ A non-terminal command state meaning the target adapter or runtime reports activ
 ## Runtime session
 
 An external session, process, harness, job, or agent context controlled through an adapter.
+
+## Security lockdown
+
+An emergency posture where Patchbay rejects new commands, marks affected runtime sessions stale, requires fresh authentication or operator action, and records the reason in audit history.
 
 ## Snapshot
 

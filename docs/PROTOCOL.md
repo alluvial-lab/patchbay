@@ -12,6 +12,8 @@ An **endpoint** is a concrete connection or addressable runtime instance for an 
 
 Actors and endpoints have stable identifiers assigned by Patchbay or verified through an adapter-specific trust root. Human-readable labels are metadata, not routing authority.
 
+An **operator session** is an authenticated browser or CLI session for the human operator. Operator sessions are endpoint-bound server-side records, not bearer authority stored in UI state. V0 has one human operator, but commands still name and validate the issuing actor/session/endpoint so future multi-operator authority domains can extend the model without changing command semantics.
+
 ## Sessions
 
 A **session** is an adapter-reported runtime/control target. A session identity binds enough information to prevent wrong-target mutation:
@@ -223,11 +225,28 @@ Snapshots expose the canonical state axes above. Stale cached state must not ren
 
 ## Authority grants
 
-A grant authorizes an actor or endpoint to perform a set of actions on a target. Grants are explicit and revocable.
+A grant authorizes an actor or endpoint to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
 
-A command without a valid grant is rejected before delivery.
+A v0 grant records:
 
-Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and command kind: continue, cancel, or require reauthorization.
+- grant id;
+- authority domain id;
+- subject actor id;
+- optional subject endpoint id or endpoint class;
+- target scope, such as actor, adapter, runtime session, project/session group, or other modeled resource;
+- allowed command kinds or adapter capability set;
+- creation time and provenance;
+- optional expiration;
+- revocation generation or revoked time;
+- revocation policy for already accepted commands.
+
+Grant checks happen before command acceptance. A submission without a live matching grant is rejected before delivery with `SubmissionOutcome = rejected` and `authorization_denied` or a narrower applicable failure term.
+
+Authorization is deny-by-default. Control surfaces may hide unavailable actions, but UI availability is never authority. Sender identity is derived from the verified connection/session context, not from self-asserted payload fields, display names, project labels, cwd metadata, or adapter-reported friendly names.
+
+Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and command kind: continue, cancel where supported, or require reauthorization. Revocation does not delete command history; late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy.
+
+V0 revocation actions include current-session revocation, all-session revocation, endpoint/device revocation, adapter/session grant revocation, and security lockdown. A lockdown rejects new commands, marks affected runtime sessions stale, requires fresh login, and records the reason.
 
 ## Leases
 
@@ -269,4 +288,8 @@ Control surfaces render unsupported actions as unavailable rather than attemptin
 
 Patchbay protocol assumes cryptographic primitives work as specified by their libraries and deployments. Formal models cover authority and identity relationships, not primitive cryptographic correctness.
 
-Sender identity is derived from verified connection/authentication context, not from self-asserted display names or payload fields.
+Browser control uses server-side operator sessions with hardened cookies and CSRF protection for state-changing requests. Browser-local UI state is never authority for command submission, grant status, or session liveness.
+
+Sender identity is derived from verified connection/authentication context, not from self-asserted display names or payload fields. External actor identities remain claims until verified by an adapter-specific trust root or deployment policy.
+
+Security audit events are durable protocol-adjacent records for authentication, authorization, session management, command lifecycle, revocation, adapter attach/detach/failure, and stale-event rejection. Audit records must not directly store raw session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies by default, or sensitive attachments.

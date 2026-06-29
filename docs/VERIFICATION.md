@@ -79,9 +79,14 @@ Properties:
 
 Properties:
 
-- Commands without grants are rejected before delivery.
+- Commands without grants are rejected before durable acceptance and before delivery.
+- Grant matching checks issuer actor, optional endpoint, target scope, command kind, expiration, and revocation generation.
 - Revocation prevents future command acceptance under the revoked grant.
+- Already accepted commands follow the grant's revocation policy: continue, cancel where supported, or require reauthorization.
+- Lockdown rejects new commands and marks affected runtime sessions stale until fresh authentication or operator action clears the condition.
 - Delegation cannot create authority beyond its parent grant.
+
+Normative model variables should include at least `Actor`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`.
 
 ### Lease safety
 
@@ -99,6 +104,25 @@ Properties:
 
 - Adapter disconnect, crash, rejection, unsupported command, target offline, timeout, expiration, cancellation, and supersession remain distinguishable using the failure/outcome vocabulary in `docs/PROTOCOL.md`.
 - Adapter failure cannot appear as command completion.
+
+### Browser session and CSRF boundary
+
+Properties:
+
+- A state-changing browser request without an authenticated operator session is rejected before command acceptance.
+- A state-changing browser request without a valid session-bound CSRF proof is rejected before command acceptance.
+- Revoked or expired operator sessions cannot issue new commands.
+- Browser-local state cannot grant authority or override core grant checks.
+
+Formal models do not prove browser cookie mechanics or cryptographic token strength; they model the server-side effects of valid, missing, expired, and revoked session/CSRF evidence.
+
+### Audit integrity
+
+Properties:
+
+- Security-relevant decisions produce audit events: authentication success/failure, session revocation, failed authorization, command acceptance/rejection, grant changes, lockdown, adapter failure, and stale-event rejection.
+- Audit events correlate to actor, endpoint/session when known, target, command, outcome, and reason without requiring secret material in the model.
+- Revocation and terminal command outcomes remain visible in audit history; they are not deleted by later state changes.
 
 ## Out of formal scope
 
