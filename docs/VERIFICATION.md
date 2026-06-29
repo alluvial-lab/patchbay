@@ -121,6 +121,7 @@ Properties:
 
 - Adapter disconnect, crash, rejection, unsupported command, target offline, timeout, expiration, cancellation, and supersession remain distinguishable using the failure/outcome vocabulary in `docs/PROTOCOL.md`.
 - Adapter failure cannot appear as command completion.
+- A `partial` or `no snapshot` adapter cannot cause the core to fabricate a live snapshot from cached or optimistic state; affected session axes move to `stale` or `unknown`.
 
 ### Browser session and CSRF boundary
 

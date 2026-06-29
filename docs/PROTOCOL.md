@@ -321,6 +321,20 @@ Adapters declare supported commands and guarantees:
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 
+### Adapter snapshot capability tiers
+
+Adapter snapshot support is not boolean. V0 recognizes three tiers:
+
+- **Authoritative snapshot** — the adapter can return a complete, authoritative view of the session at a generation the core can reconcile. The core treats this as a valid snapshot source and may use it to repair missed events.
+- **Partial snapshot** — the adapter can return some state (e.g. command history or last-known status) but cannot fully reconstruct the session view. The core marks the unreconciled axes `unknown` or `stale` per `SessionConnectivityState`/`SessionActivityState` rather than synthesizing live state.
+- **No snapshot** — the adapter cannot snapshot. The core holds the last-known cached view marked `stale` (or `unknown` if no cached view exists) and does not present it as live. Reconnect after missed events cannot be repaired by a snapshot; the control surface must reconcile against command/event records it can still query, and present unreconciled session state honestly.
+
+Degraded behavior rules:
+
+- The core never fabricates a snapshot from optimistic UI or cached state when an adapter reports no or partial snapshot capability.
+- A `partial` or `no snapshot` adapter does not weaken durable command state: accepted commands and their `CommandState` remain authoritative from the core's log.
+- If an adapter loses the ability to snapshot it previously had, the core records the capability change as an audit record and moves affected sessions to `stale` or `unknown` until a fresh authoritative signal arrives.
+
 ## Extension pressure classification
 
 - **Committed v0 behavior:** `SubmissionOutcome`, `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.

@@ -1,7 +1,7 @@
 ---
 id: feature-persistence-snapshot-model
 kind: feature
-stage: review
+stage: done
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -41,5 +41,16 @@ Durable acceptance and snapshot recovery are core Patchbay promises, but the doc
 - Files changed: `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, `docs/VERIFICATION.md`, `docs/UX.md`.
 - Tests added: none; prose/foundation documentation change.
 - Verification performed: proofread changed docs in context; confirmed `depends_on` items are done; walked each acceptance criterion (ARCHITECTURE persistence/topology, PROTOCOL revision/cursor, UX reconnect without wall-clock, VERIFICATION snapshot-convergence variables). Sanity-checked whitespace/trailing whitespace.
+- Review fixes: added adapter snapshot capability tiers (authoritative / partial / none) and degraded behavior rules after inline review found the brief scope item unaddressed; added matching verification property.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+
+## Review (2026-06-28)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none (one scope gap — adapter snapshot capability tiers — found inline and fixed before advancing)
+**Nits**: `core generation` is used as a term without a glossary entry; self-explanatory in context, left for a future glossary pass.
+
+**Notes**: Inline review (subagent-free per operator request, with 3 concurrent umans sessions running). Deep fresh-context passes were not run; review degraded to a single inline lens walk. No blockers or important findings remained after the inline fix.
