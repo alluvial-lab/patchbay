@@ -2,7 +2,7 @@
 id: feature-verification-contract-authority
 kind: feature
 stage: drafting
-tags: [prose, verification, protocol, foundation]
+tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-persistence-snapshot-model, feature-security-threat-model, feature-research-contract-tooling]
 created: 2026-06-28
@@ -14,6 +14,10 @@ release_binding: null
 # Feature: Define verification, contract, and authority order
 
 The docs currently say prose, formal models, generated contracts, and conformance vectors all matter, but they do not define which artifact is authoritative when they disagree.
+
+## Retag note (2026-06-28)
+
+Retagged from `[prose]` to a design feature. The `prose` tag was removed because the scope includes architectural choices: the authority order among prose docs, formal models, IDL/schema, conformance vectors, and implementation (which artifact wins when they disagree) is a design decision. Generation targets and traceability rules are build-pipeline design. The v0 contract source is partially grounded by `feature-research-contract-tooling` but the authority-order question is not. The prose-author black-box test should have caught this originally.
 
 ## Scope
 

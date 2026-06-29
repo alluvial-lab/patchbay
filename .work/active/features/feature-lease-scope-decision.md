@@ -2,7 +2,7 @@
 id: feature-lease-scope-decision
 kind: feature
 stage: drafting
-tags: [prose, protocol, foundation]
+tags: [protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-security-threat-model]
 created: 2026-06-28
@@ -14,6 +14,10 @@ release_binding: null
 # Feature: Decide lease scope for v0
 
 Leases appear as core concepts in the current docs, but review questioned whether they are premature without a first concrete use case or fencing model.
+
+## Retag note (2026-06-28)
+
+Retagged from `[prose]` to a design feature. The `prose` tag was removed because the scope is explicitly a decision (leases in v0 vs. deferred) with real design work if included: lessor authority, lease epochs/fencing tokens, partition behavior, adapter obligations. This is a design decision with alternatives, not prose authoring.
 
 ## Scope
 

@@ -2,7 +2,7 @@
 id: feature-ux-v0-acceptance
 kind: feature
 stage: drafting
-tags: [prose, ux, foundation]
+tags: [ux, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
 created: 2026-06-28
@@ -14,6 +14,10 @@ release_binding: null
 # Feature: Define v0 web cockpit UX acceptance criteria
 
 The docs name Claude-app-style continuity as a quality bar, but the first web cockpit needs actionable acceptance criteria for screens, states, and failure handling.
+
+## Retag note (2026-06-28)
+
+Retagged from `[prose]` to a design feature. The `prose` tag was removed because the scope includes real UX design choices: required v0 screens and navigation, session detail / message timeline behavior, and composer requirements. These are UX architecture decisions (what screens, what navigation pattern, what timeline model), not just writing criteria. The `feature-design` lane can invoke the ux-ui-design skills (`screens`, `flows`) for the design pass. The prose-author black-box test should have caught this originally.
 
 ## Scope
 
