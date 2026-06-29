@@ -127,6 +127,19 @@ V0 architecture decisions:
 - The web cockpit is the first operator surface. The CLI exists for setup, administration, debugging, and scripted access, not as a second independent product surface with divergent semantics.
 - Leases remain in the architecture and verification vocabulary, but are not required for the v0 executable skeleton unless a later scoped feature promotes a specific lease-backed workflow.
 
+### V0 persistence topology
+
+The v0 persistence layer is a single-writer, local-first, port-isolated store owned by the coordination core:
+
+- **Single writer**: one authoritative core process appends to the durable event log. No multi-writer coordination, no HA, no split-brain recovery.
+- **Embedded default backend**: the first backend may be embedded in the core process (e.g. a local file or embedded database). Domain semantics must not depend on the backend choice.
+- **Storage port**: the core reads and writes through a storage port; adapters and control surfaces never touch persistence directly. This is the Ports & Adapters boundary for durability.
+- **Log + snapshots**: the durable event log is the source of truth; snapshots are derived checkpoints used to bound recovery replay cost. A snapshot is never an alternate ordering authority.
+- **Crash recovery**: on restart the core replays the log (or loads the latest snapshot then replays the tail) to reconstruct in-memory state up to the last committed log sequence number. Accepted commands are restored; no accepted command disappears silently.
+- **No remote replication**: v0 does not require WAL shipping, remote replicas, or storage-engine hot swap. Those are reserved seams for HA/federated deployments.
+
+Revision and cursor semantics for events and snapshots are defined in `docs/PROTOCOL.md`. V0 does not require multi-region replication, point-in-time cloning, or cross-backend snapshot portability.
+
 Future architecture planes remain valid direction, but v0 implementation should prefer seams over breadth: define the port, registry, or capability boundary needed for later growth without implementing native mobile, HA, multi-operator coordination, or arbitrary adapters.
 
 ## Data flow

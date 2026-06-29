@@ -45,6 +45,8 @@ The UI displays local submission state and durable command state using the canon
 
 When the control surface reconnects, it requests authoritative snapshots and reconciles local state. Stale data is shown as stale until corrected.
 
+Reconnect does not rely on wall-clock freshness alone. The control surface submits its last-known cursor and the core returns newer events and/or a snapshot materialized at a later log sequence number. The UI keeps a view marked stale until a newer authoritative snapshot or live event stream confirms it; an older snapshot is never rendered as live.
+
 ### Continue across devices
 
 A command sent from phone is visible from laptop. A session inspected from desktop reflects accepted commands and authoritative replies from other control surfaces.

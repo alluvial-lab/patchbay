@@ -74,6 +74,23 @@ Properties:
 - A reconnecting control surface can recover authoritative state from snapshots.
 - Stale cached live/working state is corrected by a newer authoritative snapshot.
 - Event streams are not required for correctness when snapshots exist.
+- A snapshot with a log sequence number strictly less than the core's current revision for that view is rejected as an authority source and replaced by the current view.
+- A snapshot from a different authority domain or core generation is rejected outright.
+- A late event whose log sequence number is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
+- Snapshot materialization reads a consistent log prefix: it reflects every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`.
+
+Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration`, and the view variables (`CommandId`, `SessionId`, `ActorId`) the snapshot reconciles.
+
+### Crash recovery
+
+Properties:
+
+- After an ungraceful core restart, replay of the durable log reconstructs in-memory state up to the last committed `LSN`.
+- Accepted commands are restored as `accepted` (or a later committed state) and continue through their lifecycle; no accepted command disappears silently.
+- Log replay is idempotent: replaying the same committed prefix produces identical state.
+- Snapshot checkpointing bounds recovery replay cost without becoming an alternate ordering authority.
+
+V0 models do not need to prove remote replication, HA failover, or split-brain resolution. Those are out of formal scope.
 
 ### Authority safety
 

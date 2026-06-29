@@ -225,6 +225,45 @@ A snapshot is an authoritative state view for an actor, session, command, lease,
 
 Snapshots expose the canonical state axes above. Stale cached state must not render as live state.
 
+### Revisions and cursors
+
+The coordination core owns a single totally-ordered durable event log per authority domain. Every accepted state-transition event is assigned a monotonic, gap-free **log sequence number** (`LSN`) at durable-commit time. The `LSN` is the canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
+
+A **revision** is the `LSN` at which a specific view (command, session, actor, grant, audit record) was last durably updated. A **cursor** is an `LSN` a control surface or adapter holds to express "I have authoritative knowledge up to here."
+
+V0 revision/cursor rules:
+
+- Every snapshot carries the `LSN` it was materialized at and the per-view revisions it reflects.
+- A control surface reconciles by submitting its cursor; the core returns events with `LSN > cursor` and/or a snapshot materialized at a later `LSN`.
+- A snapshot with an `LSN` strictly less than the core's current state for that view is **older** and is rejected as an authority source; the core returns the current view instead.
+- A snapshot from a different authority domain or a different core generation is rejected outright.
+- Late events carry the `LSN` at which they were committed; an event whose `LSN` is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
+- The core may serve a compressed snapshot at any `LSN`; cursors remain valid across compaction because revisions are monotonic.
+
+### Atomicity between events and snapshots
+
+V0 requires the following atomicity guarantees at the persistence boundary:
+
+- A command is durably recorded (`accepted`) before delivery is attempted. Delivery never relies on in-memory state.
+- A terminal transition is committed to the log before it is reflected in snapshots or returned to control surfaces.
+- A snapshot materialization reads a consistent log prefix: it reflects every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`.
+- Snapshot writes do not reorder the log. A snapshot is a derived artifact keyed by `LSN`; it never becomes a second source of ordering.
+
+If the persistence backend cannot provide these atomicity guarantees, the core must treat the write as failed (`SubmissionOutcome = failed` for submissions, or `failed`/continued `accepted` per policy for delivery) rather than expose an inconsistent view.
+
+## Persistence and recovery
+
+The coordination core owns durable command state, the event log, snapshots, and audit records through a storage port. V0 persistence assumptions:
+
+- **Single-writer**: one authoritative core process writes to the log. There is no multi-writer, HA, or split-brain recovery in v0.
+- **Local-first**: the default backend is embedded and local to the core process. Domain semantics must not depend on a specific storage engine.
+- **Port-isolated**: the core reads/writes through a storage port; adapters and control surfaces never touch persistence directly.
+- **Crash recovery**: on restart, the core replays the durable log to reconstruct in-memory state up to the last committed `LSN`. Accepted-but-not-yet-terminal commands are restored as `accepted` (or a later committed state) and continue through their lifecycle. No accepted command disappears silently after a crash.
+- **Idempotent reprocessing**: replaying the log produces identical state. Re-delivery to adapters after recovery is governed by adapter capability and command policy, not by log replay.
+- **Snapshot checkpointing**: snapshots are periodic materializations used to bound replay cost on recovery; they are derived artifacts, never an alternate source of truth. A recovery may load the latest snapshot then replay events with `LSN > snapshot_LSN`.
+
+V0 does not require WAL replication, remote replication, point-in-time cloning, or storage-engine hot swap. Those are reserved seams.
+
 ## Authority grants
 
 A grant authorizes an actor or endpoint to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.

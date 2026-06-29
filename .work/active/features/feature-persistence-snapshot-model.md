@@ -1,7 +1,7 @@
 ---
 id: feature-persistence-snapshot-model
 kind: feature
-stage: implementing
+stage: review
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -35,3 +35,11 @@ Durable acceptance and snapshot recovery are core Patchbay promises, but the doc
 ## Extension pressure test
 
 - Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.
+
+## Implementation notes
+
+- Files changed: `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, `docs/VERIFICATION.md`, `docs/UX.md`.
+- Tests added: none; prose/foundation documentation change.
+- Verification performed: proofread changed docs in context; confirmed `depends_on` items are done; walked each acceptance criterion (ARCHITECTURE persistence/topology, PROTOCOL revision/cursor, UX reconnect without wall-clock, VERIFICATION snapshot-convergence variables). Sanity-checked whitespace/trailing whitespace.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
