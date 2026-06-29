@@ -40,7 +40,7 @@ Properties:
 
 - An accepted command is durably recorded before delivery.
 - An accepted command cannot vanish silently.
-- Every accepted command remains observable as pending, delivered, rejected, expired, failed, cancelled, completed, superseded, or running.
+- Every accepted command remains observable in exactly one canonical `CommandState` from `docs/PROTOCOL.md` until and after it reaches a terminal state.
 - Timeout does not imply success or denial.
 
 ### Wrong-session prevention
@@ -97,7 +97,7 @@ Properties:
 
 Properties:
 
-- Adapter disconnect, crash, rejection, unsupported command, and target offline states remain distinguishable.
+- Adapter disconnect, crash, rejection, unsupported command, target offline, timeout, expiration, cancellation, and supersession remain distinguishable using the failure/outcome vocabulary in `docs/PROTOCOL.md`.
 - Adapter failure cannot appear as command completion.
 
 ## Out of formal scope
@@ -118,14 +118,14 @@ Those areas require tests, monitoring, adapter documentation, and operational di
 
 Formal models produce implementation obligations. The implementation uses:
 
-- protocol golden vectors shared across languages;
+- protocol golden vectors shared across languages and derived from the canonical state/failure registries in `docs/PROTOCOL.md`;
 - property tests for Rust core behavior;
 - property tests for TypeScript operator-domain behavior;
 - adapter conformance tests for declared capabilities;
 - replay tests for event logs and snapshots;
 - reconnect tests for stale control surfaces.
 
-A protocol semantic change updates the model, contract, conformance vectors, and implementation together.
+A protocol semantic change updates `docs/PROTOCOL.md`, the model, generated contract, conformance vectors, and implementation together.
 
 ## Model promotion rule
 

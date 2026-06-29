@@ -12,7 +12,7 @@ The control surface must answer these questions reliably:
 
 - Which sessions exist?
 - Which machine, project, adapter, and runtime does each session belong to?
-- Is a session live, working, idle, stale, offline, or unknown?
+- What is the session's authoritative connectivity and activity status?
 - Was my command accepted?
 - Did it reach the intended session?
 - Can I retry safely?
@@ -74,7 +74,7 @@ Patchbay is successful when an operator can move among phone, laptop, desktop, a
 
 A useful Patchbay session has these properties:
 
-- accepted commands are durable and visible until delivered, rejected, expired, or failed;
+- accepted commands are durable and visible through a canonical lifecycle until terminal outcome;
 - retries are idempotent unless the operator explicitly duplicates an action;
 - replies correlate to the command or message they answer;
 - session identity is stable enough that late replies cannot affect the wrong session;

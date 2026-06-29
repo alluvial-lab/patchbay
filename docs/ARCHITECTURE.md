@@ -14,7 +14,7 @@ The first surface is a responsive web cockpit using the shared TypeScript operat
 
 The operator intent plane represents prompts, commands, approvals, cancels, resumes, compactions, session switches, and other human-directed actions.
 
-Every accepted operator intent has a durable state: accepted, delivered, rejected, expired, failed, superseded, or completed.
+Every accepted operator intent has a durable command state from the canonical `CommandState` registry in `docs/PROTOCOL.md`. Control-surface-local submission states are separate and never become durable core states.
 
 ### Runtime/session plane
 
@@ -28,13 +28,13 @@ Adapters are not allowed to introduce core-only assumptions such as shared cwd s
 
 ### Message and command plane
 
-This plane defines delivery, command acceptance, reply correlation, idempotency, retries, expiration, and failure semantics.
+This plane defines delivery, command acceptance, reply correlation, idempotency, retries, expiration, and failure semantics. Its state machines and failure vocabulary are owned by `docs/PROTOCOL.md` until generated contracts take over as the derived boundary artifact.
 
 Live streaming is an optimization. Durable acceptance and snapshot recovery carry correctness.
 
 ### State and snapshot plane
 
-This plane defines authoritative state for actors, sessions, and resources. Control surfaces must display stale, offline, and unknown states distinctly from live states.
+This plane defines authoritative state for actors, sessions, and resources. Session connectivity/activity axes are owned by `docs/PROTOCOL.md`; control surfaces compose those axes and must display stale, offline, and unknown states distinctly from live states.
 
 Snapshots repair missed streams and reconnect gaps.
 
@@ -144,8 +144,9 @@ Future architecture planes remain valid direction, but v0 implementation should 
 - The coordination core owns durable command state and authority checks.
 - Adapters own external-runtime protocol details.
 - Control surfaces never infer authoritative state from optimistic UI alone.
-- Generated contracts or central schemas define wire shapes.
-- Formal models define product semantics for delivery, authority, identity, snapshots, and leases.
+- `docs/PROTOCOL.md` is the prose source of truth for state registries until generated contracts exist.
+- Generated contracts or central schemas define wire shapes and derive command/session/failure variants from the canonical protocol registry.
+- Formal models define product semantics for delivery, authority, identity, snapshots, and leases using the canonical protocol variables.
 
 ## Pi-first migration path
 

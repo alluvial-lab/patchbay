@@ -48,6 +48,10 @@ The human using Patchbay to inspect, control, approve, or coordinate agent sessi
 
 The coordination layer that owns actor/session registry, durable events, command state, authority checks, snapshots, and leases.
 
+## Running
+
+A non-terminal command state meaning the target adapter or runtime reports active execution for an accepted command. Running does not imply success and must eventually reconcile to a terminal command state.
+
 ## Runtime session
 
 An external session, process, harness, job, or agent context controlled through an adapter.
@@ -59,3 +63,11 @@ An authoritative state view used to recover from missed events, reconnects, and 
 ## Stale
 
 A state where cached information exists but has not been confirmed by a sufficiently recent authoritative snapshot or live signal.
+
+## Superseded
+
+A terminal command state meaning a newer accepted command or explicit policy decision replaced an earlier command. Superseded commands are not pending, cancelled, failed, or completed; they are visible historical records of work intentionally replaced before completion.
+
+## Unknown
+
+A state used when the control surface or Patchbay lacks enough authoritative information to classify a submission, command, session connectivity, or session activity. Unknown must not be rendered as success, failure, live, or denied without reconciliation against core state or snapshots.

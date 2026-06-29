@@ -32,14 +32,14 @@ The operator can see available sessions and understand:
 - project or working context when available;
 - session label;
 - model/runtime metadata when available;
-- live/working/idle/stale/offline/unknown status;
+- protocol-derived connectivity/activity status;
 - last authoritative update time.
 
 ### Send intent
 
 The operator can send a prompt, command, approval, cancel, or other adapter-supported action to a selected session.
 
-The UI displays command state from draft through acceptance and completion. Accepted does not mean completed; delivered does not mean completed.
+The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed.
 
 ### Recover after disconnect
 
@@ -51,31 +51,25 @@ A command sent from phone is visible from laptop. A session inspected from deskt
 
 ### Handle failure
 
-Failures are explicit:
+Failures are explicit and use the layer-aware vocabulary in `docs/PROTOCOL.md`:
 
-- not authorized;
-- target offline;
+- authorization denied;
+- target offline or not found;
 - adapter unavailable;
 - command unsupported;
-- command expired;
-- delivery unknown;
+- command expired, cancelled, or superseded;
+- delivery or submission unknown;
 - execution failed.
 
 The operator sees what is safe to retry.
 
 ## Presentation states
 
-Patchbay uses explicit UI states:
+Patchbay UI presentation derives from the canonical protocol registries in `docs/PROTOCOL.md` rather than redefining state machines locally.
 
-- **Live idle** — target is reachable and no work is reported.
-- **Working** — target reports active work.
-- **Submitting** — local control surface is sending intent.
-- **Accepted** — Patchbay durably recorded intent.
-- **Delivered** — adapter accepted the command.
-- **Stale** — cached state exists but lacks fresh confirmation.
-- **Offline** — target is known unavailable.
-- **Unknown** — current state cannot be determined.
-- **Failed** — a known error occurred.
+- Command display composes `LocalSubmissionState` (`draft`, `submitting`, `submit_failed`, `unknown`) with durable `CommandState` once a command id exists.
+- Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
+- Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
 
 Stale or unknown state must not be styled as live.
 

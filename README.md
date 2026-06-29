@@ -17,7 +17,7 @@ This repository currently contains project definition documents only. There is n
 Remote/headless agent operation fails when the control surface is treated as “just chat.” Operators need to know:
 
 - Which sessions exist, and where are they running?
-- Is a session live, working, idle, stale, offline, or unknown?
+- What is the session's authoritative connectivity and activity status?
 - Was my command accepted?
 - Did it reach the intended session?
 - Can I safely retry after a timeout or reconnect?
@@ -48,7 +48,7 @@ Patchbay coordination core
       └── future tool/project adapters
 ```
 
-The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. V0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity.
+The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. V0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity. Canonical command, session, and failure state names live in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Core ideas
 

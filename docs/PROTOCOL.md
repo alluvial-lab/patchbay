@@ -2,7 +2,7 @@
 
 Patchbay protocol semantics are defined around durable operator intent, explicit authority, unambiguous target identity, and recoverable state.
 
-This document defines concepts and required behavior, not a final wire encoding. Wire contracts live in generated schemas or IDL once selected.
+This document defines concepts and required behavior, not a final wire encoding. Until generated schemas or IDL exist, this document is the canonical source of truth for command state, session state, failure vocabulary, and transition semantics. Future TypeScript/Rust enums, TLA+/Quint variables, conformance vectors, and UI presentation labels derive from these registries rather than redefining them.
 
 ## Actors and endpoints
 
@@ -46,46 +46,130 @@ A command is operator intent that may cause external action. Commands require:
 
 A reply references a prior message or command. A reply is valid only when its correlation id refers to a known prior event in the same authority/session context.
 
+## Canonical state registries
+
+These registries are committed v0 protocol behavior unless marked as an extension seam. Implementations may add display labels, colors, or adapter-specific metadata, but they must not add protocol states outside the registry without updating this document, contracts, models, and conformance vectors together.
+
+### Command lifecycle state
+
+`CommandState` is durable core state for an accepted command. Control-surface-local states such as `draft` and `submitting` are intentionally excluded from this registry.
+
+| State | Terminal? | Meaning |
+|---|---:|---|
+| `accepted` | no | Patchbay validated the command, checked authority, deduplicated the idempotency key, and durably recorded the command before delivery. Delivery may not have been attempted yet. |
+| `delivered` | no | The target adapter accepted delivery responsibility for the command. This does not imply execution started or completed. |
+| `running` | no | The target adapter or runtime reports active execution for the command. |
+| `completed` | yes | The command reached a successful semantic completion reported by the authoritative target context. |
+| `rejected` | yes | Patchbay or the target adapter refused the command before execution as a semantic/policy decision, such as unsupported command, invalid target, invalid payload, or authorization refusal. |
+| `failed` | yes | Delivery or execution reached a non-policy error after the command was accepted, such as adapter crash, transport failure after acceptance, runtime error, or unknown execution failure. |
+| `expired` | yes | The command exceeded its validity window before reaching a later non-expired terminal state. |
+| `cancelled` | yes | Operator or policy cancellation became the authoritative terminal outcome. |
+| `superseded` | yes | A newer accepted command or policy explicitly replaced this command, and the old command must no longer be executed or presented as pending work. |
+
+Allowed transitions:
+
+```text
+accepted  -> delivered | rejected | failed | expired | cancelled | superseded
+delivered -> running | completed | rejected | failed | expired | cancelled | superseded
+running   -> completed | failed | expired | cancelled | superseded
+
+completed -> <terminal>
+rejected  -> <terminal>
+failed    -> <terminal>
+expired   -> <terminal>
+cancelled -> <terminal>
+superseded -> <terminal>
+```
+
+Boundary rules:
+
+- `accepted` is the only initial durable `CommandState` for a newly accepted command.
+- Terminal states are final for that command id. Late adapter events are recorded as events for audit/reconciliation but do not mutate the command state.
+- A duplicate submission with the same command id or idempotency key returns the existing command record and state; it does not create a new state transition.
+- `rejected` means a known actor refused the command by semantics or policy. `failed` means an accepted attempt encountered an error. `expired`, `cancelled`, and `superseded` are distinct terminal outcomes and must not be collapsed into `failed`.
+
+### Control-surface local submission state
+
+`LocalSubmissionState` exists only inside a control surface before or while it reconciles with Patchbay. It is not persisted as durable command state.
+
+| State | Meaning |
+|---|---|
+| `draft` | Local-only operator input that has not been submitted to Patchbay. It may be edited or discarded without protocol history. |
+| `submitting` | The control surface sent a submission and is waiting for an acceptance, rejection, or retryable transport result. |
+| `submit_failed` | The control surface failed to obtain an acceptance result from Patchbay. The operator may retry with the same idempotency key. |
+| `unknown` | The control surface cannot determine whether the submission was accepted and must reconcile by querying Patchbay before claiming success or failure. |
+
+Once Patchbay returns or snapshots a command id, the UI derives command display from `CommandState`. A UI may still show local transport decoration, but durable truth comes from the core command record.
+
+### Session state axes
+
+Session presentation is the composition of two protocol axes. This avoids treating “live”, “idle”, “working”, “stale”, and “unknown” as one overloaded enum.
+
+#### `SessionConnectivityState`
+
+| State | Meaning |
+|---|---|
+| `live` | Patchbay has a sufficiently fresh authoritative signal that the adapter/session endpoint is reachable. |
+| `stale` | Cached state exists, but Patchbay lacks a sufficiently fresh authoritative signal. Stale data must not be rendered as live. |
+| `offline` | Patchbay has authoritative evidence that the adapter/session endpoint is unavailable. |
+| `unknown` | Patchbay lacks enough information to classify the session as live, stale, or offline. |
+| `failed` | Patchbay has an explicit adapter/session error that prevents reliable control or observation. |
+
+#### `SessionActivityState`
+
+| State | Meaning |
+|---|---|
+| `idle` | The session is not reporting active work. |
+| `working` | The session reports active work, command execution, or adapter-known runtime activity. |
+| `unknown` | Patchbay lacks a current authoritative activity report. |
+
+Derived UI labels such as “Live idle”, “Working”, “Stale working”, or “Offline” are presentation labels over these axes, not protocol states. A stale or unknown connectivity value dominates presentation: stale working is not live working.
+
+### Failure and outcome vocabulary
+
+Failures are layer-aware. Use the narrowest term that matches the authoritative event.
+
+| Term | Layer | Meaning | Typical command effect |
+|---|---|---|---|
+| `validation_failed` | acceptance | Patchbay rejected the payload shape, command kind, target shape, or required field before acceptance. | no command record, or `rejected` if represented as an accepted audit event by policy |
+| `authorization_denied` | acceptance | The actor/endpoint lacks a valid grant for the command. | `rejected` |
+| `target_not_found` | acceptance/delivery | The addressed actor/session/resource does not exist in the relevant authority/session context. | `rejected` or `failed` after acceptance |
+| `unsupported_command` | acceptance/delivery | The core or adapter does not support the declared command kind/capability. | `rejected` |
+| `target_offline` | delivery | The target is known unavailable. | `failed` or `expired`, depending on command policy |
+| `adapter_unavailable` | delivery | The adapter required for delivery is unavailable. | `failed` or remains `accepted` until retry/expiration policy resolves |
+| `transport_timeout` | submission/delivery | A transport layer did not answer within its timeout. Timeout never implies success or denial. | local `unknown`/`submit_failed`, or durable `failed`/continued `accepted` by policy |
+| `delivery_rejected` | delivery | The adapter received the command but refused delivery responsibility. | `rejected` |
+| `execution_failed` | execution | The target began or accepted execution and reported failure. | `failed` |
+| `expired` | policy/time | The command validity window closed. | `expired` |
+| `cancelled` | policy/operator | Cancellation became the authoritative result. | `cancelled` |
+| `superseded` | policy/operator | A newer command or policy replaced this command. | `superseded` |
+| `stale_event` | reconciliation | A late event refers to an old command/session generation or terminal command. | audit event only; no state mutation |
+
+Extension seam: future adapters may attach adapter-specific diagnostic codes, but those codes map onto this vocabulary at the Patchbay boundary.
+
 ## Acceptance semantics
 
 Patchbay distinguishes acceptance from delivery and completion.
 
-A command accepted by Patchbay is durably recorded before delivery. After acceptance, it must become exactly one visible terminal or continuing state:
+A command accepted by Patchbay is durably recorded before delivery. After acceptance, it remains visible as a `CommandState` until and after it reaches a terminal state. An accepted command cannot disappear silently.
 
-- delivered;
-- rejected;
-- expired;
-- failed;
-- cancelled;
-- completed;
-- superseded;
-- still pending.
-
-An accepted command cannot disappear silently.
-
-## Delivery states
-
-Control surfaces expose delivery state directly:
-
-- **draft** — local-only, not accepted by Patchbay;
-- **submitting** — sent to Patchbay, no acceptance result yet;
-- **accepted** — durably recorded by Patchbay;
-- **delivered** — target adapter accepted delivery;
-- **running** — target reports work in progress;
-- **completed** — target reports completion;
-- **rejected** — Patchbay or adapter refused the command;
-- **failed** — delivery or execution failed;
-- **expired** — command timed out before delivery/execution;
-- **cancelled** — operator or policy cancelled it;
-- **unknown** — local control surface lacks current authoritative state.
+Acceptance creates a command record only after boundary validation, authority checking, idempotency reconciliation, and target identity binding. Invalid submissions that fail before acceptance may be reported to the submitting endpoint without creating durable command state, unless audit policy records rejected attempts separately.
 
 ## Idempotency and retry
 
-Commands are idempotent by default. Retrying the same command id or idempotency key does not apply the command twice.
+Commands are idempotent by default at the Patchbay boundary. Retrying the same command id or idempotency key does not apply the command twice.
 
-A duplicate command returns the existing command state unless the operator explicitly creates a new command.
+A duplicate command returns the existing command state unless the operator explicitly creates a new command with a new command id and idempotency key.
 
-Adapters that cannot guarantee idempotent external execution must report that limitation as a capability constraint. Patchbay still deduplicates at the coordination boundary.
+Adapters that cannot guarantee idempotent external execution must report that limitation as a capability constraint. Patchbay still deduplicates at the coordination boundary and exposes the adapter limitation to control surfaces.
+
+## Cancellation, expiration, supersession, and race semantics
+
+- Cancellation is a command or policy request that races with execution. If `completed`, `failed`, `expired`, or another terminal state is committed first, later cancellation cannot mutate the command and is recorded only as a late event or separate cancellation failure.
+- Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
+- Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure.
+- Running is non-terminal. A running command remains observable until one terminal state wins.
+- For simultaneous events, Patchbay commits one state transition atomically according to core ordering rules. Later conflicting events are audit/reconciliation events, not state rewrites.
 
 ## Snapshots and streams
 
@@ -93,17 +177,7 @@ Event streams are useful but not authoritative by themselves.
 
 A snapshot is an authoritative state view for an actor, session, command, lease, or resource. Control surfaces reconcile against snapshots after reconnect, resume, tab restore, app restart, or suspected drift.
 
-Patchbay state presentation distinguishes:
-
-- live;
-- working;
-- idle;
-- stale;
-- offline;
-- unknown;
-- failed/error.
-
-Stale cached state must not render as live state.
+Snapshots expose the canonical state axes above. Stale cached state must not render as live state.
 
 ## Authority grants
 
@@ -126,6 +200,8 @@ A lease is a time-bounded exclusive claim over a resource or coordination role. 
 
 Within one modeled Patchbay authority domain, two live leases cannot grant exclusive ownership of the same resource and scope at the same time.
 
+V0 reserves leases as an extension seam. Lease-backed behavior must define its own lifecycle registry before shipping; it must not overload `CommandState` or session state.
+
 ## Adapter capabilities
 
 Adapters declare supported commands and guarantees:
@@ -141,17 +217,11 @@ Adapters declare supported commands and guarantees:
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 
-## Transport failures
+## Extension pressure classification
 
-Patchbay distinguishes transport failure from semantic failure:
-
-- timeout means no timely response at that layer;
-- offline means target endpoint unavailable;
-- denied means authority/policy refusal;
-- rejected means valid target refused the command;
-- failed means accepted work reached an error state.
-
-Timeout never implies success. Timeout also does not imply denial.
+- **Committed v0 behavior:** `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
+- **Reserved extension seams:** adapter-specific diagnostics, future command kinds, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
+- **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, or adapter-specific lifecycle variants becoming core protocol states without registry updates.
 
 ## Security and trust boundary
 

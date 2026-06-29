@@ -1,7 +1,7 @@
 ---
 id: feature-command-state-ssot
 kind: feature
-stage: implementing
+stage: review
 tags: [prose, protocol, foundation, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -52,3 +52,11 @@ Authoring decisions:
 ## Extension pressure test
 
 - Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.
+
+## Implementation notes
+
+- Files changed: `docs/PROTOCOL.md`, `docs/UX.md`, `docs/ARCHITECTURE.md`, `docs/VERIFICATION.md`, `docs/GLOSSARY.md`, `docs/VISION.md`, `README.md`.
+- Tests added: none; docs-only prose feature.
+- Discrepancies from design: also touched `docs/VISION.md` to avoid retaining a stale enum-like state list in the vision questions.
+- Adjacent issues parked: none.
+- Verification: proofread changed sections; used `rg` to confirm prior duplicated enum-like state lists were removed or converted to protocol references; confirmed `docs/PROTOCOL.md` owns concrete `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, transitions, and extension-pressure classification.
