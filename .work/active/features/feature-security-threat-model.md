@@ -1,7 +1,7 @@
 ---
 id: feature-security-threat-model
 kind: feature
-stage: drafting
+stage: implementing
 tags: [prose, security, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-research-web-control-security]
