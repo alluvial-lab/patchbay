@@ -1,7 +1,7 @@
 ---
 id: feature-persistence-snapshot-model
 kind: feature
-stage: done
+stage: review
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -47,10 +47,10 @@ Durable acceptance and snapshot recovery are core Patchbay promises, but the doc
 
 ## Review (2026-06-28)
 
-**Verdict**: Approve
+**Verdict**: Pending — awaiting fresh-context sub-agent review
 
 **Blockers**: none
-**Important**: none (one scope gap — adapter snapshot capability tiers — found inline and fixed before advancing)
-**Nits**: `core generation` is used as a term without a glossary entry; self-explanatory in context, left for a future glossary pass.
+**Important**: one scope gap (adapter snapshot capability tiers) found inline and fixed.
+**Nits**: `core generation` lacks a glossary entry; self-explanatory, left for a future glossary pass.
 
-**Notes**: Inline review (subagent-free per operator request, with 3 concurrent umans sessions running). Deep fresh-context passes were not run; review degraded to a single inline lens walk. No blockers or important findings remained after the inline fix.
+**Notes**: Inline pre-review only (subagent-free per operator request, 3 concurrent umans sessions). This does NOT satisfy the feature review bar: per the agile-workflow review principles, same-model review must use a fresh-context sub-agent rather than inline self-review, and features require deeper review. The inline pass caught one scope gap but is not a substitute for a fresh-context review pass. Revert this item to `done` only after a fresh-context sub-agent review returns Approve.
