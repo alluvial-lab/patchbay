@@ -41,6 +41,8 @@ Properties:
 - An accepted command is durably recorded before delivery.
 - An accepted command cannot vanish silently.
 - Every accepted command remains observable in exactly one canonical `CommandState` from `docs/PROTOCOL.md` until and after it reaches a terminal state.
+- Once a command reaches a terminal `CommandState`, later events for that command do not mutate the command state.
+- For competing valid terminal candidates, the terminal winner is the candidate with the lowest committed log sequence number in the authority domain.
 - Timeout does not imply success or denial.
 
 ### Wrong-session prevention
@@ -65,6 +67,7 @@ Properties:
 
 - Retrying the same idempotency key cannot double-apply a command at the Patchbay boundary.
 - Duplicate submission returns existing command state.
+- Retrying after a command is terminal returns the existing terminal command record rather than creating a later terminal candidate.
 - Explicit duplicate action requires a new command id/key.
 
 ### Snapshot convergence
@@ -77,6 +80,7 @@ Properties:
 - A snapshot with a log sequence number strictly less than the core's current revision for that view is rejected as an authority source and replaced by the current view.
 - A snapshot from a different authority domain or core generation is rejected outright.
 - A late event whose log sequence number is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
+- Terminal outcomes are deterministic after durable append: replay, snapshots, conformance traces, and UI reconciliation expose the terminal state chosen by committed log order.
 - Snapshot materialization reads a consistent log prefix: it reflects every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`.
 
 Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration`, and the view variables (`CommandId`, `SessionId`, `ActorId`) the snapshot reconciles.
@@ -164,6 +168,7 @@ Those areas require tests, monitoring, adapter documentation, and operational di
 Formal models produce implementation obligations. The implementation uses:
 
 - protocol golden vectors shared across languages and derived from the canonical state/failure registries in `docs/PROTOCOL.md`;
+- terminal-commit race vectors covering completion before cancellation, cancellation before completion, expiration before late completion, retry after terminal, late terminal candidate as audit/reconciliation only, and replay of the same committed prefix;
 - property tests for Rust core behavior;
 - property tests for TypeScript operator-domain behavior;
 - adapter conformance tests for declared capabilities;

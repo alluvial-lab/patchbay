@@ -39,7 +39,7 @@ The operator can see available sessions and understand:
 
 The operator can send a prompt, command, approval, cancel, or other adapter-supported action to a selected session.
 
-The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed.
+The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
 
 ### Recover after disconnect
 
@@ -72,6 +72,7 @@ Patchbay UI presentation derives from the canonical protocol registries in `docs
 - Command display composes protocol-defined local submission state with durable `CommandState` once a command id exists.
 - Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
 - Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
+- Command timelines can explain terminal races without adding protocol states, for example **Completed before cancellation arrived**, **Cancelled before completion**, or **Expired before adapter completion**.
 
 Stale or unknown state must not be styled as live.
 

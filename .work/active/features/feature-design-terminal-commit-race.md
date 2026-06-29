@@ -1,7 +1,7 @@
 ---
 id: feature-design-terminal-commit-race
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot]
@@ -199,3 +199,10 @@ There is no implementation code yet. Verification for this design is by document
 - **UX confusion**: Operators may expect cancel to retroactively dominate. Mitigation: make the command timeline explain "completed before cancellation arrived" rather than hiding the late cancel.
 - **Future safety-critical commands**: Some command kinds may eventually require stronger abort/fencing semantics. Mitigation: reserve command-kind-specific terminal-resolution policy as an explicit extension seam rather than changing the generic v0 lifecycle now.
 - **Coupling to provisional LSN model**: This design relies on durable log order. The current LSN model is under provisional review, but any replacement still needs a single authoritative append order for v0's single-writer core.
+
+## Implementation notes
+
+- Files changed: `docs/PROTOCOL.md`, `docs/VERIFICATION.md`, `docs/UX.md`, `.work/active/features/feature-protocol-idl-and-conformance.md`, `.work/active/features/feature-design-terminal-commit-race.md`.
+- Tests added: none; this is foundation-doc implementation with future conformance-vector cases recorded for `feature-protocol-idl-and-conformance`.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

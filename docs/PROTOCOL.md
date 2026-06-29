@@ -211,15 +211,16 @@ Adapters that cannot guarantee idempotent external execution must report that li
 
 ## Cancellation, expiration, supersession, and race semantics
 
-> **Under design review** (`feature-design-terminal-commit-race`): the "first durable terminal commit wins" rule below was decided inside a prose feature without a design pass over alternatives. It remains committed v0 behavior until the design pass ratifies or revises it.
+Cancellation, expiration, supersession, adapter completion, adapter failure, and adapter rejection are terminal candidates competing for the same command's first durable terminal transition.
 
-- Cancellation is a command or policy request that races with execution. If `completed`, `failed`, `expired`, or another terminal state is committed first, later cancellation cannot mutate the command and is recorded only as a late event or separate cancellation failure.
-- Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
-- Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure.
 - Running is non-terminal. A running command remains observable until one terminal state wins.
 - First durable terminal commit wins. The core assigns a total order to accepted state-transition events in the durable event log; the earliest committed valid terminal transition becomes authoritative.
 - If two terminal candidates are truly concurrent before persistence, models may treat the winner as nondeterministic, but implementations must persist one total order and expose the chosen terminal state consistently in snapshots and conformance traces.
-- Later conflicting events are audit/reconciliation events, not state rewrites.
+- Later conflicting terminal candidates are audit/reconciliation events, not `CommandState` rewrites and not a distinct durable conflict state.
+- Cancellation is a command or policy request that races with execution. If `completed`, `failed`, `expired`, `cancelled`, `superseded`, or another terminal state is committed first, later cancellation cannot mutate that command. Depending on the API shape, the too-late cancellation attempt may be refused before acceptance, recorded as an ineffective cancellation failure, or preserved as an audit event; it never rewrites the original command's terminal state.
+- Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
+- Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure, and a late supersession candidate does not rewrite an already-terminal command.
+- Global priority ordering such as `cancelled > completed` is not part of v0's generic command lifecycle. Future safety-critical command kinds may define explicit abort or fencing policy, but that policy must be designed as command-kind behavior rather than a hidden override of terminal-state finality.
 
 ## Snapshots and streams
 
