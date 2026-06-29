@@ -1,7 +1,7 @@
 ---
 id: feature-command-state-ssot
 kind: feature
-stage: drafting
+stage: implementing
 tags: [prose, protocol, foundation, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -22,6 +22,25 @@ Review found command, session, and presentation states duplicated across README,
 - Session liveness states such as live, idle, working, stale, offline, unknown.
 - Failure/outcome vocabulary across transport, acceptance, delivery, execution, and presentation.
 - Cancellation, expiration, supersession, running, and completion race semantics.
+
+## Outline
+
+Target files:
+
+- `docs/PROTOCOL.md` — canonical source for command lifecycle, local submission states, session state axes, failure vocabulary, transitions, and race semantics.
+- `docs/UX.md` — presentation guidance that derives UI labels from protocol state instead of redefining enums.
+- `docs/ARCHITECTURE.md` — point architecture planes at the protocol registry/source of truth rather than restating state members.
+- `docs/VERIFICATION.md` — reference canonical protocol variables for formal model obligations.
+- `docs/GLOSSARY.md` — define ambiguous state terms.
+- `README.md` — avoid stale state-list drift by pointing readers to `docs/PROTOCOL.md` for canonical state names.
+
+Authoring decisions:
+
+- Treat `docs/PROTOCOL.md` as the current prose source of truth until generated IDL/schema registries exist.
+- Split core command state from control-surface-local submission state; local `draft`/`submitting` must not become durable command states.
+- Split session status into connectivity/freshness and activity axes, then let UX compose labels like “Live idle” or “Stale working”.
+- Make failure vocabulary layer-aware so timeout/offline/denied/rejected/failed do not collapse into one ambiguous bucket.
+- Classify state decisions as committed v0 behavior, reserved extension seams, or rejected directions in the protocol text.
 
 ## Acceptance criteria
 
