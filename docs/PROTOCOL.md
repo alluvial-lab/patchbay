@@ -273,8 +273,6 @@ V0 does not require WAL replication, remote replication, point-in-time cloning, 
 
 ## Authority grants
 
-> **Under design review** (`feature-design-grant-shape`): the grant field list below (including the `parent grant id / delegated-by` seam) was decided inside a prose feature without a design pass. It remains committed v0 behavior until the design pass ratifies or revises it.
-
 A grant authorizes an actor or endpoint to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
 
 A v0 grant records:
@@ -282,15 +280,15 @@ A v0 grant records:
 - grant id;
 - authority domain id;
 - subject actor id;
-- optional subject device id;
 - optional subject endpoint id or endpoint class;
 - target scope, such as actor, adapter, runtime session, project/session group, or other modeled resource;
-- allowed command kinds or adapter capability set;
+- allowed command kinds;
 - creation time and provenance;
 - optional expiration;
 - revocation generation or revoked time;
-- revocation policy for already accepted commands;
-- optional parent grant id / delegated-by field reserved for future delegation.
+- revocation policy for already accepted commands.
+
+Delegation is a reserved future direction, not a v0 field. A `parent grant id / delegated-by` field is intentionally absent from v0; it must be designed together with delegation semantics and multi-operator / federated-authority work, both of which are outside v0 scope. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field; grant matching uses the issuer actor and optional endpoint. Adapter capability sets are not grant authority (see Adapter capabilities).
 
 Grant checks happen before command acceptance. A submission without a live matching grant is rejected before delivery with `SubmissionOutcome = rejected` and `authorization_denied` or a narrower applicable failure term.
 
@@ -329,6 +327,8 @@ Adapters declare supported commands and guarantees:
 - known failure modes.
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
+
+Adapter capability declarations are advisory for control-surface UX only: they let a control surface render an action unavailable before submission. They are not an authority gate and not a delivery gate. The core does not gate delivery on a cached adapter capability; it delivers the command kind to the adapter, and the adapter accepts or rejects based on its own support at delivery time. An adapter's `unsupported_command` is a delivery-layer, adapter-reported rejection. An unknown-to-Patchbay command kind is `validation_failed` at submission, before a grant is evaluated. Grant authority is expressed only in canonical Patchbay command kinds, which are stable and registry-owned; an adapter capability change never widens or narrows a grant.
 
 ### Adapter snapshot capability tiers
 

@@ -127,7 +127,7 @@ Unauthenticated setup pages must not expose state-changing bootstrap flows on a 
 
 A command is accepted only after Patchbay validates:
 
-1. payload shape and command kind;
+1. payload shape and command kind (the kind must be a known Patchbay command kind);
 2. authenticated issuer session or endpoint;
 3. target actor/session identity and generation;
 4. idempotency key or command id;
@@ -140,6 +140,10 @@ Retries with the same idempotency key return the existing command record. A new 
 
 Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority.
 
+### Compound issuer
+
+When a command arrives at the core through a control surface (the v0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
+
 ## Grant shape
 
 A v0 grant has at least:
@@ -149,12 +153,13 @@ A v0 grant has at least:
 - subject actor id;
 - optional subject endpoint id or endpoint class;
 - target scope: actor, adapter, runtime session, project/session group, or other modeled resource;
-- allowed command kinds or capability set;
+- allowed command kinds;
 - created time and provenance;
 - optional expiration;
 - revocation generation or revoked time;
-- revocation policy for already accepted commands;
-- optional parent grant id / delegated-by field reserved for future delegation.
+- revocation policy for already accepted commands.
+
+Delegation is a reserved future direction, not a v0 field; a `parent grant id / delegated-by` field is intentionally absent from v0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time.
 
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 

@@ -1,7 +1,7 @@
 ---
 id: feature-design-grant-shape
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-security-threat-model]
@@ -208,3 +208,11 @@ There is no implementation code yet. Verification for this design is by document
 - **Web↔core seam dependency**: This design asserts that the core must verify operator-session evidence independently of the web-server endpoint. The exact wire shape is deferred to `feature-web-core-protocol-seam`; if that feature cannot carry such evidence, this grant model needs revision. Mitigation: the requirement is recorded now so the seam feature must satisfy it.
 - **Revocation model coupling**: Device revocation and endpoint revocation (SECURITY.md revocation actions) rely on device/endpoint identity, which is preserved in the identity model. If a future revocation design needs device-scoped grants, the grant subject may need to widen; that is a future decision, not a v0 one.
 - **Adapter capability drift in UX**: Because capability declarations are advisory, a stale declaration could gray out an available action or enable a disabled-looking one. The failure mode is a real answer from the adapter at delivery time, handled by the existing failure vocabulary, which is acceptable and far better than the core silently gating on stale capability state.
+
+## Implementation notes
+
+- Files changed: `docs/PROTOCOL.md`, `docs/SECURITY.md`, `docs/VERIFICATION.md`, `.work/active/features/feature-design-grant-shape.md`.
+- Tests added: none; this is foundation-doc implementation.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: confirmed via `rg` that `parent_grant_id`/`delegated-by` appears only in "intentionally absent" explanatory notes (not as a live field); delegation property moved to a clearly labeled precondition section; grant-shape under-design-review marker removed while `feature-session-identity-adapter-contract` and the four `story-review-provisional-semantics` markers remain intact; adapter-capability display-vs-delivery wording is consistent across all three docs.

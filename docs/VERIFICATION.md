@@ -104,13 +104,20 @@ V0 models do not need to prove remote replication, HA failover, or split-brain r
 Properties:
 
 - Commands without grants are rejected before durable acceptance and before delivery.
-- Grant matching checks issuer actor, optional endpoint, target scope, command kind, expiration, and revocation generation.
+- Grant matching checks issuer actor, optional endpoint, target scope, command kind, expiration, and revocation generation. Device is not a grant-matching field; it is an identity and revocation-grouping variable.
 - Revocation prevents future command acceptance under the revoked grant.
 - Already accepted commands follow the grant's revocation policy: continue, cancel where supported, or require reauthorization.
 - Lockdown rejects new commands and marks affected runtime sessions stale until fresh authentication or operator action clears the condition.
-- Delegation cannot create authority beyond its parent grant.
+- **CompoundIssuer**: when a command arrives through a control surface, the core verifies the transport endpoint (e.g. the web server, or a CLI endpoint) as a principal and independently verifies the operator actor against operator-session evidence. The core must not trust a self-asserted operator identity.
+- **GrantAuthorityIsCommandKinds**: grant authority is expressed only in canonical Patchbay command kinds. Adapter capability declarations are advisory UX state and are not an authority or delivery gate; the adapter accepts or rejects at delivery time.
 
-Normative model variables should include at least `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`.
+Normative model variables should include at least `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`. `Device` is included as an identity, audit, and revocation-grouping variable even though it is not a grant-matching field.
+
+### Delegation precondition
+
+Delegation is not part of v0. The following property is a precondition that must be satisfied before any delegation-backed behavior ships; it is not a required v0 authority-safety obligation:
+
+- Delegation cannot create authority beyond its parent grant.
 
 ### Lease safety
 
