@@ -50,7 +50,7 @@ The coordination layer that owns actor/session registry, durable events, command
 
 ## Running
 
-A non-terminal command state meaning the target adapter or runtime reports active execution for an accepted command. Running does not imply success and must eventually reconcile to a terminal command state.
+A non-terminal command state meaning the target adapter or runtime reports active execution for an accepted command. Running does not imply success; it remains observable until a terminal state or policy-driven resolution is recorded.
 
 ## Runtime session
 

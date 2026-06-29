@@ -1,7 +1,7 @@
 ---
 id: feature-command-state-ssot
 kind: feature
-stage: review
+stage: done
 tags: [prose, protocol, foundation, verification]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -59,4 +59,14 @@ Authoring decisions:
 - Tests added: none; docs-only prose feature.
 - Discrepancies from design: also touched `docs/VISION.md` to avoid retaining a stale enum-like state list in the vision questions.
 - Adjacent issues parked: none.
-- Verification: proofread changed sections; used `rg` to confirm prior duplicated enum-like state lists were removed or converted to protocol references; confirmed `docs/PROTOCOL.md` owns concrete `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, transitions, and extension-pressure classification.
+- Verification: proofread changed sections; used `rg` to confirm prior duplicated enum-like state lists were removed or converted to protocol references; confirmed `docs/PROTOCOL.md` owns concrete `SubmissionOutcome`, `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, transitions, and extension-pressure classification.
+
+## Review (2026-06-28)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**: none
+**Nits**: `docs/PROTOCOL.md` uses `<terminal>` shorthand for terminal-state rows; acceptable prose shorthand for now, with generated contracts/conformance expected to spell out exact vectors.
+
+**Notes**: Deep substrate review used fresh-context sub-agents. Initial review found a blocker around pre-acceptance rejection vs durable `CommandState`; fixed by introducing `SubmissionOutcome` and clarifying that pre-acceptance refusal creates no command state. Also added local/session transition rules, first-durable-terminal-commit race semantics, removed remaining duplicate state lists, and softened the glossary `Running` definition. Re-review found no blockers or important findings.

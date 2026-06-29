@@ -67,7 +67,7 @@ The operator sees what is safe to retry.
 
 Patchbay UI presentation derives from the canonical protocol registries in `docs/PROTOCOL.md` rather than redefining state machines locally.
 
-- Command display composes `LocalSubmissionState` (`draft`, `submitting`, `submit_failed`, `unknown`) with durable `CommandState` once a command id exists.
+- Command display composes protocol-defined local submission state with durable `CommandState` once a command id exists.
 - Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
 - Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
 
@@ -80,7 +80,7 @@ The responsive web cockpit prioritizes:
 - readable session list on phone;
 - clear target identity before sending;
 - composer ergonomics for prompts and commands;
-- visible pending/sent/failed states;
+- visible protocol-derived pending, delivery, and failure states;
 - rich message rendering where safe;
 - low-friction reconnect;
 - minimal reliance on continuous foreground connection;

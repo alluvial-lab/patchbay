@@ -60,7 +60,7 @@ These registries are committed v0 protocol behavior unless marked as an extensio
 | `delivered` | no | The target adapter accepted delivery responsibility for the command. This does not imply execution started or completed. |
 | `running` | no | The target adapter or runtime reports active execution for the command. |
 | `completed` | yes | The command reached a successful semantic completion reported by the authoritative target context. |
-| `rejected` | yes | Patchbay or the target adapter refused the command before execution as a semantic/policy decision, such as unsupported command, invalid target, invalid payload, or authorization refusal. |
+| `rejected` | yes | Patchbay or the target adapter refused an already-recorded command before execution as a semantic/policy decision, such as unsupported command, invalid target, or delivery refusal. Pre-acceptance submission refusal is a `SubmissionOutcome`, not `CommandState = rejected`. |
 | `failed` | yes | Delivery or execution reached a non-policy error after the command was accepted, such as adapter crash, transport failure after acceptance, runtime error, or unknown execution failure. |
 | `expired` | yes | The command exceeded its validity window before reaching a later non-expired terminal state. |
 | `cancelled` | yes | Operator or policy cancellation became the authoritative terminal outcome. |
@@ -88,18 +88,38 @@ Boundary rules:
 - A duplicate submission with the same command id or idempotency key returns the existing command record and state; it does not create a new state transition.
 - `rejected` means a known actor refused the command by semantics or policy. `failed` means an accepted attempt encountered an error. `expired`, `cancelled`, and `superseded` are distinct terminal outcomes and must not be collapsed into `failed`.
 
-### Control-surface local submission state
+### Submission outcome and local submission state
+
+A submission is the request to create or retrieve a command record. Not every submission creates a durable command. Pre-acceptance refusal is represented as `SubmissionOutcome = rejected`; it is not `CommandState = rejected` unless an explicit audit policy creates a separate non-command audit record.
+
+`SubmissionOutcome` is the boundary result returned by Patchbay for a submission attempt:
+
+| Outcome | Meaning |
+|---|---|
+| `accepted` | Patchbay created or found a durable command record. The returned command id has `CommandState = accepted` or the existing deduplicated command state. |
+| `rejected` | Patchbay refused the submission before creating a command record, such as validation failure, authorization denial, unsupported command at the core boundary, or invalid target known before acceptance. |
+| `failed` | Patchbay could not complete the submission attempt due to service or transport failure. The client must not infer acceptance. |
+| `unknown` | The client cannot determine whether Patchbay accepted the submission and must reconcile by idempotency key or snapshot. |
 
 `LocalSubmissionState` exists only inside a control surface before or while it reconciles with Patchbay. It is not persisted as durable command state.
 
 | State | Meaning |
 |---|---|
 | `draft` | Local-only operator input that has not been submitted to Patchbay. It may be edited or discarded without protocol history. |
-| `submitting` | The control surface sent a submission and is waiting for an acceptance, rejection, or retryable transport result. |
-| `submit_failed` | The control surface failed to obtain an acceptance result from Patchbay. The operator may retry with the same idempotency key. |
-| `unknown` | The control surface cannot determine whether the submission was accepted and must reconcile by querying Patchbay before claiming success or failure. |
+| `submitting` | The control surface sent a submission and is waiting for a `SubmissionOutcome`. |
+| `submit_failed` | The control surface received or inferred `SubmissionOutcome = failed`. The operator may retry with the same idempotency key. |
+| `unknown` | The control surface received or inferred `SubmissionOutcome = unknown` and must reconcile by querying Patchbay before claiming success or failure. |
 
-Once Patchbay returns or snapshots a command id, the UI derives command display from `CommandState`. A UI may still show local transport decoration, but durable truth comes from the core command record.
+Allowed local transitions:
+
+```text
+draft        -> submitting
+submitting   -> draft | submit_failed | unknown | <reconciled command id> | <rejected submission>
+submit_failed -> submitting | draft
+unknown      -> submitting | submit_failed | <reconciled command id> | <rejected submission>
+```
+
+`<reconciled command id>` and `<rejected submission>` are exits from local submission state, not additional enum members. Once Patchbay returns or snapshots a command id, the UI derives command display from `CommandState`. A UI may still show local transport decoration, but durable truth comes from the core command record.
 
 ### Session state axes
 
@@ -123,6 +143,26 @@ Session presentation is the composition of two protocol axes. This avoids treati
 | `working` | The session reports active work, command execution, or adapter-known runtime activity. |
 | `unknown` | Patchbay lacks a current authoritative activity report. |
 
+Allowed connectivity observations:
+
+```text
+unknown -> live | stale | offline | failed
+live    -> stale | offline | failed
+stale   -> live | offline | unknown | failed
+offline -> live | stale | unknown | failed
+failed  -> live | stale | offline | unknown
+```
+
+Allowed activity observations:
+
+```text
+unknown -> idle | working
+idle    -> working | unknown
+working -> idle | unknown
+```
+
+Session transitions are driven by authoritative adapter events, timeout/staleness policy, and snapshots. Snapshots may move an axis to any state allowed above when they carry fresher authority than cached UI state.
+
 Derived UI labels such as “Live idle”, “Working”, “Stale working”, or “Offline” are presentation labels over these axes, not protocol states. A stale or unknown connectivity value dominates presentation: stale working is not live working.
 
 ### Failure and outcome vocabulary
@@ -131,10 +171,10 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 
 | Term | Layer | Meaning | Typical command effect |
 |---|---|---|---|
-| `validation_failed` | acceptance | Patchbay rejected the payload shape, command kind, target shape, or required field before acceptance. | no command record, or `rejected` if represented as an accepted audit event by policy |
-| `authorization_denied` | acceptance | The actor/endpoint lacks a valid grant for the command. | `rejected` |
-| `target_not_found` | acceptance/delivery | The addressed actor/session/resource does not exist in the relevant authority/session context. | `rejected` or `failed` after acceptance |
-| `unsupported_command` | acceptance/delivery | The core or adapter does not support the declared command kind/capability. | `rejected` |
+| `validation_failed` | submission | Patchbay rejected the payload shape, command kind, target shape, or required field before acceptance. | `SubmissionOutcome = rejected`; no `CommandState` |
+| `authorization_denied` | submission | The actor/endpoint lacks a valid grant for the command. | `SubmissionOutcome = rejected`; no `CommandState` |
+| `target_not_found` | submission/delivery | The addressed actor/session/resource does not exist in the relevant authority/session context. | submission `rejected` before acceptance, or command `rejected`/`failed` after acceptance by policy |
+| `unsupported_command` | submission/delivery | The core or adapter does not support the declared command kind/capability. | submission `rejected` before acceptance, or command `rejected` after acceptance |
 | `target_offline` | delivery | The target is known unavailable. | `failed` or `expired`, depending on command policy |
 | `adapter_unavailable` | delivery | The adapter required for delivery is unavailable. | `failed` or remains `accepted` until retry/expiration policy resolves |
 | `transport_timeout` | submission/delivery | A transport layer did not answer within its timeout. Timeout never implies success or denial. | local `unknown`/`submit_failed`, or durable `failed`/continued `accepted` by policy |
@@ -153,7 +193,7 @@ Patchbay distinguishes acceptance from delivery and completion.
 
 A command accepted by Patchbay is durably recorded before delivery. After acceptance, it remains visible as a `CommandState` until and after it reaches a terminal state. An accepted command cannot disappear silently.
 
-Acceptance creates a command record only after boundary validation, authority checking, idempotency reconciliation, and target identity binding. Invalid submissions that fail before acceptance may be reported to the submitting endpoint without creating durable command state, unless audit policy records rejected attempts separately.
+Acceptance creates a command record only after boundary validation, authority checking, idempotency reconciliation, and target identity binding. Invalid submissions that fail before acceptance return `SubmissionOutcome = rejected` without creating durable command state. Audit policy may record rejected attempts, but those audit records are not command records and do not use `CommandState`.
 
 ## Idempotency and retry
 
@@ -169,7 +209,9 @@ Adapters that cannot guarantee idempotent external execution must report that li
 - Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
 - Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure.
 - Running is non-terminal. A running command remains observable until one terminal state wins.
-- For simultaneous events, Patchbay commits one state transition atomically according to core ordering rules. Later conflicting events are audit/reconciliation events, not state rewrites.
+- First durable terminal commit wins. The core assigns a total order to accepted state-transition events in the durable event log; the earliest committed valid terminal transition becomes authoritative.
+- If two terminal candidates are truly concurrent before persistence, models may treat the winner as nondeterministic, but implementations must persist one total order and expose the chosen terminal state consistently in snapshots and conformance traces.
+- Later conflicting events are audit/reconciliation events, not state rewrites.
 
 ## Snapshots and streams
 
@@ -219,7 +261,7 @@ Control surfaces render unsupported actions as unavailable rather than attemptin
 
 ## Extension pressure classification
 
-- **Committed v0 behavior:** `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
+- **Committed v0 behavior:** `SubmissionOutcome`, `CommandState`, `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
 - **Reserved extension seams:** adapter-specific diagnostics, future command kinds, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
 - **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, or adapter-specific lifecycle variants becoming core protocol states without registry updates.
 

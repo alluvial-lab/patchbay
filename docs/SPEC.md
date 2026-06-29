@@ -88,7 +88,7 @@ Adapters report:
 
 - actor/session identity;
 - capabilities;
-- live/stale/offline status;
+- protocol-derived connectivity and activity status;
 - command acceptance/failure;
 - event streams where available;
 - authoritative snapshots where possible.
