@@ -1,7 +1,7 @@
 ---
 id: feature-session-identity-adapter-contract
 kind: feature
-stage: review
+stage: done
 tags: [protocol, adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -152,7 +152,7 @@ AdapterRegistration {
 
 **Acceptance Criteria**:
 - [ ] `docs/ARCHITECTURE.md` describes adapter registration and lifecycle.
-- [ ] `docs/PROTOCOL.md` treats the adapter as a principal with an generation.
+- [ ] `docs/PROTOCOL.md` treats the adapter as a principal with a generation.
 - [ ] Trust-root mechanism left adapter-specific.
 
 ---
@@ -269,6 +269,18 @@ There is no implementation code yet. Verification for this design is by document
 - Discrepancies from design: none. The design's Unit 6 "rename generation → incarnation" was walked back per operator direction before implementation; "generation" is retained as the base term, scope-qualified, with an assigner-foregrounded glossary entry. Unit 6 became a consistency/glossary pass instead of a rename.
 - Adjacent issues parked: none.
 - Verification: confirmed via `rg` that session identity excludes project/cwd/name; tombstone + monotonicity rules are present; four id spaces with assigners and typed correlation are defined; adapter registration lifecycle is described in both ARCHITECTURE and PROTOCOL; snapshot-tier marker is removed and capability shapes match E2a; the existing `Core generation` glossary entry now points to a unified `Generation` entry foregrounding the assigner per scope; `Adapter capability` and `Correlation context` glossary entries were added.
+
+## Review (2026-06-29)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**: none
+**Nits** (applied in stride):
+- `docs/PROTOCOL.md` "at a generation the core can reconcile" tightened to "at a session generation" to preserve scope-qualified discipline.
+- Feature acceptance checkbox grammar "with an generation" fixed to "with a generation".
+
+**Notes**: Deep substrate feature review performed by one fresh-context cross-model reviewer on `openai-codex/gpt-5.5` per operator request (implementor was GLM 5.2). Reviewer confirmed all five design decisions are faithfully encoded across PROTOCOL/ARCHITECTURE/VERIFICATION/GLOSSARY (and SECURITY consistent without change), the snapshot-tier under-design-review marker is removed while the four `story-review-provisional-semantics` markers remain intact, session identity excludes project/cwd/name, the four id spaces are separate with typed correlation, the adapter registration lifecycle is present with adapter-specific (not mTLS-mandated) trust root, and the glossary keeps "generation" as the protocol term with assigner-foregrounded scope qualifications. Both nits were applied per the nit-triage convention; no follow-up items filed.
 
 ## Related parked ideas
 

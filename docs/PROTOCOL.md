@@ -358,7 +358,7 @@ Attach, detach, failure, and capability redeclaration are audit events. Capabili
 
 Adapter snapshot support is not boolean. V0 recognizes three tiers:
 
-- **Authoritative snapshot** — the adapter can return a complete, authoritative view of the session at a generation the core can reconcile. The core treats this as a valid snapshot source and may use it to repair missed events.
+- **Authoritative snapshot** — the adapter can return a complete, authoritative view of the session at a session generation the core can reconcile. The core treats this as a valid snapshot source and may use it to repair missed events.
 - **Partial snapshot** — the adapter can return some state (e.g. command history or last-known status) but cannot fully reconstruct the session view. The core marks the unreconciled axes `unknown` or `stale` per `SessionConnectivityState`/`SessionActivityState` rather than synthesizing live state.
 - **No snapshot** — the adapter cannot snapshot. The core holds the last-known cached view marked `stale` (or `unknown` if no cached view exists) and does not present it as live. Reconnect after missed events cannot be repaired by a snapshot; the control surface must reconcile against command/event records it can still query, and present unreconciled session state honestly.
 
