@@ -72,6 +72,8 @@ Out-of-scope does not mean irrelevant. These risks belong to deployment guidance
 
 ## Enrollment and authentication
 
+> **Provisional** (`story-review-provisional-semantics` candidate 2): the enrollment posture below came from research and was adopted without an alternatives pass. Under review.
+
 V0 enrollment is intentionally narrow:
 
 - The first operator is created through CLI/local-console bootstrap, not through an unauthenticated network setup page.
@@ -157,6 +159,8 @@ A v0 grant has at least:
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 
 ## Revocation model
+
+> **Provisional** (`story-review-provisional-semantics` candidate 3): the five revocation actions below (especially "security lockdown" as a named posture) were invented without a design pass. Under review.
 
 Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and command kind:
 

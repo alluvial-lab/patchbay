@@ -127,6 +127,8 @@ unknown      -> submitting | submit_failed | <reconciled command id> | <rejected
 
 ### Session state axes
 
+> **Provisional** (`story-review-provisional-semantics` candidate 1): the specific 5×3 state decomposition below was not designed against alternatives. Under review.
+
 Session presentation is the composition of two protocol axes. This avoids treating “live”, “idle”, “working”, “stale”, and “unknown” as one overloaded enum.
 
 #### `SessionConnectivityState`
@@ -209,6 +211,8 @@ Adapters that cannot guarantee idempotent external execution must report that li
 
 ## Cancellation, expiration, supersession, and race semantics
 
+> **Under design review** (`feature-design-terminal-commit-race`): the "first durable terminal commit wins" rule below was decided inside a prose feature without a design pass over alternatives. It remains committed v0 behavior until the design pass ratifies or revises it.
+
 - Cancellation is a command or policy request that races with execution. If `completed`, `failed`, `expired`, or another terminal state is committed first, later cancellation cannot mutate the command and is recorded only as a late event or separate cancellation failure.
 - Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
 - Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure.
@@ -226,6 +230,8 @@ A snapshot is an authoritative state view for an actor, session, command, lease,
 Snapshots expose the canonical state axes above. Stale cached state must not render as live state.
 
 ### Revisions and cursors
+
+> **Provisional** (`story-review-provisional-semantics` candidate 4): the gap-free, per-authority-domain LSN model below is almost certainly right for single-writer v0 but was not designed against the future-federation seam. Under review.
 
 The coordination core owns a single totally-ordered durable event log per authority domain. Every accepted state-transition event is assigned a monotonic, gap-free **log sequence number** (`LSN`) at durable-commit time. The `LSN` is the canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
 
@@ -265,6 +271,8 @@ The coordination core owns durable command state, the event log, snapshots, and 
 V0 does not require WAL replication, remote replication, point-in-time cloning, or storage-engine hot swap. Those are reserved seams.
 
 ## Authority grants
+
+> **Under design review** (`feature-design-grant-shape`): the grant field list below (including the `parent grant id / delegated-by` seam) was decided inside a prose feature without a design pass. It remains committed v0 behavior until the design pass ratifies or revises it.
 
 A grant authorizes an actor or endpoint to perform a set of command kinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
 
@@ -322,6 +330,8 @@ Adapters declare supported commands and guarantees:
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 
 ### Adapter snapshot capability tiers
+
+> **Under design review** (`feature-session-identity-adapter-contract`, retagged from prose): the three-tier model below was invented during a prose feature without a design pass. It remains committed v0 behavior until the adapter-capability-tier design work ratifies or revises it.
 
 Adapter snapshot support is not boolean. V0 recognizes three tiers:
 

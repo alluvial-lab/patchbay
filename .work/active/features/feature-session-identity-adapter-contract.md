@@ -2,7 +2,7 @@
 id: feature-session-identity-adapter-contract
 kind: feature
 stage: drafting
-tags: [prose, protocol, adapter, foundation]
+tags: [protocol, adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
 created: 2026-06-28
@@ -14,6 +14,12 @@ release_binding: null
 # Feature: Define session identity and adapter capability contract
 
 Wrong-session prevention cannot rely on optional adapter metadata. Patchbay needs a normative session identity and adapter capability contract before Pi or other adapters are implemented.
+
+## Retag note (2026-06-28)
+
+Retagged from `[prose]` to a design feature. The `prose` tag was removed because the scope includes genuine design choices (adapter capability tier model, session generation semantics, capability manifest schema) that need a `feature-design` pass, not collapsed prose authoring. This is the misroute the prose-author black-box test should have caught originally.
+
+A specific item carried over from `feature-persistence-snapshot-model`: the three-tier adapter snapshot model (authoritative / partial / none) currently committed in `docs/PROTOCOL.md` was invented during a prose feature without a design pass. It belongs in this feature's adapter-capability-tier design work and should be ratified or revised here.
 
 ## Scope
 
