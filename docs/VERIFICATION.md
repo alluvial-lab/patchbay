@@ -41,8 +41,9 @@ Properties:
 - An accepted command is durably recorded before delivery.
 - An accepted command cannot vanish silently.
 - Every accepted command remains observable in exactly one canonical `CommandState` from `docs/PROTOCOL.md` until and after it reaches a terminal state.
-- Once a command reaches a terminal `CommandState`, later events for that command do not mutate the command state.
-- For competing valid terminal candidates, the terminal winner is the candidate with the lowest committed log sequence number in the authority domain.
+- **TerminalFinality**: once a command reaches a terminal `CommandState`, later events for that command do not mutate the command state.
+- **LsnDeterminesTerminalWinner**: for competing valid terminal candidates, the terminal winner is the candidate with the lowest committed log sequence number in the authority domain.
+- **PreAppendTerminalChoice**: if terminal candidates are truly concurrent before durable append, the model may choose the appended winner nondeterministically; after an `LSN` is assigned, that order determines all later snapshots, replay, conformance traces, and UI reconciliation.
 - Timeout does not imply success or denial.
 
 ### Wrong-session prevention

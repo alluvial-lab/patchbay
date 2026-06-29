@@ -72,7 +72,7 @@ Patchbay UI presentation derives from the canonical protocol registries in `docs
 - Command display composes protocol-defined local submission state with durable `CommandState` once a command id exists.
 - Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
 - Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
-- Command timelines can explain terminal races without adding protocol states, for example **Completed before cancellation arrived**, **Cancelled before completion**, or **Expired before adapter completion**.
+- Command timelines can explain terminal races without adding protocol states, following `docs/PROTOCOL.md` "Cancellation, expiration, supersession, and race semantics"; examples include **Completed before cancellation arrived**, **Cancelled before completion**, or **Expired before adapter completion**.
 
 Stale or unknown state must not be styled as live.
 
