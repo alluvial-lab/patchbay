@@ -1,7 +1,7 @@
 ---
 id: feature-persistence-snapshot-model
 kind: feature
-stage: review
+stage: done
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -47,10 +47,11 @@ Durable acceptance and snapshot recovery are core Patchbay promises, but the doc
 
 ## Review (2026-06-28)
 
-**Verdict**: Pending — awaiting fresh-context sub-agent review
+**Verdict**: Approve
 
-**Blockers**: none
-**Important**: one scope gap (adapter snapshot capability tiers) found inline and fixed.
-**Nits**: `core generation` lacks a glossary entry; self-explanatory, left for a future glossary pass.
+**Blockers**: none (one foundation-doc drift blocker found by fresh-context review — ARCHITECTURE overstatement of snapshot repair — fixed in `a314515`)
+**Important**: two found by fresh-context review (authoritative snapshot fail-closed rule; crash-recovery model variables) — both fixed in `a314515`.
+**Nits**: glossary entries for `LSN`, `cursor`, `revision`, `core generation` added in `a314515`.
 
-**Notes**: Inline pre-review only (subagent-free per operator request, 3 concurrent umans sessions). This does NOT satisfy the feature review bar: per the agile-workflow review principles, same-model review must use a fresh-context sub-agent rather than inline self-review, and features require deeper review. The inline pass caught one scope gap but is not a substitute for a fresh-context review pass. Revert this item to `done` only after a fresh-context sub-agent review returns Approve.
+**Notes**: Inline pre-review was subagent-free (umans sessions running) and caught one scope gap (adapter snapshot tiers) but was correctly treated as insufficient for a feature. Fresh-context deep review then ran on `openai-codex/gpt-5.5` (different model class from the inline author) once Codex capacity was available; first pass returned NEEDS-REVISION (1 blocker + 2 important + nits), all fixed, second pass returned APPROVED. Review bar satisfied.
+
