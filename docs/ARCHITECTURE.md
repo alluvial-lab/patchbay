@@ -127,6 +127,25 @@ V0 architecture decisions:
 - The web cockpit is the first operator surface. The CLI exists for setup, administration, debugging, and scripted access, not as a second independent product surface with divergent semantics.
 - Leases remain in the architecture and verification vocabulary, but are not required for the v0 executable skeleton unless a later scoped feature promotes a specific lease-backed workflow.
 
+### V0 process topology
+
+V0 runs two logical processes, not one:
+
+- **Rust coordination core** — the single authoritative process. Owns the durable event log, command acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.
+- **TypeScript web server** — a control-surface process that terminates HTTP/HTTPS for the browser cockpit, owns operator sessions, cookies, and CSRF protection, and speaks the generated Protobuf/Connect contract to the Rust core.
+
+The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
+
+The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics.
+
+Reserved seams:
+
+- **Server-side operator-domain reuse**: v0 may run the web server as a thin HTTP→protocol translator with the operator domain executing only in the browser; promoting delivery/reconnect state machines or SSR to the server is reserved for when a concrete need arrives.
+- **Web↔core internal protocol design**: the specific RPC surface, streaming/event channel, operator-session/CSRF evidence crossing, and web-surface authentication to the core are designed in a follow-on feature (see `feature-web-core-protocol-seam`).
+- **Split deployment**: the web server may run near the operator and the core elsewhere once the internal protocol seam is designed; v0 may colocate them on one host for simplicity.
+
+This topology is consistent with the single-authoritative-core commitment: there is one writer to the durable log (the Rust core), and the HTTP-terminating process is a control surface whose authority is delegated and revocable.
+
 ### V0 persistence topology
 
 The v0 persistence layer is a single-writer, local-first, port-isolated store owned by the coordination core:
