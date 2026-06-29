@@ -1,7 +1,7 @@
 ---
 id: feature-persistence-snapshot-model
 kind: feature
-stage: drafting
+stage: implementing
 tags: [prose, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
