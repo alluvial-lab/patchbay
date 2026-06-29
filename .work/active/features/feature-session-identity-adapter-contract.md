@@ -1,7 +1,7 @@
 ---
 id: feature-session-identity-adapter-contract
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
@@ -261,6 +261,14 @@ There is no implementation code yet. Verification for this design is by document
 - **Three-generation naming collision**: Mitigated by γ — one term ("generation") with scope qualifiers and glossary definitions foregrounding the assigner. The risk is readers conflating scopes; the glossary is the collision-detection surface.
 - **Adapter trust-root mechanism variability**: D1 defers the mechanism to adapter-specific design. If a future adapter cannot provide attachment evidence, it cannot register — which is the correct fail-closed behavior, not a design flaw.
 - **Correlation id-space complexity**: Four spaces is more than one, but each has a clear assigner and the typed-correlation reference structurally prevents forgery. The complexity is justified by the verification properties.
+
+## Implementation notes
+
+- Files changed: `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, `docs/VERIFICATION.md`, `docs/GLOSSARY.md`, `.work/active/features/feature-session-identity-adapter-contract.md`. (`docs/SECURITY.md` was reviewed for consistency and needed no change — its existing target-session-and-generation and audit-record wording already align.)
+- Tests added: none; this is foundation-doc implementation.
+- Discrepancies from design: none. The design's Unit 6 "rename generation → incarnation" was walked back per operator direction before implementation; "generation" is retained as the base term, scope-qualified, with an assigner-foregrounded glossary entry. Unit 6 became a consistency/glossary pass instead of a rename.
+- Adjacent issues parked: none.
+- Verification: confirmed via `rg` that session identity excludes project/cwd/name; tombstone + monotonicity rules are present; four id spaces with assigners and typed correlation are defined; adapter registration lifecycle is described in both ARCHITECTURE and PROTOCOL; snapshot-tier marker is removed and capability shapes match E2a; the existing `Core generation` glossary entry now points to a unified `Generation` entry foregrounding the assigner per scope; `Adapter capability` and `Correlation context` glossary entries were added.
 
 ## Related parked ideas
 

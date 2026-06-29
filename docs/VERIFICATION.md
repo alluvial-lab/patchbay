@@ -50,16 +50,17 @@ Properties:
 
 Properties:
 
-- Commands bind to target session identity and generation.
-- Late replies for old generations cannot mutate a new session generation.
+- Commands bind to target session identity and generation. Session identity is the tuple adapter id + deployment scope + runtime session id + session generation; project, cwd, and name are metadata, not identity.
+- **LateGenerationInert**: events/replies binding to a tombstoned session generation are `stale_event` audit records; they do not mutate the live generation.
+- **GenerationMonotonic**: session supersession requires a strictly-greater generation; lower reports are rejected as audit and the live generation is unchanged; equal reports are a no-op.
 - Human-readable labels cannot override verified target identity.
 
 ### Reply correlation
 
 Properties:
 
-- A reply references a known prior message or command.
-- A reply cannot forge correlation to an unrelated session or authority context.
+- A reply references a known prior message or command by typed correlation.
+- **TypedCorrelation**: a reply correlates by typed reference to a known command or message id in the same authority/session context; it cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts.
 - Duplicate replies are either idempotent or visibly rejected.
 
 ### Idempotent retry
@@ -67,6 +68,7 @@ Properties:
 Properties:
 
 - Retrying the same idempotency key cannot double-apply a command at the Patchbay boundary.
+- A retry reuses both the command id and the idempotency key; an intentional duplicate action uses a new command id and a new idempotency key.
 - Duplicate submission returns existing command state.
 - Retrying after a command is terminal returns the existing terminal command record rather than creating a later terminal candidate.
 - Explicit duplicate action requires a new command id/key.
@@ -84,7 +86,7 @@ Properties:
 - Terminal outcomes are deterministic after durable append: replay, snapshots, conformance traces, and UI reconciliation expose the terminal state chosen by committed log order.
 - Snapshot materialization reads a consistent log prefix: it reflects every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`.
 
-Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration`, and the view variables (`CommandId`, `SessionId`, `ActorId`) the snapshot reconciles.
+Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration` (the core's own incarnation, core-assigned on restart), `SessionGeneration`, `AdapterGeneration`, and the view variables (`CommandId`, `MessageId`, `ReplyId`, `CorrelationRef`, `SessionId`, `ActorId`) the snapshot reconciles.
 
 ### Crash recovery
 
@@ -111,7 +113,7 @@ Properties:
 - **CompoundIssuer**: when a command arrives through a control surface, the core verifies the transport endpoint (e.g. the web server, or a CLI endpoint) as a principal and independently verifies the operator actor against operator-session evidence. The core must not trust a self-asserted operator identity.
 - **GrantAuthorityIsCommandKinds**: grant authority is expressed only in canonical Patchbay command kinds. Adapter capability declarations are advisory UX state and are not an authority or delivery gate; the adapter accepts or rejects at delivery time.
 
-Normative model variables should include at least `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`. `Device` is included as an identity, audit, and revocation-grouping variable even though it is not a grant-matching field.
+Normative model variables should include at least `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration` (the session generation bound to a command target), `RevocationGeneration`, `CommandIssuer`, `AuthorityDomain`, `SessionGeneration`, `AdapterGeneration`, and `CorrelationRef`. `Device` is included as an identity, audit, and revocation-grouping variable even though it is not a grant-matching field.
 
 ### Delegation precondition
 

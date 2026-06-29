@@ -18,17 +18,33 @@ An **operator session** is an authenticated browser or CLI session for the human
 
 ## Sessions
 
-A **session** is an adapter-reported runtime/control target. A session identity binds enough information to prevent wrong-target mutation:
+A **session** is an adapter-reported runtime/control target. A session identity binds the fields needed to prevent wrong-target mutation:
 
 - adapter id;
-- deployment or machine scope;
-- runtime session id where available;
-- optional project/cwd/name metadata;
-- adapter-specific generation or epoch when session replacement occurs.
+- deployment scope;
+- runtime session id (adapter-reported, stable per session generation);
+- session generation (adapter-reported, monotonic per session).
 
-Late replies or events must bind to the session generation they describe. A reply for an old generation cannot mutate a new generation without an explicit adapter rule.
+Project, cwd, and name are **metadata**, not identity: they describe the session for operator orientation and display, but they update independently of the identity tuple. A cwd change does not create a new session target, and human-readable labels cannot override verified target identity.
+
+Session generation is adapter-reported because only the adapter can observe external runtime replacement. When the adapter reports a strictly-greater session generation for an existing session id, the core **tombstones** the prior generation: it marks the prior generation superseded at the next LSN, retains it for audit and late-event correlation, and treats the new generation as the live target. Late replies or events binding to a tombstoned generation are `stale_event` audit records; they do not mutate the live generation. This is consistent with the ratified first-durable-terminal-commit rule: late events do not rewrite committed state.
+
+Generation rules:
+
+- Supersession requires a strictly-greater generation. An equal report is a no-op (a capability redeclaration may proceed, but the generation is unchanged). A lower report is rejected as an audit record and the live generation is left unchanged.
+- First registration (no live generation exists) is accepted; monotonicity has nothing to check against.
+- The tombstone fact ("generation N existed, superseded at LSN X") is an audit record retained indefinitely. Per-generation detail (full command/event/reply state) is bounded and reclaimable by log compaction. After compaction, an operator querying an aged-out generation gets the tombstone plus any not-yet-compacted detail, with a note that older detail was compacted.
+- Late replies or events must bind to the session generation they describe. A reply for an old generation cannot mutate a new generation.
 
 ## Messages, commands, and replies
+
+Patchbay uses four separate id spaces, each with a defined assigner, to prevent forgery and enable idempotent retry:
+
+- **Command id** and **message id** — client-generated (operator domain), assigned before submission. Client assignment is what lets a control surface retry the same id before learning whether the core accepted.
+- **Reply id** — adapter-or-core-generated. A reply carries its own id and a **typed correlation reference** to a known prior command or message id. Because replies correlate by typed reference rather than sharing a space with command ids, a reply cannot masquerade as a command.
+- **Event id** — core-assigned, equal to the event's log sequence number (LSN).
+
+A command id and an idempotency key are **separate fields**: the command id is identity, and the idempotency key is the dedup handle. A retry reuses both; an intentional duplicate action uses a new command id and a new idempotency key.
 
 ### Message
 
@@ -39,16 +55,16 @@ A message carries information. It may ask for a reply but does not itself grant 
 A command is operator intent that may cause external action. Commands require:
 
 - command id;
+- idempotency key (separate from the command id);
 - target session or actor;
 - authority grant;
-- idempotency key;
 - declared command kind;
 - payload validated at the boundary;
 - expiration or cancellation semantics where applicable.
 
 ### Reply
 
-A reply references a prior message or command. A reply is valid only when its correlation id refers to a known prior event in the same authority/session context.
+A reply references a prior message or command by typed correlation. A reply is valid only when its correlation reference resolves to a known prior command or message id in the same authority/session context. Duplicate replies are either idempotent or visibly rejected.
 
 ## Canonical state registries
 
@@ -315,24 +331,30 @@ V0 reserves leases as an extension seam. Lease-backed behavior must define its o
 
 ## Adapter capabilities
 
-Adapters declare supported commands and guarantees:
+Adapters declare supported commands and guarantees in a capability manifest:
 
 - command kinds;
-- streaming support;
-- snapshot support;
-- cancellation support;
-- session replacement support;
-- idempotency strength;
-- attachment/authorization method;
-- known failure modes.
+- streaming support (boolean);
+- snapshot support (authoritative / partial / none);
+- cancellation support (boolean);
+- session replacement support (boolean);
+- idempotency strength (`none` / `at-Patchbay-boundary` / `end-to-end`);
+- attachment method (adapter-specific descriptor);
+- known failure modes (advisory list mapping to the failure vocabulary).
+
+Each capability is shaped by where the core's behavior branches. Snapshot support is tiered because the core's reconciliation contract on reconnect depends on the tier. Idempotency strength is an enum because the core's retry behavior depends on it. Streaming, cancellation, and session replacement are boolean: the core does the same thing regardless of the value beyond display.
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 
 Adapter capability declarations are advisory for control-surface UX only: they let a control surface render an action unavailable before submission. They are not an authority gate and not a delivery gate. The core does not gate delivery on a cached adapter capability; it delivers the command kind to the adapter, and the adapter accepts or rejects based on its own support at delivery time. An adapter's `unsupported_command` is a delivery-layer, adapter-reported rejection. An unknown-to-Patchbay command kind is `validation_failed` at submission, before a grant is evaluated. Grant authority is expressed only in canonical Patchbay command kinds, which are stable and registry-owned; an adapter capability change never widens or narrows a grant.
 
-### Adapter snapshot capability tiers
+### Adapter registration and lifecycle
 
-> **Under design review** (`feature-session-identity-adapter-contract`, retagged from prose): the three-tier model below was invented during a prose feature without a design pass. It remains committed v0 behavior until the adapter-capability-tier design work ratifies or revises it.
+An adapter is a **principal** with an explicit registration lifecycle. At attach time it submits (a) attachment evidence verified by an adapter-specific trust root (the Pi adapter uses configured local material; future adapters may use mTLS or OAuth — the mechanism is adapter-specific, not mandated by the core), and (b) its capability manifest. The core records the adapter id, capability manifest, attach LSN, and adapter generation (adapter-reported, monotonic per adapter, used to reject stale events from a prior adapter attachment).
+
+Attach, detach, failure, and capability redeclaration are audit events. Capability redeclaration is allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected sessions per the rules below. Sessions discovered or reported by the adapter inherit the adapter's authenticated channel.
+
+### Adapter snapshot capability tiers
 
 Adapter snapshot support is not boolean. V0 recognizes three tiers:
 

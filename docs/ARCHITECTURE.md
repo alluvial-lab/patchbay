@@ -26,6 +26,19 @@ Adapters translate between Patchbay concepts and external systems. Pi is the fir
 
 Adapters are not allowed to introduce core-only assumptions such as shared cwd semantics, harness-specific message formats, or project-specific workflow state into the Patchbay core.
 
+#### Adapter registration and lifecycle
+
+An adapter is a **principal** with an explicit registration lifecycle, symmetric with the web-server-as-principal model. At attach time an adapter submits attachment evidence verified by an adapter-specific trust root (the Pi adapter uses configured local material; future adapters may use mTLS or OAuth) and a capability manifest. The core records the adapter id, capability manifest, attach LSN, and adapter generation (adapter-reported, monotonic per adapter, used to reject stale events from a prior adapter attachment). Sessions discovered or reported by the adapter inherit the adapter's authenticated channel.
+
+The adapter lifecycle is audited:
+
+- **Attach** — registration with identity proof and capability manifest.
+- **Detach** — clean detachment; the core marks affected sessions `stale` or `offline`.
+- **Failure** — loss detected via timeout; the core degrades affected sessions honestly rather than fabricating liveness.
+- **Capability redeclaration** — allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected sessions per the rules in `docs/PROTOCOL.md`.
+
+The trust-root mechanism is adapter-specific; the core validates attachment evidence but does not mandate a single mechanism. An adapter that cannot provide attachment evidence cannot register (fail-closed).
+
 ### Message and command plane
 
 This plane defines delivery, command acceptance, reply correlation, idempotency, retries, expiration, and failure semantics. Its state machines and failure vocabulary are owned by `docs/PROTOCOL.md` until generated contracts take over as the derived boundary artifact.

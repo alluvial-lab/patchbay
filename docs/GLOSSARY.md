@@ -26,11 +26,21 @@ A human-facing interface such as web, CLI, future mobile app, desktop app, notif
 
 ## Core generation
 
-A marker of the coordination core's current incarnation, used to reject snapshots or events from a prior incarnation outright during reconciliation.
+A marker of the coordination core's current incarnation, used to reject snapshots or events from a prior incarnation outright during reconciliation. See Generation for the unified entry covering all three scopes.
 
 ## Cursor
 
 A log sequence number a control surface or adapter holds to express that it has authoritative knowledge of the durable log up to that point, used to drive reconciliation on reconnect.
+
+## Generation
+
+A new lifetime of an entity that retains its identity. Patchbay uses generation at three scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
+
+- **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Used to reject snapshots or events from a prior core incarnation outright during reconciliation.
+- **Session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
+- **Adapter generation** — an incarnation of the adapter process, **adapter-reported on re-attach**. Used to reject stale events from a prior adapter attachment.
+
+The three scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / session / adapter) is the collision-protection discipline.
 
 ## Device
 
@@ -39,6 +49,14 @@ A physical or virtual host that can run one or more endpoints, such as a browser
 ## Endpoint
 
 A concrete connection or addressable runtime instance for an actor on a device.
+
+## Adapter capability
+
+A declaration an adapter makes about the commands and guarantees it supports: command kinds; streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+
+## Correlation context
+
+The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. See `docs/PROTOCOL.md` Messages, commands, and replies.
 
 ## Event
 
