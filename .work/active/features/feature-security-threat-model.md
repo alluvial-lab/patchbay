@@ -1,7 +1,7 @@
 ---
 id: feature-security-threat-model
 kind: feature
-stage: review
+stage: done
 tags: [prose, security, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-research-web-control-security]
@@ -48,3 +48,13 @@ Patchbay controls remote/headless agents and potentially shell/job adapters. The
 - Review fixes: added endpoint/device enrollment posture, login throttling/authenticator setup, AGENTS orientation entry for `docs/SECURITY.md`, audit-record terminology, device/principal glossary terms, actor/endpoint alignment, `Secure` cookie requirement wording, adapter-core trust-boundary language, deployment HTTPS clarification, and delegation parent-grant seam.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+
+## Review (2026-06-28)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: addressed inline where useful: actor/device/endpoint terminology, audit-record wording, `Secure` cookie wording, and AGENTS orientation discoverability.
+
+**Notes**: Deep feature review. Fresh-context completeness and adversarial passes found missing endpoint/device enrollment, login throttling/authenticator setup, AGENTS orientation discoverability for `docs/SECURITY.md`, audit/event terminology drift, and actor/endpoint wording issues. These were fixed in `d4b4e3a`; final inline verification found no remaining blockers or important findings. Parent epic remains implementing because sibling features are still active.
