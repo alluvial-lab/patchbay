@@ -86,7 +86,7 @@ Properties:
 - Lockdown rejects new commands and marks affected runtime sessions stale until fresh authentication or operator action clears the condition.
 - Delegation cannot create authority beyond its parent grant.
 
-Normative model variables should include at least `Actor`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`.
+Normative model variables should include at least `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, and `AuthorityDomain`.
 
 ### Lease safety
 
@@ -120,8 +120,9 @@ Formal models do not prove browser cookie mechanics or cryptographic token stren
 
 Properties:
 
-- Security-relevant decisions produce audit events: authentication success/failure, session revocation, failed authorization, command acceptance/rejection, grant changes, lockdown, adapter failure, and stale-event rejection.
-- Audit events correlate to actor, endpoint/session when known, target, command, outcome, and reason without requiring secret material in the model.
+- Security-relevant decisions produce audit records: authentication success/failure, session revocation, failed authorization, command acceptance/rejection, grant changes, lockdown, adapter failure, and stale-event rejection.
+- Audit records correlate to actor, device, endpoint/session when known, target, command, outcome, and reason without requiring secret material in the model.
+- Rejected attempts and failed checks can produce audit records without creating command records.
 - Revocation and terminal command outcomes remain visible in audit history; they are not deleted by later state changes.
 
 ## Out of formal scope

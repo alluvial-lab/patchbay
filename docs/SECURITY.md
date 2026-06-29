@@ -27,8 +27,9 @@ V0 has one human operator and one authority domain. This is a product scope deci
 The model keeps these concepts explicit:
 
 - **Operator** — the single human who controls Patchbay in v0.
-- **Actor** — represented participant: operator, control-surface endpoint, adapter, daemon, or runtime-facing service.
-- **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor.
+- **Actor** — represented participant: operator, agent, adapter, daemon, service, or control surface.
+- **Device** — a physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
+- **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor on a device.
 - **Operator session** — an authenticated browser or CLI session for the operator, backed by a server-side session record.
 - **Runtime session** — an adapter-reported control target, such as a Pi session.
 - **Grant** — an authority relationship permitting an actor or endpoint to perform command kinds against a target scope.
@@ -43,6 +44,7 @@ Future multi-operator coordination remains a reserved extension seam. V0 data st
 V0 is designed against:
 
 - unauthenticated browser or CLI access;
+- unauthorized browser, CLI, or adapter endpoint enrollment;
 - CSRF attempts against the web cockpit;
 - replayed command submissions at the Patchbay boundary;
 - command submission from a revoked browser/device endpoint;
@@ -51,7 +53,8 @@ V0 is designed against:
 - confused-deputy routing where UI labels or payload fields override verified identity;
 - unsupported adapter commands being presented as available;
 - accidental logging of session cookies, CSRF tokens, passwords, bootstrap secrets, or prompt bodies;
-- deployment mistakes that expose an unauthenticated or HTTP-only non-localhost core.
+- deployment mistakes that expose an unauthenticated or HTTP-only non-localhost core;
+- adapter-to-core channels that bypass Patchbay identity, capability, or grant checks.
 
 ### Out of scope
 
@@ -67,6 +70,20 @@ V0 does not attempt to solve:
 
 Out-of-scope does not mean irrelevant. These risks belong to deployment guidance, adapter documentation, future features, or operator operational discipline.
 
+## Enrollment and authentication
+
+V0 enrollment is intentionally narrow:
+
+- The first operator is created through CLI/local-console bootstrap, not through an unauthenticated network setup page.
+- Bootstrap produces a one-time setup secret that expires after use or timeout.
+- Setup establishes the operator's primary authenticator: password/passphrase for v0, with passkeys or MFA reserved as an extension seam.
+- A browser endpoint enrolls only after successful operator authentication and creation of a server-side operator session.
+- A CLI endpoint enrolls only through local setup credentials or an existing authenticated operator session.
+- An adapter endpoint enrolls only through configured adapter attachment material or an adapter-specific trust root; an adapter cannot self-assert core authority by display name or payload field.
+- Device labels are operator-facing metadata. The authority boundary is the endpoint/operator-session/grant tuple, not the label.
+
+Interactive login must be rate-limited, track failed attempts against the operator account as well as useful network metadata, and audit both success and failure. Rate limiting and lockout policy must avoid making denial of service easier than authentication.
+
 ## Browser session model
 
 The web cockpit uses server-side sessions. The browser receives only an opaque session cookie; command authority, endpoint metadata, grants, and session state remain server-side.
@@ -75,11 +92,11 @@ V0 browser-session requirements:
 
 - session identifiers are high-entropy, meaningless client-side values;
 - session records include operator id, endpoint id, created time, last-used time, expiration, revoked time, and session generation;
-- session cookies use `HttpOnly`, `SameSite=Strict` by default, `Path=/`, and no `Domain` attribute;
+- session cookies use `HttpOnly`, `Secure` outside localhost, `SameSite=Strict` by default, `Path=/`, and no `Domain` attribute;
 - non-localhost deployments require HTTPS or a trusted HTTPS-terminating reverse proxy before browser sessions are accepted;
 - localhost development may use the browser's localhost secure-cookie exception, but that exception must not be generalized to LAN/IP/container deployments;
 - session secrets are never stored in localStorage;
-- login, logout, session renewal, and session revocation are audit events;
+- login, logout, session renewal, and session revocation are audit records;
 - reauthentication is required after suspicious session signals or before future high-risk operations when those operations are introduced.
 
 Default cookie shape:
@@ -102,7 +119,7 @@ Every state-changing web route must require:
 - Origin and/or Fetch Metadata checks where the browser provides them;
 - a non-GET method for mutations.
 
-Unauthenticated setup pages must not expose state-changing bootstrap flows on a network listener. First-run setup should use the CLI, local console output, or a one-time bootstrap secret that becomes invalid after setup.
+Unauthenticated setup pages must not expose state-changing bootstrap flows on a network listener. First-run setup must use the CLI, local console output, or a one-time bootstrap secret that becomes invalid after setup.
 
 ## Command authorization and replay resistance
 
@@ -134,7 +151,8 @@ A v0 grant has at least:
 - created time and provenance;
 - optional expiration;
 - revocation generation or revoked time;
-- revocation policy for already accepted commands.
+- revocation policy for already accepted commands;
+- optional parent grant id / delegated-by field reserved for future delegation.
 
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 
@@ -160,7 +178,9 @@ Revocation never deletes command history. Late events after revocation are audit
 
 Security audit is part of v0. The audit log should be durable and queryable even before a full audit UI exists.
 
-Minimum audit events:
+Audit records are distinct from durable command/session state-transition events. They may record rejected attempts, failed checks, and security decisions that do not create command records.
+
+Minimum audit records:
 
 - bootstrap started/completed/expired;
 - login success/failure;
@@ -186,7 +206,7 @@ Allowed v0 deployments:
 
 - localhost development;
 - local workstation service;
-- VM or container behind local access controls;
+- VM or container behind local access controls, with HTTPS required for non-localhost browser sessions;
 - LAN, VPN, or reverse-proxy deployment with HTTPS and authenticated browser sessions;
 - split deployment where adapters run near runtimes and the core remains the single authority.
 
@@ -203,7 +223,7 @@ Forbidden v0 deployments:
 Committed v0 behavior:
 
 - one operator and one authority domain;
-- explicit actor, endpoint, operator-session, runtime-session, grant, revocation, and audit concepts;
+- explicit actor, device, endpoint, operator-session, runtime-session, grant, revocation, and audit concepts;
 - server-side browser sessions with hardened cookies;
 - CSRF protection for state-changing web requests;
 - deny-by-default command authorization;

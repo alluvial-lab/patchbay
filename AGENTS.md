@@ -10,9 +10,10 @@ Read these foundation docs before designing or changing project behavior:
 2. `docs/SPEC.md`
 3. `docs/ARCHITECTURE.md`
 4. `docs/PROTOCOL.md`
-5. `docs/VERIFICATION.md`
-6. `docs/UX.md`
-7. `docs/GLOSSARY.md`
+5. `docs/SECURITY.md`
+6. `docs/VERIFICATION.md`
+7. `docs/UX.md`
+8. `docs/GLOSSARY.md`
 
 ## Substrates
 

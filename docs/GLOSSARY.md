@@ -6,7 +6,11 @@ A boundary component that connects Patchbay to an external runtime, harness, too
 
 ## Actor
 
-A represented participant in Patchbay: operator, agent, adapter, daemon, service, or control-surface endpoint.
+A represented participant in Patchbay: operator, agent, adapter, daemon, service, or control surface.
+
+## Audit record
+
+A durable security or operational record of a decision, attempt, or observation. Audit records are distinct from command/session state-transition events and may record rejected attempts that never created command records.
 
 ## Authority domain
 
@@ -20,9 +24,13 @@ Operator intent that may cause action. Commands require target identity, authori
 
 A human-facing interface such as web, CLI, future mobile app, desktop app, notification surface, or approval UI.
 
+## Device
+
+A physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
+
 ## Endpoint
 
-A concrete connection or addressable runtime instance for an actor.
+A concrete connection or addressable runtime instance for an actor on a device.
 
 ## Event
 
@@ -51,6 +59,10 @@ An authenticated browser or CLI session for the operator, represented by a serve
 ## Patchbay core
 
 The coordination layer that owns actor/session registry, durable events, command state, authority checks, snapshots, and leases.
+
+## Principal
+
+A security-facing shorthand for an actor or endpoint being authorized. Patchbay foundation docs prefer the more precise terms actor, device, endpoint, operator session, runtime session, and grant.
 
 ## Revocation
 

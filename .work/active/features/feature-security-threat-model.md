@@ -45,5 +45,6 @@ Patchbay controls remote/headless agents and potentially shell/job adapters. The
 - Files changed: `docs/SECURITY.md`, `docs/PROTOCOL.md`, `docs/VERIFICATION.md`, `docs/GLOSSARY.md`, `.work/active/features/feature-security-threat-model.md`.
 - Tests added: none; prose/foundation documentation change.
 - Verification performed: proofread changed docs in context; checked dependencies are done with `work-view`; verified security terminology is reflected in protocol, verification, and glossary docs.
+- Review fixes: added endpoint/device enrollment posture, login throttling/authenticator setup, AGENTS orientation entry for `docs/SECURITY.md`, audit-record terminology, device/principal glossary terms, actor/endpoint alignment, `Secure` cookie requirement wording, adapter-core trust-boundary language, deployment HTTPS clarification, and delegation parent-grant seam.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.

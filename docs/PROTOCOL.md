@@ -8,11 +8,13 @@ This document defines concepts and required behavior, not a final wire encoding.
 
 An **actor** is any represented participant: operator, agent, adapter, daemon, service, or control surface.
 
-An **endpoint** is a concrete connection or addressable runtime instance for an actor. An actor may have multiple endpoints across devices or deployments.
+A **device** is a physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
 
-Actors and endpoints have stable identifiers assigned by Patchbay or verified through an adapter-specific trust root. Human-readable labels are metadata, not routing authority.
+An **endpoint** is a concrete connection or addressable runtime instance for an actor on a device. An actor may have multiple endpoints across devices or deployments.
 
-An **operator session** is an authenticated browser or CLI session for the human operator. Operator sessions are endpoint-bound server-side records, not bearer authority stored in UI state. V0 has one human operator, but commands still name and validate the issuing actor/session/endpoint so future multi-operator authority domains can extend the model without changing command semantics.
+Actors, devices, and endpoints have stable identifiers assigned by Patchbay or verified through an adapter-specific trust root. Human-readable labels are metadata, not routing authority.
+
+An **operator session** is an authenticated browser or CLI session for the human operator. Operator sessions are endpoint-bound server-side records, not bearer authority stored in UI state. V0 has one human operator, but commands still name and validate the issuing actor, device, endpoint, and operator session so future multi-operator authority domains can extend the model without changing command semantics.
 
 ## Sessions
 
@@ -185,7 +187,7 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 | `expired` | policy/time | The command validity window closed. | `expired` |
 | `cancelled` | policy/operator | Cancellation became the authoritative result. | `cancelled` |
 | `superseded` | policy/operator | A newer command or policy replaced this command. | `superseded` |
-| `stale_event` | reconciliation | A late event refers to an old command/session generation or terminal command. | audit event only; no state mutation |
+| `stale_event` | reconciliation | A late event refers to an old command/session generation or terminal command. | audit record only; no state mutation |
 
 Extension seam: future adapters may attach adapter-specific diagnostic codes, but those codes map onto this vocabulary at the Patchbay boundary.
 
@@ -232,13 +234,15 @@ A v0 grant records:
 - grant id;
 - authority domain id;
 - subject actor id;
+- optional subject device id;
 - optional subject endpoint id or endpoint class;
 - target scope, such as actor, adapter, runtime session, project/session group, or other modeled resource;
 - allowed command kinds or adapter capability set;
 - creation time and provenance;
 - optional expiration;
 - revocation generation or revoked time;
-- revocation policy for already accepted commands.
+- revocation policy for already accepted commands;
+- optional parent grant id / delegated-by field reserved for future delegation.
 
 Grant checks happen before command acceptance. A submission without a live matching grant is rejected before delivery with `SubmissionOutcome = rejected` and `authorization_denied` or a narrower applicable failure term.
 
@@ -292,4 +296,4 @@ Browser control uses server-side operator sessions with hardened cookies and CSR
 
 Sender identity is derived from verified connection/authentication context, not from self-asserted display names or payload fields. External actor identities remain claims until verified by an adapter-specific trust root or deployment policy.
 
-Security audit events are durable protocol-adjacent records for authentication, authorization, session management, command lifecycle, revocation, adapter attach/detach/failure, and stale-event rejection. Audit records must not directly store raw session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies by default, or sensitive attachments.
+Security audit records are durable protocol-adjacent records for authentication, authorization, session management, command lifecycle, revocation, adapter attach/detach/failure, and stale-event rejection. Audit records are distinct from durable command/session state-transition events: they may record rejected attempts and failed checks that do not create command records. Audit records must not directly store raw session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies by default, or sensitive attachments.
