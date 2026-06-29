@@ -90,6 +90,8 @@ Properties:
 - Log replay is idempotent: replaying the same committed prefix produces identical state.
 - Snapshot checkpointing bounds recovery replay cost without becoming an alternate ordering authority.
 
+Normative model variables should include at least `CommittedPrefixLSN` (the last durably committed log prefix), `CheckpointSnapshotLSN` (the latest snapshot loaded before tail replay), `RecoveredCommandState` (the command-id to `CommandState` map reconstructed from the log), `RecoveredInbox` (delivery/inbox queue state reconstructed from the log), `RecoveredSessionView` (session connectivity/activity axes reconstructed from the log), and `RecoveryPhase` (initial load vs tail-replay vs live). `Crash` and `Restart` are the transition triggers.
+
 V0 models do not need to prove remote replication, HA failover, or split-brain resolution. Those are out of formal scope.
 
 ### Authority safety

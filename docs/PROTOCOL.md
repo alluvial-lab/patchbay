@@ -334,6 +334,7 @@ Degraded behavior rules:
 - The core never fabricates a snapshot from optimistic UI or cached state when an adapter reports no or partial snapshot capability.
 - A `partial` or `no snapshot` adapter does not weaken durable command state: accepted commands and their `CommandState` remain authoritative from the core's log.
 - If an adapter loses the ability to snapshot it previously had, the core records the capability change as an audit record and moves affected sessions to `stale` or `unknown` until a fresh authoritative signal arrives.
+- If an adapter claims an `authoritative` snapshot but returns a snapshot that is incomplete, malformed, non-monotonic, targeted at the wrong session generation, or otherwise non-conformant with its declared capability, the core rejects it as an authority source, records an audit record, and degrades the affected session axes to `stale` or `unknown`. An adapter that repeatedly fails its declared snapshot capability may have that capability reclassified by the core; reclassification is itself an audited capability change. The core never promotes a rejected snapshot to authoritative.
 
 ## Extension pressure classification
 

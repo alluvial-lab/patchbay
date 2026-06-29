@@ -24,6 +24,14 @@ Operator intent that may cause action. Commands require target identity, authori
 
 A human-facing interface such as web, CLI, future mobile app, desktop app, notification surface, or approval UI.
 
+## Core generation
+
+A marker of the coordination core's current incarnation, used to reject snapshots or events from a prior incarnation outright during reconciliation.
+
+## Cursor
+
+A log sequence number a control surface or adapter holds to express that it has authoritative knowledge of the durable log up to that point, used to drive reconciliation on reconnect.
+
 ## Device
 
 A physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
@@ -43,6 +51,10 @@ An authority relationship permitting an actor or endpoint to perform specific ac
 ## Idempotency key
 
 A stable key that lets Patchbay recognize a retry of the same command and prevent accidental double-application at the coordination boundary.
+
+## LSN
+
+Log sequence number. A monotonic, gap-free number assigned by the coordination core to each accepted state-transition event at durable-commit time. The canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
 
 ## Lease
 
@@ -67,6 +79,10 @@ A security-facing shorthand for an actor or endpoint being authorized. Patchbay 
 ## Revocation
 
 A policy action that prevents future authority for an operator session, endpoint, grant, adapter, or target scope. Revocation does not erase command history; already accepted commands follow the relevant revocation policy.
+
+## Revision
+
+The log sequence number at which a specific view (command, session, actor, grant, audit record) was last durably updated. Used to decide whether a snapshot or cached view is older than the core's current state for that view.
 
 ## Running
 

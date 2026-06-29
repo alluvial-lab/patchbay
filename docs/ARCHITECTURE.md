@@ -36,7 +36,7 @@ Live streaming is an optimization. Durable acceptance and snapshot recovery carr
 
 This plane defines authoritative state for actors, sessions, and resources. Session connectivity/activity axes are owned by `docs/PROTOCOL.md`; control surfaces compose those axes and must display stale, offline, and unknown states distinctly from live states.
 
-Snapshots repair missed streams and reconnect gaps.
+Snapshots repair missed streams and reconnect gaps when the adapter or core can provide an authoritative snapshot. Adapters with partial or no snapshot capability degrade as defined in `docs/PROTOCOL.md`.
 
 ### Authority and identity plane
 
