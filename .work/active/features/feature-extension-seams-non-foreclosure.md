@@ -6,7 +6,7 @@ tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-06-29
 gate_origin: null
 release_binding: null
 ---
@@ -43,3 +43,12 @@ Patchbay should start with a narrow v0 without accidentally closing off future i
 - Relevant hardening items know to classify decisions as v0 fixed, reserved seam, or explicitly rejected.
 - The parked `idea-multi-human-coordination` is treated as one pressure-test input, not as a v0 requirement.
 - The parked `idea-desktop-app-surface` is treated as one pressure-test input: v0 ships web cockpit + CLI, and a native desktop app is a reserved future control surface. Ensure capability/registry design does not assume web+CLI only.
+
+## Ordering note (2026-06-28)
+
+Do **not** pick this up first. The extensibility sweep classifies committed v0 assertions against future directions, and the set of committed assertions is currently shifting — three design features (`feature-design-terminal-commit-race`, `feature-design-grant-shape`, `feature-session-identity-adapter-contract`) and one review story (`story-review-provisional-semantics`) are reopened/active and will change what the sweep classifies against. Running the sweep now means classifying a moving target and likely re-sweeping later.
+
+This feature runs **after** the reopened semantic design work and the provisional-semantics review conclude. At that point the sweep classifies against settled semantics, its output (the classified registry + AGENTS pressure-test checklist) is durable, and it consolidates the local classification each design feature already does.
+
+Nothing in the active queue is hard-blocked on this feature — the "coordinate with extension-seams" blocks on other features are satisfiable by local per-feature classification until the central registry exists.
+
