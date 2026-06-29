@@ -42,3 +42,4 @@ Patchbay should start with a narrow v0 without accidentally closing off future i
 - `AGENTS.md` or a foundation doc includes an extension pressure-test checklist for future design work.
 - Relevant hardening items know to classify decisions as v0 fixed, reserved seam, or explicitly rejected.
 - The parked `idea-multi-human-coordination` is treated as one pressure-test input, not as a v0 requirement.
+- The parked `idea-desktop-app-surface` is treated as one pressure-test input: v0 ships web cockpit + CLI, and a native desktop app is a reserved future control surface. Ensure capability/registry design does not assume web+CLI only.
