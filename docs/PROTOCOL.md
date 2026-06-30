@@ -143,8 +143,6 @@ unknown      -> submitting | submit_failed | <reconciled command id> | <rejected
 
 ### Session state axes
 
-> **Provisional** (`story-review-provisional-semantics` candidate 1): the specific 5×3 state decomposition below was not designed against alternatives. Under review.
-
 Session presentation is the composition of two protocol axes. This avoids treating “live”, “idle”, “working”, “stale”, and “unknown” as one overloaded enum.
 
 #### `SessionConnectivityState`
@@ -248,9 +246,9 @@ Snapshots expose the canonical state axes above. Stale cached state must not ren
 
 ### Revisions and cursors
 
-> **Provisional** (`story-review-provisional-semantics` candidate 4): the gap-free, per-authority-domain LSN model below is almost certainly right for single-writer v0 but was not designed against the future-federation seam. Under review.
-
 The coordination core owns a single totally-ordered durable event log per authority domain. Every accepted state-transition event is assigned a monotonic, gap-free **log sequence number** (`LSN`) at durable-commit time. The `LSN` is the canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
+
+Event, cursor, and revision identity is the **`(authority_domain_id, LSN)` tuple**, not a bare LSN. V0 has one authority domain, so in practice every key carries the same domain id — but the *shape* of the durable key includes the domain demarcator. This is forward-compatibility hygiene: when federation arrives, cross-domain coordination becomes a layer on top of the per-domain keys, not a data migration that retroactively attaches domains to historical events. Hybrid logical clocks (HLC) / logical-clock abstraction was considered for cross-domain federation and deferred as premature; the per-domain key shape is the federation seam, not a blocker to it.
 
 A **revision** is the `LSN` at which a specific view (command, session, actor, grant, audit record) was last durably updated. A **cursor** is an `LSN` a control surface or adapter holds to express "I have authoritative knowledge up to here."
 

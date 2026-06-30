@@ -72,8 +72,6 @@ Out-of-scope does not mean irrelevant. These risks belong to deployment guidance
 
 ## Enrollment and authentication
 
-> **Provisional** (`story-review-provisional-semantics` candidate 2): the enrollment posture below came from research and was adopted without an alternatives pass. Under review.
-
 V0 enrollment is intentionally narrow:
 
 - The first operator is created through CLI/local-console bootstrap, not through an unauthenticated network setup page.
@@ -165,8 +163,6 @@ Grant checks are centralized in the coordination core. Control surfaces may hide
 
 ## Revocation model
 
-> **Provisional** (`story-review-provisional-semantics` candidate 3): the five revocation actions below (especially "security lockdown" as a named posture) were invented without a design pass. Under review.
-
 Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and command kind:
 
 - **continue** — preserve already accepted work, but reject future commands;
@@ -180,6 +176,8 @@ V0 must support these operator-facing revocation actions:
 3. **Revoke endpoint/device** — mark a browser or CLI endpoint revoked and reject future commands from it.
 4. **Revoke adapter/session grant** — stop command acceptance for a target scope while preserving audit history.
 5. **Security lockdown** — reject new commands, mark affected runtime sessions stale, require fresh login, and record the reason.
+
+**Lockdown exit.** Lockdown is a durable posture (an audited, persisted event). Restarting the core does not clear it: crash recovery replays the log and lockdown remains in effect. Exit requires re-establishing the bootstrap trust level **via the bootstrap channel** (local CLI/console/SSH/trusted device — whatever the operator configured at setup), not routine web re-authentication. This self-scales with the operator's configured security posture. The protection depends on the enrollment channel being distinct from routine web login: if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection, because an attacker holding the routine credential could clear it. That channel distinction is load-bearing, not incidental.
 
 Revocation never deletes command history. Late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy.
 
