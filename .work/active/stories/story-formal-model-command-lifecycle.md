@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-command-lifecycle
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -45,3 +45,29 @@ This is the trickiest unit of `feature-formal-model-seed` — the fused `command
 
 - **Composed-model parse risk (highest).** This is the first composed Patchbay model; if it fails to parse, resolve the Quint syntax before the other units are attempted. The skill idioms parse individually but composition is unvalidated.
 - **TLC bounds scalability.** 3×6×3×12 may hit limits; reduce bounds if needed.
+
+## Implementation notes
+
+- Files created: `specs/seed/command_lifecycle.qnt`, `specs/seed/command_lifecycle.emitted.tla`.
+- Tests added: none (no implementation code; verification is by running the checkers — see below).
+- Discrepancies from design:
+  - **Map-literal syntax**: the design's `Set("c1" -> "k1", ...)` for `idemKey` would have parsed as a Set of pairs, not a Map. Corrected to `Map("c1" -> "k1", ...)` per `.research/attestation/quint-builtin.md` (verified `Map(... -> ...)` is the map literal; `Set(...)` with arrows is a set of tuples).
+  - **Map membership**: `state.contains(c)` is a Set operation, not a Map operation — typecheck error. Corrected to `state.keys().contains(c)` (`m.keys()` returns the key set; verified in builtin attestation).
+  - **Action variable-consistency**: Quint `any { ... }` action branches must update the same set of variables. The `receive` action's two branches initially updated only `appliedKeys`/`applyCount`, causing a typecheck error. Fixed by adding `all { ... }` wrappers with explicit `state' = state, lsn' = lsn, ...` for the untouched variables in each branch.
+  - **`boundary_dedup` was self-defining (caught by test integrity)**: the design's `appliedKeys.size() <= IDEMPOTENCY_KEYS.size()` passed for the wrong reason — a Set cannot exceed its universe by construction. Restructured to a genuine per-key count check `applyCount.get(k) <= 1` over a new `applyCount: str -> int` state variable, with a permissive `receive(key)` action (any key may arrive any number of times; only the first applies). Now genuinely checks the dedup property against permissive transitions.
+  - **`retry_reuses_id_and_key` invariant was inverted (caught by test integrity)**: the design's formulation `(idemKey.get(cmd) == key and key.in(appliedKeys)).not()` asserted "no command's key is in the applied set" — the opposite of reality (every command's key IS applied at init). Apalache correctly found a counterexample. Restructured to a temporal binding-stability property `next(idemKey.get(cmd)) == idemKey.get(cmd)` (the command-id-to-key binding never changes after acceptance).
+  - **Backend: Q3's `tlc` for temporal properties does not work (implementation discovery)**: the Quint→TLA+ compilation of `next()`-in-`always()` emits `[](\A cmd: state[cmd]' = state[cmd])`, which TLC rejects with `[] followed by action not of form [A]_v`. Apalache (default backend) checks these temporal properties correctly (exit 0, no violation, all 5) but warns its temporal support is experimental. `backend` field changed from `tlc` to `apalache-temporal`; invocation is `echo y | quint verify ... --temporal <p>`. Recorded in parent feature's Implementation discovery section.
+  - **Bounds**: design specified `--max-steps 12`; temporal checks run at `--max-steps 10` (Apalache temporal is slower; 10 is the documented default and sufficient for the bounded state space).
+- Adjacent issues parked: none.
+- Verification (all exit 0 / `[ok]`):
+  - `quint parse command_lifecycle.qnt` → exit 0
+  - `quint compile command_lifecycle.qnt` → exit 0 (typecheck)
+  - `quint verify --invariant command_durability --max-steps 12` → `[ok]`
+  - `quint verify --invariant boundary_dedup --max-steps 12` → `[ok]`
+  - `echo y | quint verify --temporal terminal_finality --max-steps 10` → `[ok]`
+  - `echo y | quint verify --temporal pre_append_terminal_choice --max-steps 10` → `[ok]`
+  - `echo y | quint verify --temporal lsn_determines_terminal_winner --max-steps 10` → `[ok]`
+  - `echo y | quint verify --temporal retry_reuses_id_and_key --max-steps 10` → `[ok]`
+  - `echo y | quint verify --temporal retry_after_terminal_returns_existing --max-steps 10` → `[ok]`
+  - 7 `@promotion` blocks present and grep-able; each `invocation` names the exact CLI.
+  - `command_lifecycle.emitted.tla` committed (generated artifact, never hand-edited).

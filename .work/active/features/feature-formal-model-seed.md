@@ -54,14 +54,14 @@ All checked-normative property-ids are named here, even those whose models are d
 
 | Property-id | Area | Tier (this feature) | Model | Backend |
 |---|---|---|---|---|
-| `CommandDurability` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
-| `TerminalFinality` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
-| `PreAppendTerminalChoice` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
-| `LsnDeterminesTerminalWinner` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
-| `TimeoutNeitherSuccessNorDenial` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `CommandDurability` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache |
+| `TerminalFinality` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
+| `PreAppendTerminalChoice` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
+| `LsnDeterminesTerminalWinner` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
+| `TimeoutNeitherSuccessNorDenial` | operator intent delivery | stated (draft) | `command_lifecycle.qnt` | apalache |
 | `BoundaryDedup` | idempotent retry | checked | `command_lifecycle.qnt` | apalache |
-| `RetryReusesIdAndKey` | idempotent retry | checked | `command_lifecycle.qnt` | apalache |
-| `RetryAfterTerminalReturnsExisting` | idempotent retry | checked | `command_lifecycle.qnt` | tlc |
+| `RetryReusesIdAndKey` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
+| `RetryAfterTerminalReturnsExisting` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `SessionIdentityTuple` | wrong-session prevention | checked | `session_generation.qnt` | apalache |
 | `GenerationMonotonic` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
 | `LateGenerationInert` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
@@ -83,6 +83,8 @@ All checked-normative property-ids are named here, even those whose models are d
 | `CompoundIssuer` | authority safety | stated (draft) | `authority.qnt` | tlc |
 | `GrantAuthorityIsCommandKinds` | authority safety | stated (draft) | `authority.qnt` | apalache |
 | `RevocationPreventsFuture` | authority safety | stated (draft) | `authority.qnt` | apalache |
+
+Note: `TimeoutNeitherSuccessNorDenial` is listed as stated (draft) rather than checked because it concerns the *transport/submission* layer ("timeout implies neither success nor denial" — a failure-vocabulary property), not the command-lifecycle state machine. It belongs in a future transport/failure-vocabulary model, not `command_lifecycle.qnt`. Discovered during Unit 1 implementation when the story's 7-property scope did not include it; the vocabulary table retains the reserved property-id for the downstream model.
 
 ## Implementation Units
 
@@ -458,7 +460,7 @@ There is no implementation *code* (Rust/TS) — verification is by running the c
 
 - **Parse + typecheck gate**: `quint parse` + `quint compile` on every `.qnt` (catches the typed-action-parameter pitfall the bank-review found).
 - **Apalache invariant checks**: `quint verify --invariant <v> --max-steps N` exit 0 (no counterexample) for the one-state properties.
-- **TLC temporal checks**: `quint verify --backend tlc --temporal <p>` exit 0 for the two-state properties. Use default workers (the research's liveness-multi-worker caveat).
+- **TLC temporal checks**: `quint verify --backend tlc --temporal <p>` exit 0 for the two-state properties. Use default workers (the research's liveness-multi-worker caveat). **Implementation discovery (Unit 1)**: the `--backend tlc` path does NOT work for `next()`-in-`always()` temporal properties — see Implementation discovery below; use `echo y | quint verify --temporal <p>` (Apalache default) instead.
 - **Alloy checks**: `exec --command <label> --type json` → `UNSAT` for all three relational asserts.
 - **Promotion-metadata grep**: a script greps `@promotion` blocks and verifies (a) every checked-normative property-id in the vocabulary table has a `status: promoted` block, (b) no block references a misspelled property-id, (c) every `invocation` names the jar-path classpath. This is the seed of the CI coverage check the authority feature specified; full CI wiring belongs to `feature-protocol-idl-and-conformance`.
 
@@ -470,3 +472,24 @@ There is no implementation *code* (Rust/TS) — verification is by running the c
 - **Emitted-TLA+ is not an independent re-check lane (Q4 correction).** Standalone `tla2tools-1.7.4.jar` cannot parse emitted TLA+ (`EXTENDS ... Apalache, Variants`); even with the Apalache jar on the classpath it's the same toolchain (Apalache+TLC) reached via Quint. The emitted `.tla` is an *inspection artifact*, not a second verification lane. **Accepted**: the durable, human-inspectable, version-pinned form is still valuable; the "two independent paths to TLC" framing is dropped from the rationale. Recorded here so the design does not overclaim defense-in-depth.
 - **`intToString` / string-concatenation in Quint.** The `session_generation` model uses `sid ++ ":" ++ intToString(gen)` for tombstone keys; if Quint 0.32.0 lacks `intToString` or `++` for strings, the key-shape must be adjusted (e.g. a `(str, int)` tuple as the map key). Implementation-stride resolution, not a design blocker.
 - **Property-set stability.** The checked-normative property list is a v0 commitment. If implementation reveals a stated-normative property (snapshot/authority) is safety-critical earlier than expected, it must be promoted before its behavior ships — a per-property operation, not a re-open of the baseline (per the authority feature's Q2 design).
+
+## Implementation discovery (Unit 1: command_lifecycle.qnt)
+
+Unit 1 is implemented and all 7 properties check (`[ok]`). Three classes of discrepancy from the design were found and resolved in the implementation stride:
+
+1. **Quint syntax (3 fixes, all grounded in `.research/attestation/quint-builtin.md`)**:
+   - Map literal is `Map("c1" -> "k1", ...)`, NOT `Set("c1" -> "k1", ...)` (the latter is a Set of tuples). The design used the wrong form.
+   - Map membership is `state.keys().contains(c)`, NOT `state.contains(c)` (`.contains` is a Set op; maps use `.keys()` then set membership).
+   - Quint `any { ... }` action branches must update the same set of variables — branches touching fewer vars need explicit `x' = x` for the untouched ones (added `all { ... }` wrappers in `receive`).
+
+2. **Two properties were not genuine checks (caught by test integrity — Apalache found a counterexample on `retry_reuses_id_and_key`)**:
+   - `boundary_dedup` was self-defining (`appliedKeys.size() <= IDEMPOTENCY_KEYS.size()` — a Set cannot exceed its universe by construction). Restructured to a genuine per-key count check `applyCount.get(k) <= 1` over a new `applyCount: str -> int` state variable and a permissive `receive(key)` action.
+   - `retry_reuses_id_and_key` was inverted (asserted the opposite of reality). Restructured to a temporal binding-stability property `next(idemKey.get(cmd)) == idemKey.get(cmd)`.
+   - This validates the genuine-checking discipline from Q1/Q3: permissive transitions + property checked against them catches self-defining/inverted invariants that would otherwise pass for the wrong reason.
+
+3. **Q3's `backend: tlc` for temporal properties does not work (load-bearing discovery)**:
+   - The Quint→TLA+ compilation of `next()`-in-`always()` emits `[](\A cmd: state[cmd]' = state[cmd])`, which TLC rejects with `[] followed by action not of form [A]_v` (a TLA+ stencil requirement that `[]` wraps an action subscripted by vars).
+   - Apalache (default backend) checks these temporal properties correctly (all 5 pass, exit 0) but warns its temporal support is "experimental and might give incorrect results" — and prompts interactively, requiring `echo y |` in non-interactive runs.
+   - **Impact on the design**: the `backend` field for the 5 temporal properties is changed from `tlc` to `apalache-temporal`; the `invocation` is `echo y | quint verify ... --temporal <p> --max-steps 10`. The vocabulary-table `Backend` column for `command_lifecycle.qnt` temporal properties should read `apalache-temporal` (not `tlc`) in any downstream CI/generator.
+   - **Impact on Q3 design choice**: Q3=C (mixed backends) is still the right call — Apalache handles both the one-state invariants AND the temporal safety properties. But the *rationale* shifts: the original rationale was "TLC for two-state, Apalache for one-state"; the corrected rationale is "Apalache for both, with the temporal path requiring the prompt-piped invocation and carrying the experimental-support caveat." This is a real residual risk for a safety-claiming model: Apalache's temporal checker is experimental. **Mitigation**: the properties are all `always(...)` safety (not `eventually` liveness), which is the more conservative end of Apalache's temporal support; and the emitted TLA+ is inspectable. A future follow-on can re-examine the TLC stencil workaround (e.g. hand-writing the `[A]_vars` form) if Apalache temporal confidence is insufficient.
+   - This is the same species of gloss the audit caught in Q4/Q5: Q3 asserted the TLC path works for temporal without verifying it on a composed Patchbay model. The research validated `--backend tlc` on a hello-world *invariant*, not on a `next()`-in-`always()` *temporal* property. Caught here in the implementation stride, not at design time — the honest target the stride discharges.
