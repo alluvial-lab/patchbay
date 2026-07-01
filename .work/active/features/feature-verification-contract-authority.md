@@ -1,7 +1,7 @@
 ---
 id: feature-verification-contract-authority
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-persistence-snapshot-model, feature-security-threat-model, feature-research-contract-tooling]
@@ -270,3 +270,11 @@ There is no implementation code yet. Verification for this design is by document
 - **Property-set stability.** The checked-normative property list (Unit 2) is a v0 commitment. If implementation reveals a safety-critical property that was classified stated-normative, it must be promoted before its behavior ships. Mitigation: the tier split is designed so promotion is a per-property operation, not a re-open of the baseline.
 - **Traceability-metadata schema drift.** The vector frontmatter shape (Unit 3) is a design target; `feature-protocol-idl-and-conformance` implements it. If that feature finds the shape insufficient, this design's Q4=B commitment (machine-readable per-vector metadata + CI coverage check) still holds; only the field set evolves. Mitigation: the 4 CI checks are the load-bearing part, not the exact field names.
 - **`.proto` not yet existing.** The authority order and traceability rules reference `.proto` and vector frontmatter that do not exist yet (greenfield). This is intentional Late-Binding: the rules are committed so that when `feature-protocol-idl-and-conformance` and `feature-formal-model-seed` implement, they conform to the authority model rather than inventing one. The rules hold vacuously until artifacts exist; they become enforced when CI is wired.
+
+## Implementation notes
+
+- Files changed: `docs/VERIFICATION.md`, `docs/SPEC.md`, `docs/PROTOCOL.md`.
+- Tests added: none; this is foundation-doc implementation (greenfield, no code yet).
+- Discrepancies from design: none. All five units landed as specified. Verified each named checked-normative property (`TerminalFinality`, `LsnDeterminesTerminalWinner`, `PreAppendTerminalChoice`, `LateGenerationInert`, `GenerationMonotonic`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, plus the crash-recovery and CSRF spine claims) resolves to an existing property in the VERIFICATION model-areas list — no invented property ids.
+- Adjacent issues parked: none.
+- Verification: `rg` confirmed the 5-row authority table is present; "default candidate" is fully removed from SPEC; PROTOCOL's opening paragraph distinguishes product-intent/vocabulary authority (permanent) from wire-shape authority (provisional, passes to `.proto`); cross-references are bidirectional (VERIFICATION↔PROTOCOL↔SPEC); ARCHITECTURE's unchanged "prose source of truth until generated contracts exist" boundary rule composes with the split. The "Required model areas" header is retained because the tiers are *within* areas, not a replacement for the areas list.

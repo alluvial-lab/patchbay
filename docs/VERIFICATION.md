@@ -2,6 +2,46 @@
 
 Patchbay treats coordination semantics as specification-first. Formal models define the behavior the implementation must preserve.
 
+## Artifact authority order
+
+Authority is question-type-layered, not a single ranked list. Each artifact type owns one class of question and is authority only for that class:
+
+| Question type | Authority | Not authority for |
+|---|---|---|
+| Invariants, dynamic/relational properties | Formal models (TLA+/Quint/Alloy), once promoted | wire shape, product intent naming |
+| Wire shape, field identity, enum vocabulary, payload envelopes | `.proto` (Protobuf+Buf) | invariants, product intent |
+| Product intent, vocabulary naming, registry names | Prose (`docs/PROTOCOL.md`, `docs/SPEC.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`) | invariants, wire shape |
+| Expected executable examples for a specific scenario | Conformance vectors, once promoted | invariants, wire shape, product intent |
+| Anything | Implementation (never authority) | — |
+
+Disagreements route to the artifact that owns the question type. "The higher artifact wins" is not a global rule. A contradiction between two promoted artifacts that each own their question type — for example a promoted conformance vector and the formal model whose property it exercises — is a **surfaced reconciliation event**, not a silent override by whichever artifact is ranked higher: either the model is wrong (update the model, then re-check every vector exercising that property) or the vector is wrong (demote, fix, re-promote). Implementation is never authority; if running code disagrees with a normative artifact, the code is the bug-fix target.
+
+This layered order takes effect once generated schemas or IDL exist. `docs/PROTOCOL.md` remains the canonical source of truth for product intent and vocabulary naming both before and after `.proto` exists; it is the *provisional* wire reference only until `.proto` takes over wire-shape authority.
+
+## v0 normative baseline (property-graded)
+
+Each required model area below is obligated at v0. Properties within each area are tiered by risk, not all-or-nothing per area. This reconciles `docs/SPEC.md`'s verification-floor seed ("at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority") with this document's required-areas list: the checked set is the seed done right, not a different program.
+
+**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0 treats the behavior as product. Covers safety/security-critical properties:
+
+- Operator intent delivery: `TerminalFinality`, `LsnDeterminesTerminalWinner`, `PreAppendTerminalChoice`; accepted-command durability (an accepted command cannot vanish silently); timeout implies neither success nor denial.
+- Wrong-session prevention: session identity tuple (adapter id + deployment scope + runtime session id + session generation); `LateGenerationInert`; `GenerationMonotonic`; human-readable labels cannot override verified target identity.
+- Idempotent retry: boundary dedup (retrying the same idempotency key cannot double-apply); retry reuses both command id and idempotency key; retry after terminal returns the existing terminal record rather than creating a later terminal candidate.
+- Authority safety: no-command-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds`; revocation prevents future command acceptance under the revoked grant.
+- Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay (replaying the same committed prefix produces identical state).
+- Browser session and CSRF boundary: a state-changing request without an authenticated operator session is rejected before command acceptance; a state-changing request without a valid session-bound CSRF proof is rejected before command acceptance; revoked or expired operator sessions cannot issue new commands.
+
+**stated-normative** — documented v0 obligation with a *draft* model, not yet checked-to-pass; scheduled for promotion post-v0. Covers liveness/cosmetic/operational properties:
+
+- Snapshot convergence: compaction and cursor validity, late-event audit handling nuances.
+- Audit integrity: completeness of audit records and correlation coverage.
+- Adapter failure visibility: failure-vocabulary distinguishability refinements.
+- Reply correlation: typed-correlation edge cases beyond the checked wrong-session/idempotency core.
+
+This composes with the model-promotion rule: a property promotes its model **and** its vectors together. "checked-normative" = model promoted + ≥1 promoted vector; "stated-normative" = draft model, no promoted vector yet. Promotion is a per-property operation; if implementation reveals a safety-critical property classified stated-normative, it must be promoted before its behavior ships.
+
+The delegation precondition and lease safety sections below are preconditions for future behavior and are **not** part of the v0 normative baseline.
+
 ## TLA+ and Quint position
 
 TLA+ and Quint are compatible at the architecture level because both model state machines in the TLA tradition. Patchbay does not need to choose a permanent winner before design starts.
@@ -186,6 +226,35 @@ Formal models produce implementation obligations. The implementation uses:
 - reconnect tests for stale control surfaces.
 
 A protocol semantic change updates `docs/PROTOCOL.md`, the model, generated contract, conformance vectors, and implementation together.
+
+### Conformance-vector promotion and traceability
+
+Conformance vectors are draft/derived until explicitly promoted, mirroring the model-promotion rule. A promoted vector is a peer authority for expected executable examples (see Artifact authority order). Vectors are never authority for invariants (that is the formal models) or for wire shape (that is `.proto`).
+
+Vector promotion requires:
+
+- a named model property the vector exercises (property id);
+- the `.proto` fields/enums the vector constrains (or `none` for pure state-transition vectors);
+- an expected outcome matching the referenced model property's invariant;
+- a reviewed status (a vector is promoted by review, not automatically).
+
+Each conformance vector file carries structured frontmatter naming these fields:
+
+```yaml
+property: <property-id>
+status: draft | promoted
+proto_fields: [field/path, ...]   # or [none]
+expected: <outcome>
+```
+
+A CI script reads all vectors and:
+
+- fails if a checked-normative property lacks a promoted vector;
+- fails if a vector references a missing or misspelled property id;
+- fails if a promoted vector's expected outcome contradicts its referenced model property's invariant (a surfaced contradiction, per the authority order);
+- generates the traceability table in this document as a checked-in artifact, so the human-readable mapping from property → `.proto` fields → vectors never drifts.
+
+A promoted vector that later contradicts its model is a reconciliation event: either the model is wrong (update the model, re-check every vector exercising it) or the vector is wrong (demote, fix, re-promote). It is never a silent override.
 
 ## Model promotion rule
 

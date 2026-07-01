@@ -2,7 +2,7 @@
 
 Patchbay protocol semantics are defined around durable operator intent, explicit authority, unambiguous target identity, and recoverable state.
 
-This document defines concepts and required behavior, not a final wire encoding. Until generated schemas or IDL exist, this document is the canonical source of truth for command state, session state, failure vocabulary, and transition semantics. Future TypeScript/Rust enums, TLA+/Quint variables, conformance vectors, and UI presentation labels derive from these registries rather than redefining them.
+This document defines concepts and required behavior, not a final wire encoding. It is the canonical source of truth for command state, session state, failure vocabulary, and transition semantics — the **product intent and vocabulary naming** authority (see `docs/VERIFICATION.md` Artifact authority order). Wire shape, field identity, and enum encoding are authority of the generated `.proto` contract once it exists; until then this document is the provisional wire reference. Future TypeScript/Rust enums, TLA+/Quint variables, conformance vectors, and UI presentation labels derive from these registries rather than redefining them.
 
 ## Actors and endpoints
 

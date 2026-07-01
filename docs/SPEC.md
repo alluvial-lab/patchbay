@@ -74,7 +74,15 @@ The web cockpit is responsive and mobile-first so phone, laptop, and desktop use
 
 ### Protocol contracts
 
-Patchbay prefers a single protocol-contract source of truth. Protobuf + Buf is the default candidate for generated cross-language contracts and breaking-change checks. JSON Schema remains acceptable for JSON-native surfaces where human-readable wire payloads are required.
+Patchbay uses Protobuf schemas managed by Buf as the v0 boundary-contract source for durable protocol messages, command/event payloads, and shared enum vocabularies across the Rust coordination core and TypeScript operator domain.
+
+- `.proto` files are the source for wire contracts and boundary DTOs, not the full internal domain model.
+- Rust types are generated via prost/prost-build; TypeScript types via Protobuf-ES. Generated outputs are artifacts, never hand-edited.
+- `buf.gen.yaml` is checked in; `buf lint` and `buf breaking` run locally and in CI.
+- JSON Schema / TypeBox / Zod are reserved for JSON-native local validation surfaces, not as the cross-language protocol source.
+- TypeSpec is a reserved future direction if Patchbay later needs OpenAPI, JSON Schema, and Protobuf emitted as peer outputs from one authoring language.
+
+`.proto` is authority for wire shape only (see `docs/VERIFICATION.md` Artifact authority order). Product intent and vocabulary naming remain prose authority, and invariants remain model authority.
 
 ### Formal specifications
 
