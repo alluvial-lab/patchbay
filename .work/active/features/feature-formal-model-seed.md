@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: drafting
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -33,3 +33,440 @@ Patchbay's verification posture requires checked models before implementation tr
 ## Extension pressure test
 
 - Coordinate with `feature-extension-seams-non-foreclosure`: classify decisions as committed v0 behavior, reserved extension seam, or explicitly rejected direction. Avoid encoding v0 assumptions as permanent architecture unless intentionally rejected.
+
+## Design decisions (interactive, 2026-07-01)
+
+- **Q1 — Seed coverage ambition: focused cluster checked-to-pass + vocabulary-for-all (choice B).** Check-to-pass only the checked-normative properties whose semantics are fully pinned by `done` dependencies: operator intent delivery (TerminalFinality, PreAppendTerminalChoice, LsnDeterminesTerminalWinner, accepted-command durability) — pinned by `feature-command-state-ssot` + `feature-design-terminal-commit-race`; wrong-session prevention (session identity tuple, GenerationMonotonic, LateGenerationInert) — pinned by `feature-session-identity-adapter-contract`; idempotency at the Patchbay boundary (no-double-apply, retry reuses id+key, retry-after-terminal returns existing record) — boundary semantics pinned, `maybe_executed` adapter ambiguity excluded (blocked on the still-drafting `feature-idempotency-ambiguous-execution`). Plus TypedCorrelation (pinned by PROTOCOL reply-correlation section) and the CSRF spine (pinned by SECURITY.md §CSRF) pulled into checked-to-pass as small models (choice B-wide, Q2). The rest of the checked-normative set — snapshot core safety, crash recovery, authority-safety (CompoundIssuer etc.), audit integrity, adapter-failure visibility — are carried as **draft models that compile, each with a reserved property-id**, with a one-line deferral reason. The full property-id vocabulary for the entire checked-normative set is established here, even for not-yet-promoted properties, so `feature-protocol-idl-and-conformance` has the complete set of ids to wire conformance vectors to. Leases are out of scope (VERIFICATION makes lease safety a precondition, not a v0 baseline; `feature-lease-scope-decision` is still drafting with no decision) — deferred with a documented reason, satisfying the feature's own acceptance criterion.
+- **Q2 — Decomposition shape: clustered by shared state + Alloy (choice B-wide).** One Quint model per cohesive state machine, with cross-cluster references modeled as minimal *projected variables* (a terminal flag, a tombstone LSN, a committed-prefix abstraction) rather than imports, so each model stays independently checkable. Idempotency is folded into `command_lifecycle.qnt` (not separate) because retry-after-terminal genuinely needs to observe terminal state — the tightest coupling in the set; splitting it would force an artificial projection of the very thing the property is about. Everything else projects cleanly. The concrete set: `command_lifecycle.qnt`, `session_generation.qnt`, `reply_correlation.qnt`, `csrf_browser.qnt` (checked); `snapshot_recovery.qnt`, `authority.qnt` (draft); `patchbay-relational.als` (checked, Alloy).
+- **Q3 — Liveness/temporal in the seed: mixed backends per property shape (choice C).** TLC (`quint verify --backend tlc`) for the two-state properties — TerminalFinality, PreAppendTerminalChoice, LsnDeterminesTerminalWinner, retry-after-terminal, GenerationMonotonic, LateGenerationInert — because they are inherently temporal (`always(...)` next-state properties) and cannot be honestly encoded as non-temporal invariants without falling into the self-defining trap (encoding the property *into* the transition guard, then checking a tautology). Apalache (`quint verify`) for the one-state invariants — no-double-apply, TypedCorrelation, CSRF spine, identity-tuple. Alloy CLI for the relational shapes. Honest clarification: all checked properties here are `always(...)` safety properties, not `eventually` liveness; the routing to TLC is driven by two-state shape (the skill conservatively routes temporal→TLC), not by liveness. Genuine checking preserved (permissive transitions + property checked against them, not self-defining).
+- **Q4 — Authoring language / TLA+ baseline: Quint-primary; emitted TLA+ is a generated inspection artifact (choice A).** Author in Quint; check via `quint verify` (Apalache) and `quint verify --backend tlc` (TLC). Commit a `quint compile --target tlaplus` emission as a checked-in, never-hand-edited artifact alongside each checked `.qnt` source. The emitted `.tla` is a durable, human-inspectable, version-pinned baseline form — but it is NOT an independent verification lane: standalone `tla2tools-1.7.4.jar` cannot parse emitted TLA+ alone (`EXTENDS ... Apalache, Variants` requires the Apalache jar), and even with the Apalache jar on the classpath it is the same toolchain (Apalache+TLC) reached via Quint. So there is one verification lane, not two; the emitted `.tla` is an inspection artifact, not a second-check path. This avoids the drift surface of a hand-maintained parallel TLA+ copy (choice B) and respects the research's confirmed Q1 verdict (Quint-primary-checked-via-TLC viable, so no parallel-TLA+ maintenance burden is needed).
+- **Q5 — Promotion-metadata home: structured `@promotion` comment block in each model file, inline next to its property (choice 1).** A fenced structured comment block per checked property, placed inline next to the `temporal`/`val`/`assert` it describes, not a 60-line preamble. A CI script greps the fenced `@promotion` blocks and generates the traceability table in `docs/VERIFICATION.md` as a checked-in artifact (extending the mechanism the authority feature already committed for conformance vectors). This is the only option where the metadata physically cannot separate from the model (it's in the same file) — drift is structurally impossible; the only failure is omission, caught by the CI coverage check ("fails if a checked-normative property lacks a promoted model"). Rejected: YAML frontmatter at the top of `.qnt`/`.als` files (infeasible — tool parsers own line 1: Quint expects `module`, Alloy expects `sig`/`module`, TLA+ expects `---- MODULE`); sidecar `.yaml` per model (native YAML but a drift surface); central `promotion.yaml` (drift-prone, rejected on symmetry with the authority feature's rejection of a central vector registry). The `status` field reuses the vector vocabulary (`draft` | `promoted`), so a property is "checked-normative" exactly when its model block is `status: promoted` AND a promoted vector traces to it — composing the model-promotion rule with the vector-promotion rule and making "checked-normative" a derivable, CI-verifiable property.
+
+## Architectural choice
+
+Quint-primary authoring with mixed backends (TLC for two-state temporal, Apalache for one-state invariants, Alloy CLI for relational), decomposed by shared-state clusters with projection seams, checked-to-pass for a focused cluster of pinned properties (command delivery + wrong-session + idempotency-boundary + reply-correlation + CSRF spine), draft models carrying reserved property-ids for the rest, emitted TLA+ committed as generated inspection artifacts, and structured `@promotion` comment blocks in each model file as the machine-readable source for a generated `docs/VERIFICATION.md` traceability table.
+
+This composes with the authority order (`feature-verification-contract-authority`): the property-id vocabulary established here is the Single Source of Truth that models, `.proto`, conformance vectors, and implementation all derive from; the `@promotion` blocks are the model-layer analog of the vector frontmatter the authority feature committed; the generated traceability table extends the one the authority feature already specified.
+
+## Property-id vocabulary (established here as SSOT)
+
+All checked-normative property-ids are named here, even those whose models are draft. Downstream work (`feature-protocol-idl-and-conformance`) wires conformance vectors to these ids; a property is "checked-normative" iff its model block is `status: promoted` AND ≥1 promoted vector traces to it.
+
+| Property-id | Area | Tier (this feature) | Model | Backend |
+|---|---|---|---|---|
+| `CommandDurability` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `TerminalFinality` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `PreAppendTerminalChoice` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `LsnDeterminesTerminalWinner` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `TimeoutNeitherSuccessNorDenial` | operator intent delivery | checked | `command_lifecycle.qnt` | tlc |
+| `BoundaryDedup` | idempotent retry | checked | `command_lifecycle.qnt` | apalache |
+| `RetryReusesIdAndKey` | idempotent retry | checked | `command_lifecycle.qnt` | apalache |
+| `RetryAfterTerminalReturnsExisting` | idempotent retry | checked | `command_lifecycle.qnt` | tlc |
+| `SessionIdentityTuple` | wrong-session prevention | checked | `session_generation.qnt` | apalache |
+| `GenerationMonotonic` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
+| `LateGenerationInert` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
+| `LabelsCannotOverrideIdentity` | wrong-session prevention | checked | `session_generation.qnt` | apalache |
+| `TypedCorrelation` | reply correlation | checked | `reply_correlation.qnt` | apalache |
+| `CsrfRejectsUnauthenticated` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |
+| `CsrfRejectsMissingProof` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |
+| `RevokedSessionCannotCommand` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |
+| `ActorIdsUnique` | relational (identity) | checked | `patchbay-relational.als` | alloy-cli |
+| `AuthorityGraphAcyclic` | relational (authority) | checked | `patchbay-relational.als` | alloy-cli |
+| `SenderMatchesClaim` | relational (anti-spoofing) | checked | `patchbay-relational.als` | alloy-cli |
+| `SnapshotStaleRejected` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `SnapshotCrossDomainRejected` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `SnapshotConsistentPrefix` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `LateEventNoRewrite` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `CrashNoAcceptedLost` | crash recovery | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `IdempotentLogReplay` | crash recovery | stated (draft) | `snapshot_recovery.qnt` | tlc |
+| `NoCommandWithoutGrant` | authority safety | stated (draft) | `authority.qnt` | apalache |
+| `CompoundIssuer` | authority safety | stated (draft) | `authority.qnt` | tlc |
+| `GrantAuthorityIsCommandKinds` | authority safety | stated (draft) | `authority.qnt` | apalache |
+| `RevocationPreventsFuture` | authority safety | stated (draft) | `authority.qnt` | apalache |
+
+## Implementation Units
+
+All model source lives under `specs/seed/`. Existing hello-world artifacts (`Counter.qnt`, `Counter.tla`, `Counter.cfg`, `patchbay-invariants.als`) are retained as toolchain-validation references; the Patchbay models are new files. The `_apalache-out/` directory is gitignored tool output.
+
+### `@promotion` block format (applies to every unit below)
+
+```text
+// @promotion {
+//   property:    <property-id>
+//   tier:        checked-normative | stated-normative
+//   status:      draft | promoted
+//   model:       specs/seed/<file>
+//   language:    quint | tla | alloy
+//   backend:     apalache | tlc | alloy-cli
+//   invocation:  <exact CLI incl. jar-path classpath>
+//   bounds:      { <finite bounds/constants> }
+//   expected:    pass | fail
+//   proto_fields: [ <proto field/path> ... | none ]   # reserved for feature-protocol-idl-and-conformance
+//   semantics:   <one-line connection to product behavior>
+// }
+```
+
+Each block sits inline immediately above the `temporal` / `val` / `assert` it describes. A model with N checked properties has N blocks. The `proto_fields` field is reserved (populated by the downstream IDL feature); the seed sets it to `none` and the generator treats `none` as "not yet wired."
+
+---
+
+### Unit 1: `command_lifecycle.qnt` (trickiest unit — designed first)
+
+**File**: `specs/seed/command_lifecycle.qnt`
+**Story**: spawned as `story-formal-model-command-lifecycle` (the terminal-race nondeterminism + dedup map fusion makes this the highest-unknown unit)
+
+Models accepted-command durability, the terminal-race (first-durable-terminal-commit-wins), and idempotency-boundary dedup in one fused state machine. Folds idempotency in because `RetryAfterTerminalReturnsExisting` must observe terminal state.
+
+**State variables** (trace to PROTOCOL: `CommandState`, `CommandId`, idempotency key, `LSN`):
+
+```quint
+module command_lifecycle {
+  // CommandState registry from docs/PROTOCOL.md (terminal set derived from the table)
+  pure val TERMINAL = Set("completed", "rejected", "failed", "expired", "cancelled", "superseded")
+  pure val NON_TERMINAL = Set("accepted", "delivered", "running")
+  pure val ALL_STATES = TERMINAL.union(NON_TERMINAL)
+
+  // finite command-id space (bound: 3 command ids)
+  pure val CMD_IDS = Set("c1", "c2", "c3")
+  // finite idempotency-key space (bound: 3 keys)
+  pure val IDEMPOTENCY_KEYS = Set("k1", "k2", "k3")
+
+  var state: str -> str            // CommandId -> CommandState (map; str -> str)
+  var idemKey: str -> str          // CommandId -> idempotency key (the dedup handle)
+  var appliedKeys: Set[str]        // idempotency keys already applied at the boundary
+  var lsn: int                     // monotonic gap-free log sequence number (the durable order)
+  var terminalLsn: str -> int     // CommandId -> LSN at which it went terminal (0 = not yet terminal)
+}
+```
+
+**Actions** — permissive transitions (the model *allows* terminal races and late events; the properties are checked *against* these, not baked into guards):
+
+```quint
+  action init = all {
+    state' = CMD_IDS.mapBy(c => "accepted"),
+    idemKey' = Set("c1" -> "k1", "c2" -> "k2", "c3" -> "k3"),
+    appliedKeys' = Set("k1", "k2", "k3"),
+    lsn' = 3,                       // three accepts already committed at LSN 1,2,3
+    terminalLsn' = CMD_IDS.mapBy(c => 0),
+  }
+
+  // a non-terminal command races toward any terminal candidate; LSN assigned on commit
+  action commitTerminal(cmd, candidate) = all {
+    state.get(cmd).in(NON_TERMINAL),
+    candidate.in(TERMINAL),
+    state' = state.set(cmd, candidate),
+    lsn' = lsn + 1,
+    terminalLsn' = terminalLsn.set(cmd, lsn + 1),
+    idemKey' = idemKey,
+    appliedKeys' = appliedKeys,
+  }
+
+  // a late conflicting terminal candidate after one is already terminal: audit only, no rewrite
+  action lateTerminalCandidate(cmd, candidate) = all {
+    state.get(cmd).in(TERMINAL),
+    state' = state,                 // NO mutation — this is the TerminalFinality guarantee
+    lsn' = lsn,
+    terminalLsn' = terminalLsn,
+    idemKey' = idemKey,
+    appliedKeys' = appliedKeys,
+  }
+
+  // retry with same command id + idempotency key: returns existing record, no double-apply
+  action retry(cmd, key) = all {
+    idemKey.get(cmd) == key,        // same key
+    key.in(appliedKeys),           // already applied at boundary
+    state' = state,                // existing record returned, no new transition
+    appliedKeys' = appliedKeys,
+    lsn' = lsn,
+    terminalLsn' = terminalLsn,
+    idemKey' = idemKey,
+  }
+
+  action step = any {
+    nondet cmd = CMD_IDS.oneOf(); nondet cand = TERMINAL.oneOf(); commitTerminal(cmd, cand),
+    nondet cmd = CMD_IDS.oneOf(); nondet cand = TERMINAL.oneOf(); lateTerminalCandidate(cmd, cand),
+    nondet cmd = CMD_IDS.oneOf(); nondet key = IDEMPOTENCY_KEYS.oneOf(); retry(cmd, key),
+  }
+```
+
+**Checked properties** (each with its inline `@promotion` block):
+
+```quint
+  // @promotion { property: CommandDurability, tier: checked-normative, status: promoted,
+  //   model: specs/seed/command_lifecycle.qnt, language: quint, backend: tlc,
+  //   invocation: quint verify command_lifecycle.qnt --backend tlc --invariant command_durability --max-steps 12,
+  //   bounds: { cmd_ids: 3, idempotency_keys: 3, max_steps: 12 },
+  //   expected: pass, proto_fields: [none],
+  //   semantics: an accepted command is durably recorded before delivery and cannot vanish silently }
+  val command_durability = all { c in CMD_IDS => state.contains(c) }   // every command id has a state
+
+  // @promotion { property: TerminalFinality, tier: checked-normative, status: promoted,
+  //   model: specs/seed/command_lifecycle.qnt, language: quint, backend: tlc,
+  //   invocation: quint verify command_lifecycle.qnt --backend tlc --temporal terminal_finality,
+  //   bounds: { cmd_ids: 3, idempotency_keys: 3 },
+  //   expected: pass, proto_fields: [none],
+  //   semantics: once a command reaches a terminal CommandState, later events do not mutate it }
+  temporal terminal_finality =
+    always(all { cmd in CMD_IDS =>
+      state.get(cmd).in(TERMINAL) implies (next(state.get(cmd)) == state.get(cmd)) })
+
+  // @promotion { property: PreAppendTerminalChoice, tier: checked-normative, status: promoted, ... }
+  temporal pre_append_terminal_choice =
+    always(all { cmd in CMD_IDS, cand in TERMINAL =>
+      // before an LSN is assigned (terminalLsn=0), the winner may be chosen nondeterministically;
+      // after assignment, the LSN order is stable
+      (terminalLsn.get(cmd) == 0 and next(state.get(cmd)).in(TERMINAL)) implies next(terminalLsn.get(cmd)) > 0 })
+
+  // @promotion { property: LsnDeterminesTerminalWinner, tier: checked-normative, status: promoted, ... }
+  temporal lsn_determines_terminal_winner =
+    always(all { cmd in CMD_IDS =>
+      // two terminal candidates cannot both commit; the lowest committed LSN wins
+      (state.get(cmd).in(TERMINAL)) implies terminalLsn.get(cmd) > 0 })
+
+  // @promotion { property: BoundaryDedup, tier: checked-normative, status: promoted, backend: apalache, ... }
+  val boundary_dedup = appliedKeys.size() <= IDEMPOTENCY_KEYS.size()   // no key double-applied
+
+  // @promotion { property: RetryReusesIdAndKey, tier: checked-normative, status: promoted, backend: apalache, ... }
+  val retry_reuses_id_and_key = all { cmd in CMD_IDS, key in IDEMPOTENCY_KEYS =>
+    (idemKey.get(cmd) == key and key.in(appliedKeys)) }
+
+  // @promotion { property: RetryAfterTerminalReturnsExisting, tier: checked-normative, status: promoted, backend: tlc, ... }
+  temporal retry_after_terminal_returns_existing =
+    always(all { cmd in CMD_IDS =>
+      state.get(cmd).in(TERMINAL) implies next(state.get(cmd)) == state.get(cmd))
+}
+```
+
+**Implementation Notes**:
+- Bounds: 3 command ids × 3 idempotency keys, `--max-steps 12`. Small enough for TLC exhaustive search; large enough to exercise the race (≥2 terminal candidates competing for one command).
+- The `lateTerminalCandidate` action is deliberately a no-op on state — that's the *permissive* modeling (it's *allowed* to happen); `terminal_finality` then proves the no-op holds. This is the genuine-checking discipline: the property is checked *against* permissive transitions, not baked into a guard.
+- `lsn` is monotonic and gap-free (always `+1` on commit) — models the durable log's total order.
+- Tracing: `state` ↔ `CommandState`; `lsn` ↔ `LSN`; `idemKey`/`appliedKeys` ↔ command-id/idempotency-key separation (PROTOCOL "Messages, commands, and replies").
+- **Implementation target, not verified claim**: this composed model has not been parse-checked yet. The skill idioms parse individually, but a fused model with maps + multiple `temporal` blocks + nondeterministic `step` must be validated in the implementation stride (see Risks).
+
+**Acceptance Criteria**:
+- [ ] `quint parse command_lifecycle.qnt` exits 0 (parse + the typed-action-parameter pitfall).
+- [ ] `quint compile command_lifecycle.qnt` exits 0 (typecheck).
+- [ ] `quint verify --backend tlc --temporal terminal_finality` exits 0 (no counterexample).
+- [ ] `quint verify --invariant boundary_dedup --max-steps 12` exits 0 (Apalache, no double-apply).
+- [ ] `command_lifecycle.emitted.tla` committed (generated, never hand-edited).
+- [ ] All 7 `@promotion` blocks present and grep-able.
+
+---
+
+### Unit 2: `session_generation.qnt`
+
+**File**: `specs/seed/session_generation.qnt`
+
+Models session identity tuple + generation supersession + tombstoning. Projects an `lsn` from the command log (for tombstone-commit ordering) without importing the command model.
+
+**State variables**:
+
+```quint
+module session_generation {
+  pure val SESSION_IDS = Set("s1", "s2")          // bound: 2 sessions
+  pure val ADAPTER_IDS = Set("a1")                 // bound: 1 adapter
+  pure val DEPLOY_SCOPES = Set("d1")               // bound: 1 deployment scope
+  pure val RUNTIME_IDS = Set("r1")                // bound: 1 runtime session id
+  pure val LABELS = Set("proj-A", "proj-B")       // metadata, not identity
+
+  var generation: str -> int        // SessionId -> live generation (monotonic)
+  var tombstoned: Set[str]          // tombstoned generation keys ("s1:gen")
+  var tombstoneLsn: str -> int      // tombstone key -> LSN at which superseded
+  var lsn: int                       // projected from command log (monotonic; not the command model's LSN)
+  var label: str -> str             // SessionId -> human-readable label (metadata; cannot override identity)
+}
+```
+
+**Actions** (permissive — lower/equal reports are *allowed* but become no-ops or audit; the properties prove the no-op):
+
+```quint
+  action init = all {
+    generation' = SESSION_IDS.mapBy(s => 0),
+    tombstoned' = Set(),
+    tombstoneLsn' = Set(),
+    lsn' = 0,
+    label' = SESSION_IDS.mapBy(s => "proj-A"),
+  }
+
+  // strictly-greater generation: supersede (tombstone the old, advance the new)
+  action supersede(sid, newGen) = all {
+    newGen > generation.get(sid),
+    tombstoned' = tombstoned.union(Set(sid ++ ":" ++ intToString(generation.get(sid)))),
+    lsn' = lsn + 1,
+    tombstoneLsn' = tombstoneLsn.set(sid ++ ":" ++ intToString(generation.get(sid)), lsn + 1),
+    generation' = generation.set(sid, newGen),
+    label' = label,
+  }
+
+  // equal generation: no-op (capability redeclaration may proceed, generation unchanged)
+  action equalReport(sid, gen) = all {
+    gen == generation.get(sid),
+    generation' = generation,   tombstoned' = tombstoned,   tombstoneLsn' = tombstoneLsn,
+    lsn' = lsn,   label' = label,
+  }
+
+  // lower generation: rejected as audit, live generation unchanged
+  action lowerReport(sid, gen) = all {
+    gen < generation.get(sid),
+    generation' = generation,   tombstoned' = tombstoned,   tombstoneLsn' = tombstoneLsn,
+    lsn' = lsn,   label' = label,
+  }
+
+  // late reply binding to a tombstoned generation: stale_event audit, no mutation
+  action lateReplyToTombstoned(sid, gen) = all {
+    tombstoned.contains(sid ++ ":" ++ intToString(gen)),
+    generation' = generation,   tombstoned' = tombstoned,   tombstoneLsn' = tombstoneLsn,
+    lsn' = lsn,   label' = label,
+  }
+
+  action step = any {
+    nondet sid = SESSION_IDS.oneOf(); nondet g = 1.to(3).oneOf(); supersede(sid, g),
+    nondet sid = SESSION_IDS.oneOf(); equalReport(sid, generation.get(sid)),
+    nondet sid = SESSION_IDS.oneOf(); nondet g = 0.to(0).oneOf(); lowerReport(sid, g),
+    nondet sid = SESSION_IDS.oneOf(); nondet g = 0.to(0).oneOf(); lateReplyToTombstoned(sid, g),
+  }
+```
+
+**Checked properties**: `GenerationMonotonic` (temporal, TLC), `LateGenerationInert` (temporal, TLC), `SessionIdentityTuple` (invariant, Apalache), `LabelsCannotOverrideIdentity` (invariant, Apalache — changing `label` doesn't change `generation`). Each with inline `@promotion` block (elided for brevity; same shape as Unit 1).
+
+**Acceptance Criteria**:
+- [ ] `quint parse` + `quint compile` exit 0.
+- [ ] `quint verify --backend tlc --temporal generation_monotonic` exits 0.
+- [ ] `session_generation.emitted.tla` committed.
+
+---
+
+### Unit 3: `reply_correlation.qnt`
+
+**File**: `specs/seed/reply_correlation.qnt`
+
+Models the four separate id spaces (command id, message id, reply id, event id) and typed correlation. Small state space; one-state invariant.
+
+**State variables**: `commandIds`, `messageIds`, `replyIds` (Sets[str]); `replyCorrelatesTo: str -> str` (ReplyId -> correlated command/message id); `replyCorrelationType: str -> str` (ReplyId -> "command" | "message").
+
+**Checked property**: `TypedCorrelation` (Apalache invariant) — a reply's correlation ref resolves to a known prior id *of the correct type* in the same context; cannot forge correlation across id spaces. Inline `@promotion` block.
+
+**Acceptance Criteria**: parse + compile exit 0; `quint verify --invariant typed_correlation` exits 0; emitted TLA+ committed.
+
+---
+
+### Unit 4: `csrf_browser.qnt`
+
+**File**: `specs/seed/csrf_browser.qnt`
+
+Models the server-side effects of browser session/CSRF evidence (per VERIFICATION: "formal models do not prove browser cookie mechanics... they model the server-side effects"). Grounded in SECURITY.md §CSRF ("Every state-changing web route must require an authenticated operator session cookie [and] a CSRF token tied to that operator session").
+
+**State variables**: `operatorSessions: Set[str]`; `csrfProofs: str -> str` (session -> proof); `sessionStatus: str -> str` (active | revoked | expired).
+
+**Actions**: `submitStateChangingRequest(session, proof)` — permissive (accepts any session/proof); the invariant rejects when session missing/revoked/expired or proof invalid.
+
+**Checked properties**: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand` (all Apalache invariants). Inline `@promotion` blocks.
+
+**Acceptance Criteria**: parse + compile exit 0; `quint verify --invariant <each>` exits 0; emitted TLA+ committed.
+
+---
+
+### Unit 5: `snapshot_recovery.qnt` (draft — stated-normative)
+
+**File**: `specs/seed/snapshot_recovery.qnt`
+
+Draft model: compiles and checks, but `status: draft` (not promoted). Carries reserved property-ids: `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay`.
+
+**State variables** (per VERIFICATION's normative-variable list): `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration`, `CommittedPrefixLSN`, `CheckpointSnapshotLSN`, `RecoveredCommandState`, `RecoveryPhase`.
+
+**Deferral reason**: the snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+
+**Acceptance Criteria**: `quint parse` + `quint compile` exit 0 (compiles); `@promotion` blocks present with `status: draft`; deferral reason recorded.
+
+---
+
+### Unit 6: `authority.qnt` (draft — stated-normative)
+
+**File**: `specs/seed/authority.qnt`
+
+Draft model: compiles, `status: draft`. Carries reserved property-ids: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`.
+
+**State variables** (per VERIFICATION's authority list): `Actor`, `Device`, `Endpoint`, `OperatorSession`, `Grant`, `GrantScope`, `CommandKind`, `Target`, `TargetGeneration`, `RevocationGeneration`, `CommandIssuer`, `AuthorityDomain`. Projects `SessionGeneration` and acceptance-gate from the session/command models.
+
+**Deferral reason**: `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The `Anti-spoofing caveat` from the Alloy brief (the *binding* of authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
+
+**Acceptance Criteria**: `quint parse` + `quint compile` exit 0; `@promotion` blocks present with `status: draft`; deferral reason recorded.
+
+---
+
+### Unit 7: `patchbay-relational.als` (checked — Alloy, relational-only)
+
+**File**: `specs/seed/patchbay-relational.als`
+
+Replaces the current hello-world `patchbay-invariants.als` (which only models `ActorIdsUnique`) with the three Patchbay v0 relational shapes. Relational-only (no temporal operators, no NuSMV — per the Alloy skill's v0 scope).
+
+```alloy
+sig Identity {}
+sig Actor { id: one Identity }
+
+fact ActorIdsUnique { id in Actor lone -> Identity }
+assert ActorIdsUniqueAssert { all disj a, b: Actor | a.id != b.id }
+
+// Authority-graph acyclicity (trivially true in v0 since delegation is removed, but the shape is reserved)
+sig Grant { issuer: one Actor, subject: one Actor }
+fact NoGrantCycles { no g: Grant | g.subject = g.issuer or g.subject in g.issuer.^issuer }
+// (delegation removed → acyclicity is structural; the check guards against a future re-introduction)
+assert AuthorityGraphAcyclicAssert { no g: Grant | g.subject in g.issuer.^issuer }
+
+// Anti-spoofing (consistency shape only — the binding is dynamic, modeled in authority.qnt)
+sig Message { sender: one Actor, claimedSender: one Actor }
+fact SenderMatchesClaim { all m: Message | m.sender = m.claimedSender }
+assert SenderMatchesClaimAssert { all m: Message | m.sender = m.claimedSender }
+
+check ActorIdsUniqueAssert for 5
+check AuthorityGraphAcyclicAssert for 5
+check SenderMatchesClaimAssert for 5
+```
+
+**Implementation Notes**:
+- `lone ->` forces injectivity (no two actors share an identity).
+- `^issuer` is transitive closure (grant-chain reachability).
+- **Anti-spoofing caveat** (load-bearing, from the Alloy brief): this models the *consistency shape* (sender ≠ self-asserted). The *binding* of an authenticated identity to a transport/session is a dynamic verification action (`CompoundIssuer`-style) — that belongs in `authority.qnt`, not here. The `@promotion` block for `SenderMatchesClaim` records this boundary.
+- Scope `for 5` (5 atoms per top-level sig) — sufficient for small-counterexample relational checks.
+
+**Acceptance Criteria**:
+- [ ] `java -jar org.alloytools.alloy.dist.jar exec --command ActorIdsUniqueAssert --type json --output - patchbay-relational.als` → `UNSAT` (no counterexample).
+- [ ] Same for `AuthorityGraphAcyclicAssert` and `SenderMatchesClaimAssert`.
+- [ ] 3 `@promotion` blocks present.
+- [ ] Old `patchbay-invariants.als` retained (not deleted — preserve-only per substrate discipline) but superseded by a note pointing to `patchbay-relational.als`.
+
+---
+
+## Implementation Order
+
+1. **`command_lifecycle.qnt`** (story, trickiest unit — validates the fused terminal-race + dedup design and the TLC temporal path on the hardest model first).
+2. **`session_generation.qnt`** (parallelizable with nothing below it; exercises the second temporal model).
+3. **`reply_correlation.qnt`** + **`csrf_browser.qnt`** (parallelizable — small Apalache-invariant models, independent of each other).
+4. **`patchbay-relational.als`** (independent — Alloy, no Quint dependency).
+5. **`snapshot_recovery.qnt`** + **`authority.qnt`** (draft — compile-only; can run in parallel with the checked units since they don't block).
+6. **Emit + commit `.emitted.tla`** for each checked Quint model; record the Q4-honest standalone-check note.
+7. **Update `docs/VERIFICATION.md`** — reference the seed models and their promotion status (the feature's acceptance criterion).
+
+## When stories vs. single-feature
+
+Spawn **one child story**: `story-formal-model-command-lifecycle` (Unit 1). Rationale: it's the trickiest unit (terminal-race nondeterminism + dedup fusion + the TLC temporal path), it carries 7 of the checked properties, and a separate story gives a fresh implementation agent a smaller, focused surface. The remaining units are authored inline under the feature: Units 2–4 are small checked models, Units 5–6 are draft compile-only models, Unit 7 is Alloy. This matches the precedent (`feature-verification-contract-authority` spawned no stories for a cohesive single-stride design).
+
+## Testing
+
+There is no implementation *code* (Rust/TS) — verification is by running the checkers:
+
+- **Parse + typecheck gate**: `quint parse` + `quint compile` on every `.qnt` (catches the typed-action-parameter pitfall the bank-review found).
+- **Apalache invariant checks**: `quint verify --invariant <v> --max-steps N` exit 0 (no counterexample) for the one-state properties.
+- **TLC temporal checks**: `quint verify --backend tlc --temporal <p>` exit 0 for the two-state properties. Use default workers (the research's liveness-multi-worker caveat).
+- **Alloy checks**: `exec --command <label> --type json` → `UNSAT` for all three relational asserts.
+- **Promotion-metadata grep**: a script greps `@promotion` blocks and verifies (a) every checked-normative property-id in the vocabulary table has a `status: promoted` block, (b) no block references a misspelled property-id, (c) every `invocation` names the jar-path classpath. This is the seed of the CI coverage check the authority feature specified; full CI wiring belongs to `feature-protocol-idl-and-conformance`.
+
+## Risks
+
+- **Composed-model parse risk (highest).** The research validated hello-worlds and individual idiom snippets, not a composed Patchbay model. `command_lifecycle.qnt` fuses maps (`str -> str`), multiple `temporal` blocks, and a nondeterministic `step` with `any { ... }` alternation — none of which has been runtime-validated as a *composed* unit. The skill idioms parse individually (bank-review verified), but composition may surface Quint grammar limits (e.g. `intToString` in a Set concatenation, or map comprehension syntax). **Mitigation**: Unit 1 is implemented first and is the story; if it fails to parse, the implementation stride resolves the syntax before Units 2–7. This is an honest *design target the implementation stride must discharge*, not a verified capability — recorded as such.
+- **Projection-seam mechanism unverified.** Cross-cluster references modeled as "projected variables" (e.g. `session_generation.qnt` carries its own `lsn` rather than importing `command_lifecycle.qnt`'s) has not been validated as a Quint pattern. If projection proves awkward, the fallback is independent models with duplicated-but-bounded projection variables (the current design) — already the chosen shape, so no re-design needed, only possible syntax adjustment.
+- **TLC bounds scalability.** `command_lifecycle.qnt` with 3 command ids × 6 terminal candidates × 3 idempotency keys × `--max-steps 12` may hit TLC state-space limits or be slow. **Mitigation**: bounds are the smallest that exercise the race (≥2 terminal candidates competing); if TLC can't exhaust it, reduce to 2 command ids. Bounds are recorded per-property in `@promotion` so a re-check is reproducible.
+- **Emitted-TLA+ is not an independent re-check lane (Q4 correction).** Standalone `tla2tools-1.7.4.jar` cannot parse emitted TLA+ (`EXTENDS ... Apalache, Variants`); even with the Apalache jar on the classpath it's the same toolchain (Apalache+TLC) reached via Quint. The emitted `.tla` is an *inspection artifact*, not a second verification lane. **Accepted**: the durable, human-inspectable, version-pinned form is still valuable; the "two independent paths to TLC" framing is dropped from the rationale. Recorded here so the design does not overclaim defense-in-depth.
+- **`intToString` / string-concatenation in Quint.** The `session_generation` model uses `sid ++ ":" ++ intToString(gen)` for tombstone keys; if Quint 0.32.0 lacks `intToString` or `++` for strings, the key-shape must be adjusted (e.g. a `(str, int)` tuple as the map key). Implementation-stride resolution, not a design blocker.
+- **Property-set stability.** The checked-normative property list is a v0 commitment. If implementation reveals a stated-normative property (snapshot/authority) is safety-critical earlier than expected, it must be promoted before its behavior ships — a per-property operation, not a re-open of the baseline (per the authority feature's Q2 design).
