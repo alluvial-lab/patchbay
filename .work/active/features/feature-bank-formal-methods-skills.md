@@ -1,7 +1,7 @@
 ---
 id: feature-bank-formal-methods-skills
 kind: feature
-stage: review
+stage: done
 tags: [prose, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-research-formal-methods-tooling]
@@ -55,3 +55,17 @@ The research engagement banked current (2026) toolchains for Quint, TLA+/TLC, an
 - Discrepancies from design: none. All six acceptance criteria verified met.
 - Adjacent issues parked: none.
 - Verification: `rg` confirmed version pins, exit-code semantics, `--backend tlc` path, Alloy v0 relational-only scope + NuSMV caveat, TLA+ jar-path distinction, and `user-invocable: false` across all three skills. Line counts under 200 each.
+
+## Review (2026-07-01)
+
+**Verdict**: Approve with comments (after fixes)
+
+**Review lane**: fresh-context cross-model review on `openai-codex/gpt-5.5` (high thinking).
+
+**Blockers** (resolved in review stride):
+- **Quint idiom snippets used non-Quint syntax** — the initial snippets used invented forms (`all cmd in commands =>`, `requires(...)`, `? ... else ...`) not in the Quint grammar. Replaced with source-grounded idioms condensed from the specialist brief (`all {}`/`any {}`/`nondet ... oneOf()`/`temporal ... = always(... next(...))`).
+- **`quint parse` mislabeled as typecheck** — the skill said `quint parse` does "Parse + typecheck"; the research attestation shows `compile` is the parse+typecheck command. Fixed: `quint parse` = parse only; `quint compile` = parse+typecheck+compile.
+
+**Implementation discovery during review** (load-bearing): parse-checking the idiom snippets against the installed Quint 0.32.0 revealed that **typed action parameters (`action receive(key: str)`) fail to parse** — the Quint grammar accepts *untyped* params (`action receive(key)`), which is what the getting-started docs' `action deposit(account, amount)` examples use. Fixed all idiom snippets to untyped params; all three now parse clean (`quint parse` exit 0). This means the specialist brief's idiom snippets (`formal-methods-tooling-quint.md`) carry the same typed-param defect — they were authored from docs but never runtime-validated (the research explicitly deferred parse-validation as an enriching acquisition candidate). Recorded for a future brief refresh.
+
+**Notes**: The empirical parse-check discharged the research's own enriching-acquisition-candidate ("validate whether the three Patchbay idiom snippets parse/typecheck under the current package"). The TLA+ and Alloy skills needed no fixes — the reviewer confirmed both match the substrate on all checked points. This review bar caught a real defect the second time (grant-shape found blocker+important; verification-authority found blocker+2-important; the research adversarial-read found a real exit-code error; this review found two real Quint-syntax errors). Nits: none.

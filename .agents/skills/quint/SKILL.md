@@ -42,11 +42,13 @@ module Counter {
 
 | Command | Purpose |
 |---|---|
-| `quint parse <file>` | Parse + typecheck (no execution). |
+| `quint parse <file>` | Parse (syntax check; does not typecheck or execute). |
+| `quint compile <file>` | Parse + typecheck + compile (default target JSON; `--target tlaplus` emits TLA+). Use this for typecheck validation. |
 | `quint run <file> --invariant <v> --max-steps N` | Simulator (Rust evaluator); finds invariant violations by random trace. |
 | `quint verify <file> --invariant <v> --max-steps N` | Model-check via Apalache (default backend); bounded invariant checking. |
 | `quint verify <file> --backend tlc --invariant <v>` | Model-check via TLC (temporal/liveness; finite-state). |
 | `quint verify <file> --backend tlc --temporal <p>` | TLC temporal-property checking. |
+| `quint test <file> --match <run-name>` | Run named Quint `run` tests. |
 | `quint compile <file> --target tlaplus` | Emit TLA+ to stdout (through Apalache's `TLA` command). |
 
 **Exit-code semantics (load-bearing):** `quint run` and `quint verify` exit **non-zero (1)** when a counterexample/violation is found. This is correct checker behavior, not an error — do not treat exit 1 as a tool failure. Exit 0 = no violation found within bounds.
@@ -64,22 +66,57 @@ On a violation, Quint emits a trace and writes artifacts under `_apalache-out/se
 
 ## Patchbay property idioms
 
-Terminal-finality (once terminal, later events don't mutate state):
-```quint
-temporal terminalFinality = always(all cmd in commands => cmd.state == "completed" implies always(cmd.state == "completed"))
-```
+These patterns are condensed from the specialist brief's source-grounded snippets. State machines compose transitions with `any { ... }` (alternation) and `all { ... }` (conjunction); nondeterminism uses `nondet x = Set(...).oneOf()`.
 
-Idempotent retry (same idempotency key doesn't double-apply):
+**Terminal-finality** (once terminal, later events don't mutate state) — an action-level no-op for terminal retries plus a temporal next-state property:
 ```quint
-val no_double_apply = all k in appliedKeys => countApplied(k) <= 1
-```
-
-Monotonic generation (strictly-greater supersession; lower rejected, equal no-op):
-```quint
-action report_generation(s, g) = all {
-  requires(g > currentGen(s) or g == currentGen(s)),
-  g > currentGen(s) ? currentGen' = g else currentGen' == currentGen
+module TerminalFinality {
+  var phase: str
+  var payload: int
+  pure val TERMINAL = Set("done", "failed")
+  action init = all { phase' = "open", payload' = 0 }
+  action mutate = all { not(phase.in(TERMINAL)), payload' = payload + 1, phase' = phase }
+  action finish = all { phase' = "done", payload' = payload }
+  action retryAfterTerminal = all { phase.in(TERMINAL), phase' = phase, payload' = payload }
+  action step = any { mutate, finish, retryAfterTerminal }
+  temporal terminal_finality =
+    always(phase.in(TERMINAL) implies (next(phase) == phase and next(payload) == payload))
 }
+// check: quint verify TerminalFinality.qnt --backend tlc --temporal terminal_finality
+```
+
+**Idempotent retry** (same key doesn't double-apply) — model the applied-key set as state, repeated keys are no-ops, assert total ≤ unique keys:
+```quint
+module IdempotentRetry {
+  var applied: Set[str]
+  var total: int
+  action init = all { applied' = Set(), total' = 0 }
+  action receive(key) = any {
+    all { key.in(applied), applied' = applied, total' = total },
+    all { not(key.in(applied)), applied' = applied.union(Set(key)), total' = total + 1 },
+  }
+  action step = { nondet key = Set("a", "b").oneOf(); receive(key) }
+  val no_double_apply = total <= applied.size()
+  run same_key_retry_noops = (init).then(receive("a")).then(receive("a")).expect(total == 1)
+}
+// check: quint run IdempotentRetry.qnt --invariant no_double_apply
+//        quint test IdempotentRetry.qnt --match same_key_retry_noops
+```
+
+**Monotonic generation** (strictly-greater supersession; lower/equal are no-ops):
+```quint
+module MonotonicGeneration {
+  var generation: int
+  var value: int
+  action init = all { generation' = 0, value' = 0 }
+  action submit(newGen, newValue) = any {
+    all { newGen > generation, generation' = newGen, value' = newValue },
+    all { newGen <= generation, generation' = generation, value' = value },
+  }
+  action step = { nondet newGen = 0.to(5).oneOf(); nondet newValue = 0.to(10).oneOf(); submit(newGen, newValue) }
+  temporal generation_monotonic = always(next(generation) >= generation)
+}
+// check: quint verify MonotonicGeneration.qnt --backend tlc --temporal generation_monotonic
 ```
 
 ## Pitfalls
