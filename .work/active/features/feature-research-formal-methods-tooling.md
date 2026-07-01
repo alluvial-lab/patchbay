@@ -38,16 +38,24 @@ The implementor's self-assessment: TLA+/TLC is passable but unpinned (stale CLI 
 - Investigate the current (2026) toolchains for Quint, TLA+/TLC, and Alloy 6 from primary sources (official docs, repos, release notes).
 - Verify installation and a working author→check round-trip in this environment for each.
 - Produce a synthesis brief with: per-language current syntax essentials, the exact tool invocations, installation steps, idioms for the Patchbay property shapes, and the verified hello-world artifacts.
-- Produce auto-loading reference skills under `.agents/skills/` (Quint, TLA+, Alloy) so future model-authoring work has banked, version-pinned API knowledge.
 - Surface the Q1 outcome: does Quint-primary-checked-via-TLC work here, or does the seed fall back to pure-TLA+?
 
 ## Expected output
 
+The `[research]` tag routes this to the agentic-research `research-orchestrator`, which produces ARD-checked `.research/` artifacts (anti-fabrication discipline, citation lint, adversarial read). The orchestrator does NOT author `.agents/skills/` reference skills itself — those are a deliberate follow-on step built from its checked findings (see "Follow-on" below).
+
+This engagement produces:
 - Synthesis brief: `.research/analysis/briefs/formal-methods-tooling.md`
 - Source attestations: `.research/attestation/{quint,tla2tools,alloy6,...}.md`
-- Verified hello-world artifacts: one per language in the brief or a linked `specs/seed/` location
-- Reference skills: `.agents/skills/{quint,tla-plus,alloy}/SKILL.md`
+- Verified hello-world artifacts: one per language (checked-in; location per the brief — likely `specs/seed/`)
 - A confirmed Q1 answer (Quint-primary-checked-via-TLC vs pure-TLA+ fallback) handed to `feature-formal-model-seed`
+
+## Follow-on (separate, after this engagement closes)
+
+- `/agentic-research:research-handoff` (operator-confirmed, never auto-fires) emits a `[prose]` `.work/` item grounded in this brief.
+- `prose-author` then crafts the auto-loading reference skills under `.agents/skills/{quint,tla-plus,alloy}/SKILL.md` — distilled from the brief, version-pinned, specific trigger keywords, `user-invocable: false`, under 200 lines each. This is the first time `.agents/skills/` would exist in this repo.
+
+The two-step path is deliberate: ARD discipline (citation lint, adversarial read) makes the tooling findings trustworthy before they're distilled into auto-loading skills, because a wrong API pattern baked into a reference skill is inherited by every future model-authoring agent.
 
 ## Relationship to consuming work
 
