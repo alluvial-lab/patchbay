@@ -1,2 +1,5 @@
 # Pi / remote-pi local mesh runtime state
 .pi/
+*.jar
+specs/seed/_apalache-out/
+specs/seed/states/
