@@ -1,7 +1,7 @@
 ---
 id: feature-research-formal-methods-tooling
 kind: feature
-stage: drafting
+stage: done
 tags: [research, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: []
@@ -66,3 +66,13 @@ The two-step path is deliberate: ARD discipline (citation lint, adversarial read
 ## Extension pressure test
 
 - Coordinate with `feature-extension-seams-non-foreclosure`: the tool choice (Quint vs pure-TLA+) is a committed v0 decision once the research concludes; the seam to switch tools later is preserved by keeping model intent portable (already a VERIFICATION.md principle). No v0 assumption should be encoded as permanent architecture unless intentionally rejected.
+
+## Engagement record
+
+Completed: 2026-07-01. `research_completion`: `close-to-done` (CONVENTIONS default).
+
+- Fan-out: multi-specialist, 3 parallel `openai-codex/gpt-5.5` specialists (Quint, TLA+/TLC, Alloy 6).
+- Gate outcomes: lint pass (0 broken, 0 thin, 356 resolved citations); adversarial-read NEEDS-REVISION -> revised (fixed exit-code claim, added missing `quint-model-checkers{8}` anchor, fixed wrong `{4}` anchors, marked design inferences, preserved Alloy anti-spoofing caveat); spot-check pass.
+- Outputs: synthesis brief `.research/analysis/briefs/formal-methods-tooling.md` + 3 specialist briefs + verification checklist `.research/analysis/briefs/formal-methods-tooling-verification.md` + 30 per-source attestations + verified hello-world artifacts `specs/seed/`.
+- Q1 verdict: Quint-primary-checked-via-TLC CONFIRMED (empirically validated; `quint verify --backend tlc` runs TLC end-to-end, finds counterexamples, exit 1).
+- Follow-on (separate, operator-confirmed via `/agentic-research:research-handoff`): emit a `[prose]` item, then `prose-author` crafts `.agents/skills/{quint,tla-plus,alloy}/SKILL.md` reference skills from the brief.
