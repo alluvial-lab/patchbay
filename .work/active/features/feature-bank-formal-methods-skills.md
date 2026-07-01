@@ -1,7 +1,7 @@
 ---
 id: feature-bank-formal-methods-skills
 kind: feature
-stage: drafting
+stage: review
 tags: [prose, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-research-formal-methods-tooling]
@@ -46,3 +46,12 @@ Each skill:
 **Source**: `.research/analysis/briefs/formal-methods-tooling.md` (slug: `formal-methods-tooling`)
 
 The research engagement banked current (2026) toolchains for Quint, TLA+/TLC, and Alloy 6 from primary sources, empirically validated they install and check in this environment, and confirmed the Q1 verdict (Quint-primary-checked-via-TLC). The specialist briefs under `.research/analysis/briefs/formal-methods-tooling-{quint,tla,alloy}.md` and the 30 per-source attestations under `.research/attestation/` are the source material for these reference skills. Distilling them into auto-loading skills makes the verified API knowledge available to future model-authoring agents (notably `feature-formal-model-seed`) without re-reading the full research substrate.
+
+## Implementation notes
+
+- Files created: `.agents/skills/quint/SKILL.md`, `.agents/skills/tla-plus/SKILL.md`, `.agents/skills/alloy/SKILL.md`. First `.agents/skills/` content in the repo.
+- Authored from the verified research brief + 3 specialist briefs + 30 attestations + the empirically-validated `specs/seed/` hello-world artifacts. Every CLI invocation, version pin, and exit-code claim is grounded in the research substrate.
+- Each skill under 200 lines (93/104/102), `user-invocable: false`, version-pinned (Quint 0.32.0, tla2tools v1.7.4, Alloy 6.2.0), with specific trigger keywords for auto-loading.
+- Discrepancies from design: none. All six acceptance criteria verified met.
+- Adjacent issues parked: none.
+- Verification: `rg` confirmed version pins, exit-code semantics, `--backend tlc` path, Alloy v0 relational-only scope + NuSMV caveat, TLA+ jar-path distinction, and `user-invocable: false` across all three skills. Line counts under 200 each.
