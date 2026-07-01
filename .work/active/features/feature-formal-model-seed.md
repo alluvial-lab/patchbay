@@ -4,9 +4,9 @@ kind: feature
 stage: drafting
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
-depends_on: [feature-command-state-ssot, feature-verification-contract-authority]
+depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-01
 gate_origin: null
 release_binding: null
 ---
