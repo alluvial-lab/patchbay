@@ -1,7 +1,7 @@
 ---
 id: feature-verification-contract-authority
 kind: feature
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-persistence-snapshot-model, feature-security-threat-model, feature-research-contract-tooling]
@@ -278,3 +278,18 @@ There is no implementation code yet. Verification for this design is by document
 - Discrepancies from design: none. All five units landed as specified. Verified each named checked-normative property (`TerminalFinality`, `LsnDeterminesTerminalWinner`, `PreAppendTerminalChoice`, `LateGenerationInert`, `GenerationMonotonic`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, plus the crash-recovery and CSRF spine claims) resolves to an existing property in the VERIFICATION model-areas list — no invented property ids.
 - Adjacent issues parked: none.
 - Verification: `rg` confirmed the 5-row authority table is present; "default candidate" is fully removed from SPEC; PROTOCOL's opening paragraph distinguishes product-intent/vocabulary authority (permanent) from wire-shape authority (provisional, passes to `.proto`); cross-references are bidirectional (VERIFICATION↔PROTOCOL↔SPEC); ARCHITECTURE's unchanged "prose source of truth until generated contracts exist" boundary rule composes with the split. The "Required model areas" header is retained because the tiers are *within* areas, not a replacement for the areas list.
+
+## Review (2026-06-30)
+
+**Verdict**: Approve with comments (after fixes)
+
+**Review lane**: deep, substrate mode, fresh-context cross-model (different class than the GLM-5.2 implementor). One convergence loop on `openai-codex/gpt-5.5` (high thinking); ran 3 passes, findings stabilized → no second adversarial pass needed.
+
+**Blocker** (resolved in review stride):
+- Snapshot semantics demoted despite SPEC's verification floor. SPEC line 32 names "snapshots" in the v0 verification floor, but the implementation had put *all* of "Snapshot convergence" in stated-normative, leaving the safety-critical snapshot properties (reject stale/cross-authority snapshots, consistent log-prefix read) outside the checked floor. This was foundation-doc drift (SPEC↔VERIFICATION) and contradicted the design's own "seed done right" rationale. **Fixed**: split the snapshot area — core snapshot safety (stale/cross-domain rejection, consistent log prefix, late-event audit-not-rewrite) promoted to checked-normative; compaction/cursor/operational nuances stay stated-normative. The checked property text mirrors the existing Snapshot convergence model-area properties verbatim.
+
+**Important** (resolved in review stride):
+- `TypedCorrelation` left out of checked-normative. v0 ships correlated replies/events and `TypedCorrelation` is anti-forgery (a reply cannot masquerade as a command or cross session/authority contexts) — safety semantics, not an edge-case refinement. **Fixed**: promoted the core `TypedCorrelation` property to checked-normative; only duplicate-reply and reference-resolution refinements remain stated.
+- `.proto` "enum vocabulary" wording blurred the wire-shape-only boundary. If `.proto` owns "enum vocabulary" while prose owns "vocabulary naming," enum *names* are ambiguously placed, risking the canonical prose registry losing authority over variant names. **Fixed**: narrowed VERIFICATION's authority table to "enum wire encoding" (not authority for "enum variant naming") and SPEC's wording to "wire encoding of enum vocabularies" + "not the canonical registry of protocol variant names." Product variant naming stays prose authority.
+
+**Notes**: Reviewer's bash tool hit the same `.claude/commands` sandbox issue seen earlier this session, so it read the full current artifact files directly rather than `git show` — did not affect the review. All three findings were genuine drift/coherence gaps, not padding; the review bar earned its keep again (grant-shape found blocker+important; this feature found blocker+2-important). Nits: none.

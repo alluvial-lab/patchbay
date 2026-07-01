@@ -9,7 +9,7 @@ Authority is question-type-layered, not a single ranked list. Each artifact type
 | Question type | Authority | Not authority for |
 |---|---|---|
 | Invariants, dynamic/relational properties | Formal models (TLA+/Quint/Alloy), once promoted | wire shape, product intent naming |
-| Wire shape, field identity, enum vocabulary, payload envelopes | `.proto` (Protobuf+Buf) | invariants, product intent |
+| Wire shape, field identity, enum wire encoding, payload envelopes | `.proto` (Protobuf+Buf) | invariants, product intent, enum variant naming |
 | Product intent, vocabulary naming, registry names | Prose (`docs/PROTOCOL.md`, `docs/SPEC.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`) | invariants, wire shape |
 | Expected executable examples for a specific scenario | Conformance vectors, once promoted | invariants, wire shape, product intent |
 | Anything | Implementation (never authority) | — |
@@ -30,13 +30,15 @@ Each required model area below is obligated at v0. Properties within each area a
 - Authority safety: no-command-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds`; revocation prevents future command acceptance under the revoked grant.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay (replaying the same committed prefix produces identical state).
 - Browser session and CSRF boundary: a state-changing request without an authenticated operator session is rejected before command acceptance; a state-changing request without a valid session-bound CSRF proof is rejected before command acceptance; revoked or expired operator sessions cannot issue new commands.
+- Snapshot convergence (core safety): a snapshot with an LSN strictly less than the core's current revision for that view is rejected as an authority source and replaced by the current view; a snapshot from a different authority domain or core generation is rejected outright; snapshot materialization reads a consistent log prefix (every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`); a late event whose LSN is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
+- Reply correlation (core safety): `TypedCorrelation` — a reply correlates by typed reference to a known command or message id in the same authority/session context and cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts.
 
 **stated-normative** — documented v0 obligation with a *draft* model, not yet checked-to-pass; scheduled for promotion post-v0. Covers liveness/cosmetic/operational properties:
 
-- Snapshot convergence: compaction and cursor validity, late-event audit handling nuances.
+- Snapshot convergence (refinements): compaction and cursor validity nuances; "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
-- Reply correlation: typed-correlation edge cases beyond the checked wrong-session/idempotency core.
+- Reply correlation (refinements): duplicate-reply idempotency/rejection and reference-resolution edge cases beyond the checked `TypedCorrelation` core.
 
 This composes with the model-promotion rule: a property promotes its model **and** its vectors together. "checked-normative" = model promoted + ≥1 promoted vector; "stated-normative" = draft model, no promoted vector yet. Promotion is a per-property operation; if implementation reveals a safety-critical property classified stated-normative, it must be promoted before its behavior ships.
 

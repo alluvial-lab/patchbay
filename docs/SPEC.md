@@ -74,9 +74,9 @@ The web cockpit is responsive and mobile-first so phone, laptop, and desktop use
 
 ### Protocol contracts
 
-Patchbay uses Protobuf schemas managed by Buf as the v0 boundary-contract source for durable protocol messages, command/event payloads, and shared enum vocabularies across the Rust coordination core and TypeScript operator domain.
+Patchbay uses Protobuf schemas managed by Buf as the v0 boundary-contract source for durable protocol messages, command/event payloads, and the wire encoding of shared enum vocabularies across the Rust coordination core and TypeScript operator domain.
 
-- `.proto` files are the source for wire contracts and boundary DTOs, not the full internal domain model.
+- `.proto` files are the source for wire contracts and boundary DTOs (including the wire encoding of enum vocabularies), not the full internal domain model and not the canonical registry of protocol variant names.
 - Rust types are generated via prost/prost-build; TypeScript types via Protobuf-ES. Generated outputs are artifacts, never hand-edited.
 - `buf.gen.yaml` is checked in; `buf lint` and `buf breaking` run locally and in CI.
 - JSON Schema / TypeBox / Zod are reserved for JSON-native local validation surfaces, not as the cross-language protocol source.
