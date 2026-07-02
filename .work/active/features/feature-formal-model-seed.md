@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -502,3 +502,49 @@ Unit 2 is implemented and all 4 properties check (`[ok]`). Implementation used t
 - Avoided unverified `intToString` and string `++`; tuple keys were parse/typecheck validated before use.
 - Used a unified conditional `step` event (`report` / `late` / `relabel`) so Apalache's temporal checker completes at the required `--max-steps 10` while preserving permissive lower/equal generation no-ops and stale late-event no-ops.
 - `session_generation.emitted.tla` is generated and committed as an inspection artifact only, not an independent verification lane.
+
+## Orchestrator implementation summary (2026-07-01)
+
+All 7 implementation units are complete. The feature was implemented as 1 child story (Unit 1, the trickiest unit — done separately) + 6 inline units authored via parallel sub-agent dispatch (the orchestrator's childless-feature / inline-units case, since the design specified Units 2–7 as inline feature work, not stories).
+
+### Units delivered
+
+| Unit | File | Tier | Status |
+|---|---|---|---|
+| 1 | `specs/seed/command_lifecycle.qnt` (+ `.emitted.tla`) | checked | done (story, 7 properties `[ok]`) |
+| 2 | `specs/seed/session_generation.qnt` (+ `.emitted.tla`) | checked | done (4 properties `[ok]`) |
+| 3 | `specs/seed/reply_correlation.qnt` (+ `.emitted.tla`) | checked | done (1 property `[ok]`) |
+| 4 | `specs/seed/csrf_browser.qnt` (+ `.emitted.tla`) | checked | done (3 properties `[ok]`) |
+| 7 | `specs/seed/patchbay-relational.als` | checked | done (3 asserts `UNSAT`) |
+| 5 | `specs/seed/snapshot_recovery.qnt` | stated (draft) | done (compiles, 6 reserved ids) |
+| 6 | `specs/seed/authority.qnt` | stated (draft) | done (compiles, 4 reserved ids) |
+
+### Dispatch (2 waves, 6 parallel sub-agents, all openai-codex per AGENTS.md)
+
+- **Wave 1 (4 parallel)**: Unit 2 (`gpt-5.5` high), Unit 3 (`gpt-5.5` high), Unit 4 (`gpt-5.5` high), Unit 7 Alloy (`gpt-5.5` high). All checked models + Alloy, file-independent.
+- **Wave 2 (2 parallel)**: Unit 5 draft, Unit 6 draft (`gpt-5.3-codex-spark` medium — compile-only draft models, lower complexity).
+- **Bundling**: no multi-item bundles — each unit is one independent file with its own verification surface, so one agent per item (the default). Parallelism followed file-write ownership, not item count.
+
+### Integration verification (orchestrator re-ran, not just trusting agent claims)
+
+- All 4 checked `.qnt` models: `quint parse` + `quint compile` exit 0.
+- Spot-checked one property per checked model: `generation_monotonic` `[ok]`, `typed_correlation` `[ok]`, `csrf_rejects_unauthenticated` `[ok]` (Unit 1 re-confirmed in its review).
+- Alloy: all 3 asserts `UNSAT` (the CLI writes status to output dirs, not stdout — confirmed by agents and consistent with the skill's documented behavior).
+- Both draft models: `quint parse` + `quint compile` exit 0.
+- `@promotion` block counts: 27 across the 6 Quint models + 3 in Alloy = 30 total. Property-id vocabulary established as SSOT for the entire checked-normative set (checked + draft).
+
+### Deviations across items (recorded by agents, consolidated here)
+
+- **Unit 2 (session_generation)**: avoided unverified `intToString`/string `++` (the Risks-section flag was correct — not in the attestation); used `(str, int)` tuple keys for tombstones. Unified conditional `step` so Apalache temporal completes at `--max-steps 10`.
+- **Unit 3 (reply_correlation)**: discovered `pure def` cannot read state variables — helpers inspecting state use `def`. Used filter-in-action encoding (invalid reply attempts leave no record; invariant asserts all recorded replies are valid).
+- **Unit 4 (csrf_browser)**: same `pure def` → `def` discovery. Permissive request action accepts any session/proof/UI-claim; acceptance computed from server-side evidence only.
+- **Unit 7 (Alloy)**: resolved the fact-vs-assert genuine-check question by modeling `fact DelegationRemovedV0 { no Grant }` (the v0 premise) and asserting acyclicity as a consequence (not a self-defining tautology). Used `let issuer = ~subject.issuer | no a: Actor | a in a.^issuer` for transitive closure over the Actor→Actor graph (the design's `g.issuer.^issuer` was the wrong relation shape).
+- **No design flaws** triggered the escape hatch — all deviations were syntax/encoding fixes resolved in-stride, consistent with the "implementation target, not verified claim" risk posture recorded at design time.
+
+### VERIFICATION.md update (feature acceptance criterion)
+
+`docs/VERIFICATION.md` now references the seed models and their promotion status: a "Seed models (v0)" section with checked-normative and stated-normative tables, the toolchain note (Apalache-temporal, not TLC), and the emitted-TLA+ inspection-artifact caveat.
+
+### Verification status
+
+All checked properties pass (`[ok]` / `UNSAT`); all draft models compile; property-id vocabulary complete; emitted TLA+ artifacts committed. The residual risk from Unit 1 (Apalache-temporal experimental support for safety-claiming temporal properties) carries forward unchanged — flagged in the Unit 1 review and the feature's Implementation discovery section.

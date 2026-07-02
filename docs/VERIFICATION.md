@@ -269,3 +269,32 @@ A model becomes normative only when it includes:
 - a short explanation connecting the model to product semantics.
 
 Draft models may explore ideas without becoming product commitments.
+
+## Seed models (v0)
+
+The v0 seed formal models live under `specs/seed/`. Each model carries its promotion metadata as inline `@promotion` comment blocks (one per checked/draft property) — the machine-readable source a future CI script reads to generate the traceability table above. The property-id vocabulary established by the seed is the Single Source of Truth that `.proto` contracts, conformance vectors, and implementation all derive from.
+
+### Checked-normative (model promoted; awaiting conformance vectors)
+
+| Model | Language | Properties checked | Backend |
+|---|---|---|---|
+| `specs/seed/command_lifecycle.qnt` | Quint | `CommandDurability`, `BoundaryDedup` (invariants); `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` (temporal) | Apalache + Apalache-temporal |
+| `specs/seed/session_generation.qnt` | Quint | `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (invariants); `GenerationMonotonic`, `LateGenerationInert` (temporal) | Apalache + Apalache-temporal |
+| `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) | Apalache |
+| `specs/seed/csrf_browser.qnt` | Quint | `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand` (invariants) | Apalache |
+| `specs/seed/patchbay-relational.als` | Alloy | `ActorIdsUnique`, `AuthorityGraphAcyclic`, `SenderMatchesClaim` | Alloy CLI |
+
+Each checked Quint model also commits a generated `*.emitted.tla` inspection artifact (via `quint compile --target tlaplus`); these are generated, never hand-edited, and are NOT an independent re-check lane (they `EXTENDS ... Apalache, Variants` and need the Apalache jar on the classpath — same toolchain reached via Quint).
+
+### Stated-normative (draft models; property-ids reserved)
+
+| Model | Language | Reserved property-ids |
+|---|---|---|
+| `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
+| `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture` |
+
+`TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state).
+
+### Toolchain note (implementation discovery)
+
+Quint temporal properties using `next()` inside `always()` are checked via the **Apalache default backend** (`echo y | quint verify --temporal <p> --max-steps 10`), not `--backend tlc`. The Quint→TLA+ compilation emits `[](...)` forms that TLC rejects with `[] followed by action not of form [A]_v`. Apalache checks these correctly but warns its temporal support is experimental; all checked temporal properties here are `always(...)` safety (not `eventually` liveness), the more conservative end of Apalache's temporal support. Tool versions: Quint 0.32.0, Apalache 0.56.1, Alloy 6.2.0, tla2tools 1.7.4. See `feature-formal-model-seed` Implementation discovery for detail.
