@@ -628,3 +628,19 @@ The feature re-advances `implementing → review` for the second deep-review re-
 **Residuals**: `idea-tlc-temporal-workaround` (experimental-temporal) — adequate disclosure. `idea-csrf-trace-fidelity` — partially applied (csrf_browser only, and incompletely per I1); the fix story completes it.
 
 **Notes**: This is the third deep pass over the seed models. The arc: first review caught 6 self-defining properties; second caught a fix-pass regression (B5/B6 vacuous-true → actually-false); this third pass found the B2-trace fix was itself incomplete (`attemptedProof` still action-recorded) plus metadata drift. Each pass caught what the previous couldn't because each attacked from a fresh angle. The promoted safety-critical properties now genuinely hold — the remaining findings are a deeper trace-fidelity refinement (I1, filed) and draft-metadata consistency (I2, filed), neither of which undermines the soundness of the checked properties. Advancing to done with the findings filed as a follow-up story rather than blocking: the safety claims that ARE promoted are sound, and the gaps are honestly disclosed + tracked. The feature delivers its acceptance criteria (checked-normative properties genuinely checked, draft models with reserved ids, property-id vocabulary as SSOT, VERIFICATION.md referencing the models). Two block→fix cycles + this approve-with-comments is the right cost for a safety-claiming artifact.
+
+## Final re-review (2026-07-01, post-follow-up)
+
+**Verdict**: Approve (re-advanced to done)
+
+**Lane**: deep-lane posture, host-run (the follow-up story was fast-lane reviewed; this is the parent re-review the substrate requires when a child changes under a done feature — the procedural step skipped when the follow-up was filed under the already-done feature).
+
+**Context**: `story-fix-csrf-trace-and-ssot-drift` (the follow-up filed at the second feature review) landed and was fast-lane reviewed to `done`. Filing a child under a done feature re-opens the parent's review surface in principle; this pass closes that gap. All 5 child stories are now terminal.
+
+**Verification (host re-ran the full suite + mutation-test sweep)**:
+- All 10 promoted checks green: 7 Quint invariants `[ok]`, 2 Quint temporal `[ok]`, 1 Alloy assert `UNSAT` (0 skolems, reliable `--type text`).
+- Mutation-test sweep (the genuine-checking proof) — all 4 reproduce `[violation]`: B1 TypedCorrelation (break `typedReferenceOk`), B2-trace CSRF (drop proof check; `csrf_rejects_unauthenticated` correctly stays `[ok]` — discriminating), B3 LateGenerationInert (late mutates generation), B4 GenerationMonotonic (allow decrease). The follow-up's CSRF restructure (pre-state `attemptedProof` split) introduced no regressions.
+
+**Blockers**: none. **Important**: none. **Nits**: none.
+
+**Notes**: The follow-up's substantive work — closing the CSRF attempted-evidence trace-fidelity gap (raw submitted evidence is now pre-state the accepting action reads but cannot rewrite) and fixing the vocabulary-table SSOT drift — is verified and holds. The seed formal-model arc is complete: all promoted safety-critical properties genuinely checked (mutation-test proven end-to-end across the full review arc), SSOT consistent across the 7 model files / `docs/VERIFICATION.md` / feature body, and the two residuals (`idea-tlc-temporal-workaround`, `idea-csrf-trace-fidelity`) honestly disclosed in backlog. The procedural lesson recorded: filing a child under a done feature re-opens its review surface — re-review the parent when the child lands, even for "post-hoc refinements."
