@@ -1,7 +1,7 @@
 ---
 id: story-fix-csrf-trace-and-ssot-drift
 kind: story
-stage: implementing
+stage: review
 tags: [verification, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -41,3 +41,20 @@ Second feature-level deep re-review (`openai-codex/gpt-5.5`, xhigh) found two im
 
 ## Implementation notes
 - The I1 fix is the `idea-csrf-trace-fidelity` pattern's correct completion. After this, the backlog item can note the pattern is now applied properly in csrf_browser.qnt and should be reused for authority.qnt's CompoundIssuer when promoted.
+
+## Implementation notes
+
+- Files changed: `specs/seed/csrf_browser.qnt` (I1), `specs/seed/patchbay-relational.als` (nit), `.work/active/features/feature-formal-model-seed.md` (I2), regenerated `csrf_browser.emitted.tla`.
+- Tests added: none (verification is by running the checkers + mutation tests).
+- Fixes:
+  - **I1 (CSRF attempted-evidence)**: split request capture from server processing. Added an `arriveRequest` action that sets the RAW submitted evidence (`attemptedSession`/`attemptedProof`) as pre-state (plus `requestPending`); `submitStateChangingRequest` now takes no evidence args — it READS `attemptedSession`/`attemptedProof` but does NOT rewrite them. The accepting action can no longer lie about what was submitted. `arriveRequest` also resets `accepted=false` so the invariants reason about the current request, not a stale prior acceptance. The combined mutation (drop the proof check) now reliably fails `csrf_rejects_missing_proof` (`[violation]`) while `csrf_rejects_unauthenticated` stays `[ok]` (discriminating).
+  - **Root-cause during implementation (test-integrity)**: the initial split broke the invariants (`[violation]` on the unchanged model) because `accepted` was a lingering outcome while `attemptedSession`/`attemptedProof` got overwritten by a new `arriveRequest`. Fixed by resetting `accepted=false` in `arriveRequest`. This is exactly the test-integrity discipline: the counterexample surfaced a real model bug (stale `accepted`), not a bad property.
+  - **I2 (SSOT drift)**: fixed three vocabulary-table rows — `TimeoutNeitherSuccessNorDenial` model → `<transport model (future)>`; `CompoundIssuer` backend → `apalache` (matches @promotion); `RevocationPreventsFuture` backend → `apalache-temporal` (matches @promotion).
+  - **Nit**: rewrote the `ActorIdsUniqueAssert` comment to drop the overstated non-vacuity claim (a fact-consequence check doesn't establish non-vacuity by itself).
+- Mutation-test results (acceptance criterion):
+  - I1: drop the proof check (`serverAccepts` ignores proof) → `csrf_rejects_missing_proof` `[violation]`, `csrf_rejects_unauthenticated` `[ok]` (discriminating) ✓
+  - B1/B4 regression sweep: still genuine (`[violation]`) — not regressed by the CSRF edits.
+  - All 3 CSRF invariants `[ok]` on the unchanged model; Alloy `ActorIdsUniqueAssert` UNSAT (0 skolems).
+- Discrepancies from design: none — the I1 fix is the `idea-csrf-trace-fidelity` pattern's correct completion as the story specified.
+- Adjacent issues parked: none new. The `idea-csrf-trace-fidelity` backlog pattern is now properly applied in csrf_browser.qnt; the note there should be updated to reflect the pre-state split is the correct shape (the authority.qnt CompoundIssuer, when promoted, should use the same environment-evidence split).
+- Verification: all promoted CSRF invariants `[ok]`; combined mutation `[violation]`; SSOT consistency grep confirms draft authority backends match across feature body / @promotion / VERIFICATION.md.

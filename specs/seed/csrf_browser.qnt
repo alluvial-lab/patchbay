@@ -34,14 +34,16 @@ module csrf_browser {
   var lastSession: str
   var lastProof: str
 
-  // --- attempted-evidence state (the RAW submitted values, distinct from lastSession/lastProof) ---
-  // The invariants check THESE, not lastSession/lastProof. This is the genuine-checking
-  // discipline extended to the evidence-recording layer: the action cannot fool the invariant
-  // by lying about what was submitted (setting lastProof to the bound proof regardless of input).
-  // See idea-csrf-trace-fidelity. lastSession/lastProof are retained as the recorded trace for
-  // audit/observability but are NOT what the safety invariants consult.
+  // --- environment pre-state: the RAW submitted evidence (set by arriveRequest, NOT by submit) ---
+  // This is the genuine-checking fix for the trace-fidelity gap (idea-csrf-trace-fidelity / story-fix-csrf-trace).
+  // The accepting action (submitStateChangingRequest) READS these but CANNOT rewrite them — so it
+  // cannot lie about what was submitted. The invariants consult these pre-state values, not the
+  // action-recorded lastSession/lastProof. A combined mutation (drop the proof check AND set
+  // attemptedProof to the bound proof) is now impossible: submit doesn't assign attemptedProof.
   var attemptedSession: str
   var attemptedProof: str
+  // tracks whether a request is pending arrival (so submit only fires after arrive)
+  var requestPending: bool
 
   // Browser-local claims are deliberately modeled and deliberately ignored by the
   // acceptance rule. They represent UI optimism such as "this session still looks live"
@@ -79,34 +81,58 @@ module csrf_browser {
     lastProof' = "missing_proof",
     attemptedSession' = "missing_session",
     attemptedProof' = "missing_proof",
+    requestPending' = false,
     browserLocalSessionLive' = false,
     browserLocalGrantClaim' = false,
   }
 
-  // Permissive request attempt: every session/proof in the finite request space may be
-  // submitted, and browser-local UI may optimistically claim the session/grant is good.
-  // Acceptance ignores those local claims and depends only on server-side evidence.
-  action submitStateChangingRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent) = all {
+  // Environment action: a request ARRIVES with raw submitted evidence. This action sets the
+  // pre-state attemptedSession/attemptedProof (the submitted values) and marks a request pending.
+  // The accepting action below reads these but does NOT rewrite them — so the accepting action
+  // cannot lie about what was submitted. Browser-local UI claims also arrive here as environment
+  // input the server cannot forge.
+  action arriveRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent) = all {
     session.in(SESSION_IDS),
     proof.in(PROOFS),
-    accepted' = serverAccepts(session, proof),
-    lastSession' = session,
-    lastProof' = proof,
     attemptedSession' = session,
     attemptedProof' = proof,
     browserLocalSessionLive' = uiSaysSessionLive,
     browserLocalGrantClaim' = uiSaysGrantPresent,
+    requestPending' = true,
+    // a new request arriving means the prior acceptance is no longer the current outcome —
+    // reset accepted so the invariants reason about THIS request, not a stale prior one
+    accepted' = false,
+    lastSession' = lastSession,
+    lastProof' = lastProof,
     operatorSessions' = operatorSessions,
     csrfProofs' = csrfProofs,
     sessionStatus' = sessionStatus,
   }
 
-  action step = {
-    nondet session = SESSION_IDS.oneOf()
-    nondet proof = PROOFS.oneOf()
-    nondet uiSaysSessionLive = Set(true, false).oneOf()
-    nondet uiSaysGrantPresent = Set(true, false).oneOf()
-    submitStateChangingRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent)
+  // Server processing: reads the pending request's RAW evidence (attemptedSession/attemptedProof
+  // — set by arriveRequest, NOT rewritable here) and applies the acceptance rule. It records the
+  // outcome in lastSession/lastProof/accepted (the recorded trace) but the INVARIANTS consult the
+  // pre-state attempted* values, not these. A buggy acceptance rule (e.g. dropping the proof check)
+  // is caught because attemptedProof != csrfProofs.get(attemptedSession) for a wrong-proof request.
+  action submitStateChangingRequest = all {
+    requestPending,
+    accepted' = serverAccepts(attemptedSession, attemptedProof),
+    lastSession' = attemptedSession,
+    lastProof' = attemptedProof,
+    requestPending' = false,
+    // submit does NOT rewrite attemptedSession/attemptedProof (the genuine-checking invariant)
+    attemptedSession' = attemptedSession,
+    attemptedProof' = attemptedProof,
+    browserLocalSessionLive' = browserLocalSessionLive,
+    browserLocalGrantClaim' = browserLocalGrantClaim,
+    operatorSessions' = operatorSessions,
+    csrfProofs' = csrfProofs,
+    sessionStatus' = sessionStatus,
+  }
+
+  action step = any {
+    nondet session = SESSION_IDS.oneOf(); nondet proof = PROOFS.oneOf(); nondet uiSaysSessionLive = Set(true, false).oneOf(); nondet uiSaysGrantPresent = Set(true, false).oneOf(); arriveRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent),
+    submitStateChangingRequest,
   }
 
   // ---------------------------------------------------------------------------

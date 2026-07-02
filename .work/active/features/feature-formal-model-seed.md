@@ -6,7 +6,7 @@ tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
 created: 2026-06-28
-updated: 2026-07-01
+updated: 2026-07-02
 gate_origin: null
 release_binding: null
 ---
@@ -58,7 +58,7 @@ All checked-normative property-ids are named here, even those whose models are d
 | `TerminalFinality` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `PreAppendTerminalChoice` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `LsnDeterminesTerminalWinner` | operator intent delivery | checked | `command_lifecycle.qnt` | apalache-temporal |
-| `TimeoutNeitherSuccessNorDenial` | operator intent delivery | stated (draft) | `command_lifecycle.qnt` | apalache |
+| `TimeoutNeitherSuccessNorDenial` | operator intent delivery | stated (draft) | `<transport model (future)>` | apalache |
 | `BoundaryDedup` | idempotent retry | checked | `command_lifecycle.qnt` | apalache |
 | `RetryReusesIdAndKey` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `RetryAfterTerminalReturnsExisting` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
@@ -80,9 +80,9 @@ All checked-normative property-ids are named here, even those whose models are d
 | `CrashNoAcceptedLost` | crash recovery | stated (draft) | `snapshot_recovery.qnt` | tlc |
 | `IdempotentLogReplay` | crash recovery | stated (draft) | `snapshot_recovery.qnt` | tlc |
 | `NoCommandWithoutGrant` | authority safety | stated (draft) | `authority.qnt` | apalache |
-| `CompoundIssuer` | authority safety | stated (draft) | `authority.qnt` | tlc |
+| `CompoundIssuer` | authority safety | stated (draft) | `authority.qnt` | apalache |
 | `GrantAuthorityIsCommandKinds` | authority safety | stated (draft) | `authority.qnt` | apalache |
-| `RevocationPreventsFuture` | authority safety | stated (draft) | `authority.qnt` | apalache |
+| `RevocationPreventsFuture` | authority safety | stated (draft) | `authority.qnt` | apalache-temporal |
 
 Note: `TimeoutNeitherSuccessNorDenial` is listed as stated (draft) rather than checked because it concerns the *transport/submission* layer ("timeout implies neither success nor denial" — a failure-vocabulary property), not the command-lifecycle state machine. It belongs in a future transport/failure-vocabulary model, not `command_lifecycle.qnt`. Discovered during Unit 1 implementation when the story's 7-property scope did not include it; the vocabulary table retains the reserved property-id for the downstream model.
 

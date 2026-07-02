@@ -46,11 +46,11 @@ sig Message {
 //   semantics:   actor identities are injective in a static relational snapshot (enforced by the ActorIdsUnique fact; the assert verifies non-vacuity and that the fact's constraint holds across all instances)
 // }
 // NOTE on genuine-checking: ActorIdsUniqueAssert checks `all disj a,b: Actor | a.id != b.id`,
-// which is the SAME constraint the ActorIdsUnique fact enforces. This is a borderline case: the
-// assert verifies the fact is non-vacuously satisfiable (there exist instances where it holds),
-// and guards against a future change to the fact. It is NOT a tautology over an empty set — Alloy
-// finds instances with multiple Actors satisfying it. Verified UNSAT (no counterexample) via
-// `--type text` (no skolem witness).
+// which is the SAME constraint the ActorIdsUnique fact enforces. This is a fact-consequence
+// check: it verifies the fact holds across all instances and guards against a future change to
+// the fact. It does NOT by itself establish non-vacuity (a separate `run` finding multi-actor
+// instances would); the non-vacuity here is observed via the check finding a satisfying instance,
+// not a proof. Verified UNSAT (no counterexample) via `--type text` (no skolem witness).
 assert ActorIdsUniqueAssert {
   all disj a, b: Actor | a.id != b.id
 }

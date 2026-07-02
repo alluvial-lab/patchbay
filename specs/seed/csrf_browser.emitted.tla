@@ -72,6 +72,12 @@ VARIABLE
   (*
     @type: Bool;
   *)
+  requestPending
+
+VARIABLE
+  (*
+    @type: Bool;
+  *)
   browserLocalSessionLive
 
 VARIABLE
@@ -105,8 +111,27 @@ init ==
     /\ lastProof = "missing_proof"
     /\ attemptedSession = "missing_session"
     /\ attemptedProof = "missing_proof"
+    /\ requestPending = FALSE
     /\ browserLocalSessionLive = FALSE
     /\ browserLocalGrantClaim = FALSE
+
+(*
+  @type: ((Str, Str, Bool, Bool) => Bool);
+*)
+arriveRequest(session_192, proof_192, uiSaysSessionLive_192, uiSaysGrantPresent_192) ==
+  session_192 \in SESSION_IDS
+    /\ proof_192 \in PROOFS
+    /\ attemptedSession' := session_192
+    /\ attemptedProof' := proof_192
+    /\ browserLocalSessionLive' := uiSaysSessionLive_192
+    /\ browserLocalGrantClaim' := uiSaysGrantPresent_192
+    /\ requestPending' := TRUE
+    /\ accepted' := FALSE
+    /\ lastSession' := lastSession
+    /\ lastProof' := lastProof
+    /\ operatorSessions' := operatorSessions
+    /\ csrfProofs' := csrfProofs
+    /\ sessionStatus' := sessionStatus
 
 (*
   @type: (() => Bool);
@@ -141,25 +166,25 @@ browser_local_state_not_authority ==
 (*
   @type: ((Str) => Bool);
 *)
-authenticated(session_47) == session_47 \in operatorSessions
+authenticated(session_49) == session_49 \in operatorSessions
 
 (*
   @type: ((Str) => Bool);
 *)
-active(session_55) == sessionStatus[session_55] = "active"
+active(session_57) == sessionStatus[session_57] = "active"
 
 (*
   @type: ((Str, Str) => Bool);
 *)
-validCsrfProof(session_69, proof_69) ==
-  session_69 \in DOMAIN csrfProofs /\ proof_69 = csrfProofs[session_69]
+validCsrfProof(session_71, proof_71) ==
+  session_71 \in DOMAIN csrfProofs /\ proof_71 = csrfProofs[session_71]
 
 (*
   @type: ((Str, Str) => Bool);
 *)
-serverAccepts(session_82, proof_82) ==
-  (authenticated(session_82) /\ active(session_82))
-    /\ validCsrfProof(session_82, proof_82)
+serverAccepts(session_84, proof_84) ==
+  (authenticated(session_84) /\ active(session_84))
+    /\ validCsrfProof(session_84, proof_84)
 
 (*
   @type: (() => Bool);
@@ -167,18 +192,18 @@ serverAccepts(session_82, proof_82) ==
 q_init == init
 
 (*
-  @type: ((Str, Str, Bool, Bool) => Bool);
+  @type: (() => Bool);
 *)
-submitStateChangingRequest(session_186, proof_186, uiSaysSessionLive_186, uiSaysGrantPresent_186) ==
-  session_186 \in SESSION_IDS
-    /\ proof_186 \in PROOFS
-    /\ accepted' := (serverAccepts(session_186, proof_186))
-    /\ lastSession' := session_186
-    /\ lastProof' := proof_186
-    /\ attemptedSession' := session_186
-    /\ attemptedProof' := proof_186
-    /\ browserLocalSessionLive' := uiSaysSessionLive_186
-    /\ browserLocalGrantClaim' := uiSaysGrantPresent_186
+submitStateChangingRequest ==
+  requestPending
+    /\ accepted' := (serverAccepts(attemptedSession, attemptedProof))
+    /\ lastSession' := attemptedSession
+    /\ lastProof' := attemptedProof
+    /\ requestPending' := FALSE
+    /\ attemptedSession' := attemptedSession
+    /\ attemptedProof' := attemptedProof
+    /\ browserLocalSessionLive' := browserLocalSessionLive
+    /\ browserLocalGrantClaim' := browserLocalGrantClaim
     /\ operatorSessions' := operatorSessions
     /\ csrfProofs' := csrfProofs
     /\ sessionStatus' := sessionStatus
@@ -187,11 +212,12 @@ submitStateChangingRequest(session_186, proof_186, uiSaysSessionLive_186, uiSays
   @type: (() => Bool);
 *)
 step ==
-  \E session \in SESSION_IDS:
-    \E proof \in PROOFS:
-      \E uiSaysSessionLive \in { TRUE, FALSE }:
-        \E uiSaysGrantPresent \in { TRUE, FALSE }:
-          submitStateChangingRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent)
+  (\E session \in SESSION_IDS:
+      \E proof \in PROOFS:
+        \E uiSaysSessionLive \in { TRUE, FALSE }:
+          \E uiSaysGrantPresent \in { TRUE, FALSE }:
+            arriveRequest(session, proof, uiSaysSessionLive, uiSaysGrantPresent))
+    \/ submitStateChangingRequest
 
 (*
   @type: (() => Bool);
