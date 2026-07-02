@@ -1,7 +1,7 @@
 ---
 id: story-fix-formal-model-disclosure-drift
 kind: story
-stage: review
+stage: done
 tags: [verification, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -52,3 +52,13 @@ VERIFICATION's snapshot/recovery normative-variable list includes `SessionGenera
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
 - Verification: `quint parse` + `quint compile` exit 0 for both draft models (authority, snapshot_recovery); I1 consistency grep confirms all checked temporal properties are `apalache-temporal` across feature body / @promotion blocks / VERIFICATION.md; I4 grep confirms 0 dead actions in authority.
+
+## Review (2026-07-01)
+
+**Verdict**: Approve - fast-lane advance
+
+**Lane**: fast (story with green verification; no `--deep` requested). Substrate mode.
+
+**Blockers**: none. **Important**: none. **Nits**: none.
+
+**Notes**: Re-verified myself rather than trusting the recorded green. Both draft models parse+compile clean. I1 confirmed: all 7 checked temporal properties are `apalache-temporal` across the feature body / `@promotion` blocks / VERIFICATION.md (the remaining `tlc` references are all in draft placeholder blocks — legitimate, not drift). I4 confirmed: 0 dead actions in authority. I2/I3 confirmed. The I1 judgment call (draft `tlc` entries are placeholders, not drift) is sound — a draft property's backend is aspirational, and the criterion's intent was about *checked* temporal properties, which are all consistent. With this story done, all 3 child stories of `feature-formal-model-seed` are terminal, so the parent re-advances to review.

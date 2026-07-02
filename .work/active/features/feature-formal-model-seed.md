@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -574,3 +574,11 @@ All checked properties pass (`[ok]` / `UNSAT`); all draft models compile; proper
 **Nits**: `@promotion` invocation fields omit the `specs/seed/` path prefix (not exact from repo root); Alloy CLI `--output -` produces empty stdout for UNSAT (status is in output dirs, not console — don't claim observed `UNSAT` unless captured).
 
 **Notes**: This is the review bar earning its keep at the highest value — the cross-model adversarial pass found that 6 of the newly-promoted properties are self-defining or vacuous, which is the exact failure mode the verification program exists to prevent. The Unit 1 review (fast lane) caught 2 self-defining properties in one model; this deep review caught 6 more across the other models — confirming the pattern is systemic when agents author models without an independent check path. The host reproduced the two most damning findings (B1 TypedCorrelation, B2 CSRF) via mutation tests before classifying. The fix pattern is uniform: separate the action's implementation predicate from an independent property oracle, and verify via mutation test that breaking the predicate fails the invariant. The fixes stay within the existing design (Q1=B focused cluster, Q3=C mixed backends) — no design re-open needed, just genuine-checking rigor applied to Units 2–7 that Unit 1 already had.
+
+## Re-review readiness (2026-07-01)
+
+Both fix stories from the deep-review block are now `done`:
+- `story-fix-formal-model-genuine-checks` (done) — 6 self-defining/vacuous properties fixed; all 4 mutation tests reproduce `[violation]` (independent-oracle proof).
+- `story-fix-formal-model-disclosure-drift` (done) — 4 disclosure/drift findings fixed; draft models parse+compile; all checked temporal properties consistently `apalache-temporal` across all 3 sources.
+
+All 3 child stories are now terminal (`done`). The feature re-advances `implementing → review`. The original deep-review blockers (B1–B6) are resolved with the genuine-checking discipline empirically proven via mutation tests; the important findings (I1–I4) are resolved. The residual `idea-tlc-temporal-workaround` backlog item remains (experimental-temporal risk — not fixable in this stride).
