@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: review
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -548,3 +548,29 @@ All 7 implementation units are complete. The feature was implemented as 1 child 
 ### Verification status
 
 All checked properties pass (`[ok]` / `UNSAT`); all draft models compile; property-id vocabulary complete; emitted TLA+ artifacts committed. The residual risk from Unit 1 (Apalache-temporal experimental support for safety-claiming temporal properties) carries forward unchanged — flagged in the Unit 1 review and the feature's Implementation discovery section.
+
+## Review (2026-07-01)
+
+**Verdict**: Block (bounced to implementing)
+
+**Review lane**: deep, substrate mode, fresh-context cross-model adversarial on `openai-codex/gpt-5.5` (xhigh thinking) — a different model class than the umans orchestrator, satisfying the cross-model requirement. The host verified the reviewer's findings empirically (mutation tests reproduced) before classifying.
+
+**Blockers** (filed as `story-fix-formal-model-genuine-checks`):
+- **B1 — `TypedCorrelation` self-referential** (`reply_correlation.qnt`): the invariant's `recordedReplyOk` calls `typedReferenceOk`, the *same* helper used in the action's `replyRecordable` filter. Mutation test confirmed: setting `typedReferenceOk = true` (total anti-forgery break) leaves `typed_correlation` still `[ok]`. The invariant cannot detect a broken correlation rule.
+- **B2 — CSRF invariants self-referential** (`csrf_browser.qnt`): `validCsrfProof` is used in both the action's `serverAccepts` and the invariant. Same pattern as B1 — a broken proof predicate would let invalid requests through AND pass the invariant.
+- **B3 — `LateGenerationInert` vacuously true** (`session_generation.qnt`): the `"late"` event kind is a dead stutter branch; the property passes because generation only changes when `lsn` changes (structural), not because late events are proven inert. Removing `"late"` from `EVENT_KINDS` leaves the property passing.
+- **B4 — `GenerationMonotonic` weaker than claimed** (`session_generation.qnt`): proves non-decrease, not strict-supersession. A mutation allowing `gen >= current` (equal reports superseding) still passed. The action's `if gen > generation` guard makes strictness structural.
+- **B5 — Alloy `AuthorityGraphAcyclicAssert` vacuous + contradicts PROTOCOL** (`patchbay-relational.als`): `fact DelegationRemovedV0 { no Grant }` removes ALL grants, but PROTOCOL (line 290-307) says v0 HAS grants (only delegation is absent). The assert proves an empty graph is acyclic.
+- **B6 — Alloy `SenderMatchesClaimAssert` checks a fact** (`patchbay-relational.als`): the `fact` forces `sender = claimedSender`, then the assert checks the same — a tautology.
+
+**Important** (filed as `story-fix-formal-model-disclosure-drift`):
+- Feature body vocabulary-table backend drift (`tlc` vs `apalache-temporal` for session_generation temporal properties — the orchestrator's VERIFICATION.md update didn't propagate to the feature body table).
+- Malformed emitted TLA+ header in `reply_correlation.emitted.tla` (`MODULE reply_correlation ---` without leading dashes).
+- Draft `snapshot_recovery.qnt` omits several VERIFICATION normative variables.
+- Draft `authority.qnt` has dead actions (`rotateSession`, `revokeTarget` not reachable from `step`).
+
+**Backlog** (filed as `idea-tlc-temporal-workaround`): the experimental-temporal residual risk — all promoted temporal properties rely on Apalache's experimental temporal support. Not fixable in this stride; options to evaluate when promoted.
+
+**Nits**: `@promotion` invocation fields omit the `specs/seed/` path prefix (not exact from repo root); Alloy CLI `--output -` produces empty stdout for UNSAT (status is in output dirs, not console — don't claim observed `UNSAT` unless captured).
+
+**Notes**: This is the review bar earning its keep at the highest value — the cross-model adversarial pass found that 6 of the newly-promoted properties are self-defining or vacuous, which is the exact failure mode the verification program exists to prevent. The Unit 1 review (fast lane) caught 2 self-defining properties in one model; this deep review caught 6 more across the other models — confirming the pattern is systemic when agents author models without an independent check path. The host reproduced the two most damning findings (B1 TypedCorrelation, B2 CSRF) via mutation tests before classifying. The fix pattern is uniform: separate the action's implementation predicate from an independent property oracle, and verify via mutation test that breaking the predicate fails the invariant. The fixes stay within the existing design (Q1=B focused cluster, Q3=C mixed backends) — no design re-open needed, just genuine-checking rigor applied to Units 2–7 that Unit 1 already had.
