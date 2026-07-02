@@ -1,5 +1,5 @@
 // GENERATED ARTIFACT — do not hand-edit. Regenerate via: quint compile session_generation.qnt --target tlaplus
-// Source: session_generation.qnt (the single source of truth). Inspection artifact, NOT an independent re-check lane (see feature-formal-model-seed Q4).
+// Source: session_generation.qnt. Inspection artifact, NOT an independent re-check lane (see feature-formal-model-seed Q4).
 
 -------------------------- MODULE session_generation --------------------------
 
@@ -89,26 +89,47 @@ VARIABLE
   *)
   identityGeneration
 
+VARIABLE
+  (*
+    @type: Str;
+  *)
+  attemptedKind
+
+VARIABLE
+  (*
+    @type: Str;
+  *)
+  attemptedSid
+
+VARIABLE
+  (*
+    @type: Int;
+  *)
+  attemptedGen
+
 (*
   @type: (() => Bool);
 *)
 init ==
-  generation = [ s_82 \in SESSION_IDS |-> 0 ]
-    /\ tombstoned = [ k_89 \in TOMBSTONE_KEYS |-> FALSE ]
-    /\ tombstoneLsn = [ k_96 \in TOMBSTONE_KEYS |-> 0 ]
+  generation = [ s_88 \in SESSION_IDS |-> 0 ]
+    /\ tombstoned = [ k_95 \in TOMBSTONE_KEYS |-> FALSE ]
+    /\ tombstoneLsn = [ k_102 \in TOMBSTONE_KEYS |-> 0 ]
     /\ lsn = 0
-    /\ label = [ s_106 \in SESSION_IDS |-> "proj-A" ]
-    /\ identityGeneration = [ s_113 \in SESSION_IDS |-> 0 ]
+    /\ label = [ s_112 \in SESSION_IDS |-> "proj-A" ]
+    /\ identityGeneration = [ s_119 \in SESSION_IDS |-> 0 ]
+    /\ attemptedKind = "relabel"
+    /\ attemptedSid = "s1"
+    /\ attemptedGen = 0
 
 (*
   @type: (() => Bool);
 *)
 session_identity_tuple ==
-  \A sid_284 \in SESSION_IDS:
-    sid_284 \in DOMAIN generation
-      /\ sid_284 \in DOMAIN identityGeneration
-      /\ identityGeneration[sid_284] = generation[sid_284]
-      /\ generation[sid_284] \in GENERATIONS
+  \A sid_310 \in SESSION_IDS:
+    sid_310 \in DOMAIN generation
+      /\ sid_310 \in DOMAIN identityGeneration
+      /\ identityGeneration[sid_310] = generation[sid_310]
+      /\ generation[sid_310] \in GENERATIONS
       /\ Cardinality((ADAPTER_IDS)) = 1
       /\ Cardinality((DEPLOY_SCOPES)) = 1
       /\ Cardinality((RUNTIME_IDS)) = 1
@@ -117,31 +138,29 @@ session_identity_tuple ==
   @type: (() => Bool);
 *)
 generation_monotonic ==
-  [](\A sid_311 \in SESSION_IDS:
-    generation[sid_311]' >= generation[sid_311]
-      /\ (lsn' = lsn => generation[sid_311]' = generation[sid_311]))
+  [](\A sid_323 \in SESSION_IDS: generation[sid_323]' >= generation[sid_323])
 
 (*
   @type: (() => Bool);
 *)
 late_generation_inert ==
-  [](\A sid_349 \in SESSION_IDS:
-    \A gen_347 \in GENERATIONS:
-      tombstoned[<<sid_349, gen_347>>] /\ lsn' = lsn
-        => generation[sid_349]' = generation[sid_349]
-          /\ identityGeneration[sid_349]' = identityGeneration[sid_349])
+  [](\A sid_363 \in SESSION_IDS:
+    (attemptedKind' = "late" /\ attemptedSid' = sid_363)
+      /\ tombstoned[<<sid_363, attemptedGen'>>]
+      => generation[sid_363]' = generation[sid_363]
+        /\ identityGeneration[sid_363]' = identityGeneration[sid_363])
 
 (*
   @type: (() => Bool);
 *)
 labels_cannot_override_identity ==
-  \A sid_390 \in SESSION_IDS:
-    sid_390 \in DOMAIN label
-      /\ label[sid_390] \in LABELS
-      /\ ~(label[sid_390] \in ADAPTER_IDS)
-      /\ ~(label[sid_390] \in DEPLOY_SCOPES)
-      /\ ~(label[sid_390] \in RUNTIME_IDS)
-      /\ identityGeneration[sid_390] = generation[sid_390]
+  \A sid_404 \in SESSION_IDS:
+    sid_404 \in DOMAIN label
+      /\ label[sid_404] \in LABELS
+      /\ ~(label[sid_404] \in ADAPTER_IDS)
+      /\ ~(label[sid_404] \in DEPLOY_SCOPES)
+      /\ ~(label[sid_404] \in RUNTIME_IDS)
+      /\ identityGeneration[sid_404] = generation[sid_404]
 
 (*
   @type: (() => Bool);
@@ -151,7 +170,7 @@ step ==
     \E sid \in SESSION_IDS:
       \E gen \in GENERATIONS:
         \E newLabel \in LABELS:
-          <<sid, generation[sid]>> \in TOMBSTONE_KEYS
+          (kind /= "late" \/ tombstoned[<<sid, gen>>])
             /\ tombstoned'
               := (IF kind = "report" /\ gen > generation[sid]
               THEN [ tombstoned EXCEPT ![<<sid, generation[sid]>>] = TRUE ]
@@ -176,6 +195,9 @@ step ==
               := (IF kind = "report" /\ gen > generation[sid]
               THEN [ identityGeneration EXCEPT ![sid] = gen ]
               ELSE identityGeneration)
+            /\ attemptedKind' := kind
+            /\ attemptedSid' := sid
+            /\ attemptedGen' := gen
 
 (*
   @type: (() => Bool);

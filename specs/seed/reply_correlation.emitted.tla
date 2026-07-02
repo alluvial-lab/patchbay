@@ -1,7 +1,7 @@
 // GENERATED ARTIFACT — do not hand-edit. Regenerate via: quint compile reply_correlation.qnt --target tlaplus
 // Source: reply_correlation.qnt. Inspection artifact, NOT an independent re-check lane (see feature-formal-model-seed Q4).
 
-MODULE reply_correlation ---------------------------
+--------------------------- MODULE reply_correlation ---------------------------
 
 EXTENDS Integers, Sequences, FiniteSets, TLC, Apalache, Variants
 
@@ -79,14 +79,21 @@ messageCorrelationOk(replyId_99, corrId_99) ==
   ELSE FALSE
 
 (*
-  @type: (() => Bool);
+  @type: ((Str) => Bool);
 *)
-init ==
-  commandIds = COMMAND_ID_SPACE
-    /\ messageIds = MESSAGE_ID_SPACE
-    /\ replyIds = {}
-    /\ replyCorrelatesTo = [ r_188 \in REPLY_ID_SPACE |-> "none" ]
-    /\ replyCorrelationType = [ r_195 \in REPLY_ID_SPACE |-> "none" ]
+recordedReplyIndependentOk(replyId_208) ==
+  ((((replyId_208 \in REPLY_ID_SPACE /\ replyId_208 \in DOMAIN replyCorrelatesTo)
+          /\ replyId_208 \in DOMAIN replyCorrelationType)
+        /\ ~(replyId_208 \in commandIds))
+      /\ ~(replyId_208 \in messageIds))
+    /\ (((replyCorrelationType[replyId_208] = "command"
+          /\ replyCorrelatesTo[replyId_208] \in commandIds)
+        /\ (replyContext)[replyId_208]
+          = (commandContext)[replyCorrelatesTo[replyId_208]])
+      \/ ((replyCorrelationType[replyId_208] = "message"
+          /\ replyCorrelatesTo[replyId_208] \in messageIds)
+        /\ (replyContext)[replyId_208]
+          = (messageContext)[replyCorrelatesTo[replyId_208]]))
 
 (*
   @type: (() => Set(Str));
@@ -94,6 +101,16 @@ init ==
 ALL_ID_ATTEMPTS ==
   ((COMMAND_ID_SPACE \union MESSAGE_ID_SPACE) \union REPLY_ID_SPACE)
     \union {"x"}
+
+(*
+  @type: (() => Bool);
+*)
+init ==
+  commandIds = COMMAND_ID_SPACE
+    /\ messageIds = MESSAGE_ID_SPACE
+    /\ replyIds = {}
+    /\ replyCorrelatesTo = [ r_222 \in REPLY_ID_SPACE |-> "none" ]
+    /\ replyCorrelationType = [ r_229 \in REPLY_ID_SPACE |-> "none" ]
 
 (*
   @type: ((Str, Str) => Bool);
@@ -116,6 +133,18 @@ typedReferenceOk(replyId_119, corrId_119, corrType_119) ==
 (*
   @type: (() => Bool);
 *)
+typed_correlation ==
+  (((((commandIds \subseteq COMMAND_ID_SPACE
+              /\ messageIds \subseteq MESSAGE_ID_SPACE)
+            /\ replyIds \subseteq REPLY_ID_SPACE)
+          /\ Cardinality((commandIds \intersect messageIds)) = 0)
+        /\ Cardinality((commandIds \intersect replyIds)) = 0)
+      /\ Cardinality((messageIds \intersect replyIds)) = 0)
+    /\ (\A r_344 \in replyIds: recordedReplyIndependentOk(r_344))
+
+(*
+  @type: (() => Bool);
+*)
 q_init == init
 
 (*
@@ -127,47 +156,23 @@ replyRecordable(replyId_138, corrId_138, corrType_138) ==
   ELSE FALSE
 
 (*
-  @type: ((Str) => Bool);
-*)
-recordedReplyOk(replyId_174) ==
-  IF (replyId_174 \in REPLY_ID_SPACE /\ replyId_174 \in DOMAIN replyCorrelatesTo)
-    /\ replyId_174 \in DOMAIN replyCorrelationType
-  THEN (~(replyId_174 \in commandIds) /\ ~(replyId_174 \in messageIds))
-    /\ typedReferenceOk(replyId_174, replyCorrelatesTo[replyId_174], replyCorrelationType[
-      replyId_174
-    ])
-  ELSE FALSE
-
-(*
   @type: ((Str, Str, Str) => Bool);
 *)
-createReply(replyId_255, corrId_255, corrType_255) ==
-  (replyRecordable(replyId_255, corrId_255, corrType_255)
+createReply(replyId_289, corrId_289, corrType_289) ==
+  (replyRecordable(replyId_289, corrId_289, corrType_289)
       /\ commandIds' := commandIds
       /\ messageIds' := messageIds
-      /\ replyIds' := (replyIds \union {replyId_255})
+      /\ replyIds' := (replyIds \union {replyId_289})
       /\ replyCorrelatesTo'
-        := [ replyCorrelatesTo EXCEPT ![replyId_255] = corrId_255 ]
+        := [ replyCorrelatesTo EXCEPT ![replyId_289] = corrId_289 ]
       /\ replyCorrelationType'
-        := [ replyCorrelationType EXCEPT ![replyId_255] = corrType_255 ])
-    \/ (~(replyRecordable(replyId_255, corrId_255, corrType_255))
+        := [ replyCorrelationType EXCEPT ![replyId_289] = corrType_289 ])
+    \/ (~(replyRecordable(replyId_289, corrId_289, corrType_289))
       /\ commandIds' := commandIds
       /\ messageIds' := messageIds
       /\ replyIds' := replyIds
       /\ replyCorrelatesTo' := replyCorrelatesTo
       /\ replyCorrelationType' := replyCorrelationType)
-
-(*
-  @type: (() => Bool);
-*)
-typed_correlation ==
-  (((((commandIds \subseteq COMMAND_ID_SPACE
-              /\ messageIds \subseteq MESSAGE_ID_SPACE)
-            /\ replyIds \subseteq REPLY_ID_SPACE)
-          /\ Cardinality((commandIds \intersect messageIds)) = 0)
-        /\ Cardinality((commandIds \intersect replyIds)) = 0)
-      /\ Cardinality((messageIds \intersect replyIds)) = 0)
-    /\ (\A r_310 \in replyIds: recordedReplyOk(r_310))
 
 (*
   @type: (() => Bool);

@@ -68,15 +68,27 @@ module reply_correlation {
     else
       false
 
-  def recordedReplyOk(replyId) =
-    if (REPLY_ID_SPACE.contains(replyId)
-        and replyCorrelatesTo.keys().contains(replyId)
-        and replyCorrelationType.keys().contains(replyId))
-      not(commandIds.contains(replyId))
-        and not(messageIds.contains(replyId))
-        and typedReferenceOk(replyId, replyCorrelatesTo.get(replyId), replyCorrelationType.get(replyId))
-    else
-      false
+  // INDEPENDENT property oracle: checks raw id-space/context facts WITHOUT calling
+  // typedReferenceOk (the helper the action's replyRecordable filter uses). This is the
+  // genuine-checking discipline from the design: the invariant must not re-use the
+  // predicate that gates the action, or it can never catch a broken predicate.
+  // Mutation test: if typedReferenceOk is broken to `true`, this oracle still asserts the
+  // raw facts (corrId is a known prior command/message, types match, contexts match, id
+  // spaces disjoint) and a real forgery would fail it.
+  def recordedReplyIndependentOk(replyId) =
+    REPLY_ID_SPACE.contains(replyId)
+      and replyCorrelatesTo.keys().contains(replyId)
+      and replyCorrelationType.keys().contains(replyId)
+      and not(commandIds.contains(replyId))
+      and not(messageIds.contains(replyId))
+      and (
+        (replyCorrelationType.get(replyId) == "command"
+          and commandIds.contains(replyCorrelatesTo.get(replyId))
+          and replyContext.get(replyId) == commandContext.get(replyCorrelatesTo.get(replyId)))
+        or (replyCorrelationType.get(replyId) == "message"
+          and messageIds.contains(replyCorrelatesTo.get(replyId))
+          and replyContext.get(replyId) == messageContext.get(replyCorrelatesTo.get(replyId)))
+      )
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -147,5 +159,5 @@ module reply_correlation {
       and commandIds.intersect(messageIds).size() == 0
       and commandIds.intersect(replyIds).size() == 0
       and messageIds.intersect(replyIds).size() == 0
-      and replyIds.forall(r => recordedReplyOk(r))
+      and replyIds.forall(r => recordedReplyIndependentOk(r))
 }

@@ -19,18 +19,24 @@ sig Grant {
   subject: one Actor
 }
 
-fact DelegationRemovedV0 {
-  no Grant
-}
+// v0 HAS grants (docs/PROTOCOL.md:290-307 — grants are explicit and revocable in v0). Only
+// DELEGATION (the parent-grant edge) is absent. There is no delegation field on Grant in v0;
+// the AuthorityGraphAcyclic check below asserts acyclicity over the reserved issuer-subject
+// graph shape as a seam against a future delegation re-introduction. (A previous version used
+// `fact DelegationRemovedV0 { no Grant }`, which removed ALL grants — contradicting PROTOCOL
+// and making the acyclicity check vacuously true on an empty graph.)
 
 sig Message {
   sender: one Actor,
   claimedSender: one Actor
 }
 
-fact SenderMatchesClaim {
-  all m: Message | m.sender = m.claimedSender
-}
+// NO fact forces sender = claimedSender. The assert below is a GENUINE check that the
+// consistency holds across all instances — not a tautology over a fact. (A previous version
+// had `fact SenderMatchesClaim { all m: Message | m.sender = m.claimedSender }` which made the
+// assert check a fact — a tautology.) The dynamic binding of authenticated identity to a
+// transport/session is a CompoundIssuer-style action that belongs in authority.qnt; this
+// relational shape only checks the static consistency.
 
 // @promotion {
 //   property:    ActorIdsUnique
@@ -60,11 +66,12 @@ assert ActorIdsUniqueAssert {
 //   bounds:      { scope: 5 }
 //   expected:    pass
 //   proto_fields: [none]
-//   semantics:   v0 has no grants because delegation is removed, so the reserved subject-to-issuer authority graph has no transitive cycle
+//   semantics:   v0 grants form an issuer-subject graph; the reserved delegation seam (parent grant) is absent, so the subject-to-issuer graph has no transitive cycle
 // }
 assert AuthorityGraphAcyclicAssert {
-  // Derive the Actor -> Actor graph from Grant atoms, naming it issuer so
-  // the checked shape is explicitly the reserved ^issuer reachability cycle.
+  // Derive the Actor -> Actor graph from Grant atoms (subject -> issuer), naming it issuer so
+  // the checked shape is the reserved ^issuer reachability cycle. With grants present (v0 has
+  // them), this is a genuine acyclicity check, not a vacuous check on an empty graph.
   let issuer = ~subject.issuer |
     no a: Actor | a in a.^issuer
 }

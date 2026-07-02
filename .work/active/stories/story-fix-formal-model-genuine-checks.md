@@ -1,7 +1,7 @@
 ---
 id: story-fix-formal-model-genuine-checks
 kind: story
-stage: implementing
+stage: review
 tags: [verification, bug, protocol, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -57,3 +57,24 @@ The property proves non-decrease + "no generation change when LSN unchanged" —
 - The genuine-checking discipline is load-bearing: the action must be PERMISSIVE (allow the bad thing to be attempted) and the invariant must check the property via an INDEPENDENT path (not the same helper the action uses). The test: mutate the predicate that gates the action → if the invariant still passes, it's self-defining.
 - This story supersedes the Unit 3/4 agents' "honest encoding" claims — their filter-in-action approach used the SAME predicate in both places, which is the bug.
 - Reference: `specs/seed/command_lifecycle.qnt` (Unit 1) did this correctly — `boundary_dedup` checks `applyCount.get(k) <= 1` via a permissive `receive` action; the invariant is independent of the action's guard.
+
+## Implementation notes
+
+- Files changed: `specs/seed/reply_correlation.qnt`, `specs/seed/csrf_browser.qnt`, `specs/seed/session_generation.qnt`, `specs/seed/patchbay-relational.als`; regenerated `*.emitted.tla` for the 3 Quint models.
+- Tests added: none (no implementation code; verification is by running the checkers + mutation tests — the acceptance criterion).
+- Fixes applied (one per blocker):
+  - **B1 (TypedCorrelation)**: replaced the self-referential `recordedReplyOk` (which called the action's `typedReferenceOk` helper) with an INDEPENDENT oracle `recordedReplyIndependentOk` that checks raw id-space/context facts (`commandIds.contains(corrId)`, `replyContext.get(replyId) == commandContext.get(corrId)`, type ∈ {command,message}, id-space disjointness) — NOT via the helper the action uses.
+  - **B2 (CSRF invariants)**: rewrote `csrf_rejects_missing_proof` to assert raw `csrfProofs.keys().contains(lastSession) and lastProof == csrfProofs.get(lastSession)` instead of the `validCsrfProof` helper that `serverAccepts` uses. Also rewrote the doc-only `browser_local_state_not_authority` invariant to use raw facts. (`csrf_rejects_unauthenticated` was already independent — uses `operatorSessions.contains`.)
+  - **B3 (LateGenerationInert)**: restructured the `step` action so the `"late"` event is only enabled when `(sid, gen)` is genuinely tombstoned (a real stale event, not a dead stutter). Added `attemptedKind/Sid/Gen` state vars tracking what each step attempted. The property reads them via `next()` to refer to this step's attempt.
+  - **B4 (GenerationMonotonic)**: reformulated. The strict-supersession form (proving `gen > live` required to change, via `next()` on attempted vars in an implication antecedent) exceeded what Apalache's experimental temporal support reliably handles — isolated testing produced false counterexamples on valid traces (0→1→2 supersessions flagged as violations). **Honest fix**: checked property = non-decrease floor (genuine: mutation-verified), with strict-supersession recorded as a documented structural property of the action guard (`if gen > generation`). This avoids overclaiming what the experimental checker proves; PROTOCOL's monotonicity safety is satisfied by non-decrease + the guard's strictness. Flagged to `idea-tlc-temporal-workaround` as the deeper residual.
+  - **B5 (Alloy AuthorityGraphAcyclic)**: removed `fact DelegationRemovedV0 { no Grant }` (which contradicted PROTOCOL — v0 HAS grants). Grants are now present; the assert checks acyclicity over the derived subject→issuer graph — genuine, not vacuous-on-empty.
+  - **B6 (Alloy SenderMatchesClaim)**: removed `fact SenderMatchesClaim`. The assert now genuinely checks the consistency across all instances, not a tautology over a fact.
+- Mutation-test results (acceptance criterion — broken model/action MUST fail the invariant):
+  - B1: break action's `typedReferenceOk`→true (records invalid replies) → `typed_correlation` `[violation]` ✓
+  - B2: break `validCsrfProof`→true (accepts any proof) → `csrf_rejects_missing_proof` `[violation]` ✓
+  - B3: make 'late' event mutate generation → `late_generation_inert` `[violation]` ✓
+  - B4: allow gen<live to supersede (decrease) → `generation_monotonic` `[violation]` ✓
+  - B5/B6: Alloy asserts `UNSAT` (hold); B5 no longer vacuous-on-empty (grants present), B6 no longer tautological (fact removed).
+- Discrepancies from the fix design: B4 did not achieve the strict-supersession temporal proof the blocker asked for — Apalache's experimental temporal support couldn't reliably verify the `next()`-on-attempted-vars form. Documented honestly; the non-decrease floor + guard strictness satisfies PROTOCOL's safety. This is itself a confirmation of the experimental-temporal residual risk flagged in the review.
+- Adjacent issues parked: none new (the experimental-temporal limitation is already in `idea-tlc-temporal-workaround`).
+- Verification: all 6 fixed properties `[ok]`/`UNSAT`; all 4 mutation tests produce `[violation]` (the genuine-checking proof). Full suite re-run.

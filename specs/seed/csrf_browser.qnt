@@ -129,8 +129,13 @@ module csrf_browser {
   //   proto_fields: [none]
   //   semantics:   SECURITY.md §CSRF requires a CSRF token tied to the authenticated operator session before command acceptance
   // }
+  // INDEPENDENT oracle: asserts raw csrfProofs map facts, NOT the validCsrfProof helper that
+  // serverAccepts (the action) uses. Mutation test: breaking validCsrfProof to `true` would let
+  // a wrong_proof through acceptance, but this invariant would still catch it (proof != bound proof).
   val csrf_rejects_missing_proof =
-    accepted.implies(validCsrfProof(lastSession, lastProof))
+    accepted.implies(
+      csrfProofs.keys().contains(lastSession)
+        and lastProof == csrfProofs.get(lastSession))
 
   // @promotion {
   //   property:    RevokedSessionCannotCommand
@@ -149,8 +154,13 @@ module csrf_browser {
     accepted.implies(not(sessionStatus.get(lastSession).in(DEAD_STATUSES)))
 
   // Non-promoted documentation invariant for the local-UI authority rule from
-  // docs/VERIFICATION.md. It is equivalent to saying browserLocalSessionLive and
-  // browserLocalGrantClaim never widen the server acceptance predicate.
+  // docs/VERIFICATION.md. INDEPENDENT oracle: asserts raw operatorSessions + csrfProofs +
+  // sessionStatus facts, not the serverAccepts helper. Mutation test: breaking serverAccepts'
+  // sub-helpers would still be caught here.
   val browser_local_state_not_authority =
-    accepted.implies(serverAccepts(lastSession, lastProof))
+    accepted.implies(
+      operatorSessions.contains(lastSession)
+        and sessionStatus.get(lastSession) == "active"
+        and csrfProofs.keys().contains(lastSession)
+        and lastProof == csrfProofs.get(lastSession))
 }

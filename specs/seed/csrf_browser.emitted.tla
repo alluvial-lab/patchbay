@@ -102,8 +102,25 @@ csrf_rejects_unauthenticated == accepted => lastSession \in operatorSessions
 (*
   @type: (() => Bool);
 *)
+csrf_rejects_missing_proof ==
+  accepted
+    => lastSession \in DOMAIN csrfProofs /\ lastProof = csrfProofs[lastSession]
+
+(*
+  @type: (() => Bool);
+*)
 revoked_session_cannot_command ==
   accepted => ~(sessionStatus[lastSession] \in DEAD_STATUSES)
+
+(*
+  @type: (() => Bool);
+*)
+browser_local_state_not_authority ==
+  accepted
+    => ((lastSession \in operatorSessions
+          /\ sessionStatus[lastSession] = "active")
+        /\ lastSession \in DOMAIN csrfProofs)
+      /\ lastProof = csrfProofs[lastSession]
 
 (*
   @type: ((Str) => Bool);
@@ -120,11 +137,6 @@ active(session_51) == sessionStatus[session_51] = "active"
 *)
 validCsrfProof(session_65, proof_65) ==
   session_65 \in DOMAIN csrfProofs /\ proof_65 = csrfProofs[session_65]
-
-(*
-  @type: (() => Bool);
-*)
-csrf_rejects_missing_proof == accepted => validCsrfProof(lastSession, lastProof)
 
 (*
   @type: ((Str, Str) => Bool);
@@ -152,12 +164,6 @@ submitStateChangingRequest(session_170, proof_170, uiSaysSessionLive_170, uiSays
     /\ operatorSessions' := operatorSessions
     /\ csrfProofs' := csrfProofs
     /\ sessionStatus' := sessionStatus
-
-(*
-  @type: (() => Bool);
-*)
-browser_local_state_not_authority ==
-  accepted => serverAccepts(lastSession, lastProof)
 
 (*
   @type: (() => Bool);
