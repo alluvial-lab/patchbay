@@ -55,6 +55,8 @@ java -jar org.alloytools.alloy.dist.jar exec --command <label> --type json --out
 
 **Exit-code semantics:** exit 0 = command ran. For `check`, a counterexample found prints `SAT` (the negated assertion is satisfiable); `UNSAT` = no counterexample found within scope (the assertion holds). Examine output, not just exit code.
 
+**Measurement discipline (load-bearing):** verify assertions with `--type text --output -` and look for a `skolem $<AssertName>_...` line. A skolem witness means a counterexample was found (assertion FAILS); its absence means `UNSAT` (assertion holds). **Do NOT use `--type json` or output-file-count to judge UNSAT** — both give false positives (reported a passing assertion on an actually-failing check in the seed-model arc). The reliable invocation: `java -jar org.alloytools.alloy.dist.jar exec --command <label> --type text --output - <file>.als | grep -c skolem` (0 = holds).
+
 ## Counterexample output
 
 On a failed `check`, Alloy finds a satisfying solution to the negated assertion (a counterexample instance where facts hold but the checked formula does not). JSON output writes a `SolutionDTO`; text output shows the instance. For relational-only models, output is a single-state instance (no trace).
@@ -66,6 +68,8 @@ Patchbay v0 relational invariants (identity uniqueness, authority-graph shape, a
 **Temporal Alloy (out of v0):** Alloy 6 added `after`/`always`/`eventually`/`until`/`'` (next-state), but complete temporal model checking needs NuSMV or nuXmv installed by the user. If revocation/lease/future-routing dynamics enter v0, that crosses into temporal modeling — re-open this scope decision then.
 
 ## Patchbay relational idioms
+
+**Genuine-checking discipline (load-bearing):** a relational `check` must not be a tautology over a `fact`, and removing a forcing `fact` to make a check "genuine" without adding a real constraint turns vacuous-true into **actually-false** (Alloy will find a counterexample). A relational check is genuine only if the asserted property is true because of *other* constraints in the model — or it should be **demoted to draft** if no such constraint exists (the property may be inherently dynamic and belong in a TLA+/Quint model). Test: temporarily remove any fact that duplicates the assertion; if Alloy then finds a counterexample (`SAT`), the check was tautological and the property is not genuinely checkable relationally.
 
 Actor-identity uniqueness (no two actors share an identity):
 ```alloy

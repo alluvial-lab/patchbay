@@ -74,6 +74,8 @@ Patchbay uses Alloy for bounded relational invariants:
 
 TLA+/Quint models dynamic histories. Alloy models relational shapes and small counterexamples.
 
+**Measurement discipline (load-bearing):** verify Alloy assertions with `java -jar org.alloytools.alloy.dist.jar exec --command <label> --type text --output - <file>.als`. A `skolem $<AssertName>_...` line in the output means a counterexample was found (the assertion FAILS); its absence means `UNSAT` (the assertion holds). Do NOT use `--type json` or output-file-count to judge UNSAT — both give false positives (reported a passing assertion on an actually-failing check in the seed-model arc). For Quint, `quint verify`/`quint run` exit non-zero (1) when a counterexample is found; exit 0 = no violation.
+
 ## Required model areas
 
 ### Operator intent delivery
@@ -267,6 +269,10 @@ A model becomes normative only when it includes:
 - command/tool invocation;
 - expected pass/fail status;
 - a short explanation connecting the model to product semantics.
+
+**Genuine-checking discipline (load-bearing for safety-claiming models):** a promoted property must not be self-defining — the invariant must not reuse the same predicate the action's guard uses, or it can never catch a broken predicate. The test: mutate the predicate (break it to `true`, invert it, or weaken a guard); if the invariant still passes, it is self-defining and must be restructured to an **independent oracle** that checks raw state facts the action does not consult. Two refinements discovered in the seed-model arc:
+- **Trace-fidelity:** even an independent oracle is insufficient if it checks *action-recorded* state rather than *environment pre-state*. A server-side-acceptance invariant (e.g. CSRF, CompoundIssuer) must check the raw submitted evidence as pre-state the accepting action reads but cannot rewrite — not the action's recorded trace of what was submitted.
+- **Relational Alloy:** a `check` that asserts a constraint also enforced by a `fact` is a tautology; removing the fact to make it "genuine" without adding a real constraint turns vacuous-true into actually-false. A relational check must be true because of *other* constraints in the model, or be demoted to draft if none exist (the property may be inherently dynamic and belong in a TLA+/Quint model instead).
 
 Draft models may explore ideas without becoming product commitments.
 

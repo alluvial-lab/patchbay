@@ -58,7 +58,9 @@ module Counter {
 - **Apalache (default)** — bounded invariant checking. Needs `--max-steps` (default 10). An Apalache pass proves the invariant holds up to the bound; for unbounded claims use inductive invariants or cross-check via TLC on finite state spaces.
 - **TLC (`--backend tlc`)** — temporal/liveness properties and exhaustive finite-state checking. Compiles to TLA+ via Apalache, generates a TLC config (`INIT q_init`, `NEXT q_step`, optional `INVARIANT q_inv`, optional `PROPERTY q_temporalProps`), spawns `tlc2.TLC`. Uses the **Apalache-distribution jar** on the classpath (not a standalone `tla2tools.jar`).
 
-**Temporal/liveness caveat:** Apalache temporal support is *partial* (Quint docs: "Temporal properties have partial support"). For temporal/liveness properties, **always use `--backend tlc`**.
+**Temporal/liveness caveat:** Apalache temporal support is *partial* (Quint docs: "Temporal properties have partial support"). For liveness (`eventually`) properties, **use `--backend tlc`**.
+
+**`--backend tlc` does NOT work for `next()`-in-`always()` safety properties (empirically verified, Quint 0.32.0).** The Quint→TLA+ compilation emits `[](...)` forms that TLC rejects with `[] followed by action not of form [A]_v` (TLA+ requires `[]` to wrap an action subscripted by vars). For `always(next(...) ...)` safety properties, use the **Apalache default backend** instead: `echo y | quint verify <file>.qnt --temporal <p> --max-steps 10` (the `echo y |` answers Apalache's interactive "experimental support" prompt in non-interactive runs). Caveat: Apalache warns its temporal support is experimental; `always(...)` safety is the conservative end. **Further limitation discovered:** reading `next()` on action-assigned "attempted-event" state variables in an implication *antecedent* can produce false counterexamples on valid traces — prefer reasoning about `next()` on the core state variables, or downgrade to a non-temporal invariant + a documented structural guard property if the strict form can't be reliably checked.
 
 ## Counterexample output
 
@@ -67,6 +69,26 @@ On a violation, Quint emits a trace and writes artifacts under `_apalache-out/se
 ## Patchbay property idioms
 
 These patterns are condensed from the specialist brief's source-grounded snippets. State machines compose transitions with `any { ... }` (alternation) and `all { ... }` (conjunction); nondeterminism uses `nondet x = Set(...).oneOf()`.
+
+### Genuine-checking discipline (load-bearing for safety-claiming models)
+
+A checked property must not be **self-defining**: the invariant must not reuse the predicate the action's guard uses, or it can never catch a broken predicate. The test: mutate the predicate (break to `true`, invert, weaken a guard); if the invariant still passes, it is self-defining. Restructure to an **independent oracle** that checks raw state facts the action does not consult.
+
+**Independent oracle** (the `command_lifecycle.qnt` `BoundaryDedup` gold standard) — the action is permissive; the invariant checks a raw fact independent of the action's guard:
+```quint
+// PERMISSIVE action: any key may arrive any number of times; only the first applies
+action receive(key) = any {
+  all { key.in(appliedKeys), appliedKeys' = appliedKeys, applyCount' = applyCount, /* ...unchanged... */ },
+  all { not(key.in(appliedKeys)), appliedKeys' = appliedKeys.union(Set(key)), applyCount' = applyCount.set(key, 1), /* ... */ },
+}
+// INDEPENDENT oracle: checks applyCount, NOT the `key.in(appliedKeys)` guard the action uses
+val boundary_dedup = IDEMPOTENCY_KEYS.forall(k => applyCount.get(k) <= 1)
+```
+
+**Trace-fidelity extension** (for server-side-acceptance properties — CSRF, CompoundIssuer): an independent oracle is still insufficient if it checks *action-recorded* state rather than *environment pre-state*. The raw submitted evidence must be **pre-state** set by a separate `arriveRequest` action; the accepting action reads it but cannot rewrite it. Otherwise a combined mutation (drop the acceptance check AND lie about the recorded evidence) passes undetected.
+
+### Idioms
+
 
 **Terminal-finality** (once terminal, later events don't mutate state) — an action-level no-op for terminal retries plus a temporal next-state property:
 ```quint

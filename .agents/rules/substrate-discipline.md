@@ -8,3 +8,4 @@ Patchbay uses `.work/` for operational coordination and `.research/` for grounde
 - When converting or importing legacy material, preserve-only is the default. Do not delete, move, overwrite, or replace legacy content without content-integrity and reference-integrity checks.
 - Use `work-view` to query queue state rather than guessing from filenames.
 - Review nits are triaged by the dispatching/reviewing agent before advancing to `done`: cheap/local nits should be applied in the review stride; nits not applied should be explicitly recorded as intentionally deferred or not worth changing, so they are not silently swallowed.
+- Filing a child item under a `done` feature re-opens the feature's review surface: re-review the parent when the child lands, even for "post-hoc refinements." A child is a child; the substrate does not distinguish refinement from scope.
