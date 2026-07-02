@@ -58,6 +58,18 @@ VARIABLE
 
 VARIABLE
   (*
+    @type: Str;
+  *)
+  attemptedSession
+
+VARIABLE
+  (*
+    @type: Str;
+  *)
+  attemptedProof
+
+VARIABLE
+  (*
     @type: Bool;
   *)
   browserLocalSessionLive
@@ -91,59 +103,63 @@ init ==
     /\ accepted = FALSE
     /\ lastSession = "missing_session"
     /\ lastProof = "missing_proof"
+    /\ attemptedSession = "missing_session"
+    /\ attemptedProof = "missing_proof"
     /\ browserLocalSessionLive = FALSE
     /\ browserLocalGrantClaim = FALSE
 
 (*
   @type: (() => Bool);
 *)
-csrf_rejects_unauthenticated == accepted => lastSession \in operatorSessions
+csrf_rejects_unauthenticated ==
+  accepted => attemptedSession \in operatorSessions
 
 (*
   @type: (() => Bool);
 *)
 csrf_rejects_missing_proof ==
   accepted
-    => lastSession \in DOMAIN csrfProofs /\ lastProof = csrfProofs[lastSession]
+    => attemptedSession \in DOMAIN csrfProofs
+      /\ attemptedProof = csrfProofs[attemptedSession]
 
 (*
   @type: (() => Bool);
 *)
 revoked_session_cannot_command ==
-  accepted => ~(sessionStatus[lastSession] \in DEAD_STATUSES)
+  accepted => ~(sessionStatus[attemptedSession] \in DEAD_STATUSES)
 
 (*
   @type: (() => Bool);
 *)
 browser_local_state_not_authority ==
   accepted
-    => ((lastSession \in operatorSessions
-          /\ sessionStatus[lastSession] = "active")
-        /\ lastSession \in DOMAIN csrfProofs)
-      /\ lastProof = csrfProofs[lastSession]
+    => ((attemptedSession \in operatorSessions
+          /\ sessionStatus[attemptedSession] = "active")
+        /\ attemptedSession \in DOMAIN csrfProofs)
+      /\ attemptedProof = csrfProofs[attemptedSession]
 
 (*
   @type: ((Str) => Bool);
 *)
-authenticated(session_43) == session_43 \in operatorSessions
+authenticated(session_47) == session_47 \in operatorSessions
 
 (*
   @type: ((Str) => Bool);
 *)
-active(session_51) == sessionStatus[session_51] = "active"
+active(session_55) == sessionStatus[session_55] = "active"
 
 (*
   @type: ((Str, Str) => Bool);
 *)
-validCsrfProof(session_65, proof_65) ==
-  session_65 \in DOMAIN csrfProofs /\ proof_65 = csrfProofs[session_65]
+validCsrfProof(session_69, proof_69) ==
+  session_69 \in DOMAIN csrfProofs /\ proof_69 = csrfProofs[session_69]
 
 (*
   @type: ((Str, Str) => Bool);
 *)
-serverAccepts(session_78, proof_78) ==
-  (authenticated(session_78) /\ active(session_78))
-    /\ validCsrfProof(session_78, proof_78)
+serverAccepts(session_82, proof_82) ==
+  (authenticated(session_82) /\ active(session_82))
+    /\ validCsrfProof(session_82, proof_82)
 
 (*
   @type: (() => Bool);
@@ -153,14 +169,16 @@ q_init == init
 (*
   @type: ((Str, Str, Bool, Bool) => Bool);
 *)
-submitStateChangingRequest(session_170, proof_170, uiSaysSessionLive_170, uiSaysGrantPresent_170) ==
-  session_170 \in SESSION_IDS
-    /\ proof_170 \in PROOFS
-    /\ accepted' := (serverAccepts(session_170, proof_170))
-    /\ lastSession' := session_170
-    /\ lastProof' := proof_170
-    /\ browserLocalSessionLive' := uiSaysSessionLive_170
-    /\ browserLocalGrantClaim' := uiSaysGrantPresent_170
+submitStateChangingRequest(session_186, proof_186, uiSaysSessionLive_186, uiSaysGrantPresent_186) ==
+  session_186 \in SESSION_IDS
+    /\ proof_186 \in PROOFS
+    /\ accepted' := (serverAccepts(session_186, proof_186))
+    /\ lastSession' := session_186
+    /\ lastProof' := proof_186
+    /\ attemptedSession' := session_186
+    /\ attemptedProof' := proof_186
+    /\ browserLocalSessionLive' := uiSaysSessionLive_186
+    /\ browserLocalGrantClaim' := uiSaysGrantPresent_186
     /\ operatorSessions' := operatorSessions
     /\ csrfProofs' := csrfProofs
     /\ sessionStatus' := sessionStatus

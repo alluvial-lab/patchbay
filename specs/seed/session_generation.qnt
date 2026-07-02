@@ -142,7 +142,7 @@ module session_generation {
   //   bounds:      { session_ids: 2, max_generations: 3, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   supersession requires strictly-greater generation; equal/lower generation reports leave the live target unchanged
+  //   semantics:   the live session generation never decreases (checked). Strict-supersession (equal/lower reports are no-ops) is additionally enforced by the action guard (`if gen > generation`) but is NOT a checked temporal property — it exceeded Apalache's experimental temporal support; see idea-tlc-temporal-workaround.
   // }
   // GENUINE check (not structural/vacuous): the action is permissive — a report may be ATTEMPTED
   // with any gen, including gen <= live; only gen > live supersedes. This property proves the

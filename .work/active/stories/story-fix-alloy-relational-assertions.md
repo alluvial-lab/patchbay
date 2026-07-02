@@ -1,7 +1,7 @@
 ---
 id: story-fix-alloy-relational-assertions
 kind: story
-stage: implementing
+stage: review
 tags: [verification, bug, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -54,3 +54,21 @@ Confirmed by the host via `--type text` output: both asserts produce a skolem wi
 
 - The lesson: removing a forcing fact without adding a real constraint turns a vacuous-true into an actual-false. A genuine Alloy check must either (a) check a property that's true because of OTHER genuine constraints in the model (not the assert's own fact), or (b) be demoted if no such constraint exists. Neither B5 nor B6 has a relational constraint making it true without a tautological fact — so both demote.
 - Measurement-discipline note: `--type json` / file-count is an unreliable UNSAT check; use `--type text` and look for a skolem witness (`skolem $<AssertName>_...`) — its presence means a counterexample was found (assert FAILS).
+
+## Implementation notes
+
+- Files changed: `specs/seed/patchbay-relational.als` (B5/B6 demotion), `specs/seed/session_generation.qnt` (B4 semantics narrowing), `specs/seed/csrf_browser.qnt` (B2-trace attempted-evidence), `docs/VERIFICATION.md` (table updates), `.work/active/features/feature-formal-model-seed.md` (vocabulary table). Regenerated `session_generation.emitted.tla` + `csrf_browser.emitted.tla`.
+- Tests added: none (verification is by running the checkers + mutation tests).
+- Fixes:
+  - **B5 (`AuthorityGraphAcyclicAssert`)**: demoted to `status: draft` / `tier: stated-normative`. The assert is commented out and its `check` command removed — only `ActorIdsUniqueAssert` remains as a promoted `check`. Reason recorded: acyclicity is only meaningful once a delegation/parent-grant edge exists, which is out of v0 (PROTOCOL line 305); with grants present but no delegation edge, the assert is either vacuous (empty graph) or false (unconstrained self-grants). Reserved for the delegation follow-on.
+  - **B6 (`SenderMatchesClaimAssert`)**: demoted to `status: draft` / `tier: stated-normative`. Assert commented out, `check` removed. Reason recorded: sender==claimedSender is a DYNAMIC consistency property (the binding is CompoundIssuer-style, belongs in `authority.qnt` per the Alloy brief's caveat); in a static snapshot, sender/claimedSender are independent fields — nothing forces equality except a fact, which makes the assert a tautology. Reserved for the authority follow-on.
+  - **B2-trace**: added `attemptedSession`/`attemptedProof` state (raw submitted values, distinct from `lastSession`/`lastProof`). Rewrote all 4 CSRF invariants to consult the attempted evidence, not the recorded trace. Now an action that lies about the recorded trace (or drops the proof check) is caught via the `attemptedProof` oracle.
+  - **B4-overclaim**: narrowed the `GenerationMonotonic` `@promotion` `semantics` field to "the live session generation never decreases (checked). Strict-supersession ... is NOT a checked temporal property" — matching what's actually checked.
+  - **Measurement-discipline**: switched the Alloy `invocation` field to `--type text` (the reliable UNSAT method via skolem-witness check); recorded the `--type json`/file-count unreliability in the model comments.
+- Mutation-test results (acceptance criterion):
+  - B2 helper: break `validCsrfProof`→true → `csrf_rejects_missing_proof` `[violation]` ✓
+  - B2-trace: break `serverAccepts` to drop the proof check (accept any proof) → `csrf_rejects_missing_proof` `[violation]` ✓ (and `csrf_rejects_unauthenticated` correctly stays `[ok]` — discriminating genuine check)
+  - B5/B6: no longer promoted; the only promoted Alloy assert (`ActorIdsUniqueAssert`) is `UNSAT` (0 skolems = no counterexample).
+  - B1/B3/B4 (from prior story): still genuine — not regressed by these edits (re-confirmed: `typed_correlation` `[ok]`, `late_generation_inert` `[ok]`, `generation_monotonic` `[ok]`, and their mutation tests still reproduce `[violation]`).
+- Discrepancies from design: none — the demotions are the honest resolution the fix story specified.
+- Verification: all promoted Quint properties `[ok]`; the one promoted Alloy assert `UNSAT`; both B2 mutation tests `[violation]`; VERIFICATION.md + feature body vocabulary tables updated to match (patchbay-relational.als shows only `ActorIdsUnique` checked; `AuthorityGraphAcyclic`/`SenderMatchesClaim` stated draft).

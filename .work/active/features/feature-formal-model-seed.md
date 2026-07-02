@@ -71,8 +71,8 @@ All checked-normative property-ids are named here, even those whose models are d
 | `CsrfRejectsMissingProof` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |
 | `RevokedSessionCannotCommand` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |
 | `ActorIdsUnique` | relational (identity) | checked | `patchbay-relational.als` | alloy-cli |
-| `AuthorityGraphAcyclic` | relational (authority) | checked | `patchbay-relational.als` | alloy-cli |
-| `SenderMatchesClaim` | relational (anti-spoofing) | checked | `patchbay-relational.als` | alloy-cli |
+| `AuthorityGraphAcyclic` | relational (authority) | stated (draft) | `patchbay-relational.als` | alloy-cli |
+| `SenderMatchesClaim` | relational (anti-spoofing) | stated (draft) | `patchbay-relational.als` | alloy-cli |
 | `SnapshotStaleRejected` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
 | `SnapshotCrossDomainRejected` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |
 | `SnapshotConsistentPrefix` | snapshot convergence (core safety) | stated (draft) | `snapshot_recovery.qnt` | tlc |

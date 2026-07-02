@@ -34,6 +34,15 @@ module csrf_browser {
   var lastSession: str
   var lastProof: str
 
+  // --- attempted-evidence state (the RAW submitted values, distinct from lastSession/lastProof) ---
+  // The invariants check THESE, not lastSession/lastProof. This is the genuine-checking
+  // discipline extended to the evidence-recording layer: the action cannot fool the invariant
+  // by lying about what was submitted (setting lastProof to the bound proof regardless of input).
+  // See idea-csrf-trace-fidelity. lastSession/lastProof are retained as the recorded trace for
+  // audit/observability but are NOT what the safety invariants consult.
+  var attemptedSession: str
+  var attemptedProof: str
+
   // Browser-local claims are deliberately modeled and deliberately ignored by the
   // acceptance rule. They represent UI optimism such as "this session still looks live"
   // or "the button looked granted". They are evidence in the request environment, not
@@ -68,6 +77,8 @@ module csrf_browser {
     accepted' = false,
     lastSession' = "missing_session",
     lastProof' = "missing_proof",
+    attemptedSession' = "missing_session",
+    attemptedProof' = "missing_proof",
     browserLocalSessionLive' = false,
     browserLocalGrantClaim' = false,
   }
@@ -81,6 +92,8 @@ module csrf_browser {
     accepted' = serverAccepts(session, proof),
     lastSession' = session,
     lastProof' = proof,
+    attemptedSession' = session,
+    attemptedProof' = proof,
     browserLocalSessionLive' = uiSaysSessionLive,
     browserLocalGrantClaim' = uiSaysGrantPresent,
     operatorSessions' = operatorSessions,
@@ -113,8 +126,12 @@ module csrf_browser {
   //   proto_fields: [none]
   //   semantics:   SECURITY.md §CSRF requires an authenticated operator session cookie before accepting a state-changing web command
   // }
+  // INDEPENDENT oracle: checks the RAW attempted evidence (attemptedSession/attemptedProof),
+  // not lastSession/lastProof (which the action records and could lie about). This is the
+  // genuine-checking discipline extended to the evidence layer (idea-csrf-trace-fidelity):
+  // the invariant consults what was SUBMITTED, not what the action claims was submitted.
   val csrf_rejects_unauthenticated =
-    accepted.implies(operatorSessions.contains(lastSession))
+    accepted.implies(operatorSessions.contains(attemptedSession))
 
   // @promotion {
   //   property:    CsrfRejectsMissingProof
@@ -129,13 +146,16 @@ module csrf_browser {
   //   proto_fields: [none]
   //   semantics:   SECURITY.md §CSRF requires a CSRF token tied to the authenticated operator session before command acceptance
   // }
-  // INDEPENDENT oracle: asserts raw csrfProofs map facts, NOT the validCsrfProof helper that
-  // serverAccepts (the action) uses. Mutation test: breaking validCsrfProof to `true` would let
-  // a wrong_proof through acceptance, but this invariant would still catch it (proof != bound proof).
+  // INDEPENDENT oracle: asserts raw csrfProofs map facts against the ATTEMPTED evidence
+  // (attemptedSession/attemptedProof), NOT the validCsrfProof helper that serverAccepts uses,
+  // and NOT lastSession/lastProof (which the action records). Mutation tests: (1) breaking
+  // validCsrfProof to `true` is caught; (2) an action that lies about the recorded trace
+  // (setting lastProof to the bound proof regardless of input) is caught because the invariant
+  // reads attemptedProof, the raw submitted value.
   val csrf_rejects_missing_proof =
     accepted.implies(
-      csrfProofs.keys().contains(lastSession)
-        and lastProof == csrfProofs.get(lastSession))
+      csrfProofs.keys().contains(attemptedSession)
+        and attemptedProof == csrfProofs.get(attemptedSession))
 
   // @promotion {
   //   property:    RevokedSessionCannotCommand
@@ -151,16 +171,17 @@ module csrf_browser {
   //   semantics:   SECURITY.md and VERIFICATION.md require revoked or expired operator sessions to be rejected before issuing new commands
   // }
   val revoked_session_cannot_command =
-    accepted.implies(not(sessionStatus.get(lastSession).in(DEAD_STATUSES)))
+    accepted.implies(not(sessionStatus.get(attemptedSession).in(DEAD_STATUSES)))
 
   // Non-promoted documentation invariant for the local-UI authority rule from
   // docs/VERIFICATION.md. INDEPENDENT oracle: asserts raw operatorSessions + csrfProofs +
-  // sessionStatus facts, not the serverAccepts helper. Mutation test: breaking serverAccepts'
-  // sub-helpers would still be caught here.
+  // sessionStatus facts against the ATTEMPTED evidence, not the serverAccepts helper or the
+  // recorded trace. Mutation test: breaking serverAccepts' sub-helpers, or an action lying
+  // about the recorded trace, would still be caught here.
   val browser_local_state_not_authority =
     accepted.implies(
-      operatorSessions.contains(lastSession)
-        and sessionStatus.get(lastSession) == "active"
-        and csrfProofs.keys().contains(lastSession)
-        and lastProof == csrfProofs.get(lastSession))
+      operatorSessions.contains(attemptedSession)
+        and sessionStatus.get(attemptedSession) == "active"
+        and csrfProofs.keys().contains(attemptedSession)
+        and attemptedProof == csrfProofs.get(attemptedSession))
 }

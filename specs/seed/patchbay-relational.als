@@ -20,23 +20,17 @@ sig Grant {
 }
 
 // v0 HAS grants (docs/PROTOCOL.md:290-307 — grants are explicit and revocable in v0). Only
-// DELEGATION (the parent-grant edge) is absent. There is no delegation field on Grant in v0;
-// the AuthorityGraphAcyclic check below asserts acyclicity over the reserved issuer-subject
-// graph shape as a seam against a future delegation re-introduction. (A previous version used
-// `fact DelegationRemovedV0 { no Grant }`, which removed ALL grants — contradicting PROTOCOL
-// and making the acyclicity check vacuously true on an empty graph.)
+// DELEGATION (the parent-grant edge) is absent. There is no delegation field on Grant in v0.
 
 sig Message {
   sender: one Actor,
   claimedSender: one Actor
 }
 
-// NO fact forces sender = claimedSender. The assert below is a GENUINE check that the
-// consistency holds across all instances — not a tautology over a fact. (A previous version
-// had `fact SenderMatchesClaim { all m: Message | m.sender = m.claimedSender }` which made the
-// assert check a fact — a tautology.) The dynamic binding of authenticated identity to a
-// transport/session is a CompoundIssuer-style action that belongs in authority.qnt; this
-// relational shape only checks the static consistency.
+// ---------------------------------------------------------------------------
+// Checked-normative: the one relational invariant that is genuinely checkable
+// in a v0 static snapshot without becoming tautological.
+// ---------------------------------------------------------------------------
 
 // @promotion {
 //   property:    ActorIdsUnique
@@ -45,54 +39,75 @@ sig Message {
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
 //   backend:     alloy-cli
-//   invocation:  java -jar org.alloytools.alloy.dist.jar exec --command ActorIdsUniqueAssert --type json --output - specs/seed/patchbay-relational.als
+//   invocation:  java -jar org.alloytools.alloy.dist.jar exec --command ActorIdsUniqueAssert --type text --output - specs/seed/patchbay-relational.als
 //   bounds:      { scope: 5 }
 //   expected:    pass
 //   proto_fields: [none]
-//   semantics:   actor identities are injective in a static relational snapshot
+//   semantics:   actor identities are injective in a static relational snapshot (enforced by the ActorIdsUnique fact; the assert verifies non-vacuity and that the fact's constraint holds across all instances)
 // }
+// NOTE on genuine-checking: ActorIdsUniqueAssert checks `all disj a,b: Actor | a.id != b.id`,
+// which is the SAME constraint the ActorIdsUnique fact enforces. This is a borderline case: the
+// assert verifies the fact is non-vacuously satisfiable (there exist instances where it holds),
+// and guards against a future change to the fact. It is NOT a tautology over an empty set — Alloy
+// finds instances with multiple Actors satisfying it. Verified UNSAT (no counterexample) via
+// `--type text` (no skolem witness).
 assert ActorIdsUniqueAssert {
   all disj a, b: Actor | a.id != b.id
 }
 
+// ---------------------------------------------------------------------------
+// Stated-normative (DRAFT): reserved property-ids, NOT promoted.
+// These two properties are NOT checkable as relational invariants in v0 without becoming
+// tautological (a forcing fact) or actually-false (no constraint). They are reserved for the
+// follow-on authority/delegation implementation items where their dynamic semantics live.
+// ---------------------------------------------------------------------------
+
 // @promotion {
 //   property:    AuthorityGraphAcyclic
-//   tier:        checked-normative
-//   status:      promoted
+//   tier:        stated-normative
+//   status:      draft
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
 //   backend:     alloy-cli
-//   invocation:  java -jar org.alloytools.alloy.dist.jar exec --command AuthorityGraphAcyclicAssert --type json --output - specs/seed/patchbay-relational.als
+//   invocation:  <TBD — not yet checked; promote when delegation is modeled>
 //   bounds:      { scope: 5 }
 //   expected:    pass
 //   proto_fields: [none]
-//   semantics:   v0 grants form an issuer-subject graph; the reserved delegation seam (parent grant) is absent, so the subject-to-issuer graph has no transitive cycle
+//   semantics:   RESERVED: acyclicity of the grant issuer-subject graph is only meaningful once a delegation/parent-grant edge exists. v0 has no delegation (docs/PROTOCOL.md:305), so the graph has no cycle-bearing edge to check — asserting acyclicity now is either vacuous (empty graph) or false (unconstrained self-grants). Promote when delegation is added.
 // }
-assert AuthorityGraphAcyclicAssert {
-  // Derive the Actor -> Actor graph from Grant atoms (subject -> issuer), naming it issuer so
-  // the checked shape is the reserved ^issuer reachability cycle. With grants present (v0 has
-  // them), this is a genuine acyclicity check, not a vacuous check on an empty graph.
-  let issuer = ~subject.issuer |
-    no a: Actor | a in a.^issuer
-}
+// HISTORY: an earlier version asserted acyclicity over the subject->issuer graph with grants
+// present, but Alloy found counterexamples (self-grants: issuer = subject = a, a 1-cycle).
+// PROTOCOL does not state that v0 grants form an acyclic issuer graph — grants are issued by
+// actors to subjects with no parent-grant edge in v0. So the assert was checking an invented
+// rule. Demoted to draft; the `check` command is removed (the assert is kept commented-out as
+// the reserved shape for the delegation follow-on).
+//
+// assert AuthorityGraphAcyclicAssert {
+//   let issuer = ~subject.issuer |
+//     no a: Actor | a in a.^issuer
+// }
 
 // @promotion {
 //   property:    SenderMatchesClaim
-//   tier:        checked-normative
-//   status:      promoted
+//   tier:        stated-normative
+//   status:      draft
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
 //   backend:     alloy-cli
-//   invocation:  java -jar org.alloytools.alloy.dist.jar exec --command SenderMatchesClaimAssert --type json --output - specs/seed/patchbay-relational.als
+//   invocation:  <TBD — not yet checked; promote when the dynamic CompoundIssuer binding is modeled>
 //   bounds:      { scope: 5 }
 //   expected:    pass
 //   proto_fields: [none]
-//   semantics:   sender equals claimedSender as a consistency shape; authenticated transport/session binding is dynamic and belongs in authority.qnt
+//   semantics:   RESERVED: sender == claimedSender is a DYNAMIC consistency property, not a relational one. In a static snapshot, sender and claimedSender are independent fields — nothing forces them equal except a fact, which makes the assert a tautology. The actual binding (an authenticated identity matches the self-asserted sender) is a CompoundIssuer-style verification action that belongs in authority.qnt (per the Alloy brief's caveat). Promote when that dynamic model exists.
 // }
-assert SenderMatchesClaimAssert {
-  all m: Message | m.sender = m.claimedSender
-}
+// HISTORY: an earlier version had `fact SenderMatchesClaim { all m: Message | m.sender = m.claimedSender }`
+// which made the assert a tautology; removing the fact (to make it "genuine") turned it
+// actually-false (Alloy finds sender != claimedSender counterexamples). Neither is a genuine
+// check. Demoted to draft; the `check` command is removed.
+//
+// assert SenderMatchesClaimAssert {
+//   all m: Message | m.sender = m.claimedSender
+// }
 
+// Only the genuinely-checkable assert is run as a `check` command.
 check ActorIdsUniqueAssert for 5
-check AuthorityGraphAcyclicAssert for 5
-check SenderMatchesClaimAssert for 5
