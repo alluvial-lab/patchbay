@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -600,3 +600,13 @@ All 3 child stories are now terminal (`done`). The feature re-advances `implemen
 **Confirmed-genuine** (no action): B1 (`TypedCorrelation`) and B3 (`LateGenerationInert`) are genuinely fixed — mutation tests reproduce `[violation]`. B2's helper self-reference IS fixed (the partial fix is real, just incomplete on the trace layer).
 
 **Notes**: This re-review found a regression the original block didn't — the B5/B6 "fixes" traded vacuous-true for actually-false, which is worse for a safety-claiming artifact. The root cause: removing a forcing fact without adding a real constraint. The honest resolution is that B5/B6 are NOT checkable as relational invariants in v0 without becoming tautological (B6's binding is dynamic; B5's acyclicity needs delegation) — so both demote to draft, and only `ActorIdsUniqueAssert` remains a promoted Alloy check. The host also caught its own measurement error: `--type json`/file-count gave false UNSAT; `--type text` with a skolem-witness check is the reliable method (recorded in the fix story). The `idea-tlc-temporal-workaround` and new `idea-csrf-trace-fidelity` backlog items carry the residual risks. The review bar earned its keep again — the adversarial re-pass caught a regression the fix pass introduced.
+
+## Re-review readiness (2026-07-01, second pass)
+
+All 4 child stories are now `done`:
+- `story-formal-model-command-lifecycle` (done) — Unit 1, the trickiest model.
+- `story-fix-formal-model-genuine-checks` (done) — 6 self-defining/vacuous properties fixed; mutation-test proof.
+- `story-fix-formal-model-disclosure-drift` (done) — 4 disclosure/drift findings fixed.
+- `story-fix-alloy-relational-assertions` (done) — B5/B6 regression resolved (demoted to draft — not checkable relationally in v0); B2-trace attempted-evidence fix; B4-overclaim semantics narrowed.
+
+The feature re-advances `implementing → review` for the second deep-review re-pass. Current promoted state: only `ActorIdsUniqueAssert` promoted in Alloy (UNSAT); all promoted Quint properties `[ok]` with mutation-test genuine-checking proof. Residuals honestly disclosed: `idea-tlc-temporal-workaround` (experimental-temporal), `idea-csrf-trace-fidelity` (pattern generalized). The two deep reviews caught, respectively, 6 self-defining properties and 1 fix-pass regression — the adversarial re-pass is the right scrutiny for a safety-claiming artifact that's now been through two block→fix cycles.

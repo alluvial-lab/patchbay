@@ -1,7 +1,7 @@
 ---
 id: story-fix-alloy-relational-assertions
 kind: story
-stage: review
+stage: done
 tags: [verification, bug, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -72,3 +72,13 @@ Confirmed by the host via `--type text` output: both asserts produce a skolem wi
   - B1/B3/B4 (from prior story): still genuine — not regressed by these edits (re-confirmed: `typed_correlation` `[ok]`, `late_generation_inert` `[ok]`, `generation_monotonic` `[ok]`, and their mutation tests still reproduce `[violation]`).
 - Discrepancies from design: none — the demotions are the honest resolution the fix story specified.
 - Verification: all promoted Quint properties `[ok]`; the one promoted Alloy assert `UNSAT`; both B2 mutation tests `[violation]`; VERIFICATION.md + feature body vocabulary tables updated to match (patchbay-relational.als shows only `ActorIdsUnique` checked; `AuthorityGraphAcyclic`/`SenderMatchesClaim` stated draft).
+
+## Review (2026-07-01)
+
+**Verdict**: Approve - fast-lane advance
+
+**Lane**: fast (story with green verification; no `--deep` requested). Substrate mode.
+
+**Blockers**: none. **Important**: none. **Nits**: none.
+
+**Notes**: Re-verified everything myself with the reliable `--type text` (skolem-witness) method — the same measurement discipline this story's B5/B6 fix required (the prior false-UNSAT was a `--type json`/file-count error). The one promoted Alloy assert (`ActorIdsUniqueAssert`) is genuinely UNSAT (0 skolems); only 1 `check` command remains (B5/B6 demoted, no promoted assert can fail). All 4 promoted Quint checks `[ok]`. Re-ran all mutation tests myself: B2-trace (break `serverAccepts`) → `csrf_rejects_missing_proof` `[violation]` while `csrf_rejects_unauthenticated` stays `[ok]` (discriminating — proves the check targets the proof, not auth); B2 helper → `[violation]`; B1 regression → `[violation]` (not regressed). The attempted-evidence fix is the genuine-checking discipline correctly extended to the evidence layer. With this story done, all 4 child stories of `feature-formal-model-seed` are terminal, so the parent re-advances to review.
