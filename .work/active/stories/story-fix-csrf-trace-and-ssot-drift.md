@@ -1,7 +1,7 @@
 ---
 id: story-fix-csrf-trace-and-ssot-drift
 kind: story
-stage: review
+stage: done
 tags: [verification, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -58,3 +58,13 @@ Second feature-level deep re-review (`openai-codex/gpt-5.5`, xhigh) found two im
 - Discrepancies from design: none — the I1 fix is the `idea-csrf-trace-fidelity` pattern's correct completion as the story specified.
 - Adjacent issues parked: none new. The `idea-csrf-trace-fidelity` backlog pattern is now properly applied in csrf_browser.qnt; the note there should be updated to reflect the pre-state split is the correct shape (the authority.qnt CompoundIssuer, when promoted, should use the same environment-evidence split).
 - Verification: all promoted CSRF invariants `[ok]`; combined mutation `[violation]`; SSOT consistency grep confirms draft authority backends match across feature body / @promotion / VERIFICATION.md.
+
+## Review (2026-07-01)
+
+**Verdict**: Approve - fast-lane advance
+
+**Lane**: fast (story with green verification; no `--deep` requested). Substrate mode.
+
+**Blockers**: none. **Important**: none. **Nits**: none.
+
+**Notes**: Re-verified everything myself. All 3 CSRF invariants `[ok]`. The I1 combined-mutation test reproduces `[violation]` (drop the proof check) while `csrf_rejects_unauthenticated` stays `[ok]` — discriminating, confirming the check targets the proof not auth. Confirmed the structural-impossibility of the lie: `submit` only does `attemptedProof' = attemptedProof` (a no-op self-assignment), never a rewrite — `arriveRequest` is the sole writer of the raw submitted evidence as pre-state. SSOT drift confirmed fixed: both draft authority backends match across the feature body and `@promotion` blocks. The test-integrity catch during implementation (the initial split broke the invariants due to stale `accepted`; root-caused and fixed by resetting `accepted=false` in `arriveRequest`) is the right discipline — a failing check means root-cause, not game it. Parent `feature-formal-model-seed` is already `done`; this closes the filed follow-up. The seed formal-model arc is now substantively complete: all promoted safety-critical properties genuinely checked (mutation-test proven end-to-end across 3 deep reviews), the trace-fidelity gap closed, SSOT consistent, and the two residuals honestly disclosed in backlog.
