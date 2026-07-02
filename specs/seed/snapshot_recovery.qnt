@@ -13,6 +13,15 @@
 //   - LSN, Cursor, SnapshotRevision, AuthorityDomain, CoreGeneration
 //   - CommittedPrefixLSN, CheckpointSnapshotLSN, RecoveredCommandState, RecoveryPhase
 // plus auxiliary replay variables used to make draft properties typecheck cleanly.
+//
+// ELIDED normative variables (deferred to the follow-on snapshot/recovery implementation item):
+//   SessionGeneration, AdapterGeneration, MessageId, ReplyId, CorrelationRef, SessionId,
+//   ActorId, RecoveredInbox, RecoveredSessionView. These cross-cutting view/identity variables
+//   are named in VERIFICATION's normative-variable list but are not modeled in this draft —
+//   the snapshot/recovery core safety properties (stale-reject, cross-domain-reject,
+//   consistent-prefix, late-event-no-rewrite, crash-no-accepted-lost, idempotent-log-replay)
+//   are exercised against the LSN/cursor/revision/domain/generation core, with the
+//   view-variable reconciliation deferred to the follow-on item that promotes these from draft.
 module snapshot_recovery {
   // --- finite bounds ----------------------------------------------------------
   pure val COMMAND_IDS = Set("cmdA", "cmdB")

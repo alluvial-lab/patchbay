@@ -63,8 +63,8 @@ All checked-normative property-ids are named here, even those whose models are d
 | `RetryReusesIdAndKey` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `RetryAfterTerminalReturnsExisting` | idempotent retry | checked | `command_lifecycle.qnt` | apalache-temporal |
 | `SessionIdentityTuple` | wrong-session prevention | checked | `session_generation.qnt` | apalache |
-| `GenerationMonotonic` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
-| `LateGenerationInert` | wrong-session prevention | checked | `session_generation.qnt` | tlc |
+| `GenerationMonotonic` | wrong-session prevention | checked | `session_generation.qnt` | apalache-temporal |
+| `LateGenerationInert` | wrong-session prevention | checked | `session_generation.qnt` | apalache-temporal |
 | `LabelsCannotOverrideIdentity` | wrong-session prevention | checked | `session_generation.qnt` | apalache |
 | `TypedCorrelation` | reply correlation | checked | `reply_correlation.qnt` | apalache |
 | `CsrfRejectsUnauthenticated` | browser session/CSRF | checked | `csrf_browser.qnt` | apalache |

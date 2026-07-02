@@ -1,7 +1,7 @@
 ---
 id: story-fix-formal-model-disclosure-drift
 kind: story
-stage: implementing
+stage: review
 tags: [verification, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -39,3 +39,16 @@ VERIFICATION's snapshot/recovery normative-variable list includes `SessionGenera
 - [ ] I2: `reply_correlation.emitted.tla` header consistent with the other emitted files.
 - [ ] I3: snapshot_recovery draft either has the variables or an explicit elision note.
 - [ ] I4: authority draft has no dead actions (wired in or removed with note).
+
+## Implementation notes
+
+- Files changed: `.work/active/features/feature-formal-model-seed.md` (I1), `specs/seed/authority.qnt` (I4), `specs/seed/snapshot_recovery.qnt` (I3). I2 (`reply_correlation.emitted.tla` header) was already fixed during the genuine-checks story implementation — all 4 emitted TLA+ artifacts now have consistent `---- MODULE <name> ----` headers.
+- Tests added: none (substrate-hygiene fixes; verification is parse+compile for the draft models + consistency grep for I1).
+- Fixes:
+  - **I1**: updated the feature body vocabulary table — `GenerationMonotonic` and `LateGenerationInert` rows changed `tlc` → `apalache-temporal`, matching the `@promotion` blocks and `docs/VERIFICATION.md`. All 7 checked temporal properties are now consistently `apalache-temporal` across all three sources. (The remaining `tlc` references in the repo are all in DRAFT `@promotion` blocks / the draft rows of the feature body table — those are legitimate placeholder backends for not-yet-checked properties, not drift. The I1 criterion was about *checked* temporal properties, and those are all consistent.)
+  - **I2**: already fixed (emitted TLA+ headers consistent).
+  - **I3**: added an explicit ELIDED-variables note to the snapshot_recovery model header documenting which VERIFICATION normative variables are deferred (SessionGeneration, AdapterGeneration, MessageId, ReplyId, CorrelationRef, SessionId, ActorId, RecoveredInbox, RecoveredSessionView) and why (draft — view-variable reconciliation deferred to the follow-on promotion item).
+  - **I4**: removed the dead `rotateSession` and `revokeTarget` actions from `authority.qnt`; added a deferral note explaining revocation/session-rotation dynamics (and the `RevocationPreventsFuture` reserved property) are deferred to the follow-on authority implementation item, consistent with the draft status. The `RevocationGeneration` and `SessionGeneration` state variables remain so the follow-on can wire them in. `step` now only calls the live `attemptSubmit`.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `quint parse` + `quint compile` exit 0 for both draft models (authority, snapshot_recovery); I1 consistency grep confirms all checked temporal properties are `apalache-temporal` across feature body / @promotion blocks / VERIFICATION.md; I4 grep confirms 0 dead actions in authority.

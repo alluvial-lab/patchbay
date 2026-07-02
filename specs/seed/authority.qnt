@@ -288,90 +288,13 @@ module authority {
     AcceptanceGateOpen' = AcceptanceGateOpen,
   }
 
-  // Note: this action intentionally updates all variables, even those not logically
-  // changed, to satisfy the action-mode shape checks and avoid branch-coverage
-  // mismatches.
-  action rotateSession(session) = all {
-    session.in(OPERATOR_SESSIONS),
-    Actor' = Actor,
-    Device' = Device,
-    Endpoint' = Endpoint,
-    OperatorSession' = OperatorSession,
-    Grant' = Grant,
-    GrantScope' = GrantScope,
-    GrantIssuer' = GrantIssuer,
-    GrantSubject' = GrantSubject,
-    GrantScopeById' = GrantScopeById,
-    GrantEndpoint' = GrantEndpoint,
-    GrantCommandKinds' = GrantCommandKinds,
-    GrantStatus' = GrantStatus,
-    CommandKind' = CommandKind,
-    Target' = Target,
-    TargetGeneration' = TargetGeneration,
-    RevocationGeneration' = RevocationGeneration,
-    CommandIssuer' = CommandIssuer,
-    CommandSession' = CommandSession,
-    CommandEndpoint' = CommandEndpoint,
-    CommandTarget' = CommandTarget,
-    CommandScope' = CommandScope,
-    CommandKindRequest' = CommandKindRequest,
-    CommandTargetGeneration' = CommandTargetGeneration,
-    CommandVerifiedActor' = CommandVerifiedActor,
-    CommandAccepted' = CommandAccepted,
-    CommandAcceptedByGrant' = CommandAcceptedByGrant,
-    CommandDelivered' = CommandDelivered,
-    CommandState' = CommandState,
-    CommandRevocationReason' = CommandRevocationReason,
-    AuthorityDomain' = AuthorityDomain,
-    SessionGeneration' = SessionGeneration.put(session, SessionGeneration.get(session) + 1),
-    SessionActor' = SessionActor,
-    AdapterGeneration' = AdapterGeneration,
-    CorrelationRef' = CorrelationRef,
-    AdapterSupport' = AdapterSupport,
-    LastAttemptedCommand' = LastAttemptedCommand,
-    AcceptanceGateOpen' = AcceptanceGateOpen,
-  }
-
-  action revokeTarget(target) = all {
-    target.in(TARGETS),
-    Actor' = Actor,
-    Device' = Device,
-    Endpoint' = Endpoint,
-    OperatorSession' = OperatorSession,
-    Grant' = Grant,
-    GrantScope' = GrantScope,
-    GrantIssuer' = GrantIssuer,
-    GrantSubject' = GrantSubject,
-    GrantScopeById' = GrantScopeById,
-    GrantEndpoint' = GrantEndpoint,
-    GrantCommandKinds' = GrantCommandKinds,
-    GrantStatus' = GrantStatus,
-    CommandKind' = CommandKind,
-    Target' = Target,
-    TargetGeneration' = TargetGeneration,
-    RevocationGeneration' = RevocationGeneration.put(target, RevocationGeneration.get(target) + 1),
-    CommandIssuer' = CommandIssuer,
-    CommandSession' = CommandSession,
-    CommandEndpoint' = CommandEndpoint,
-    CommandTarget' = CommandTarget,
-    CommandScope' = CommandScope,
-    CommandKindRequest' = CommandKindRequest,
-    CommandTargetGeneration' = CommandTargetGeneration,
-    CommandVerifiedActor' = CommandVerifiedActor,
-    CommandAccepted' = CommandAccepted,
-    CommandAcceptedByGrant' = CommandAcceptedByGrant,
-    CommandDelivered' = CommandDelivered,
-    CommandState' = CommandState,
-    CommandRevocationReason' = CommandRevocationReason,
-    AuthorityDomain' = AuthorityDomain,
-    SessionGeneration' = SessionGeneration,
-    SessionActor' = SessionActor,
-    AdapterGeneration' = AdapterGeneration,
-    CorrelationRef' = CorrelationRef,
-    AdapterSupport' = AdapterSupport,
-    LastAttemptedCommand' = LastAttemptedCommand,
-    AcceptanceGateOpen' = AcceptanceGateOpen,
-  }
+  // Revocation and session-rotation dynamics are intentionally NOT exercised by `step` in
+  // this draft model. `revokeTarget` and `rotateSession` were removed to avoid dead actions
+  // (they were defined but unreachable from `step`). Revocation/session-rotation transitions
+  // — and the `RevocationPreventsFuture` reserved property — are deferred to the follow-on
+  // authority implementation item (consistent with this model's draft/stated-normative status
+  // and the deferral reason in each @promotion block). The `RevocationGeneration` and
+  // `SessionGeneration` state variables remain so the follow-on item can wire them in.
 
   // Reusable one-step driver.
   action step = {
