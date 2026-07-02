@@ -1,7 +1,7 @@
 ---
 id: story-fix-formal-model-genuine-checks
 kind: story
-stage: review
+stage: done
 tags: [verification, bug, protocol, foundation]
 parent: feature-formal-model-seed
 depends_on: []
@@ -78,3 +78,15 @@ The property proves non-decrease + "no generation change when LSN unchanged" —
 - Discrepancies from the fix design: B4 did not achieve the strict-supersession temporal proof the blocker asked for — Apalache's experimental temporal support couldn't reliably verify the `next()`-on-attempted-vars form. Documented honestly; the non-decrease floor + guard strictness satisfies PROTOCOL's safety. This is itself a confirmation of the experimental-temporal residual risk flagged in the review.
 - Adjacent issues parked: none new (the experimental-temporal limitation is already in `idea-tlc-temporal-workaround`).
 - Verification: all 6 fixed properties `[ok]`/`UNSAT`; all 4 mutation tests produce `[violation]` (the genuine-checking proof). Full suite re-run.
+
+## Review (2026-07-01)
+
+**Verdict**: Approve - fast-lane advance
+
+**Lane**: fast (story with green verification; no `--deep` requested). Substrate mode.
+
+**Blockers**: none. **Important**: none. **Nits**: none.
+
+**Notes**: Re-verified the full suite myself rather than trusting the implementer's recorded green (this story carries the safety-claim load, and the whole arc's lesson is that recorded-green is not enough). All 6 fixed properties `[ok]`/`UNSAT` in my run. Critically, re-ran all 4 mutation tests myself — each reproduces `[violation]` when the model/action is broken (B1: break `typedReferenceOk`→true; B2: break `validCsrfProof`→true; B3: late event mutates; B4: generation decreases). The independent-oracle pattern holds: every broken predicate is now caught by an invariant that does not re-use the action's helper. This is the genuine-checking proof the story was created to deliver.
+
+The B4 honest discrepancy (strict-supersession temporal form exceeded Apalache's experimental support; checked as non-decrease floor + documented guard strictness) is accepted — it's the right call given the flagged residual risk (`idea-tlc-temporal-workaround`), not a gap. No above-nit findings to file. Parent `feature-formal-model-seed` remains `implementing` (sibling `story-fix-formal-model-disclosure-drift` pending); no roll-up or archival.
