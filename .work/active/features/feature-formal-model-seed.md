@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: review
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -582,3 +582,21 @@ Both fix stories from the deep-review block are now `done`:
 - `story-fix-formal-model-disclosure-drift` (done) — 4 disclosure/drift findings fixed; draft models parse+compile; all checked temporal properties consistently `apalache-temporal` across all 3 sources.
 
 All 3 child stories are now terminal (`done`). The feature re-advances `implementing → review`. The original deep-review blockers (B1–B6) are resolved with the genuine-checking discipline empirically proven via mutation tests; the important findings (I1–I4) are resolved. The residual `idea-tlc-temporal-workaround` backlog item remains (experimental-temporal risk — not fixable in this stride).
+
+## Re-review (2026-07-01)
+
+**Verdict**: Block (bounced to implementing again)
+
+**Review lane**: deep, substrate mode, fresh-context cross-model adversarial re-review on `openai-codex/gpt-5.5` (xhigh) — same posture as the original block. The host verified the reviewer's findings empirically before classifying (and caught its own measurement error in the process).
+
+**Blockers** (filed as `story-fix-alloy-relational-assertions`):
+- **B5 — `AuthorityGraphAcyclicAssert` now FAILS (regression from the fix)**: removing `fact DelegationRemovedV0 { no Grant }` turned the assert from vacuously-true into actually-false. Alloy finds a counterexample (self-grants create a 1-cycle). The assert checks an *invented* rule — PROTOCOL does not state v0 grants form an acyclic issuer graph (acyclicity is only meaningful once delegation exists, which is out of v0). **Fix**: demote to `status: draft` (reserved for the delegation follow-on).
+- **B6 — `SenderMatchesClaimAssert` now FAILS (regression from the fix)**: removing `fact SenderMatchesClaim` left nothing forcing `sender = claimedSender`. Alloy finds `sender=Actor$0, claimedSender=Actor$1`. Per the Alloy brief's caveat, the *binding* is a dynamic CompoundIssuer-style property that belongs in `authority.qnt`, not a relational snapshot. **Fix**: demote to `status: draft` (reserved for the authority follow-on).
+
+**Important** (filed in the same story):
+- **B2-trace — CSRF invariant trace-fidelity weakness**: the B2 fix removed the helper self-reference, but the invariant trusts `lastProof` (recorded by the action). A deeper mutation (action lies about submitted proof) still passes. **Fix**: add attempted-evidence state; invariant checks raw submitted values. (Generalized to `idea-csrf-trace-fidelity` backlog.)
+- **B4-overclaim — `GenerationMonotonic` semantics overclaim**: the checked property is non-decrease, but the `@promotion` `semantics` field still claims strict-supersession. Mutation allowing equal supersession stays `[ok]`. **Fix**: narrow the semantics field to "non-decrease"; note strict-supersession as a structural guard property.
+
+**Confirmed-genuine** (no action): B1 (`TypedCorrelation`) and B3 (`LateGenerationInert`) are genuinely fixed — mutation tests reproduce `[violation]`. B2's helper self-reference IS fixed (the partial fix is real, just incomplete on the trace layer).
+
+**Notes**: This re-review found a regression the original block didn't — the B5/B6 "fixes" traded vacuous-true for actually-false, which is worse for a safety-claiming artifact. The root cause: removing a forcing fact without adding a real constraint. The honest resolution is that B5/B6 are NOT checkable as relational invariants in v0 without becoming tautological (B6's binding is dynamic; B5's acyclicity needs delegation) — so both demote to draft, and only `ActorIdsUniqueAssert` remains a promoted Alloy check. The host also caught its own measurement error: `--type json`/file-count gave false UNSAT; `--type text` with a skolem-witness check is the reliable method (recorded in the fix story). The `idea-tlc-temporal-workaround` and new `idea-csrf-trace-fidelity` backlog items carry the residual risks. The review bar earned its keep again — the adversarial re-pass caught a regression the fix pass introduced.
