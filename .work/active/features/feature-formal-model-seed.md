@@ -493,3 +493,12 @@ Unit 1 is implemented and all 7 properties check (`[ok]`). Three classes of disc
    - **Impact on the design**: the `backend` field for the 5 temporal properties is changed from `tlc` to `apalache-temporal`; the `invocation` is `echo y | quint verify ... --temporal <p> --max-steps 10`. The vocabulary-table `Backend` column for `command_lifecycle.qnt` temporal properties should read `apalache-temporal` (not `tlc`) in any downstream CI/generator.
    - **Impact on Q3 design choice**: Q3=C (mixed backends) is still the right call — Apalache handles both the one-state invariants AND the temporal safety properties. But the *rationale* shifts: the original rationale was "TLC for two-state, Apalache for one-state"; the corrected rationale is "Apalache for both, with the temporal path requiring the prompt-piped invocation and carrying the experimental-support caveat." This is a real residual risk for a safety-claiming model: Apalache's temporal checker is experimental. **Mitigation**: the properties are all `always(...)` safety (not `eventually` liveness), which is the more conservative end of Apalache's temporal support; and the emitted TLA+ is inspectable. A future follow-on can re-examine the TLC stencil workaround (e.g. hand-writing the `[A]_vars` form) if Apalache temporal confidence is insufficient.
    - This is the same species of gloss the audit caught in Q4/Q5: Q3 asserted the TLC path works for temporal without verifying it on a composed Patchbay model. The research validated `--backend tlc` on a hello-world *invariant*, not on a `next()`-in-`always()` *temporal* property. Caught here in the implementation stride, not at design time — the honest target the stride discharges.
+
+## Implementation notes (Unit 2: session_generation.qnt)
+
+Unit 2 is implemented and all 4 properties check (`[ok]`). Implementation used tuple-keyed tombstone maps rather than string-concatenated keys:
+
+- `tombstoned: (str, int) -> bool` and `tombstoneLsn: (str, int) -> int`, with keys drawn from `TOMBSTONE_KEYS`.
+- Avoided unverified `intToString` and string `++`; tuple keys were parse/typecheck validated before use.
+- Used a unified conditional `step` event (`report` / `late` / `relabel`) so Apalache's temporal checker completes at the required `--max-steps 10` while preserving permissive lower/equal generation no-ops and stale late-event no-ops.
+- `session_generation.emitted.tla` is generated and committed as an inspection artifact only, not an independent verification lane.
