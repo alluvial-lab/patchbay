@@ -1,3 +1,7 @@
+// Superseded by specs/seed/patchbay-relational.als, which keeps this
+// ActorIdsUnique hello-world shape and adds the authority-graph acyclicity
+// and sender/claimed-sender anti-spoofing consistency shapes.
+
 sig Identity {}
 sig Actor { id: one Identity }
 
