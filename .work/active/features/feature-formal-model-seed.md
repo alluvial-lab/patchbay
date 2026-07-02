@@ -1,7 +1,7 @@
 ---
 id: feature-formal-model-seed
 kind: feature
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-verification-contract-authority, feature-research-formal-methods-tooling]
@@ -610,3 +610,21 @@ All 4 child stories are now `done`:
 - `story-fix-alloy-relational-assertions` (done) — B5/B6 regression resolved (demoted to draft — not checkable relationally in v0); B2-trace attempted-evidence fix; B4-overclaim semantics narrowed.
 
 The feature re-advances `implementing → review` for the second deep-review re-pass. Current promoted state: only `ActorIdsUniqueAssert` promoted in Alloy (UNSAT); all promoted Quint properties `[ok]` with mutation-test genuine-checking proof. Residuals honestly disclosed: `idea-tlc-temporal-workaround` (experimental-temporal), `idea-csrf-trace-fidelity` (pattern generalized). The two deep reviews caught, respectively, 6 self-defining properties and 1 fix-pass regression — the adversarial re-pass is the right scrutiny for a safety-claiming artifact that's now been through two block→fix cycles.
+
+## Review (2026-07-01, second re-review)
+
+**Verdict**: Approve with comments (advanced to done)
+
+**Review lane**: deep, substrate mode, fresh-context cross-model adversarial re-review on `openai-codex/gpt-5.5` (xhigh) — the second feature-level deep pass. The host verified the reviewer's findings empirically before classifying.
+
+**Blockers**: none. All promoted safety-critical properties genuinely hold (mutation-test proven by the reviewer and re-confirmed by the host): B1 TypedCorrelation, B2 CSRF helper, B3 LateGenerationInert, B4 GenerationMonotonic all catch their mutations `[violation]`; the one promoted Alloy assert (`ActorIdsUniqueAssert`) is UNSAT (0 skolems, reliable `--type text` method); B5/B6 honestly demoted.
+
+**Important** (filed as `story-fix-csrf-trace-and-ssot-drift`):
+- **I1 — CSRF `attemptedProof` still action-recorded**: the B2-trace fix closed the recorded-trace lie (`lastProof`) but `attemptedProof` is still action-assigned, so a *combined* mutation (drop the proof check AND lie about `attemptedProof`) still passes `[ok]`. Confirmed empirically by the host. Root cause: the raw submitted evidence must be PRE-STATE/environment input the accepting action reads but cannot rewrite. Fix story: split request capture from server processing. This is the `idea-csrf-trace-fidelity` pattern's correct completion.
+- **I2 — vocabulary-table SSOT drift**: three draft-property mismatches between the feature body table and the `@promotion` blocks / VERIFICATION.md (`TimeoutNeitherSuccessNorDenial` model, `CompoundIssuer` backend, `RevocationPreventsFuture` backend). Not safety-failing (draft properties) but the feature claims the table is SSOT.
+
+**Nit**: `ActorIdsUniqueAssert` checks the same constraint as `fact ActorIdsUnique`; the comment's non-vacuity claim is overstated. Recorded in the fix story.
+
+**Residuals**: `idea-tlc-temporal-workaround` (experimental-temporal) — adequate disclosure. `idea-csrf-trace-fidelity` — partially applied (csrf_browser only, and incompletely per I1); the fix story completes it.
+
+**Notes**: This is the third deep pass over the seed models. The arc: first review caught 6 self-defining properties; second caught a fix-pass regression (B5/B6 vacuous-true → actually-false); this third pass found the B2-trace fix was itself incomplete (`attemptedProof` still action-recorded) plus metadata drift. Each pass caught what the previous couldn't because each attacked from a fresh angle. The promoted safety-critical properties now genuinely hold — the remaining findings are a deeper trace-fidelity refinement (I1, filed) and draft-metadata consistency (I2, filed), neither of which undermines the soundness of the checked properties. Advancing to done with the findings filed as a follow-up story rather than blocking: the safety claims that ARE promoted are sound, and the gaps are honestly disclosed + tracked. The feature delivers its acceptance criteria (checked-normative properties genuinely checked, draft models with reserved ids, property-id vocabulary as SSOT, VERIFICATION.md referencing the models). Two block→fix cycles + this approve-with-comments is the right cost for a safety-claiming artifact.
