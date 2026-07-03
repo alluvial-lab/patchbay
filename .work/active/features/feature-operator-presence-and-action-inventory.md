@@ -4,7 +4,7 @@ kind: feature
 stage: drafting
 tags: [foundation, protocol, adapter]
 parent: epic-foundation-hardening
-depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
+depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-research-harness-action-surfaces]
 created: 2026-07-02
 updated: 2026-07-03
 gate_origin: null
