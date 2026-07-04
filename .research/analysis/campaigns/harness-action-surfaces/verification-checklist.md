@@ -285,3 +285,65 @@ Scope read:
 ## Final verdict
 
 **NEEDS-REVISION.** Four of the five second-pass blockers are resolved. The remaining blocker is narrow and mechanical: revise seed answer 4 to show all four provisioning postures, including Antigravity’s programmatic local sidecar/session startup, instead of grouping Antigravity only as cloud-managed. After that correction, this final-verification pass would have no remaining blocking finding.
+
+---
+
+# Reconciliation verification — spawn/attach spine final check (2026-07-04)
+
+Scope read:
+
+- Reconciled synthesis: `.research/analysis/campaigns/harness-action-surfaces/parent.md`
+- Cross-corpus pointer attestations: `.research/attestation/snc-rao-sp-cc-remote-control.md`, `.research/attestation/snc-rao-ae-opencode-cli.md`, `.research/attestation/snc-rao-landscape.md`
+- SNC canonical sources spot-checked: `/home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md`, `/home/agent/SNC/.research/attestation/rao-ae-opencode-cli.md`, `/home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md`, `/home/agent/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md`, `/home/agent/SNC/docs/ops/remote-agent-piloting.md`
+- Attach grounding spot-checks: `.research/attestation/pi-extension.md`, `.research/attestation/claude-code-remote-control.md`, `.research/attestation/opencode-session-handler.md`, `.research/attestation/codex-appserver-readme.md`
+
+## Reconciliation checklist
+
+1. **Spawn finding corrected — SUBSTANTIVELY ADDRESSED, citation cleanup still required.**
+   - The synthesis no longer concludes that no harness exposes spawn-as-operator-action. It explicitly names Claude Code Remote Control `--spawn`, OpenCode `serve`, Codex thread creation, Cursor Cloud Agents, Antigravity managed environments, and Claude Dispatch as prior art.
+   - The novelty framing is now correctly scoped: Patchbay is novel as **harness-agnostic + durable/authority-bearing spawn**, not as the spawn primitive itself.
+   - No stale current-conclusion wording of “no harness exposes spawn” remains. The only occurrence of that idea is in the methodology correction as the prior, explicitly reversed failure.
+   - Citation cleanup remains: the synthesis says the SNC landscape pointer-attestation exists, but it does not actually cite `[snc-rao-landscape]` in the load-bearing methodology/spawn-vs-pilot prose.
+
+2. **Spine restructured to spawn/attach/operate/receive/payload — ADDRESSED with one wording overclaim.**
+   - The parent now uses the five-primitive spine: **spawn / attach / operate / receive / payload**.
+   - Attach is split out from operate/drive and is grounded across harnesses: Pi `pair_request` + `session_sync` via `[pi-extension]`, Claude Code remote/mobile connection and sync via `[claude-code-remote-control]{1}`/`{5}`/`{9}`, and OpenCode client connection to a running `serve` via `[opencode-session-handler]` plus `[snc-rao-ae-opencode-cli]{3}`.
+   - Mechanical wording issue: the common-action introduction says “Every surveyed harness exposes the following action classes,” but the Spawn table itself says Aider has no control-surface spawn, and the Attach table says Aider has no separate scripting attach. Revise this to “surveyed surfaces fit the following action classes” or qualify per primitive.
+
+3. **No remaining stale spawn overclaim — PASSES.**
+   - Seed answers 4 and 6 now state the four spawn postures and acknowledge prior art.
+   - The contradictions section now treats spawn-scope divergence as the live issue, not absence of spawn.
+   - No stale “no harness exposes spawn” conclusion remains outside the historical-methodology sentence.
+
+4. **Citation chain sound — NEEDS-REVISION.**
+   - `[snc-rao-sp-cc-remote-control]` resolves to a Patchbay pointer-attestation and points to the real SNC attestation `/home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md`, which supports `claude remote-control --spawn <mode>` and `--capacity N`.
+   - `[snc-rao-ae-opencode-cli]` resolves to a Patchbay pointer-attestation and points to `/home/agent/SNC/.research/attestation/rao-ae-opencode-cli.md`, which supports `opencode serve` and `opencode attach`.
+   - `[snc-rao-landscape]` resolves to a Patchbay pointer-attestation and points to `/home/agent/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md` plus the deployed guide `/home/agent/SNC/docs/ops/remote-agent-piloting.md`; however, `parent.md` mentions the handle only in backticks and never uses it as a bracket citation.
+   - `[snc-rao-sp-cc-desktop]{2}` is cited in `parent.md` for Dispatch, but no `.research/attestation/snc-rao-sp-cc-desktop.md` pointer-attestation exists. The underlying SNC source exists at `/home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md`; add a Patchbay pointer-attestation or cite Dispatch through an existing resolving handle with an attested passage.
+
+## Jobs (a)–(d) on new/reconciled issues
+
+### Job (a): Semantic citation-chain walk
+
+- Remote Control `--spawn` and OpenCode `serve` chains are semantically sound through their Patchbay pointer-attestations to SNC source-direct attestations.
+- Dispatch is source-supported in SNC (`rao-sp-cc-desktop.md`) but the Patchbay parent citation `[snc-rao-sp-cc-desktop]{2}` is broken because the corresponding Patchbay pointer-attestation file is missing.
+- The prior landscape/deployed-systemd-unit claim is source-real, but not bracket-cited in `parent.md`; add `[snc-rao-landscape]{1}` / `{2}` / `{3}` where the parent invokes that prior art.
+
+### Job (b): Claim-shapes lint missed
+
+- “Every surveyed harness exposes the following action classes” is too broad after adding Spawn and Attach as top-level primitives; Aider has no control-surface spawn and no separate scripting attach. This is a claim-shape overreach, not a taxonomy failure.
+- The “not novel as a primitive; novel as harness-agnostic + durable/authority-bearing” claim is now appropriately scoped and no longer overclaims spawn novelty.
+
+### Job (c): Coherence-read for smoothed contradictions
+
+- Spawn/attach/operate coherence is strong: main body, contradiction section, disconfirming analysis, and seed answers now agree on the five-primitive spine and four spawn postures.
+- The only coherence issue is the introduction’s universal-exposure wording, which conflicts with the per-harness Spawn/Attach rows.
+
+### Job (d): Noise-domination / relevance-weighting
+
+- The revised synthesis now foregrounds the operator’s SNC corpus and the actual spawn prior art rather than the old absence finding.
+- Citation weighting still needs repair for Dispatch and the landscape pointer: both are central to the reconciliation narrative, so their bracket citations must resolve directly in Patchbay’s attestation tier.
+
+## Final reconciliation verdict
+
+**NEEDS-REVISION.** The substantive spawn correction and the spawn/attach/operate/receive/payload spine are correct. The remaining blockers are mechanical but grounding-relevant: add or fix the Dispatch pointer citation (`[snc-rao-sp-cc-desktop]`), actually cite `[snc-rao-landscape]` where the SNC prior landscape is used, and soften the universal “Every surveyed harness exposes” sentence to avoid overclaiming Spawn/Attach exposure for Aider.
