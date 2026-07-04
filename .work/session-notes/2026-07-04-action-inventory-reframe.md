@@ -99,3 +99,59 @@ operator's broader `~/SNC/.research/` corpus. For engagements touching harness/o
 tooling, the check should span the operator's whole research corpus. Not formalized as a
 skill change pending operator decision.
 
+
+## Update — message-centric reframe (refinement to the direction-agnostic model)
+
+The operator sharpened the reframe further: "Command" couples the message to the
+operator-as-authority role. The fundamental unit is **{sender} → {recipient} : Message{force}**,
+direction-agnostic. Force = the speech-act distinction:
+
+- **Directive** — "do this work" (= old "Command")
+- **Assertive** — "here's a result/fact" (= old "Output")
+- **Interrogative** — "I need input" (= old "Query"/AskUserQuestion)
+
+The operator→agent→response PATTERN is one config (op sends directive, agent sends
+assertive back). Not the only reality. This is why op→op and agent→agent didn't fit —
+we'd hard-coded the op→agent direction into primitive names. In message-centric form
+they fit trivially: just messages between entities.
+
+### Refined shape set (candidate)
+
+- **Spawn** — bring an entity/session into existence (connection-management)
+- **Attach** — establish a connection between entities (connection-management)
+- **Message** — content sent from one entity to another, with a FORCE:
+  - directive (do this) / assertive (here's a result) / interrogative (need input)
+  - (commissive, declarative — reserved?)
+- (Payload = field of Message, not a primitive)
+
+### Reconciliation with the "Message drop" decision
+
+The drop was a SPECIFIC flavor (operator-originated no-grant informational replyable
+= assertive op→agent message, rare/weird, no harness exercises it). Drop stands for
+that flavor. The GENERAL Message primitive (content exchanged between entities, with
+force) is the unifying abstraction — always alive, hidden under role-coupled names.
+
+### Honest tension (for design pass)
+
+Patchbay's protocol needs to distinguish "directive message with a CommandState
+lifecycle" (TerminalFinality proves a property about it) from "assertive reply."
+Resolution: MODEL is message-centric (one Message primitive + force); PROJECTION
+(patchbay's protocol) distinguishes message sub-types (Command = directive message
+whose execution has lifecycle tracking; Output = assertive reply; Query =
+interrogative) based on force + execution semantics. Model stays clean; patchbay
+makes distinctions as a design decision OVER the model.
+
+### What this supersedes
+
+- The spawn/attach/operate/receive spine → SUPERSEDED by {spawn, attach, Message+force}.
+- Open question #2 (Output vs Command) → DISSOLVED: they're the same primitive
+  (Message) with different forces. No longer a separate question.
+- The "Command" term → still patchbay's protocol word (for the directive-message-with-
+  lifecycle sub-type in the projection), but NOT a model-layer primitive.
+
+### Next session should
+
+1. Pressure-test the message-centric model: does {spawn, attach, Message+force} hold?
+2. Resolve force set: directive/assertive/rogative sufficient, or need commissive/declarative?
+3. Restructure the synthesis into (a) message-centric MODEL + (b) patchbay PROJECTION.
+4. Then the consuming feature's design pass can run (design→review→implement→deep review).
