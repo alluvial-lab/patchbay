@@ -1,12 +1,12 @@
 ---
 id: feature-research-harness-action-surfaces
 kind: feature
-stage: drafting
+stage: done
 tags: [research, adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
 created: 2026-07-02
-updated: 2026-07-03
+updated: 2026-07-04
 gate_origin: null
 release_binding: null
 research_dials:
@@ -75,3 +75,20 @@ Source: `/home/agent/projects/remote_pi/pi-extension/src/` (index.ts, protocol/g
 
 - **`feature-operator-presence-and-action-inventory`** (drafting) depends on this: its design pass is blocked until this survey grounds the action surface. Its D4 (normative vs. reference) resolves after this lands.
 - **`feature-pi-parity-checklist`** (drafting) benefits: Pi parity can be assessed against the cross-harness common set this survey establishes.
+
+## Engagement record
+
+Completed: 2026-07-04
+
+- **Fan-out**: 6 parallel research-specialists (by-harness decomposition, Candidate A) on `openai-codex`: `gpt-5.5` (medium) for Claude Code, Codex, Cursor, Antigravity (complex SDK/extension surfaces); `gpt-5.3-codex-spark` (medium) for OpenCode, Aider (readable open-source). OpenCode facet grounded directly by lead after two specialist dispatches hit harness limits without writing files.
+- **Surveyed**: Pi (via remote_pi pi-extension source — attested as `pi-extension`), Claude Code, Codex, Cursor, OpenCode, Aider, Antigravity — 7 harnesses total.
+- **Gate outcomes**:
+  - Citation lint: 483 resolved / 49 broken (mostly `[low] unreachable-source` from no-network URL probes; 1 `[medium]` local-path nit on `opencode-schema-events`); 0 thin; 17 `warn` pattern flags (content nits, cited). Run with `--no-url-check` after direct source fetches, matching the prior engagement's posture.
+  - Adversarial-read: 2 passes (`gpt-5.5` high). Pass 1 NEEDS-REVISION (8 findings: Message-drop over-breadth, uncited tables, spine misstatement, provisioning posture, Aider flags, payload framing, Claude citation locators). Pass 2 NEEDS-REVISION (5 blocking findings: table citations, broken `[pi-extension-supervisord]` handle, unsupported Codex citation, stale spine, Antigravity collapse). All addressed in-revision; final pass APPROVED.
+  - Spot-check (lead): remaining `warn` flags are framing prose, not grounding failures.
+- **Acquisition candidates**: 2 blocking (Antigravity `agy` CLI canonical docs; Antigravity SDK Overview/permissions docs); 2 enriching (Cursor Cloud Agents OpenAPI spec; Codex app-server schema from exact binary version). Persisted research-side; operator-confirmed promotion at the research-handoff gate.
+- **Outputs**: `.research/analysis/campaigns/harness-action-surfaces/` (`parent.md` synthesis, `specialists/*.md`, `verification-checklist.md`); 34 per-source attestations under `.research/attestation/` (including the new `pi-extension.md` grounding Pi's surface).
+- **Key findings consumed by `feature-operator-presence-and-action-inventory`**:
+  - Six-class spine (drive/request/query/result/payload/provision) survives across all 7 harnesses.
+  - Provisioning is novel for patchbay — no harness exposes remote-machine process spawn as an operator action. Four postures surfaced (out-of-band sysadmin / programmatic local sidecar / in-process session creation / cloud-managed).
+  - `Message` (operator-originated no-grant replyable) drops for v0; agent-originated question/elicitation surface is real and common (a separate modeling question the design pass inherits). Formal-model `TypedCorrelation` amendment re-scoped: narrows operator-originated correlation to the command space, must still accommodate agent-originated question/elicitation replies as a typed reference target.
