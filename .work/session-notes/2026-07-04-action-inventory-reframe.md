@@ -6,7 +6,7 @@
 ### Where we are
 
 The wide harness/tooling survey (`feature-research-harness-action-surfaces`, DONE,
-grounded across 7 harnesses + reconciled with operator's `~/SNC/.research/` corpus)
+grounded across 7 harnesses + reconciled with operator's `/home/agent/projects/SNC/.research/` corpus)
 produced a synthesis at `.research/analysis/campaigns/harness-action-surfaces/parent.md`.
 
 The operator then surfaced a REFRAME that invalidates the synthesis's structure:
@@ -88,14 +88,14 @@ mesh). Reserved: op→op.
 
 - Synthesis (operator-centric, needs reframe): `.research/analysis/campaigns/harness-action-surfaces/parent.md`
 - Consuming feature: `.work/active/features/feature-operator-presence-and-action-inventory.md`
-- SNC prior corpus: `~/SNC/.research/` (855 attestations; `remote-agent-operation-landscape.md`
+- SNC prior corpus: `/home/agent/projects/SNC/.research/` (855 attestations; `remote-agent-operation-landscape.md`
   is the load-bearing prior brief — spawn-vs-pilot framing lives there)
-- Deploy guide (spawn prior art): `~/SNC/docs/ops/remote-agent-piloting.md`
+- Deploy guide (spawn prior art): `/home/agent/projects/SNC/docs/ops/remote-agent-piloting.md`
 
 ### Methodology note (for future engagements)
 
 The substrate-check was scoped too narrowly to patchbay's `.research/` and missed the
-operator's broader `~/SNC/.research/` corpus. For engagements touching harness/operator
+operator's broader `/home/agent/projects/SNC/.research/` corpus. For engagements touching harness/operator
 tooling, the check should span the operator's whole research corpus. Not formalized as a
 skill change pending operator decision.
 

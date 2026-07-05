@@ -1,7 +1,7 @@
 ---
 source_handle: snc-rao-sp-cc-desktop
 fetched: 2026-07-04
-source_path: /home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md
+source_path: /home/agent/projects/SNC/.research/attestation/rao-sp-cc-desktop.md
 provenance: source-direct
 source_class: cross-corpus-attestation
 note: Cross-corpus pointer to the operator's SNC research (fetched 2026-06-03) on Claude Code Dispatch — the mobile-app-triggered spawn mechanism (message a task from the Claude mobile app, runs on your machine via Desktop).
@@ -9,7 +9,7 @@ note: Cross-corpus pointer to the operator's SNC research (fetched 2026-06-03) o
 
 # Cross-corpus pointer: Claude Code Dispatch (SNC attestation)
 
-The canonical attestation is at `/home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md`, fetched 2026-06-03.
+The canonical attestation is at `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-desktop.md`, fetched 2026-06-03.
 
 ## Load-bearing claims
 

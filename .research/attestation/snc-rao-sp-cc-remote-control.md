@@ -1,7 +1,7 @@
 ---
 source_handle: snc-rao-sp-cc-remote-control
 fetched: 2026-07-04
-source_path: /home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md
+source_path: /home/agent/projects/SNC/.research/attestation/rao-sp-cc-remote-control.md
 provenance: source-direct
 source_class: cross-corpus-attestation
 note: This attestation lives in the operator's broader SNC research corpus (fetched 2026-06-03 from https://code.claude.com/docs/en/remote-control). Cited here because patchbay's harness-action-surfaces engagement was scoped to patchbay's .research/ and missed the operator's prior grounded research on the same topic (see the campaign's methodology-correction note). The underlying source is the Claude Code Remote Control docs.
@@ -9,7 +9,7 @@ note: This attestation lives in the operator's broader SNC research corpus (fetc
 
 # Cross-corpus pointer: Claude Code Remote Control (SNC attestation)
 
-The canonical attestation is at `/home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md` (and a parallel `rao-ae-claude-code-remote-control.md`), fetched 2026-06-03 from `https://code.claude.com/docs/en/remote-control`.
+The canonical attestation is at `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-remote-control.md` (and a parallel `rao-ae-claude-code-remote-control.md`), fetched 2026-06-03 from `https://code.claude.com/docs/en/remote-control`.
 
 ## Load-bearing claims (for citation by handle)
 

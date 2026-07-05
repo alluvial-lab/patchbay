@@ -294,7 +294,7 @@ Scope read:
 
 - Reconciled synthesis: `.research/analysis/campaigns/harness-action-surfaces/parent.md`
 - Cross-corpus pointer attestations: `.research/attestation/snc-rao-sp-cc-remote-control.md`, `.research/attestation/snc-rao-ae-opencode-cli.md`, `.research/attestation/snc-rao-landscape.md`
-- SNC canonical sources spot-checked: `/home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md`, `/home/agent/SNC/.research/attestation/rao-ae-opencode-cli.md`, `/home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md`, `/home/agent/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md`, `/home/agent/SNC/docs/ops/remote-agent-piloting.md`
+- SNC canonical sources spot-checked: `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-remote-control.md`, `/home/agent/projects/SNC/.research/attestation/rao-ae-opencode-cli.md`, `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-desktop.md`, `/home/agent/projects/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md`, `/home/agent/projects/SNC/docs/ops/remote-agent-piloting.md`
 - Attach grounding spot-checks: `.research/attestation/pi-extension.md`, `.research/attestation/claude-code-remote-control.md`, `.research/attestation/opencode-session-handler.md`, `.research/attestation/codex-appserver-readme.md`
 
 ## Reconciliation checklist
@@ -316,10 +316,10 @@ Scope read:
    - No stale “no harness exposes spawn” conclusion remains outside the historical-methodology sentence.
 
 4. **Citation chain sound — NEEDS-REVISION.**
-   - `[snc-rao-sp-cc-remote-control]` resolves to a Patchbay pointer-attestation and points to the real SNC attestation `/home/agent/SNC/.research/attestation/rao-sp-cc-remote-control.md`, which supports `claude remote-control --spawn <mode>` and `--capacity N`.
-   - `[snc-rao-ae-opencode-cli]` resolves to a Patchbay pointer-attestation and points to `/home/agent/SNC/.research/attestation/rao-ae-opencode-cli.md`, which supports `opencode serve` and `opencode attach`.
-   - `[snc-rao-landscape]` resolves to a Patchbay pointer-attestation and points to `/home/agent/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md` plus the deployed guide `/home/agent/SNC/docs/ops/remote-agent-piloting.md`; however, `parent.md` mentions the handle only in backticks and never uses it as a bracket citation.
-   - `[snc-rao-sp-cc-desktop]{2}` is cited in `parent.md` for Dispatch, but no `.research/attestation/snc-rao-sp-cc-desktop.md` pointer-attestation exists. The underlying SNC source exists at `/home/agent/SNC/.research/attestation/rao-sp-cc-desktop.md`; add a Patchbay pointer-attestation or cite Dispatch through an existing resolving handle with an attested passage.
+   - `[snc-rao-sp-cc-remote-control]` resolves to a Patchbay pointer-attestation and points to the real SNC attestation `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-remote-control.md`, which supports `claude remote-control --spawn <mode>` and `--capacity N`.
+   - `[snc-rao-ae-opencode-cli]` resolves to a Patchbay pointer-attestation and points to `/home/agent/projects/SNC/.research/attestation/rao-ae-opencode-cli.md`, which supports `opencode serve` and `opencode attach`.
+   - `[snc-rao-landscape]` resolves to a Patchbay pointer-attestation and points to `/home/agent/projects/SNC/.research/analysis/briefs/remote-agent-operation-landscape.md` plus the deployed guide `/home/agent/projects/SNC/docs/ops/remote-agent-piloting.md`; however, `parent.md` mentions the handle only in backticks and never uses it as a bracket citation.
+   - `[snc-rao-sp-cc-desktop]{2}` is cited in `parent.md` for Dispatch, but no `.research/attestation/snc-rao-sp-cc-desktop.md` pointer-attestation exists. The underlying SNC source exists at `/home/agent/projects/SNC/.research/attestation/rao-sp-cc-desktop.md`; add a Patchbay pointer-attestation or cite Dispatch through an existing resolving handle with an attested passage.
 
 ## Jobs (a)–(d) on new/reconciled issues
 
