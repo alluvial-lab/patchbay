@@ -4,9 +4,9 @@ kind: feature
 stage: drafting
 tags: [prose, adapter, foundation]
 parent: epic-foundation-hardening
-depends_on: [feature-v0-walking-skeleton, feature-session-identity-adapter-contract]
+depends_on: [feature-v0-walking-skeleton, feature-session-identity-adapter-contract, feature-operator-presence-and-action-inventory]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-05
 gate_origin: null
 release_binding: null
 ---
