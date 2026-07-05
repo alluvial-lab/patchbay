@@ -10,15 +10,17 @@ The human control surface plane contains web, CLI, future mobile, desktop, notif
 
 The first surface is a responsive web cockpit using the shared TypeScript operator domain. The CLI provides administrative and scriptable control. The future Expo app reuses the same domain and protocol client.
 
-### Operator intent plane
+### Operation plane
 
-The operator intent plane represents prompts, commands, approvals, cancels, resumes, compactions, session switches, and other human-directed actions.
+The operation plane represents authorized control-plane requests through an actor-neutral vocabulary, while v0 admits only operator-originated Operations. It includes spawn, attach, drive, cancel, interrupt, query, approval response, elicitation response, reconfiguration, and session-management Operations; non-operator Operation senders remain reserved seams.
 
-Every accepted operator intent has a durable command state from the canonical `CommandState` registry in `docs/PROTOCOL.md`. Control-surface-local submission states are separate and never become durable core states.
+Every accepted Operation initially reuses the canonical `CommandState` registry in `docs/PROTOCOL.md` by documented refinement equivalence. Control-surface-local submission states are separate and never become durable core states. A future rename to `OperationState` must update prose, generated contracts, formal models, conformance vectors, and implementations together.
 
 ### Runtime/session plane
 
 The runtime/session plane contains harness sessions, agent processes, shell jobs, containers, worktrees, CI tasks, or other execution contexts. Patchbay observes and controls these through adapters.
+
+Spawn authority is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired. Spawn is one `OperationKind`; spawn variants (worktree, same-dir, session, process, cloud environment) are described by payload `target_spec.shape` from a reserved open shape registry, not by per-variant OperationKinds. See `docs/PROTOCOL.md` for the spawn authority model and `docs/SECURITY.md` for the descendant-grant and revocation rules.
 
 ### Adapter plane
 
@@ -39,11 +41,9 @@ The adapter lifecycle is audited:
 
 The trust-root mechanism is adapter-specific; the core validates attachment evidence but does not mandate a single mechanism. An adapter that cannot provide attachment evidence cannot register (fail-closed).
 
-### Message and command plane
+### Operation, Observation, and Elicitation plane
 
-This plane defines delivery, command acceptance, reply correlation, idempotency, retries, expiration, and failure semantics. Its state machines and failure vocabulary are owned by `docs/PROTOCOL.md` until generated contracts take over as the derived boundary artifact.
-
-Live streaming is an optimization. Durable acceptance and snapshot recovery carry correctness.
+This plane defines Operation acceptance, delivery, reply/response correlation, idempotency, retries, expiration, failure semantics, source-authenticated Observations, and durable Elicitations. Its state machines and failure vocabulary are owned by `docs/PROTOCOL.md` until generated contracts take over as the derived boundary artifact.
 
 ### State and snapshot plane
 
@@ -89,7 +89,7 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
 │ Patchbay coordination core                               │
 │  actor registry                                          │
 │  durable events/inboxes                                  │
-│  command routing                                         │
+│  operation routing                                       │
 │  authority/grants                                        │
 │  snapshots                                               │
 │  leases                                                  │
@@ -117,7 +117,7 @@ The v0 executable slice is a single-authority deployment that proves the core co
 ┌──────────────────────────────────────────────────────────┐
 │ Single Patchbay coordination core                        │
 │  actor/session registry                                  │
-│  command acceptance + idempotency                        │
+│  operation acceptance + idempotency                      │
 │  authority checks                                        │
 │  durable event log + snapshots                           │
 └──────────────────────────────┬───────────────────────────┘
@@ -126,7 +126,7 @@ The v0 executable slice is a single-authority deployment that proves the core co
 ┌──────────────────────────────────────────────────────────┐
 │ Pi adapter                                                │
 │  session discovery/status                                 │
-│  message/prompt delivery                                  │
+│  operation/prompt delivery                                 │
 │  cancel/interrupt where supported                         │
 │  replies/events/snapshots                                 │
 └──────────────────────────────────────────────────────────┘
@@ -144,7 +144,7 @@ V0 architecture decisions:
 
 V0 runs two logical processes, not one:
 
-- **Rust coordination core** — the single authoritative process. Owns the durable event log, command acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.
+- **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.
 - **TypeScript web server** — a control-surface process that terminates HTTP/HTTPS for the browser cockpit, owns operator sessions, cookies, and CSRF protection, and speaks the generated Protobuf/Connect contract to the Rust core.
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
@@ -155,7 +155,7 @@ Reserved seams:
 
 - **Server-side operator-domain reuse**: v0 may run the web server as a thin HTTP→protocol translator with the operator domain executing only in the browser; promoting delivery/reconnect state machines or SSR to the server is reserved for when a concrete need arrives.
 - **Web↔core internal protocol design**: the specific RPC surface, streaming/event channel, operator-session/CSRF evidence crossing, and web-surface authentication to the core are designed in a follow-on feature (see `feature-web-core-protocol-seam`).
-- **Split deployment**: the web server may run near the operator and the core elsewhere once the internal protocol seam is designed; v0 may colocate them on one host for simplicity.
+- **Split deployment**: the web server, CLI, core, and adapters may run on different machines. V0 may colocate them on one host for installation simplicity, but that colocation is a deployment convenience, not the architecture. The Rust coordination core remains the network-reachable fixed point and the single durable writer.
 
 This topology is consistent with the single-authoritative-core commitment: there is one writer to the durable log (the Rust core), and the HTTP-terminating process is a control surface whose authority is delegated and revocable.
 
@@ -167,7 +167,7 @@ The v0 persistence layer is a single-writer, local-first, port-isolated store ow
 - **Embedded default backend**: the first backend may be embedded in the core process (e.g. a local file or embedded database). Domain semantics must not depend on the backend choice.
 - **Storage port**: the core reads and writes through a storage port; adapters and control surfaces never touch persistence directly. This is the Ports & Adapters boundary for durability.
 - **Log + snapshots**: the durable event log is the source of truth; snapshots are derived checkpoints used to bound recovery replay cost. A snapshot is never an alternate ordering authority.
-- **Crash recovery**: on restart the core replays the log (or loads the latest snapshot then replays the tail) to reconstruct in-memory state up to the last committed log sequence number. Accepted commands are restored; no accepted command disappears silently.
+- **Crash recovery**: on restart the core replays the log (or loads the latest snapshot then replays the tail) to reconstruct in-memory state up to the last committed log sequence number. Accepted Operations are restored; no accepted Operation disappears silently.
 - **No remote replication**: v0 does not require WAL shipping, remote replicas, or storage-engine hot swap. Those are reserved seams for HA/federated deployments.
 
 Revision and cursor semantics for events and snapshots are defined in `docs/PROTOCOL.md`. V0 does not require multi-region replication, point-in-time cloning, or cross-backend snapshot portability.
@@ -176,21 +176,22 @@ Future architecture planes remain valid direction, but v0 implementation should 
 
 ## Data flow
 
-1. A control surface submits operator intent through the shared TypeScript client.
-2. The coordination core validates identity, authority, target session, idempotency key, and command shape.
-3. Accepted intent is durably recorded before delivery is attempted.
-4. The target adapter receives the command or reports an explicit failure.
-5. Events and replies correlate to the accepted command id.
-6. Control surfaces update from event streams when available.
-7. On reconnect, control surfaces request snapshots and reconcile local presentation state.
+1. A control surface submits an operator-originated Operation through the shared TypeScript client. (Non-operator Operation submitters remain reserved seams in v0.)
+2. The coordination core validates identity, authority, target scope, idempotency key, `OperationKind`, and payload shape.
+3. Accepted Operations are durably recorded before delivery is attempted.
+4. The target adapter receives the Operation or reports an explicit failure; adapters and actors emit source-authenticated Observations.
+5. Adapter/agent/harness openers create Elicitations over authenticated adapter channels; the core durably records them and fans them out to subscribed operator surfaces.
+6. Replies, response Operations, and Observations correlate to the accepted Operation/Elicitation they answer by typed reference.
+7. Control surfaces update from event streams when available; streams are delivery optimizations, not authoritative alone.
+8. On reconnect, control surfaces submit their cursor and reconcile against snapshots and core records rather than optimistic UI state.
 
 ## Boundary rules
 
-- The coordination core owns durable command state and authority checks.
+- The coordination core owns durable Operation state and authority checks.
 - Adapters own external-runtime protocol details.
 - Control surfaces never infer authoritative state from optimistic UI alone.
 - `docs/PROTOCOL.md` is the prose source of truth for state registries until generated contracts exist.
-- Generated contracts or central schemas define wire shapes and derive command/session/failure variants from the canonical protocol registry.
+- Generated contracts or central schemas define wire shapes and derive Operation/session/failure variants from the canonical protocol registry.
 - Formal models define product semantics for delivery, authority, identity, snapshots, and leases using the canonical protocol variables.
 
 ## Pi-first migration path

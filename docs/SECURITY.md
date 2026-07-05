@@ -32,7 +32,7 @@ The model keeps these concepts explicit:
 - **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor on a device.
 - **Operator session** — an authenticated browser or CLI session for the operator, backed by a server-side session record.
 - **Runtime session** — an adapter-reported control target, such as a Pi session.
-- **Grant** — an authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform command kinds against a target scope.
+- **Grant** — an authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform OperationKinds against a target scope.
 - **Authority domain** — the single core-owned context in which grants, revocation, routing authority, and audit are evaluated.
 
 Future multi-operator coordination remains a reserved extension seam. V0 data structures should not assume there can only ever be one operator, but v0 UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
@@ -123,20 +123,20 @@ Unauthenticated setup pages must not expose state-changing bootstrap flows on a 
 
 ## Command authorization and replay resistance
 
-A command is accepted only after Patchbay validates:
+An Operation is accepted only after Patchbay validates:
 
-1. payload shape and command kind (the kind must be a known Patchbay command kind);
+1. payload shape and `OperationKind` (the kind must be a known Patchbay OperationKind; an unknown or reserved-but-not-validatable kind like `agent-send` is `validation_failed` at submission, before a grant is evaluated);
 2. authenticated issuer session or endpoint;
-3. target actor/session identity and generation;
+3. target actor/session identity and generation, or fleet/supervisor scope for spawn Operations whose target does not yet exist;
 4. idempotency key or command id;
 5. command expiration window;
-6. a live, unrevoked grant permitting that issuer to perform that command kind on that target scope.
+6. a live, unrevoked grant permitting that issuer to perform that OperationKind on that target scope.
 
-Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, or command-kind-mismatched grants produce `SubmissionOutcome = rejected` with `authorization_denied` or the narrower applicable failure term from `docs/PROTOCOL.md`.
+Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, or kind-mismatched grants produce `SubmissionOutcome = rejected` with `authorization_denied` or the narrower applicable failure term from `docs/PROTOCOL.md`.
 
 Retries with the same idempotency key return the existing command record. A new intentional action requires a new command id/key.
 
-Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority.
+Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. V0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0 mediated behavior.
 
 ### Compound issuer
 
@@ -150,8 +150,8 @@ A v0 grant has at least:
 - authority domain id;
 - subject actor id;
 - optional subject endpoint id or endpoint class;
-- target scope: actor, adapter, runtime session, project/session group, or other modeled resource;
-- allowed command kinds;
+- target scope: actor, adapter, runtime session, project/session group, fleet/supervisor scope, or other modeled resource;
+- allowed OperationKinds;
 - created time and provenance;
 - optional expiration;
 - revocation generation or revoked time;
@@ -159,11 +159,25 @@ A v0 grant has at least:
 
 Delegation is a reserved future direction, not a v0 field; a `parent grant id / delegated-by` field is intentionally absent from v0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time.
 
+### Spawn authority
+
+Spawn is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority is reserved.
+
+Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session: spawner/operator subject as subject, spawned session as target. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. It preserves and builds the seam for future cross-operator delegation over spawned sessions: a future delegated grant can reintroduce `parent_grant_id` and reference the auto-issued descendant grant directly; that is same infrastructure, not v0 cross-actor delegation.
+
+Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0 behavior; future cascade is a query over grant provenance and needs no schema change.
+
+### Elicitation responder authorization
+
+V0 Elicitations bind to the operator actor (the `expected_responder_actor`), not a specific endpoint. Any authenticated operator endpoint may answer; the responding endpoint is captured in the response Operation audit at response time, not pre-bound in the Elicitation. First valid answer terminalizes the Elicitation for all subscribed surfaces; later attempts from other surfaces are rejected as already-terminal/stale and audited. Tighter responder binding (endpoint, endpoint class, fallback chain) and responder-actor distinction for multi-operator sessions are reserved seams.
+
+Response Operations and spawn are state-changing and subject to the same CSRF and authority requirements as other Operations. Secret response-contract kinds (reserved, not validatable in v0) carry redaction/no-log obligations: a `secret` contract response must never be persisted in plaintext or logged raw; redaction policy is enforced at the boundary before any audit or snapshot materializes.
+
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 
 ## Revocation model
 
-Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and command kind:
+Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and OperationKind:
 
 - **continue** — preserve already accepted work, but reject future commands;
 - **cancel** — submit or record cancellation for accepted non-terminal commands when supported;

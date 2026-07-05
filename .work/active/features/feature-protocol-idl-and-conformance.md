@@ -23,6 +23,12 @@ Patchbay's generated-contract posture requires actual schema/IDL artifacts, gene
 - Produce golden conformance vectors for command acceptance, reply correlation, snapshot reconciliation, terminal-commit race resolution, and failure/outcome mapping.
 - Document how generated contracts relate to prose semantics and formal models.
 
+### Normative registry inheritance
+
+This feature **inherits the normative action registry** from `feature-operator-presence-and-action-inventory`. It does **not** invent a separate command/action-kind list. The product-vocabulary registry is authored in `docs/PROTOCOL.md` (Operation, Observation, Elicitation, Payload, `OperationKind` registry, `ElicitationState` lifecycle, `response_contract` registry, the five id spaces, and the Presence/Subscription axes). This feature's `.proto` enum/wire representation derives from that registry: if `.proto` needs a new action kind, the product-vocabulary registry in `docs/PROTOCOL.md` changes first, then `.proto`, models, vectors, and implementation follow.
+
+The original Q4 ("what are the command/action kinds?") is **dissolved**: it is answered by consuming `OperationKind`, `ElicitationState`, `response_contract.contract_kind`, and Presence/Subscription registries from the foundation work rather than by introducing a parallel enum here.
+
 ## Acceptance criteria
 
 - `contracts/` contains the v0 IDL/schema and generation instructions.

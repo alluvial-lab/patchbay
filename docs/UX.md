@@ -37,9 +37,13 @@ The operator can see available sessions and understand:
 
 ### Send intent
 
-The operator can send a prompt, command, approval, cancel, or other adapter-supported action to a selected session.
+The operator can submit Operations to a selected target: spawn or attach where supported, drive a turn with prompt payload, cancel or interrupt active work, answer approvals or Elicitations, query status/snapshots, reconfigure adapter-declared settings, or perform session-management actions.
 
 The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
+
+### Answer Elicitations
+
+V0 Elicitations target the operator actor (not a specific endpoint) and fan out to all subscribed operator surfaces. The UI surfaces pending Elicitations (approvals and questions) as attention-required state. The operator may answer from any authenticated operator endpoint; the first valid answer clears the Elicitation everywhere. The endpoint that actually answered is captured in the response Operation audit. Tighter binding (endpoint class, fallback chain) is reserved.
 
 ### Recover after disconnect
 
@@ -71,6 +75,7 @@ Patchbay UI presentation derives from the canonical protocol registries in `docs
 
 - Command display composes protocol-defined local submission state with durable `CommandState` once a command id exists.
 - Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
+- Pending Elicitations (approvals, questions) and Observations (output, lifecycle facts, status emissions) are presented from subscription streams but never treated as authoritative alone; snapshots and core records reconcile.
 - Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
 - Command timelines can explain terminal races without adding protocol states, following `docs/PROTOCOL.md` "Cancellation, expiration, supersession, and race semantics"; examples include **Completed before cancellation arrived**, **Cancelled before completion**, or **Expired before adapter completion**.
 

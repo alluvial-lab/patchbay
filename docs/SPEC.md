@@ -27,7 +27,7 @@ V0 includes:
 - **Deployment topology:** one authoritative coordination core process. Adapters and control surfaces may run in separate processes, but v0 does not provide high availability, clustering, split-brain resolution, or multiple authoritative cores.
 - **Persistence:** a local durable event and snapshot store behind ports. The first backend may be embedded and file- or database-backed, but domain semantics must not depend on a specific storage engine.
 - **First adapter:** Pi. Patchbay exposes Pi sessions through adapter-declared capabilities rather than making Pi concepts part of the core ontology.
-- **Initial command kinds:** send message/prompt, cancel or interrupt where the adapter supports it, request status/snapshot refresh, and receive correlated replies/events. Broader command families wait until the protocol registry and conformance vectors exist.
+- **Initial OperationKinds:** initial `OperationKind` registry: committed `spawn`, `attach`, `drive`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, and `session-management`, plus reserved `agent-send` (rejected with `validation_failed` in v0); prompt text, slash-commands, images, and structured user input are payloads carried by `drive` or response Operations. Observations carry output/events/status; they are not OperationKinds. Broader OperationKind families wait until the protocol registry and conformance vectors exist.
 - **Control surfaces:** responsive web cockpit first, with CLI support for administration, debugging, and scripted access. Native mobile, desktop, notifications, and third-party surfaces are future work.
 - **Verification floor:** protocol contracts and at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority before those semantics are treated as product behavior. Lease modeling remains required before lease-backed behavior ships, but leases are outside the v0 executable skeleton unless explicitly promoted.
 
@@ -35,7 +35,8 @@ V0 explicitly excludes:
 
 - native mobile or Expo app delivery;
 - multi-operator provisioning, handoff workflows, shared authority administration, or third-party human coordination;
-- high availability, replicated cores, or split-brain recovery;
+- high availability, replicated cores, or split-brain recovery (fleet-level spawn authority IS in v0 scope — it is single-operator, single-core, not HA/multi-core);
+- non-operator Operation senders (agent→agent, adapter→operator service Operations) — a reserved seam, rejected with `validation_failed` in v0;
 - arbitrary adapter ecosystem support beyond the Pi adapter seam;
 - general project-management or workflow-substrate features;
 - lease-backed exclusive coordination unless a later foundation feature explicitly promotes leases into the first executable slice.
@@ -95,11 +96,14 @@ Adapters are replaceable edges. The first adapter targets Pi workflows so the op
 Adapters report:
 
 - actor/session identity;
+- supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values);
 - capabilities;
 - protocol-derived connectivity and activity status;
-- command acceptance/failure;
+- Operation acceptance/failure and Observations;
 - event streams where available;
-- authoritative snapshots where possible.
+- authoritative snapshots where possible;
+- Elicitations opened over the adapter's authenticated channel;
+- presence/subscription facts for reconnect reconciliation.
 
 Adapters do not define Patchbay's core ontology.
 
@@ -110,11 +114,13 @@ Adapters do not define Patchbay's core ontology.
 - **Control surface** — web, CLI, mobile, desktop, notification, or other human-facing UI.
 - **Runtime session** — an external session, process, harness, job, or agent context controlled through an adapter.
 - **Adapter** — integration boundary between Patchbay and an external runtime, harness, tool, or surface.
-- **Message** — information delivered to an actor or session.
-- **Command** — operator intent that may cause an action.
-- **Reply** — correlated answer to a previous message or command.
+- **Operation** — an authorized control-plane request by an actor to a target. V0 Operations are operator-originated; non-operator senders are a reserved seam.
+- **Observation** — a source-authenticated fact/event/output/status emission that does not grant authority. Live streams are delivery optimizations.
+- **Elicitation** — a durable pending response solicitation opened by an adapter/agent/harness; v0 binds to the operator actor and delivers by subscription fan-out.
+- **Payload** — content carried inside an Operation, Observation, or Elicitation; not a standalone authority primitive.
+- **Command** — a Patchbay lifecycle record for an accepted authorized request; retained as the checked `CommandState` legacy/refinement term. `Operation` is the actor-neutral vocabulary that maps to it by refinement equivalence.
 - **Snapshot** — authoritative state view for a session, actor, or resource.
-- **Grant** — authority relationship allowing one actor/control surface to perform actions on a target.
+- **Grant** — authority relationship allowing one actor/control surface to perform OperationKinds on a target.
 - **Lease** — time-bounded exclusive claim over a resource or coordination role.
 - **Event** — durable record of an accepted state transition.
 

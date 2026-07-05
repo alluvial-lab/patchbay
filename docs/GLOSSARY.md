@@ -18,7 +18,7 @@ A bounded Patchbay control context within which grants, revocation, routing auth
 
 ## Command
 
-Operator intent that may cause action. Commands require target identity, authority, validation, and idempotency semantics.
+A Patchbay lifecycle record for an accepted authorized request, currently used by the checked `CommandState` formal model. The actor-neutral protocol vocabulary is Operation; `CommandState` remains the checked lifecycle registry until a coordinated rename. A harness slash-command is different: it is payload text interpreted by a harness and has no Patchbay authority by itself.
 
 ## Control surface
 
@@ -50,13 +50,25 @@ A physical or virtual host that can run one or more endpoints, such as a browser
 
 A concrete connection or addressable runtime instance for an actor on a device.
 
+## Elicitation
+
+A durable pending response solicitation from one actor/system component to another. It opens a response slot rather than answering a prior request. V0 Elicitations bind to the operator actor (not a specific endpoint), deliver by subscription fan-out to all subscribed surfaces, and clear everywhere on first answer. The opener is always an adapter/agent/harness in v0; the core does not open Elicitations. Core prompts (lockdown, expired/revoked sessions, CSRF rejection) are NOT Elicitations. See `docs/PROTOCOL.md`.
+
+## ElicitationId
+
+A new id space, adapter-assigned when a pending response slot is opened. The core assigns an LSN when it durably records the Elicitation; it does not assign the `ElicitationId` in v0. Separate from CommandId/MessageId/ReplyId/EventId to prevent forgery and preserve initiation-vs-response direction.
+
+## ElicitationState
+
+The lifecycle registry for an Elicitation: `opened` → `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. Stated-normative until promoted — not checked.
+
 ## Adapter capability
 
-A declaration an adapter makes about the commands and guarantees it supports: command kinds; streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the commands and guarantees it supports: supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
 
 ## Correlation context
 
-The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. See `docs/PROTOCOL.md` Messages, commands, and replies.
+The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. Response Operations to Elicitations use a typed correlation reference to a known `ElicitationId` in the same authority/session/responder context; this case is a new stated-normative obligation. See `docs/PROTOCOL.md` Operations, Observations, Elicitations, payloads, and correlation.
 
 ## Event
 
@@ -64,7 +76,11 @@ A durable record of an accepted state transition.
 
 ## Grant
 
-An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific command kinds against a target.
+An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific OperationKinds against a target scope. Spawn grants are fleet-level by default in v0; successful spawn records an auto-issued descendant grant for the spawned session. See `docs/PROTOCOL.md`.
+
+## Harness slash-command
+
+Text such as `/compact`, `/model`, `/review`, or `!cmd` carried inside an Operation payload and interpreted by a harness. It is not a Patchbay protocol kind and has no Patchbay authority by itself.
 
 ## Idempotency key
 
@@ -82,6 +98,18 @@ A time-bounded exclusive claim over a resource or coordination role.
 
 The human using Patchbay to inspect, control, approve, or coordinate agent sessions and runtime work.
 
+## Observation
+
+A source-authenticated fact, event, output, status emission, reply-like result, or lifecycle/status fact emitted by an actor, adapter, core, runtime, or service. Observations do not grant authority to act. Live streams are delivery optimizations; durable core records and snapshots remain authoritative. See `docs/PROTOCOL.md`.
+
+## Operation
+
+An authorized control-plane request by an actor to an actor, core, adapter, fleet, session, service, or resource target. V0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam. An accepted Operation reuses the `CommandState` lifecycle by documented refinement equivalence. See `docs/PROTOCOL.md`.
+
+## OperationKind
+
+A registry-owned kind of Operation: `spawn`, `attach`, `drive`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0), plus reserved `agent-send`. Unknown kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
+
 ## Operator session
 
 An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an endpoint. It is the continuity mechanism for a control surface, not a substitute for command grants.
@@ -90,9 +118,25 @@ An authenticated browser or CLI session for the operator, represented by a serve
 
 The coordination layer that owns actor/session registry, durable events, command state, authority checks, snapshots, and leases.
 
+## Payload
+
+The adapter-specific content or schema-bound body carried inside an Operation, Observation, or Elicitation — prompt text, slash-command text, tool-call arguments, function results, image/file references, question options, structured schemas, or adapter diagnostics. Payload does not itself grant authority, create lifecycle state, or define protocol kinds.
+
+## Presence
+
+A derived fact (from endpoint observations and session connectivity state), not a query target. One-shot "is session X present?" reads route through snapshot/status `query` Operations; there is no `query-presence` OperationKind. Single-operator v0 has no presence-leak threat; filter-scoped subscriptions for multi-operator presence-leak prevention are a reserved seam.
+
 ## Principal
 
 A security-facing shorthand for an actor or endpoint being authorized. Patchbay foundation docs prefer the more precise terms actor, device, endpoint, operator session, runtime session, and grant.
+
+## Response contract
+
+A `response_contract` describes what kind of response is semantically required: committed v0 contract kinds are `approval`, `question`, `freeform`; reserved contract kinds are `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`. UI hints (select-one, select-many, free-text, upload, draw) are optional open-set sub-fields of `question`/`approval`, not contract kinds. See `docs/PROTOCOL.md`.
+
+## Subscription
+
+A grant-checked transport-layer establishment that delivers an event/snapshot stream to a control surface. Subscriptions are grant-checked at establish, audited, reconciled by cursor on reconnect, and NOT durably recorded as Operations or entered into `OperationState`. This is the second authority mechanism (grant-checked-without-lifecycle) alongside grant-checked-with-lifecycle Operations/Elicitations.
 
 ## Revocation
 

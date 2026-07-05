@@ -2,11 +2,13 @@
 
 Patchbay is a deployment-neutral human control plane for operating agent sessions across machines.
 
-Patchbay gives an operator a reliable cockpit for discovering sessions, sending intent, receiving correlated replies, approving or interrupting work, and recovering state after disconnection. It starts with a Pi adapter because Pi is the first workflow target, but Pi is an adapter, not the architecture.
+Patchbay gives an operator a reliable cockpit for discovering sessions, spawning or attaching to runtime sessions, submitting authorized Operations, receiving source-authenticated Observations, answering Elicitations, and recovering state after disconnection. The coordination core is a network-reachable fixed point: operator surfaces and agent/harness machines are reconnecting clients of it, and neither side is load-bearing for the other. Patchbay starts with a Pi adapter because Pi is the first workflow target, but Pi is an adapter, not the architecture.
 
 ## Why Patchbay exists
 
 Headless and remote agent work needs more than chat transport. An operator often works from several human surfaces — phone, laptop, desktop, web, CLI — while agents and runtimes live wherever the operator chooses: a VM, container, local workstation, home server, cloud host, or future deployment target.
+
+The core must remain reachable independently of any one operator device or harness host. A colocated v0 deployment is a convenience for installation and testing; it is not the architectural model. The architectural model is a durable coordination core that reconnecting surfaces and adapters can independently join.
 
 The control surface must answer these questions reliably:
 
@@ -50,7 +52,7 @@ Patchbay coordination core
 Patchbay is:
 
 - a human-operated control plane for headless and distributed agent sessions;
-- a durable message, command, snapshot, and authority layer;
+- a durable Operation, Observation, Elicitation, snapshot, and authority layer;
 - an adapter-neutral protocol and daemon model;
 - a web-first cockpit with mobile-quality ergonomics;
 - a formally specified coordination system where safety properties are modeled before they are treated as product semantics.
@@ -74,9 +76,9 @@ Patchbay is successful when an operator can move among phone, laptop, desktop, a
 
 A useful Patchbay session has these properties:
 
-- accepted commands are durable and visible through a canonical lifecycle until terminal outcome;
+- accepted Operations are durable and visible through the `CommandState`-equivalent lifecycle until terminal outcome;
 - retries are idempotent unless the operator explicitly duplicates an action;
-- replies correlate to the command or message they answer;
+- replies and response Operations correlate through typed references to the command/message/elicitation they answer;
 - session identity is stable enough that late replies cannot affect the wrong session;
 - stale state is displayed as stale rather than live;
 - authority grants are checked before commands execute;
