@@ -163,7 +163,21 @@ Delegation is a reserved future direction, not a v0 field; a `parent grant id / 
 
 Spawn is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority is reserved.
 
-Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session: spawner/operator subject as subject, spawned session as target. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. It preserves and builds the seam for future cross-operator delegation over spawned sessions: a future delegated grant can reintroduce `parent_grant_id` and reference the auto-issued descendant grant directly; that is same infrastructure, not v0 cross-actor delegation.
+Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant shape matches `docs/PROTOCOL.md` and is a normal grant instance with:
+
+- `grant id` — standard grant id (core-assigned).
+- `authority domain id` — same domain as the spawning grant.
+- `subject actor id` — the spawner (operator actor in v0).
+- `optional subject endpoint id or endpoint class` — the spawning endpoint, if applicable.
+- `target scope` — the spawned session/generation (an existing-session scope, now that the session exists).
+- `allowed OperationKinds` — the full set of committed kinds applicable to an existing session, enumerated explicitly (not a wildcard `all`): `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`. `spawn` is excluded because recursive spawning requires a separate fleet-level spawn grant; `attach` is excluded because the spawned session is already attached to its spawner's control plane.
+- `creation time and provenance` — `provenance = { spawn_operation_id, spawning_grant_id }` (explicit link to the spawn Operation and the grant that authorized it).
+- `optional expiration` — none by default (the descendant grant lives until revoked or the session is retired).
+- `revocation generation or revoked time` — standard; revocable independently of the spawn grant (two-lever rule, no cascade).
+- `revocation policy for already accepted commands` — standard.
+- `audit id` — links to the spawn-completion audit event.
+
+The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
 
 Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0 behavior; future cascade is a query over grant provenance and needs no schema change.
 
