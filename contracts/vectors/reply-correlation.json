@@ -3,49 +3,48 @@
   "property_id": "TypedCorrelation",
   "promotion_status": "draft",
   "proto_fields_constrained": [
-    "patchbay.Operation.kind",
-    "patchbay.Operation.correlations",
+    "patchbay.Observation.reply_id",
+    "patchbay.Observation.correlations",
+    "patchbay.ReplyId.value",
     "patchbay.TypedCorrelation.command_id",
-    "patchbay.TypedCorrelation.message_id",
-    "patchbay.SubmissionResult.outcome",
-    "patchbay.SubmissionResult.operation_state"
+    "patchbay.TypedCorrelation.message_id"
   ],
-  "description": "A response Operation carries typed correlations to known command and message ids; the id spaces remain explicit and non-interchangeable.",
+  "description": "A reply Observation carries a ReplyId plus a typed correlation to a known prior CommandId; the reply id and command id spaces remain explicit and non-interchangeable.",
   "input": {
-    "operation_type": "patchbay.Operation",
-    "operation": {
-      "command_id": { "value": "cmd-response-001" },
+    "observation_type": "patchbay.Observation",
+    "observation": {
+      "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 112 } },
+      "reply_id": { "value": "reply-result-001" },
       "authority_domain_id": { "value": "auth-main" },
       "sender": {
-        "actor_id": { "value": "operator-alice" },
-        "endpoint_id": { "value": "web-1" },
-        "device_id": { "value": "device-browser" },
-        "endpoint_generation": { "value": 7 }
-      },
-      "recipient": {
         "actor_id": { "value": "agent-runner" },
         "endpoint_id": { "value": "pi-adapter-1" },
         "device_id": { "value": "host-pi" },
         "endpoint_generation": { "value": 3 }
       },
-      "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
+      "recipient": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "kind": "OBSERVATION_KIND_RESULT",
+      "correlations": [
+        { "command_id": { "value": "cmd-question-001" } }
+      ],
       "target_scope": {
         "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
         "adapter_id": { "value": "pi" },
         "runtime_session_id": { "value": "sess-001" },
         "session_generation": { "value": 12 }
       },
-      "idempotency_key": "idem-response-001",
-      "correlations": [
-        { "command_id": { "value": "cmd-question-001" } },
-        { "message_id": { "value": "msg-question-001" } }
-      ],
       "payload": {
-        "payload": "eyJhbnN3ZXIiOiJhcHByb3ZlZCJ9",
+        "payload": "eyJyZXN1bHQiOiJhcHByb3ZlZCJ9",
         "content_type": "PAYLOAD_CONTENT_TYPE_JSON",
-        "schema_ref": "patchbay.examples.response.v0"
+        "schema_ref": "patchbay.examples.reply-result.v0"
       },
-      "submitted_at": "2026-07-06T00:01:00Z"
+      "lsn": { "value": 112 },
+      "observed_at": "2026-07-06T00:01:00Z"
     },
     "known_context": {
       "authority_domain_id": { "value": "auth-main" },
@@ -56,19 +55,22 @@
     }
   },
   "expected_outcome": {
-    "result_type": "patchbay.SubmissionResult",
-    "submission_result": {
-      "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
-      "command_id": { "value": "cmd-response-001" },
-      "operation_state": "OPERATION_STATE_ACCEPTED",
-      "accepted_lsn": { "value": 112 },
-      "deduplicated": false
+    "result_type": "patchbay.Observation",
+    "accepted_observation": {
+      "reply_id": { "value": "reply-result-001" },
+      "kind": "OBSERVATION_KIND_RESULT",
+      "correlations": [
+        { "command_id": { "value": "cmd-question-001" } }
+      ],
+      "lsn": { "value": 112 }
     },
-    "accepted_correlations": [
-      { "command_id": { "value": "cmd-question-001" } },
-      { "message_id": { "value": "msg-question-001" } }
-    ],
-    "rejected_correlation_shapes": ["reply_id_as_command_id", "event_id_as_message_id", "cross_authority_reference"]
+    "correlation_status": "accepted",
+    "id_space_assertions": {
+      "reply_id_is_not_command_id": true,
+      "typed_reference_resolves_to_known_command_id": true,
+      "same_authority_and_session_context": true,
+      "rejected_correlation_shapes": ["reply_id_as_command_id", "event_id_as_message_id", "cross_authority_reference"]
+    }
   },
-  "invariant_check": "TypedCorrelation: correlation is by explicit CommandId/MessageId variants in the same context; other id spaces cannot masquerade."
+  "invariant_check": "TypedCorrelation: a ReplyId-bearing Observation may correlate only by explicit CommandId/MessageId variants to known prior ids in the same context; reply ids and event ids cannot masquerade as command/message references."
 }

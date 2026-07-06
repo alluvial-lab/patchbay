@@ -35,6 +35,17 @@ The TypeScript generator is installed by `npm install` in `contracts/ts/`. The R
 cargo install protoc-gen-prost
 ```
 
+## Generated-code drift check
+
+CI can verify committed generated code against a fresh generation with:
+
+```sh
+cd ts
+npm run check:drift
+```
+
+The drift check first fails on existing local generated-code edits, then runs `buf generate` from `contracts/`, then fails if `git diff --exit-code -- contracts/rust/src/gen contracts/ts/src/gen` reports generated-code changes. Ensure `buf` is on `PATH`; in this sandbox that means including `$HOME/.npm-global/bin` as shown above.
+
 ## Rust crate
 
 Build the Rust contract crate with:

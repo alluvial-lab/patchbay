@@ -45,12 +45,11 @@
     "submission_result": {
       "outcome": "SUBMISSION_OUTCOME_REJECTED",
       "command_id": { "value": "cmd-no-grant-001" },
-      "operation_state": "OPERATION_STATE_REJECTED",
       "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED",
       "deduplicated": false
     },
     "durable_acceptance_record_created": false,
     "delivered_to_adapter": false
   },
-  "invariant_check": "NoCommandWithoutGrant, generalized to Operation by refinement: an Operation cannot be accepted unless a live matching grant authorizes its OperationKind and target."
+  "invariant_check": "NoCommandWithoutGrant, generalized to Operation by refinement: an Operation cannot be accepted unless a live matching grant authorizes its OperationKind and target; pre-acceptance refusal returns no OperationState."
 }

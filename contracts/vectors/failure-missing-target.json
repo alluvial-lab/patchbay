@@ -45,12 +45,11 @@
     "submission_result": {
       "outcome": "SUBMISSION_OUTCOME_REJECTED",
       "command_id": { "value": "cmd-missing-target-001" },
-      "operation_state": "OPERATION_STATE_REJECTED",
       "failure_code": "FAILURE_CODE_TARGET_NOT_FOUND",
       "deduplicated": false
     },
     "durable_acceptance_record_created": false,
     "delivered_to_adapter": false
   },
-  "invariant_check": "Boundary validation: target_scope must resolve to an existing authorized target before durable acceptance or delivery."
+  "invariant_check": "Boundary validation: target_scope must resolve to an existing authorized target before durable acceptance or delivery; pre-acceptance refusal returns no OperationState."
 }

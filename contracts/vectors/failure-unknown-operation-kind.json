@@ -5,7 +5,6 @@
   "proto_fields_constrained": [
     "patchbay.Operation.kind",
     "patchbay.SubmissionResult.outcome",
-    "patchbay.SubmissionResult.operation_state",
     "patchbay.SubmissionResult.failure_code"
   ],
   "description": "An Operation submitted with an unrecognized raw OperationKind enum value is rejected at the boundary with validation_failed.",
@@ -36,11 +35,10 @@
     "submission_result": {
       "outcome": "SUBMISSION_OUTCOME_REJECTED",
       "command_id": { "value": "cmd-invalid-kind-001" },
-      "operation_state": "OPERATION_STATE_REJECTED",
       "failure_code": "FAILURE_CODE_VALIDATION_FAILED",
       "deduplicated": false
     },
     "durable_acceptance_record_created": false
   },
-  "invariant_check": "Boundary validation: Operation.kind must resolve to a v0-valid OperationKind before durable acceptance."
+  "invariant_check": "Boundary validation: Operation.kind must resolve to a v0-valid OperationKind before durable acceptance; pre-acceptance refusal returns no OperationState."
 }
