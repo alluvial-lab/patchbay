@@ -2,7 +2,7 @@
 id: feature-foundation-doc-completeness-gaps
 kind: feature
 stage: drafting
-tags: [prose, foundation, protocol]
+tags: [foundation, protocol]
 parent: epic-foundation-hardening
 depends_on: [feature-operator-presence-and-action-inventory]
 created: 2026-07-06
@@ -51,7 +51,7 @@ implicit, in the existing docs' voice and structure.
 
 ## Routing
 
-This is a `[prose]` feature: no-code-surface deliverable, design and implementation collapse into a single authoring act. Routes through `prose-author` at pickup. Confirms the brief is a sufficient spec (the review findings above ARE the spec), fleshes the body inline if needed, and advances drafting → implementing → review as real draft/write/revise steps.
+**Not `[prose]`.** Despite being a docs-only deliverable (no code surface), this feature involves genuine semantic and architectural commitments — choosing the OperationKind lifecycle/display field shape (P1), specifying the notification/reconciliation mechanism (P2), and defining the descendant grant field shape (P3) all involve choosing between approaches and pinning a model. Per the prose black-box test in `.work/CONVENTIONS.md` (and the epic's lane-routing discipline), semantic commitments route through `feature-design`, not `prose-author`. The design gate runs (alternatives, pre-mortem) before the writing pass.
 
 ## Provenance
 

@@ -43,6 +43,12 @@ research_dials:
 ## Tags
 
 - `[prose]` — docs, specifications, conventions, or config-as-prose. Route drafting features through prose-author; implementation is usually the writing pass.
+
+### Prose black-box test (lane routing)
+
+Apply this honestly to every candidate `[prose]` item before routing. **`[prose]` is for items whose deliverable is authored prose and whose design collapses into the writing** — authoring a checklist, classification rule, inventory, mapping, or config-as-prose where the choices are settled or obvious. If the scope item involves **choosing between approaches, pinning a semantic model, or making an architectural commitment**, route to `feature-design` instead, even when the deliverable is docs-only. The prose-author lane skips the design gate, pre-mortem, and alternatives evaluation; a semantic commitment made silently through prose is high-cost and hard to reverse.
+
+**Going forward:** when in doubt, prefer design — the design gate's cost is low; the cost of a semantic commitment made silently through prose is high. (Origin: `epic-foundation-hardening` lane-routing discipline, 2026-06-28; codified project-wide 2026-07-06 after `feature-foundation-doc-completeness-gaps` was initially misrouted as `[prose]`.)
 - `[research]` — grounded research engagement. Route to agentic-research research-orchestrator. Do not bind research items to releases.
 - `[protocol]` — protocol semantics, schemas, state machines, wire contracts, or conformance vectors.
 - `[security]` — threat model, grants, principals, auth, revocation, replay resistance.
