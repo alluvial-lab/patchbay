@@ -1,7 +1,7 @@
 ---
 id: feature-pi-parity-checklist
 kind: feature
-stage: review
+stage: done
 tags: [adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-session-identity-adapter-contract, feature-operator-presence-and-action-inventory]
@@ -194,3 +194,20 @@ No implementation code; verification is by document consistency, mirroring the s
 **Nits**: none.
 
 **Notes**: Reviewer verified `session_new` against remote_pi source (`handleSessionNew` → `ctx.newSession`, replacement contexts rebound, `_resetSessionForNew` fans out reset history, daemon `EXIT_DAEMON_FRESH_SESSION` fresh-session path, `--continue` reuse) and confirmed the generation-bump mapping is consistent across §3/§4/§6/§9. Unit 2 (Architecture forward-reference) passes — `git diff 45e7ef4^ 45e7ef4 -- docs/ARCHITECTURE.md` shows only the intended one-sentence change. Re-verified post-fix: all 12 OperationKinds present; `session_new` replacement mapping intact across the four sections; 9 sections intact; no "reserved pending promotion" framing of `question` remains.
+
+## Confirmatory review (2026-07-06)
+
+**Verdict**: Approve
+
+**Reviewer**: fresh-context cross-model confirmatory pass on `openai-codex/gpt-5.5` (high thinking), scoped to the three fixes from the substrate deep review + a 7-point regression check.
+
+**Fix confirmation**: all three confirmed fixed against canonical sources —
+- **B1**: §4/§7/§9 now frame `elicitation-response` + `question` as committed core, with only Pi non-approval question delivery support reserved/unsupported at adapter level (verified against `docs/PROTOCOL.md:157`, `:331`).
+- **I1**: §2 includes `model_select`/`thinking_level_select`; §5 maps them to Observations (verified against `.research/attestation/pi-extension.md`).
+- **I2**: §4 intro lists generated `AdapterCapability` fields (`streaming_support`, `snapshot_support`, `cancellation_support`, `session_replacement_support`) and labels table terms as prose shorthand (verified against `contracts/rust/src/gen/patchbay/patchbay.rs`).
+
+**Regression check**: 7/7 pass — `session_new` mapping consistent across §3/4/6/9 (verified against remote_pi source); all 12 OperationKinds present + match generated enum; §3 identity excludes project/cwd/name and cites the 3 checked properties; snapshot tier `partial` + adapter-declared; §8 checklist runnable with replacement-window + queued-message + ux ref; no canonical registry re-declared; 9 sections + Architecture forward-reference intact.
+
+**Findings**: none at any level (no blockers, no important, no nits).
+
+**Notes**: Reviewer verified against `docs/ADAPTER-PI.md`, `docs/PROTOCOL.md`, generated `AdapterCapability`/`OperationKind`, the Pi attestation, `docs/ARCHITECTURE.md`, and remote_pi `session_new`/`--continue`/fresh-session source. No residual concern. Feature advanced to `stage: done`.
