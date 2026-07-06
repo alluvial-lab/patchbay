@@ -1,7 +1,7 @@
 ---
 id: feature-pi-parity-checklist
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-session-identity-adapter-contract, feature-operator-presence-and-action-inventory]

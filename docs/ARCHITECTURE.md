@@ -198,4 +198,4 @@ Future architecture planes remain valid direction, but v0 implementation should 
 
 The Pi adapter provides the first real runtime integration. It exposes Pi sessions to Patchbay without making Pi session semantics global. Pi-specific features appear as adapter capabilities, not as core protocol requirements.
 
-The migration target is functional parity with the operator's current Remote Pi workflow and a UX quality bar closer to a mature remote agent app.
+The migration target is functional parity with the operator's current Remote Pi workflow and a UX quality bar closer to a mature remote agent app. The v0 Pi adapter parity checklist, capability mapping, and migration-decision criteria live in `docs/ADAPTER-PI.md`.
