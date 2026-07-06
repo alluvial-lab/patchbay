@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+import "patchbay/operations.proto";
+
+message Grant {
+  GrantId grant_id = 1;
+  AuthorityDomainId authority_domain_id = 2;
+  ActorId subject_actor_id = 3;
+  EndpointId subject_endpoint_id = 4;
+  string subject_endpoint_class = 5;
+  TargetScope target_scope = 6;
+  repeated OperationKind allowed_operation_kinds = 7;
+  google.protobuf.Timestamp created_at = 8;
+  GrantProvenance provenance = 9;
+  google.protobuf.Timestamp expires_at = 10;
+  Generation revocation_generation = 11;
+  google.protobuf.Timestamp revoked_at = 12;
+  GrantRevocationPolicy revocation_policy = 13;
+}
+
+message GrantProvenance {
+  ActorEndpointRef created_by = 1;
+  CommandId created_by_operation_id = 2;
+  EventId audit_id = 3;
+  string reason = 4;
+}
+
+enum GrantRevocationPolicy {
+  GRANT_REVOCATION_POLICY_UNSPECIFIED = 0;
+  GRANT_REVOCATION_POLICY_CONTINUE = 1;
+  GRANT_REVOCATION_POLICY_CANCEL = 2;
+  GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION = 3;
+}
+
+message DescendantGrant {
+  GrantId grant_id = 1;
+  AuthorityDomainId authority_domain_id = 2;
+  ActorId subject_actor_id = 3;
+  EndpointId subject_endpoint_id = 4;
+  string subject_endpoint_class = 5;
+  TargetScope target_scope = 6;
+  // Must explicitly enumerate existing-session OperationKinds only: instruct, cancel, interrupt, query,
+  // approval-response, elicitation-response, reconfigure, and session-management. Spawn and attach are excluded.
+  repeated OperationKind allowed_operation_kinds = 7;
+  DescendantGrantProvenance provenance = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp expires_at = 10;
+  Generation revocation_generation = 11;
+  google.protobuf.Timestamp revoked_at = 12;
+  GrantRevocationPolicy revocation_policy = 13;
+  EventId audit_id = 14;
+}
+
+message DescendantGrantProvenance {
+  CommandId spawn_operation_id = 1;
+  GrantId spawning_grant_id = 2;
+}
+
+message Revocation {
+  AuthorityDomainId authority_domain_id = 1;
+  GrantId grant_id = 2;
+  ActorEndpointRef revoked_by = 3;
+  google.protobuf.Timestamp revoked_at = 4;
+  Generation revocation_generation = 5;
+  GrantRevocationPolicy accepted_operation_policy = 6;
+  string reason = 7;
+  EventId audit_id = 8;
+}

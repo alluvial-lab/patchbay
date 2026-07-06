@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+
+message Session {
+  AuthorityDomainId authority_domain_id = 1;
+  AdapterId adapter_id = 2;
+  string deployment_scope = 3;
+  RuntimeSessionId runtime_session_id = 4;
+  Generation session_generation = 5;
+  string project = 6;
+  string cwd = 7;
+  string name = 8;
+  SessionState state = 9;
+  Lsn last_authoritative_lsn = 10;
+  google.protobuf.Timestamp observed_at = 11;
+  bool tombstoned = 12;
+  Lsn superseded_at_lsn = 13;
+}
+
+message SessionState {
+  SessionConnectivityState connectivity = 1;
+  SessionActivityState activity = 2;
+}
+
+enum SessionConnectivityState {
+  SESSION_CONNECTIVITY_STATE_UNSPECIFIED = 0;
+  SESSION_CONNECTIVITY_STATE_LIVE = 1;
+  SESSION_CONNECTIVITY_STATE_STALE = 2;
+  SESSION_CONNECTIVITY_STATE_OFFLINE = 3;
+  SESSION_CONNECTIVITY_STATE_UNKNOWN = 4;
+  SESSION_CONNECTIVITY_STATE_FAILED = 5;
+}
+
+enum SessionActivityState {
+  SESSION_ACTIVITY_STATE_UNSPECIFIED = 0;
+  SESSION_ACTIVITY_STATE_IDLE = 1;
+  SESSION_ACTIVITY_STATE_WORKING = 2;
+  SESSION_ACTIVITY_STATE_UNKNOWN = 3;
+}
+
+message SessionSnapshot {
+  AuthorityDomainId authority_domain_id = 1;
+  Lsn snapshot_lsn = 2;
+  Generation core_generation = 3;
+  repeated Session sessions = 4;
+  repeated ViewRevision view_revisions = 5;
+  google.protobuf.Timestamp materialized_at = 6;
+}
+
+message ViewRevision {
+  TargetScope target_scope = 1;
+  Lsn revision_lsn = 2;
+}

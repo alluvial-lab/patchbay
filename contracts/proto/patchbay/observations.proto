@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+import "patchbay/operations.proto";
+import "patchbay/sessions.proto";
+
+message Observation {
+  EventId event_id = 1;
+  ReplyId reply_id = 2;
+  AuthorityDomainId authority_domain_id = 3;
+  ActorEndpointRef sender = 4;
+  ActorEndpointRef recipient = 5;
+  ObservationKind kind = 6;
+  repeated TypedCorrelation correlations = 7;
+  TargetScope target_scope = 8;
+  PayloadEnvelope payload = 9;
+  Lsn lsn = 10;
+  google.protobuf.Timestamp observed_at = 11;
+  FailureCode failure_code = 12;
+}
+
+enum ObservationKind {
+  OBSERVATION_KIND_UNSPECIFIED = 0;
+  OBSERVATION_KIND_EVENT = 1;
+  OBSERVATION_KIND_STATUS = 2;
+  OBSERVATION_KIND_DELTA = 3;
+  OBSERVATION_KIND_RESULT = 4;
+}
+
+message EndpointPresence {
+  EndpointId endpoint_id = 1;
+  DeviceId device_id = 2;
+  SessionConnectivityState endpoint_availability = 3;
+  Lsn last_authoritative_lsn = 4;
+}
+
+message ActorPresence {
+  ActorId actor_id = 1;
+  ActorPresenceState state = 2;
+  repeated EndpointPresence endpoints = 3;
+  Lsn revision_lsn = 4;
+}
+
+enum ActorPresenceState {
+  ACTOR_PRESENCE_STATE_UNSPECIFIED = 0;
+  ACTOR_PRESENCE_STATE_AVAILABLE = 1;
+  ACTOR_PRESENCE_STATE_AWAY = 2;
+  ACTOR_PRESENCE_STATE_UNAVAILABLE = 3;
+  ACTOR_PRESENCE_STATE_UNKNOWN = 4;
+}
+
+message ObservationSubscription {
+  SubscriptionId subscription_id = 1;
+  ActorEndpointRef subscriber = 2;
+  TargetScope authorized_filter = 3;
+  ObservationSubscriptionState state = 4;
+  Lsn cursor = 5;
+  Lsn last_delivered_lsn = 6;
+  EventId audit_id = 7;
+}
+
+enum ObservationSubscriptionState {
+  OBSERVATION_SUBSCRIPTION_STATE_UNSPECIFIED = 0;
+  OBSERVATION_SUBSCRIPTION_STATE_SUBSCRIBED = 1;
+  OBSERVATION_SUBSCRIPTION_STATE_RESUMING = 2;
+  OBSERVATION_SUBSCRIPTION_STATE_UNSUBSCRIBED = 3;
+  OBSERVATION_SUBSCRIPTION_STATE_FAILED = 4;
+}
+
+enum AttentionRequiredState {
+  ATTENTION_REQUIRED_STATE_UNSPECIFIED = 0;
+  ATTENTION_REQUIRED_STATE_NONE = 1;
+  ATTENTION_REQUIRED_STATE_ATTENTION_REQUESTED = 2;
+  ATTENTION_REQUIRED_STATE_RESPONSE_REQUIRED = 3;
+  ATTENTION_REQUIRED_STATE_BLOCKING = 4;
+  ATTENTION_REQUIRED_STATE_ESCALATED = 5;
+}
+
+message AttentionRequired {
+  TargetScope target_scope = 1;
+  AttentionRequiredState state = 2;
+  repeated TypedCorrelation correlations = 3;
+  Lsn revision_lsn = 4;
+}

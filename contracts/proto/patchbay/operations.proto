@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+
+message Operation {
+  CommandId command_id = 1;
+  AuthorityDomainId authority_domain_id = 2;
+  ActorEndpointRef sender = 3;
+  ActorEndpointRef recipient = 4;
+  OperationKind kind = 5;
+  TargetScope target_scope = 6;
+  string idempotency_key = 7;
+  PayloadEnvelope payload = 8;
+  repeated TypedCorrelation correlations = 9;
+  TimeWindow validity_window = 10;
+  google.protobuf.Timestamp submitted_at = 11;
+}
+
+enum OperationKind {
+  OPERATION_KIND_UNSPECIFIED = 0;
+  OPERATION_KIND_SPAWN = 1;
+  OPERATION_KIND_ATTACH = 2;
+  OPERATION_KIND_INSTRUCT = 3;
+  OPERATION_KIND_CANCEL = 4;
+  OPERATION_KIND_INTERRUPT = 5;
+  OPERATION_KIND_QUERY = 6;
+  OPERATION_KIND_APPROVAL_RESPONSE = 7;
+  OPERATION_KIND_ELICITATION_RESPONSE = 8;
+  OPERATION_KIND_RECONFIGURE = 9;
+  OPERATION_KIND_SESSION_MANAGEMENT = 10;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  OPERATION_KIND_RESERVED_AGENT_SEND = 100;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  OPERATION_KIND_RESERVED_ADAPTER_UTILITY_EXEC = 101;
+}
+
+// OperationState reuses the CommandState registry by refinement equivalence.
+enum OperationState {
+  OPERATION_STATE_UNSPECIFIED = 0;
+  OPERATION_STATE_ACCEPTED = 1;
+  OPERATION_STATE_DELIVERED = 2;
+  OPERATION_STATE_RUNNING = 3;
+  OPERATION_STATE_COMPLETED = 4;
+  OPERATION_STATE_REJECTED = 5;
+  OPERATION_STATE_FAILED = 6;
+  OPERATION_STATE_EXPIRED = 7;
+  OPERATION_STATE_CANCELLED = 8;
+  OPERATION_STATE_SUPERSEDED = 9;
+}
+
+enum SubmissionOutcome {
+  SUBMISSION_OUTCOME_UNSPECIFIED = 0;
+  SUBMISSION_OUTCOME_ACCEPTED = 1;
+  SUBMISSION_OUTCOME_REJECTED = 2;
+  SUBMISSION_OUTCOME_FAILED = 3;
+  SUBMISSION_OUTCOME_UNKNOWN = 4;
+}
+
+// LocalSubmissionState is control-surface-local; it is included to keep the committed registry named.
+enum LocalSubmissionState {
+  LOCAL_SUBMISSION_STATE_UNSPECIFIED = 0;
+  LOCAL_SUBMISSION_STATE_DRAFT = 1;
+  LOCAL_SUBMISSION_STATE_SUBMITTING = 2;
+  LOCAL_SUBMISSION_STATE_SUBMIT_FAILED = 3;
+  LOCAL_SUBMISSION_STATE_UNKNOWN = 4;
+}
+
+enum FailureCode {
+  FAILURE_CODE_UNSPECIFIED = 0;
+  FAILURE_CODE_VALIDATION_FAILED = 1;
+  FAILURE_CODE_AUTHORIZATION_DENIED = 2;
+  FAILURE_CODE_TARGET_NOT_FOUND = 3;
+  FAILURE_CODE_UNSUPPORTED_COMMAND = 4;
+  FAILURE_CODE_TARGET_OFFLINE = 5;
+  FAILURE_CODE_ADAPTER_UNAVAILABLE = 6;
+  FAILURE_CODE_TRANSPORT_TIMEOUT = 7;
+  FAILURE_CODE_DELIVERY_REJECTED = 8;
+  FAILURE_CODE_EXECUTION_FAILED = 9;
+  FAILURE_CODE_EXPIRED = 10;
+  FAILURE_CODE_CANCELLED = 11;
+  FAILURE_CODE_SUPERSEDED = 12;
+  FAILURE_CODE_STALE_EVENT = 13;
+}
+
+message SubmissionResult {
+  SubmissionOutcome outcome = 1;
+  CommandId command_id = 2;
+  OperationState operation_state = 3;
+  FailureCode failure_code = 4;
+  string diagnostic_message = 5;
+  Lsn accepted_lsn = 6;
+  bool deduplicated = 7;
+}

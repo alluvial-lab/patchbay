@@ -1,0 +1,11 @@
+version: v1
+name: buf.build/patchbay/patchbay
+lint:
+  use:
+    - STANDARD
+  except:
+    # The feature deliberately names one v0 package `patchbay` rather than `patchbay.v0`.
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - WIRE_JSON

@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+
+// Distinct protocol id spaces. These wrappers intentionally do not collapse to raw strings.
+message CommandId {
+  string value = 1;
+}
+
+message MessageId {
+  string value = 1;
+}
+
+message ReplyId {
+  string value = 1;
+}
+
+message EventId {
+  AuthorityDomainId authority_domain_id = 1;
+  Lsn lsn = 2;
+}
+
+message ElicitationId {
+  string value = 1;
+}
+
+message Lsn {
+  uint64 value = 1;
+}
+
+message ActorId {
+  string value = 1;
+}
+
+message EndpointId {
+  string value = 1;
+}
+
+message DeviceId {
+  string value = 1;
+}
+
+message AdapterId {
+  string value = 1;
+}
+
+message RuntimeSessionId {
+  string value = 1;
+}
+
+message AuthorityDomainId {
+  string value = 1;
+}
+
+message GrantId {
+  string value = 1;
+}
+
+message OperatorSessionId {
+  string value = 1;
+}
+
+message SubscriptionId {
+  string value = 1;
+}
+
+message Generation {
+  uint64 value = 1;
+}
+
+message ActorEndpointRef {
+  ActorId actor_id = 1;
+  EndpointId endpoint_id = 2;
+  DeviceId device_id = 3;
+  Generation endpoint_generation = 4;
+}
+
+message TargetScope {
+  TargetScopeKind kind = 1;
+  ActorId actor_id = 2;
+  AdapterId adapter_id = 3;
+  RuntimeSessionId runtime_session_id = 4;
+  Generation session_generation = 5;
+  string deployment_scope = 6;
+  string project_or_group = 7;
+  string resource_id = 8;
+}
+
+enum TargetScopeKind {
+  TARGET_SCOPE_KIND_UNSPECIFIED = 0;
+  TARGET_SCOPE_KIND_ACTOR = 1;
+  TARGET_SCOPE_KIND_ADAPTER = 2;
+  TARGET_SCOPE_KIND_RUNTIME_SESSION = 3;
+  TARGET_SCOPE_KIND_PROJECT_SESSION_GROUP = 4;
+  TARGET_SCOPE_KIND_FLEET_SUPERVISOR = 5;
+  TARGET_SCOPE_KIND_RESOURCE = 6;
+  TARGET_SCOPE_KIND_AUTHORITY_DOMAIN = 7;
+}
+
+message TypedCorrelation {
+  oneof ref {
+    CommandId command_id = 1;
+    MessageId message_id = 2;
+    ReplyId reply_id = 3;
+    EventId event_id = 4;
+    ElicitationId elicitation_id = 5;
+  }
+}
+
+enum PayloadContentType {
+  PAYLOAD_CONTENT_TYPE_UNSPECIFIED = 0;
+  PAYLOAD_CONTENT_TYPE_BINARY = 1;
+  PAYLOAD_CONTENT_TYPE_TEXT_UTF8 = 2;
+  PAYLOAD_CONTENT_TYPE_JSON = 3;
+  PAYLOAD_CONTENT_TYPE_PROTOBUF = 4;
+}
+
+message PayloadEnvelope {
+  bytes payload = 1;
+  PayloadContentType content_type = 2;
+  string schema_ref = 3;
+}
+
+message TimeWindow {
+  google.protobuf.Timestamp starts_at = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}

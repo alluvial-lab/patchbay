@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+
+message Elicitation {
+  ElicitationId elicitation_id = 1;
+  AuthorityDomainId authority_domain_id = 2;
+  ActorEndpointRef opener = 3;
+  ActorId expected_responder_actor = 4;
+  ResponseContract response_contract = 5;
+  TargetScope target_context = 6;
+  TimeoutPolicy timeout_policy = 7;
+  CancellationPolicy cancellation_policy = 8;
+  repeated TypedCorrelation correlations = 9;
+  PayloadEnvelope payload = 10;
+  ElicitationState state = 11;
+  Lsn recorded_lsn = 12;
+  google.protobuf.Timestamp opened_at = 13;
+}
+
+enum ElicitationState {
+  ELICITATION_STATE_UNSPECIFIED = 0;
+  ELICITATION_STATE_OPENED = 1;
+  ELICITATION_STATE_PENDING = 2;
+  ELICITATION_STATE_ANSWERED = 3;
+  ELICITATION_STATE_DECLINED = 4;
+  ELICITATION_STATE_EXPIRED = 5;
+  ELICITATION_STATE_CANCELLED = 6;
+  ELICITATION_STATE_WITHDRAWN = 7;
+  ELICITATION_STATE_SUPERSEDED = 8;
+  ELICITATION_STATE_STALE = 9;
+}
+
+message ResponseContract {
+  ResponseContractKind contract_kind = 1;
+  string schema_ref = 2;
+  repeated string ui_hints = 3;
+  TimeoutPolicy timeout_policy = 4;
+  InvalidResponsePolicy invalid_response_policy = 5;
+  ResponderPolicy responder_policy = 6;
+  ResponseSensitivity sensitivity = 7;
+}
+
+enum ResponseContractKind {
+  RESPONSE_CONTRACT_KIND_UNSPECIFIED = 0;
+  RESPONSE_CONTRACT_KIND_APPROVAL = 1;
+  RESPONSE_CONTRACT_KIND_QUESTION = 2;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_FREEFORM = 100;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_SECRET = 101;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_FUNCTION_RESULT = 102;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_FILE_ATTACHMENT = 103;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_STRUCTURED_SCHEMA = 104;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  RESPONSE_CONTRACT_KIND_RESERVED_SERVICE_REQUEST = 105;
+}
+
+message TimeoutPolicy {
+  google.protobuf.Timestamp expires_at = 1;
+  google.protobuf.Duration duration = 2;
+}
+
+message CancellationPolicy {
+  bool opener_may_withdraw = 1;
+  bool responder_may_decline = 2;
+  bool core_or_policy_may_cancel = 3;
+}
+
+enum InvalidResponsePolicy {
+  INVALID_RESPONSE_POLICY_UNSPECIFIED = 0;
+  INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING = 1;
+  INVALID_RESPONSE_POLICY_TERMINAL_DECLINED = 2;
+  INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED = 3;
+  INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED = 4;
+}
+
+message ResponderPolicy {
+  ActorId expected_responder_actor = 1;
+  string endpoint_class = 2;
+  string fallback_policy = 3;
+}
+
+enum ResponseSensitivity {
+  RESPONSE_SENSITIVITY_UNSPECIFIED = 0;
+  RESPONSE_SENSITIVITY_LOGGABLE = 1;
+  RESPONSE_SENSITIVITY_REDACTED = 2;
+  RESPONSE_SENSITIVITY_ENCRYPTED = 3;
+  RESPONSE_SENSITIVITY_NEVER_PERSIST_PLAINTEXT = 4;
+}

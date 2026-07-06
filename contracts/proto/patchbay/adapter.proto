@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+import "patchbay/operations.proto";
+
+message AdapterCapability {
+  repeated OperationKind supported_operation_kinds = 1;
+  repeated string supported_target_spec_shapes = 2;
+  bool streaming_support = 3;
+  AdapterSnapshotSupport snapshot_support = 4;
+  bool cancellation_support = 5;
+  bool session_replacement_support = 6;
+  IdempotencyStrength idempotency_strength = 7;
+  AttachmentMethod attachment_method = 8;
+  repeated FailureCode known_failure_modes = 9;
+}
+
+enum IdempotencyStrength {
+  IDEMPOTENCY_STRENGTH_UNSPECIFIED = 0;
+  IDEMPOTENCY_STRENGTH_NONE = 1;
+  IDEMPOTENCY_STRENGTH_AT_PATCHBAY_BOUNDARY = 2;
+  IDEMPOTENCY_STRENGTH_END_TO_END = 3;
+}
+
+enum AdapterSnapshotSupport {
+  ADAPTER_SNAPSHOT_SUPPORT_UNSPECIFIED = 0;
+  ADAPTER_SNAPSHOT_SUPPORT_AUTHORITATIVE = 1;
+  ADAPTER_SNAPSHOT_SUPPORT_PARTIAL = 2;
+  ADAPTER_SNAPSHOT_SUPPORT_NONE = 3;
+}
+
+message AttachmentMethod {
+  string kind = 1;
+  bytes descriptor = 2;
+  PayloadContentType descriptor_content_type = 3;
+}
+
+message AdapterRegistration {
+  AdapterId adapter_id = 1;
+  EndpointId endpoint_id = 2;
+  AuthorityDomainId authority_domain_id = 3;
+  Generation adapter_generation = 4;
+  AdapterCapability capability = 5;
+  Lsn attach_lsn = 6;
+  google.protobuf.Timestamp attached_at = 7;
+}
