@@ -30,7 +30,7 @@ A marker of the coordination core's current incarnation, used to reject snapshot
 
 ## Cursor
 
-A log sequence number a control surface or adapter holds to express that it has authoritative knowledge of the durable log up to that point, used to drive reconciliation on reconnect.
+A log sequence number a control surface or adapter holds to express that it has authoritative knowledge of the durable log up to that point, used to support reconciliation on reconnect.
 
 ## Generation
 
@@ -60,11 +60,11 @@ A new id space, adapter-assigned when a pending response slot is opened. The cor
 
 ## ElicitationState
 
-The lifecycle registry for an Elicitation: `opened` → `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. Stated-normative until promoted — not checked.
+The lifecycle registry for an Elicitation. Initial state is `opened`; transitions include `opened` → `pending` or direct `opened` → terminal, and `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. Stated-normative until promoted — not checked.
 
 ## Adapter capability
 
-A declaration an adapter makes about the commands and guarantees it supports: supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the Operations and guarantees it supports: supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
 
 ## Correlation context
 
@@ -90,6 +90,10 @@ A stable key that lets Patchbay recognize a retry of the same command and preven
 
 Log sequence number. A monotonic, gap-free number assigned by the coordination core to each accepted state-transition event at durable-commit time. The canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
 
+## Message
+
+Generic operator-originated no-grant Message is not a v0 action: it is rejected for v0 because no surveyed harness exposes it as a distinct operator action. The `message id` space remains reserved for future informational surfaces and current correlation-model compatibility. Contrast with `instruct` (an authorized Operation carrying prompt/input payload) and Elicitation (an agent/adapter-opened response slot).
+
 ## Lease
 
 A time-bounded exclusive claim over a resource or coordination role.
@@ -108,7 +112,7 @@ An authorized control-plane request by an actor to an actor, core, adapter, flee
 
 ## OperationKind
 
-A registry-owned kind of Operation: `spawn`, `attach`, `drive`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0), plus reserved `agent-send`. Unknown kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
+A registry-owned kind of Operation: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0), plus reserved `agent-send` and `adapter-utility-exec`. Unknown or reserved-but-not-validatable kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
 
 ## Operator session
 
@@ -132,7 +136,7 @@ A security-facing shorthand for an actor or endpoint being authorized. Patchbay 
 
 ## Response contract
 
-A `response_contract` describes what kind of response is semantically required: committed v0 contract kinds are `approval`, `question`, `freeform`; reserved contract kinds are `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`. UI hints (select-one, select-many, free-text, upload, draw) are optional open-set sub-fields of `question`/`approval`, not contract kinds. See `docs/PROTOCOL.md`.
+A `response_contract` describes what kind of response is semantically required: committed v0 contract kinds are `approval` and `question`; reserved contract kinds are `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`. UI hints (select-one, select-many, free-text, upload, draw) are optional open-set sub-fields of `question`/`approval`, not contract kinds. See `docs/PROTOCOL.md`.
 
 ## Subscription
 

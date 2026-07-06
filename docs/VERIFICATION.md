@@ -22,38 +22,42 @@ This layered order takes effect once generated schemas or IDL exist. `docs/PROTO
 
 Each required model area below is obligated at v0. Properties within each area are tiered by risk, not all-or-nothing per area. This reconciles `docs/SPEC.md`'s verification-floor seed ("at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority") with this document's required-areas list: the checked set is the seed done right, not a different program.
 
-**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0 treats the behavior as product. Covers safety/security-critical properties:
+**checked-model** (also called **model-promoted**) — the formal model exists, passes with documented tool invocation, and carries promoted model metadata, but no promoted conformance vector has landed yet. This is the current status of the seed models listed under "Seed models (v0)" below. It is a real formal check, but it is not yet checked-normative product behavior.
 
-- Operator intent delivery: `TerminalFinality`, `LsnDeterminesTerminalWinner`, `PreAppendTerminalChoice`; accepted-command durability (an accepted command cannot vanish silently); timeout implies neither success nor denial.
-- Wrong-session prevention: session identity tuple (adapter id + deployment scope + runtime session id + session generation); `LateGenerationInert`; `GenerationMonotonic`; human-readable labels cannot override verified target identity.
-- Idempotent retry: boundary dedup (retrying the same idempotency key cannot double-apply); retry reuses both command id and idempotency key; retry after terminal returns the existing terminal record rather than creating a later terminal candidate.
-- Authority safety: no-command-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds`; revocation prevents future command acceptance under the revoked grant.
-- Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay (replaying the same committed prefix produces identical state).
-- Browser session and CSRF boundary: a state-changing request without an authenticated operator session is rejected before command acceptance; a state-changing request without a valid session-bound CSRF proof is rejected before command acceptance; revoked or expired operator sessions cannot issue new commands.
-- Snapshot convergence (core safety): a snapshot with an LSN strictly less than the core's current revision for that view is rejected as an authority source and replaced by the current view; a snapshot from a different authority domain or core generation is rejected outright; snapshot materialization reads a consistent log prefix (every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`); a late event whose LSN is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
-- Reply correlation (core safety): `TypedCorrelation` — a reply correlates by typed reference to a known command or message id in the same authority/session context and cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts.
+Current checked-model properties:
 
-**stated-normative** — documented v0 obligation with a *draft* model, not yet checked-to-pass; scheduled for promotion post-v0. Covers liveness/cosmetic/operational properties:
+- Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting`.
+- Wrong-session prevention from `session_generation.qnt`: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `GenerationMonotonic`, and `LateGenerationInert`.
+- Reply correlation core from `reply_correlation.qnt`: `TypedCorrelation` for Reply → Command/Message only; response Operation → Elicitation is not covered.
+- Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, and `RevokedSessionCannotCommand`.
+- Relational actor identity from `patchbay-relational.als`: `ActorIdsUnique`.
 
-- Snapshot convergence (refinements): compaction and cursor validity nuances; "event streams not required for correctness when snapshots exist" as an operational property.
+**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vectors exist or have been promoted yet.
+
+**stated-normative** — documented v0 obligation with a draft model, no model yet, or no promoted conformance vector yet. These are product obligations but must not be claimed checked until promoted through both model and vector gates. Current stated-normative areas include:
+
+- OperationState transition adjacency and read/query lifecycle refinements: the no-`accepted → completed` adjacency rule and no-direct-to-completed fast-path reads rule are stated-normative until `command_lifecycle.qnt` is strengthened or an OperationState-specific model is promoted.
+- Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; spawn fleet authority and descendant-grant behavior.
+- Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
+- Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
-- Reply correlation (refinements): duplicate-reply idempotency/rejection and reference-resolution edge cases beyond the checked `TypedCorrelation` core.
+- Reply correlation refinements and extensions: duplicate-reply idempotency/rejection, reference-resolution edge cases beyond the checked `TypedCorrelation` core, and response Operation → Elicitation typed correlation.
 
-### `OperationState` ⇿ `CommandState` refinement (checked by equivalence)
+### `OperationState` ⇿ `CommandState` refinement (checked-model properties by equivalence)
 
-`OperationState` is not a new checked model. It reuses `CommandState` by documented equivalence: an accepted Operation's lifecycle is exactly the `CommandState` registry in `docs/PROTOCOL.md`. The checked properties in `specs/seed/command_lifecycle.qnt` apply to OperationState by equivalence, not by a new model:
+`OperationState` is not a new checked model. It reuses `CommandState` by documented refinement for the properties actually checked in `specs/seed/command_lifecycle.qnt`; it does not make the full `docs/PROTOCOL.md` transition graph checked. The checked-model properties below apply to OperationState by equivalence, not by a new model:
 
 | Operation vocabulary | Existing checked artifact |
 |---|---|
 | `Operation` accepted lifecycle record | `Command` record in `command_lifecycle.qnt` |
 | `OperationKind` | `CommandKind` / `CommandKindRequest` registry concept |
-| `OperationState` | `CommandState` exactly: `accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded` |
+| `OperationState` state-name vocabulary | `CommandState` names: `accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded` |
 | terminal finality | existing `TerminalFinality` |
 | first durable terminal commit | existing `PreAppendTerminalChoice` + `LsnDeterminesTerminalWinner` |
 | idempotent retry | existing `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` |
 
-Classification: **checked-normative by refinement only** for Operations whose lifecycle semantics are exactly the existing Command lifecycle. Read/query Operations use the same lifecycle in v0; they may skip `running`, but the design does not claim a direct-to-completed fast path that contradicts the committed transition registry. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
+Classification: **checked-model by refinement only** for the listed properties. The full transition graph is **stated-normative**, not checked: the current `command_lifecycle.qnt` terminal-commit action allows any non-terminal state to commit any terminal candidate, so adjacency rules such as no `accepted → completed` require a strengthened lifecycle model or an OperationState-specific model before they can be claimed checked. Read/query Operations use the same lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
 
 ### New Elicitation model obligations (stated-normative)
 
@@ -109,7 +113,7 @@ Subscriptions are grant-checked without `OperationState` lifecycle. Reserve thes
 - `SubscriptionAudited` — subscription allow/deny decisions create security audit records without creating Operation records.
 - `SubscriptionCursorReplayAuthorized` — reconnect replay returns only events with `LSN > cursor` within the authorized subscription filter.
 
-This composes with the model-promotion rule: a property promotes its model **and** its vectors together. "checked-normative" = model promoted + ≥1 promoted vector; "stated-normative" = draft model, no promoted vector yet. Promotion is a per-property operation; if implementation reveals a safety-critical property classified stated-normative, it must be promoted before its behavior ships.
+This composes with the tier definitions: `SubscriptionGrantChecked`, `SubscriptionAudited`, and `SubscriptionCursorReplayAuthorized` are stated-normative until a subscription/audit model exists and conformance vectors are promoted. Promotion is a per-property operation; if implementation reveals a safety-critical property classified stated-normative, it must be promoted before its behavior ships.
 
 The delegation precondition and lease safety sections below are preconditions for future behavior and are **not** part of the v0 normative baseline.
 
@@ -315,7 +319,10 @@ Reserve the following conformance-vector families. Each is draft until its refer
 - `elicitation-stale-generation`: answer after target generation tombstone records stale/audit and does not mutate live state.
 - `operation-response-correlation-forgery`: response Operation using ReplyId/EventId/CommandId as ElicitationId rejected.
 - `subscription-grant-checked`: subscription establish succeeds/fails by grant and records audit without OperationState.
+- `subscription-audited`: subscription allow/deny decisions create security audit records without creating Operation records.
 - `subscription-cursor-replay-authorized`: reconnect replay by cursor returns only events within the authorized subscription filter.
+
+Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt`; adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
 
 A protocol semantic change updates `docs/PROTOCOL.md`, the model, generated contract, conformance vectors, and implementation together.
 
@@ -368,9 +375,9 @@ Draft models may explore ideas without becoming product commitments.
 
 The v0 seed formal models live under `specs/seed/`. Each model carries its promotion metadata as inline `@promotion` comment blocks (one per checked/draft property) — the machine-readable source a future CI script reads to generate the traceability table above. The property-id vocabulary established by the seed is the Single Source of Truth that `.proto` contracts, conformance vectors, and implementation all derive from.
 
-### Checked-normative (model promoted; awaiting conformance vectors)
+### Checked-model (model promoted; awaiting conformance vectors)
 
-These checked properties are **unaffected** by the O/O/E vocabulary roll-forward and apply to `OperationState` by equivalence (no regression). `command_lifecycle.qnt`'s properties apply to Operations whose lifecycle semantics are exactly the existing Command lifecycle.
+These checked-model properties are **unaffected** by the O/O/E vocabulary roll-forward and apply to `OperationState` by equivalence for the listed properties only. They are not checked-normative until at least one conformance vector tracing to each property is promoted. No checked-normative property exists yet in this repository because conformance vectors have not landed.
 
 | Model | Language | Properties checked | Backend |
 |---|---|---|---|
@@ -382,7 +389,7 @@ These checked properties are **unaffected** by the O/O/E vocabulary roll-forward
 
 Each checked Quint model also commits a generated `*.emitted.tla` inspection artifact (via `quint compile --target tlaplus`); these are generated, never hand-edited, and are NOT an independent re-check lane (they `EXTENDS ... Apalache, Variants` and need the Apalache jar on the classpath — same toolchain reached via Quint).
 
-The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState` ⇿ `CommandState` refinement above) means the checked-normative `command_lifecycle.qnt` properties also apply to OperationState by equivalence — no new model is introduced.
+The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState` ⇿ `CommandState` refinement above) means the checked-model `command_lifecycle.qnt` properties also apply to OperationState by equivalence — no new model is introduced and no full transition-graph check is implied.
 
 ### Stated-normative (draft models; property-ids reserved)
 

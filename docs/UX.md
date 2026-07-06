@@ -37,7 +37,7 @@ The operator can see available sessions and understand:
 
 ### Send intent
 
-The operator can submit Operations to a selected target: spawn or attach where supported, drive a turn with prompt payload, cancel or interrupt active work, answer approvals or Elicitations, query status/snapshots, reconfigure adapter-declared settings, or perform session-management actions.
+The operator can submit Operations to a selected target: spawn or attach where supported, instruct a turn with prompt payload, cancel or interrupt active work, answer approvals or Elicitations, query status/snapshots, reconfigure adapter-declared settings, or perform session-management actions.
 
 The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
 

@@ -12,7 +12,7 @@ The first surface is a responsive web cockpit using the shared TypeScript operat
 
 ### Operation plane
 
-The operation plane represents authorized control-plane requests through an actor-neutral vocabulary, while v0 admits only operator-originated Operations. It includes spawn, attach, drive, cancel, interrupt, query, approval response, elicitation response, reconfiguration, and session-management Operations; non-operator Operation senders remain reserved seams.
+The operation plane represents authorized control-plane requests through an actor-neutral vocabulary, while v0 admits only operator-originated Operations. It includes spawn, attach, instruct, cancel, interrupt, query, approval response, elicitation response, reconfiguration, and session-management Operations; non-operator Operation senders remain reserved seams. Reserved-but-not-validatable seams such as `agent-send` and `adapter-utility-exec` are named for non-operator routing and standalone adapter utility-exec pressure, but v0 submissions reject with `validation_failed`.
 
 Every accepted Operation initially reuses the canonical `CommandState` registry in `docs/PROTOCOL.md` by documented refinement equivalence. Control-surface-local submission states are separate and never become durable core states. A future rename to `OperationState` must update prose, generated contracts, formal models, conformance vectors, and implementations together.
 

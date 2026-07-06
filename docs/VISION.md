@@ -81,7 +81,7 @@ A useful Patchbay session has these properties:
 - replies and response Operations correlate through typed references to the command/message/elicitation they answer;
 - session identity is stable enough that late replies cannot affect the wrong session;
 - stale state is displayed as stale rather than live;
-- authority grants are checked before commands execute;
+- authority grants are checked before Operations execute;
 - adapters can fail without hiding the failure from the operator.
 
 ## Quality benchmark

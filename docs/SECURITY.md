@@ -11,8 +11,8 @@ Research grounding: `.research/analysis/briefs/web-control-security.md`.
 V0 security must ensure:
 
 - only authenticated operator endpoints can submit control actions;
-- every command is authorized before durable acceptance;
-- accepted commands bind to the intended target session and generation;
+- every Operation is authorized before durable acceptance;
+- accepted Operations bind to the intended target session and generation;
 - retries cannot double-apply intent at the Patchbay boundary;
 - browser sessions can be revoked promptly;
 - stale or late events cannot mutate newer session state;
@@ -46,12 +46,12 @@ V0 is designed against:
 - unauthenticated browser or CLI access;
 - unauthorized browser, CLI, or adapter endpoint enrollment;
 - CSRF attempts against the web cockpit;
-- replayed command submissions at the Patchbay boundary;
-- command submission from a revoked browser/device endpoint;
-- commands aimed at the wrong session generation;
+- replayed Operation submissions at the Patchbay boundary;
+- Operation submission from a revoked browser/device endpoint;
+- Operations aimed at the wrong session generation;
 - stale adapter events or late replies mutating newer state;
 - confused-deputy routing where UI labels or payload fields override verified identity;
-- unsupported adapter commands being presented as available;
+- unsupported adapter Operations being presented as available;
 - accidental logging of session cookies, CSRF tokens, passwords, bootstrap secrets, or prompt bodies;
 - deployment mistakes that expose an unauthenticated or HTTP-only non-localhost core;
 - adapter-to-core channels that bypass Patchbay identity, capability, or grant checks.
@@ -86,7 +86,7 @@ Interactive login must be rate-limited, track failed attempts against the operat
 
 ## Browser session model
 
-The web cockpit uses server-side sessions. The browser receives only an opaque session cookie; command authority, endpoint metadata, grants, and session state remain server-side.
+The web cockpit uses server-side sessions. The browser receives only an opaque session cookie; Operation authority, endpoint metadata, grants, and session state remain server-side.
 
 V0 browser-session requirements:
 
@@ -121,15 +121,15 @@ Every state-changing web route must require:
 
 Unauthenticated setup pages must not expose state-changing bootstrap flows on a network listener. First-run setup must use the CLI, local console output, or a one-time bootstrap secret that becomes invalid after setup.
 
-## Command authorization and replay resistance
+## Operation authorization and replay resistance
 
 An Operation is accepted only after Patchbay validates:
 
-1. payload shape and `OperationKind` (the kind must be a known Patchbay OperationKind; an unknown or reserved-but-not-validatable kind like `agent-send` is `validation_failed` at submission, before a grant is evaluated);
+1. payload shape and `OperationKind` (the kind must be a known Patchbay OperationKind; an unknown or reserved-but-not-validatable kind like `agent-send` or `adapter-utility-exec` is `validation_failed` at submission, before a grant is evaluated);
 2. authenticated issuer session or endpoint;
 3. target actor/session identity and generation, or fleet/supervisor scope for spawn Operations whose target does not yet exist;
 4. idempotency key or command id;
-5. command expiration window;
+5. Operation expiration window;
 6. a live, unrevoked grant permitting that issuer to perform that OperationKind on that target scope.
 
 Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, or kind-mismatched grants produce `SubmissionOutcome = rejected` with `authorization_denied` or the narrower applicable failure term from `docs/PROTOCOL.md`.
@@ -140,7 +140,7 @@ Sender identity comes from the verified connection/session context. Payload disp
 
 ### Compound issuer
 
-When a command arrives at the core through a control surface (the v0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
+When an Operation arrives at the core through a control surface (the v0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
 
 ## Grant shape
 
@@ -177,19 +177,19 @@ Grant checks are centralized in the coordination core. Control surfaces may hide
 
 ## Revocation model
 
-Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and OperationKind:
+Revocation prevents future authority. Already accepted Operations follow the policy attached to their grant and OperationKind:
 
-- **continue** — preserve already accepted work, but reject future commands;
-- **cancel** — submit or record cancellation for accepted non-terminal commands when supported;
+- **continue** — preserve already accepted work, but reject future Operations;
+- **cancel** — submit or record cancellation for accepted non-terminal Operations when supported;
 - **require reauthorization** — hold or reject delivery until a fresh grant/session is established.
 
 V0 must support these operator-facing revocation actions:
 
 1. **Revoke current browser session** — delete or mark the session revoked and clear its cookie.
 2. **Revoke all browser sessions** — invalidate all operator-session generations, optionally by rotating the server-side session-signing/encryption secret.
-3. **Revoke endpoint/device** — mark a browser or CLI endpoint revoked and reject future commands from it.
-4. **Revoke adapter/session grant** — stop command acceptance for a target scope while preserving audit history.
-5. **Security lockdown** — reject new commands, mark affected runtime sessions stale, require fresh login, and record the reason.
+3. **Revoke endpoint/device** — mark a browser or CLI endpoint revoked and reject future Operations from it.
+4. **Revoke adapter/session grant** — stop Operation acceptance for a target scope while preserving audit history.
+5. **Security lockdown** — reject new Operations, mark affected runtime sessions stale, require fresh login, and record the reason.
 
 **Lockdown exit.** Lockdown is a durable posture (an audited, persisted event). Restarting the core does not clear it: crash recovery replays the log and lockdown remains in effect. Exit requires re-establishing the bootstrap trust level **via the bootstrap channel** (local CLI/console/SSH/trusted device — whatever the operator configured at setup), not routine web re-authentication. This self-scales with the operator's configured security posture. The protection depends on the enrollment channel being distinct from routine web login: if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection, because an attacker holding the routine credential could clear it. That channel distinction is load-bearing, not incidental.
 
@@ -235,9 +235,9 @@ Forbidden v0 deployments:
 
 - internet-exposed unauthenticated core;
 - non-localhost HTTP browser access carrying authenticated sessions;
-- deployments that bypass Patchbay authority checks by sending browser commands directly to adapters;
+- deployments that bypass Patchbay authority checks by sending browser Operations directly to adapters;
 - deployments that treat adapter-reported display names as routing authority;
-- deployments that disable audit for command acceptance, authorization, or revocation.
+- deployments that disable audit for Operation acceptance, authorization, or revocation.
 
 ## Extension pressure classification
 
@@ -247,8 +247,8 @@ Committed v0 behavior:
 - explicit actor, device, endpoint, operator-session, runtime-session, grant, revocation, and audit concepts;
 - server-side browser sessions with hardened cookies;
 - CSRF protection for state-changing web requests;
-- deny-by-default command authorization;
-- idempotent command retry at the Patchbay boundary;
+- deny-by-default Operation authorization;
+- idempotent Operation retry at the Patchbay boundary;
 - target session generation checks;
 - emergency revocation controls;
 - security event audit with secret redaction.

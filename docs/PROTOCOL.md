@@ -68,7 +68,7 @@ A **Payload** is the adapter-specific content or schema-bound body carried insid
 
 ### Generic Message
 
-Generic operator-originated no-grant `Message` is not a v0 action. Operator-originated content that drives work is payload of an authorized `drive` Operation. Agent/harness/service-originated requests for a response are durable Elicitations. The `message id` space remains reserved for future informational surfaces and for current correlation-model compatibility.
+Generic operator-originated no-grant `Message` is not a v0 action. Operator-originated content that drives work is payload of an authorized `instruct` Operation. Agent/harness/service-originated requests for a response are durable Elicitations. The `message id` space remains reserved for future informational surfaces and for current correlation-model compatibility.
 
 ### Reply and response correlation
 
@@ -137,9 +137,9 @@ Boundary rules:
 
 ### `OperationState` ⇿ `CommandState` refinement equivalence
 
-`OperationState` is not a new checked model. It reuses `CommandState` by documented equivalence: an accepted Operation's lifecycle is exactly the `CommandState` registry above (`accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded`). The checked properties in `command_lifecycle.qnt` (`CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`) apply to OperationState by equivalence — see `docs/VERIFICATION.md`. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together; until then `CommandState` remains the checked lifecycle registry name and `Operation` is the actor-neutral protocol vocabulary that maps to it.
+`OperationState` is not a new checked model. It reuses `CommandState` by documented refinement: accepted Operations use the existing `CommandState` state names (`accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded`) and inherit only the properties actually checked in `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting`. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together; until then `CommandState` remains the checked lifecycle registry name and `Operation` is the actor-neutral protocol vocabulary that maps to it.
 
-Read/query Operations use the same lifecycle in v0; they may skip `running`, but they do not use a direct-to-completed fast path that contradicts the committed transition registry. A no-lifecycle reads optimization is a reserved seam, promotable if polling volume warrants it later.
+The full transition graph above is **stated-normative**, not checked by `command_lifecycle.qnt`: the current checked model permits any non-terminal state to commit any terminal candidate, so adjacency rules such as no `accepted → completed` require a strengthened lifecycle model or an OperationState-specific model before they can be claimed checked. Read/query Operations use the same stated-normative lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative, not checked. A no-lifecycle reads optimization is a reserved seam, promotable if polling volume warrants it later.
 
 ### `OperationKind` registry
 
@@ -149,20 +149,21 @@ One registry owns kinds, lifecycle policy, authority matching, adapter capabilit
 |---|---|---|
 | `spawn` | Create a new runtime/session/thread/agent/process/cloud resource; target is fleet-level by default before a session exists. This is one OperationKind; spawn variants are described by payload `target_spec.shape`, not by per-variant OperationKinds. | Committed v0. Requires fleet-authority modeling. The `target_spec.shape` registry is reserved/open in v0 and adapter-enforced at delivery. |
 | `attach` | Connect/reconnect a control surface endpoint to an existing session/server and reconcile. | Committed v0. |
-| `drive` | Send prompt/user input/steering content into a session/turn. | Committed v0 for operator-originated drive. |
+| `instruct` | Send prompt/user input/steering content into a session/turn. | Committed v0 for operator-originated instruct. |
 | `cancel` | Request cancellation of a target Operation/turn/session action. | Committed v0. |
 | `interrupt` | Request immediate stop/interrupt of active execution. | Committed v0. |
 | `query` | Read status, snapshot, capabilities, lists, history, metadata, or diagnostics. | Committed v0. |
 | `approval-response` | Respond to a permission/tool approval Elicitation. | Committed v0. |
-| `elicitation-response` | Respond to non-approval Elicitations. | Committed v0 for `question` and `freeform` contracts; reserved for `secret`, `function_result`, `file_attachment`, `structured_schema`, and `service_request` contracts. |
+| `elicitation-response` | Respond to non-approval Elicitations. | Committed v0 for `question` contracts; reserved for `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, and `service_request` contracts. |
 | `reconfigure` | Change model, reasoning/thinking level, permission mode, tools/MCP, agent mode, workspace, or adapter config. | Committed v0. |
 | `session-management` | Resume, fork, compact, clear, archive/delete, revert, share/unshare, remove messages, checkpoint restore, disconnect/retire existing sessions/resources. | Committed v0. |
-| `agent-send` | Reserved slot for agent→agent mesh, op→op routing, adapter→operator service Operations, and other non-operator Operation directions. | Reserved seam; v0 submissions reject with `validation_failed`. |
+| `agent-send` | Reserved design seam for agent→agent mesh, op→op routing, adapter→operator service Operations, and other non-operator Operation directions. Informed by remote-pi mesh `agent_send`/`agent_request` prior art (not one of the 7 surveyed harnesses) and by Antigravity trigger / Codex service-request pressure. | Reserved seam; v0 submissions reject with `validation_failed`. |
+| `adapter-utility-exec` | Reserved seam for standalone adapter utility execution that does not create a thread/turn or persistent runtime session. Codex `command/exec` and `process/spawn` are the surveyed pressure `[codex-appserver-readme]` `[codex-appserver-types]`. | Reserved seam; named in registry, not validatable in v0; submissions reject with `validation_failed`. Full lifecycle/idempotency modeling deferred. |
 
 Boundary rules:
 
 - Unknown `OperationKind` is `SubmissionOutcome = rejected` with `validation_failed` before grant evaluation.
-- Reserved-but-not-validatable kinds such as `agent-send` also reject with `validation_failed` in v0. Promotion is a registry update, not a schema change.
+- Reserved-but-not-validatable kinds such as `agent-send` and `adapter-utility-exec` also reject with `validation_failed` in v0. Promotion is a registry update, not a schema change.
 - Unsupported-by-adapter known committed kind is a delivery-layer `unsupported_command` rejection after acceptance, matching the existing capability posture (the core does not gate delivery on cached adapter capability).
 
 #### Spawn payload and authority commitments
@@ -298,7 +299,7 @@ Reserved future Elicitation shapes: multi-responder quorum Elicitations; multi-a
 
 ### `response_contract` registry
 
-A `response_contract` describes what kind of response is semantically required; optional UI hints describe how a surface may render it. The `elicitation-response` OperationKind is committed v0. The `response_contract.contract_kind` values have a committed/reserved split: committed v0 contract kinds are `approval`, `question`, and `freeform`; reserved contract kinds are named in the registry but not validatable in v0. A response submitted for an unknown or reserved/unsupported `contract_kind` is rejected at submission with `validation_failed` unless a later registry update promotes that contract kind.
+A `response_contract` describes what kind of response is semantically required; optional UI hints describe how a surface may render it. The `elicitation-response` OperationKind is committed v0. The `response_contract.contract_kind` values have a committed/reserved split: committed v0 contract kinds are `approval` and `question`; reserved contract kinds are named in the registry but not validatable in v0. `freeform` is reserved because the solid surveyed grounding is currently Claude's optional `AskUserQuestion` freeform answer, while other surveyed response surfaces are structured question/answer, approval, secret, function-result, or service-request shapes rather than standalone unstructured Elicitation responses. A response submitted for an unknown or reserved/unsupported `contract_kind` is rejected at submission with `validation_failed` unless a later registry update promotes that contract kind.
 
 Required fields:
 
@@ -314,7 +315,7 @@ Required fields:
 |---|---|---|
 | `approval` | Allow/deny/allow-once/always/policy-amend/modified-input permission response. | Committed v0. |
 | `question` | Answer one or more questions, possibly with options and freeform text. | Committed v0. |
-| `freeform` | Unstructured text response. | Committed v0. |
+| `freeform` | Unstructured text response. | Reserved seam. Named in registry, not validatable in v0; demoted until more than Claude's optional freeform answer is grounded as a genuine Elicitation response surface. |
 | `secret` | Provide sensitive secret/token/input with redaction/no-log policy. | Reserved seam. Named in registry, not validatable in v0. |
 | `function_result` | Return custom tool/function result to a waiting service/harness. | Reserved seam. Named in registry, not validatable in v0. |
 | `file_attachment` | Provide file/blob/image/attachment reference or upload. | Reserved seam. Named in registry, not validatable in v0. |
@@ -329,7 +330,7 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 
 | Term | Layer | Meaning | Typical command effect |
 |---|---|---|---|
-| `validation_failed` | submission | Patchbay rejected the payload shape, OperationKind, target shape, or required field before acceptance. | `SubmissionOutcome = rejected`; no `CommandState` |
+| `validation_failed` | submission | Patchbay rejected the payload envelope, OperationKind, target identity/scope envelope, or required field before acceptance. This does not include spawn `target_spec.shape` variant support, which the adapter enforces at delivery with `unsupported_command`. | `SubmissionOutcome = rejected`; no `CommandState` |
 | `authorization_denied` | submission | The actor/endpoint lacks a valid grant for the command. | `SubmissionOutcome = rejected`; no `CommandState` |
 | `target_not_found` | submission/delivery | The addressed actor/session/resource does not exist in the relevant authority/session context. | submission `rejected` before acceptance, or command `rejected`/`failed` after acceptance by policy |
 | `unsupported_command` | delivery | The adapter does not support the declared OperationKind at delivery time. (An unknown-to-Patchbay OperationKind is `validation_failed` at submission, before a grant is evaluated; the core does not gate delivery on cached adapter capability.) | command `rejected` after acceptance |
@@ -541,8 +542,8 @@ Degraded behavior rules:
 
 ## Extension pressure classification
 
-- **Committed v0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `drive`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative until promoted), the `response_contract` registry (committed contract kinds: `approval`, `question`, `freeform`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
-- **Reserved extension seams:** adapter-specific diagnostics, future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved `agent-send` OperationKind (rejected with `validation_failed` in v0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation through `parent_grant_id`, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
+- **Committed v0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative until promoted), the `response_contract` registry (committed contract kinds: `approval`, `question`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
+- **Reserved extension seams:** adapter-specific diagnostics, future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation through `parent_grant_id`, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
 - **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
 
 ## Security and trust boundary
