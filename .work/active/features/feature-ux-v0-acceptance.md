@@ -1,12 +1,12 @@
 ---
 id: feature-ux-v0-acceptance
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-operator-presence-and-action-inventory]
 created: 2026-06-28
-updated: 2026-07-05
+updated: 2026-07-06
 gate_origin: null
 release_binding: null
 ---
@@ -72,22 +72,24 @@ Approaches considered:
 **Structure**:
 
 1. **Purpose and scope** — UX.md defines the surface-neutral UX conformance floor and the v0 web cockpit as its first conformant instance. State surface-neutrality as a principle (symmetric to adapter-neutrality): surface-specific presentation is a surface-declared feature, not a core UX primitive. State that the floor is registry-derived (references `docs/PROTOCOL.md` canonical registries; does not re-declare them). Note the relationship to `docs/ARCHITECTURE.md` (the operator domain + presentation model) and that a surface is conformant when it meets the floor.
-2. **Surface-neutral conformance floor** — the obligations any conformant control surface must meet, each referencing the canonical registry:
-   - **State presentation honesty.** Present `CommandState` (`accepted`/`delivered`/`running`/`completed`/`rejected`/`failed`/`expired`/`cancelled`/`superseded`), `SessionConnectivityState` (`live`/`stale`/`offline`/`unknown`/`failed`), `SessionActivityState` (`idle`/`working`/`unknown`), and `ElicitationState` from `docs/PROTOCOL.md` without inventing divergent states. Stale/unknown must not be styled as live. Session display composes connectivity × activity; a stale/unknown connectivity value dominates presentation.
+2. **Surface-neutral conformance floor** — the obligations any conformant control surface must meet. Each obligation references the canonical registry in `docs/PROTOCOL.md` by section/anchor rather than re-listing the registry members (re-listing would reintroduce the duplicate-enum drift `feature-command-state-ssot` was created to kill — `docs/UX.md` references rather than redefines protocol state machines). UI labels (e.g. "Live idle", "Stale working") are clearly marked as non-authoritative presentation labels over the protocol axes, not a restatement of the registry:
+   - **State presentation honesty.** Present every canonical member of `CommandState`, `SessionConnectivityState`, `SessionActivityState`, and `ElicitationState` **as defined in `docs/PROTOCOL.md`** (Command lifecycle state; Session state axes; ElicitationState lifecycle) without inventing divergent states. Stale/unknown must not be styled as live. Session display composes connectivity × activity; a stale/unknown connectivity value dominates presentation.
    - **Liveness vs delivery separation.** Separate session liveness (connectivity × activity) from command delivery (`CommandState`). Accepted ≠ completed; delivered ≠ completed. (Satisfies acceptance criterion.)
    - **Identity-before-intent.** Show stable target identity (adapter, deployment, runtime session id, session generation) before the operator can submit an Operation. Human-readable labels (project/cwd/name) are metadata, not identity — they must not override verified target identity.
+   - **Authority/grant visibility.** Answer the canonical operator question "Who is allowed to control this session or resource?" (`docs/VISION.md`). Action availability is derived from grants + adapter capabilities, but UI availability is never authority (`docs/PROTOCOL.md` Authority grants: "Control surfaces may hide unavailable actions, but UI availability is never authority"). Surfaces must distinguish denial (`authorization_denied`) from unsupported (`unsupported_command`) from revoked, and show operator-visible grant/audit context where needed (current-session/endpoint/adapter revocation, lockdown). Revocation prevents future authority; already-accepted commands follow their attached policy.
+   - **Operation affordance coverage.** Every committed v0 `OperationKind` (`spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` per `docs/PROTOCOL.md` OperationKind registry) is either actionable through an appropriate surface flow or visibly presented as unavailable/unsupported with a canonical reason. Reserved kinds (`agent-send`, `adapter-utility-exec`) are not presented as committed v0 actions. (The composer need not surface every kind — e.g. `spawn`/`attach` may be entry-point actions rather than composer actions — but the surface as a whole must cover them.)
    - **Failure vocabulary mapping.** Map failure text to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct. Show what is safe to retry.
    - **Reconnect reconciliation.** On reconnect, submit cursor and reconcile against snapshots + newer events. An older snapshot is never rendered as live. Reconnect does not rely on wall-clock freshness alone.
    - **Elicitation presentation.** Surface pending Elicitations (approvals, questions) as attention-required state. V0 binds to the operator actor; any authenticated endpoint may answer; first valid answer clears everywhere. The responding endpoint is captured in the response Operation audit. Tighter binding is reserved.
-   - **Observation/substream honesty.** Present Observations from subscription streams but never as authoritative alone; snapshots and core records reconcile. Streams are delivery optimizations.
-   - **Terminal-race explanation.** Command timelines can explain terminal races (Completed before cancellation arrived; Cancelled before completion; Expired before adapter completion) without adding protocol states.
+   - **Observation/subscription-stream honesty.** Present Observations from subscription streams but never as authoritative alone; snapshots and core records reconcile. Streams are delivery optimizations.
+   - **Terminal-race explanation.** Command timelines can explain terminal races (e.g. Completed-before-cancellation-arrived, Cancelled-before-completion, Expired-before-adapter-completion — examples, not protocol states) without adding protocol states.
    - **No optimistic-state authority.** Optimistic UI state is never authority for command submission, grant status, or session liveness.
-3. **Shared presentation-component layer (named seam)** — name the seam (refining `docs/ARCHITECTURE.md:152` "presentation model"). State its obligations: bind canonical protocol states to skin-able presentable primitives (`StateBadge`, `CommandTimeline`, `Composer`, `ElicitationCard`, etc.); be skin-able via design tokens; be composable by any conformant surface. Implementation **deferred** — named here as the architectural seam that makes the floor enforceable and skins possible; bootstrapping it is follow-on surface-design work. Note that `ux-ui-design`'s `components` skill is the mockup-time analog of this layer.
+3. **Shared presentation-component layer (named seam)** — name the seam (refining `docs/ARCHITECTURE.md:152` "presentation model"). State its obligations: bind canonical protocol states to skin-able presentable primitives (`StateBadge`, `CommandTimeline`, `Composer`, `ElicitationCard`, etc.); be skin-able via design tokens; be composable by any conformant surface. Implementation **deferred** — named here as the **future structural enforcement mechanism** that makes the floor machine-checkable and skins possible; bootstrapping it is follow-on surface-design work. Until it is implemented, conformance is enforced by these UX acceptance criteria, protocol references, and later tests/vectors — not by the component layer. Note that `ux-ui-design`'s `components` skill is the mockup-time analog of this layer. (See Risks: the first real web cockpit must not proceed without either the component layer or an explicit conformance-test substitute.)
 4. **v0 web cockpit — first conformant instance** — the v0-specific acceptance, framed as the first surface that must satisfy the floor:
    - **Required v0 screens.** Session list; session detail (message timeline + command delivery timeline); composer; Elicitation/attention surface. (Navigation pattern is an instance decision, deferred to the mockup follow-on; the floor requires the screens exist, not their layout.)
    - **Session list visible fields.** machine/deployment, adapter, project/working context when available, session label, model/runtime metadata when available, protocol-derived connectivity/activity status, last authoritative update time.
    - **Session detail / message timeline behavior.** Render Observations (assistant messages, tool calls/results, lifecycle facts) with source authentication and correlation context; render command delivery states distinctly from message content.
-   - **Composer requirements.** Submit Operations (instruct with prompt payload, cancel/interrupt, approval/elicitation responses, query, reconfigure, session-management). Show local submission state + durable `CommandState`. Show idempotency behavior on retry.
+   - **Composer requirements.** Submit Operations; the composer surfaces the in-session OperationKinds (`instruct` with prompt payload, `cancel`/`interrupt`, `approval-response`/`elicitation-response`, `query`, `reconfigure`, `session-management`) while `spawn`/`attach` are surfaced as entry-point actions elsewhere (per the Operation affordance coverage obligation). Show local submission state + durable `CommandState`. Show idempotency behavior on retry.
    - **Reconnect/stale/offline banners.** Visible connectivity-state banners; stale view marked until a newer authoritative snapshot/live stream confirms.
    - **Multi-device continuity.** A command sent from phone is visible from laptop; a session inspected from desktop reflects accepted commands and authoritative replies from other surfaces.
    - **Empty/error/loading states.** Explicit states for no sessions, no messages, target-not-found, adapter-unavailable, and failure cases — all using the failure vocabulary.
@@ -98,8 +100,8 @@ Approaches considered:
 7. **Anti-patterns** — carry forward the existing anti-patterns list (treating optimistic UI as authoritative; hiding delivery distinctions; stale-working-as-live; labels without identity context; retry without idempotency display; mobile-only assumptions; Pi-specific core UI concepts) and add: inventing divergent state names; rendering a stale snapshot as live; binding Elicitation responses to a specific endpoint rather than the operator actor.
 
 **Implementation Notes**:
-- Consume, do not duplicate: every state name and registry value must reference `docs/PROTOCOL.md` as authoritative. If a value diverges, `docs/PROTOCOL.md` is correct.
-- Restructure, not append: the current UX.md is web-cockpit-flavored; the restructure makes the floor the frame and the v0 instance a section. Preserve the benchmark/quality-bar and mobile-first content (it moves into the v0-instance section).
+- Consume, do not duplicate: every state name and registry value must reference `docs/PROTOCOL.md` as authoritative (by section/anchor), not re-list the members — `feature-command-state-ssot` requires `docs/UX.md` to reference rather than redefine protocol state machines. UI labels ("Live idle", "Stale working", terminal-race examples) are non-authoritative presentation labels, clearly marked as such. If a value diverges, `docs/PROTOCOL.md` is correct.
+- Restructure, not append: the current UX.md is web-cockpit-flavored; the restructure makes the floor the frame and the v0 instance a section. **Preserve the existing UX benchmark/quality-bar section** ("UX benchmark" — Remote Pi compatibility floor, Claude-app-style quality bar) by relocating it into the v0-instance section, and preserve the mobile-first content likewise.
 - Surface-neutrality is named here but ratifies what `docs/ARCHITECTURE.md` and `docs/VISION.md` already imply; note the cross-reference.
 - The presentation-component seam refines `docs/ARCHITECTURE.md:152` "presentation model"; do not contradict it — name the refinement.
 
@@ -146,14 +148,17 @@ No implementation code; verification is by document consistency:
 
 - **Floor over-specification forecloses skins.** If the floor mandates visual/interaction detail, it contradicts surface-neutrality. Mitigation: the floor is behavioral + state-binding only; visual design is explicitly surface-declared.
 - **Presentation-component seam left too vague to enforce.** If the seam's obligations aren't concrete, "conformant floor" stays unenforceable. Mitigation: state the obligations (bind canonical states; skin-able via tokens; composable by any surface) even though implementation is deferred.
+- **Conformance unenforceable until the component layer exists (review finding I3).** The floor's structural enforcement depends on a deferred component layer; until it is implemented, conformance is enforced only by UX acceptance criteria + protocol references. The first real web cockpit must not proceed without either the component layer or an explicit conformance-test substitute (e.g. a UX conformance vector/checklist that gates the web cockpit's stage:review). Mitigation: state this as a required follow-up (see Reserved follow-up); a future UX conformance vector is the test substitute if the component layer is not yet built.
 - **v0 instance drifts from the floor.** The v0 web cockpit section could accidentally specify something the floor doesn't require (or contradict it). Mitigation: frame every v0-instance item as "satisfies floor obligation X" where applicable.
-- **UX.md restructure churn.** A full restructure risks losing content (benchmark, mobile-first, anti-patterns). Mitigation: preserve and relocate, don't delete.
+- **UX.md restructure churn.** A full restructure risks losing content (benchmark, mobile-first, anti-patterns). Mitigation: preserve and relocate, don't delete — the implementation notes explicitly preserve the UX benchmark/quality-bar section.
+- **Surface-neutrality is a new named principle; downstream features may not honor it yet.** Mitigation: the cross-reference in ARCHITECTURE.md and the reserved-seams list make it discoverable; the central `feature-extension-seams-non-foreclosure` sweep will consolidate it.
 - **Surface-neutrality is a new named principle; downstream features may not honor it yet.** Mitigation: the cross-reference in ARCHITECTURE.md and the reserved-seams list make it discoverable; the central `feature-extension-seams-non-foreclosure` sweep will consolidate it.
 
-## Reserved follow-up (not v0)
+## Reserved follow-up (not this feature)
 
-- **v0 web cockpit mockup pass** — design the first conformant instance (session list, session detail/timeline, composer, Elicitation surface) via `ux-ui-design:screens`/`flows` + the design-system pipeline (palette → components → motion → screens). Belongs at surface-design tier, not in this criteria feature.
-- **Shared presentation-component layer implementation** — bootstrap the component library that binds canonical states to skin-able primitives. Follow-on; the seam is named here, the build is deferred.
+- **v0 web cockpit mockup pass — v0 surface-design follow-up, required before web cockpit implementation.** Design the first conformant instance (session list, session detail/timeline, composer, Elicitation surface, navigation pattern) via `ux-ui-design:screens`/`flows` + the design-system pipeline (palette → components → motion → screens). This is v0 work (the web cockpit is v0 per `docs/SPEC.md`), but it is **not this feature**: this feature defines the conformance contract; the mockup pass designs the first instance that satisfies it. It must land before the web cockpit reaches `stage: review` — either the shared presentation-component layer is built first, or a UX conformance vector/checklist gates the web cockpit (see Risks). The navigation-pattern decision (scope item) is tracked here and resolved in that follow-on.
+- **Shared presentation-component layer implementation** — bootstrap the component library that binds canonical states to skin-able primitives. Follow-on; the seam is named here, the build is deferred. This is the structural enforcement mechanism for the floor.
+- **UX conformance vector/checklist** — the test substitute for the component layer if it is not yet built; gates the web cockpit's `stage:review`. Reserved.
 - **Operator-customizable skins/layouts** — the "Codex-style vs Claude-style vs CLI" direction. Reserved seam above the floor.
 
 ## Review (advisory design review, 2026-07-06)
@@ -163,3 +168,24 @@ No implementation code; verification is by document consistency:
 **Reviewer**: fresh-context cross-model deep review on `openai-codex/gpt-5.5` (high thinking), dispatched by the umans orchestrator after the surface-neutrality + presentation-component-seam reframing (a meaningful shift from the original brief, warranting a fresh-context adversarial pass before implementation). Advisory pass on the design body; no implementation existed yet; no substrate side-effects, no stage change.
 
 (Review record to be appended when the reviewer returns.)
+
+## Review (advisory design review, 2026-07-06)
+
+**Verdict**: Block → fixed → proceeding to implement
+
+**Reviewer**: fresh-context cross-model deep review on `openai-codex/gpt-5.5` (high thinking), dispatched by the umans orchestrator after the surface-neutrality + presentation-component-seam reframing (a meaningful shift from the original brief). Advisory pass on the design body; no implementation existed yet; no substrate side-effects, no stage change.
+
+**Blocker** (fixed in-stride):
+- **Design re-declared canonical state registries while saying not to.** Unit 1 told the implementer to list concrete `CommandState`/`SessionConnectivityState`/`SessionActivityState`/`ElicitationState` members in UX.md, while the same design said "No canonical registry value re-declared" and `feature-command-state-ssot.md:48` requires `docs/UX.md` to reference rather than redefine protocol state machines (the SSOT feature was created to kill exactly this duplicate-enum drift). Fixed: the floor obligations now reference `docs/PROTOCOL.md` by section/anchor ("present every canonical member of CommandState as defined in PROTOCOL") rather than re-listing members; UI labels ("Live idle", terminal-race examples) are explicitly marked non-authoritative presentation labels over the axes.
+
+**Important findings** (all fixed in-stride):
+- **I1 — conformance floor lacked authority/grant visibility.** Added a floor obligation: answer "Who is allowed to control this session or resource?" (`docs/VISION.md:22`); action availability derived from grants + adapter capabilities but UI availability is never authority (`docs/PROTOCOL.md:494`); distinguish denial (`authorization_denied`) from unsupported (`unsupported_command`) from revoked; show operator-visible grant/audit context.
+- **I2 — Operation affordance coverage incomplete.** Added a floor obligation: every committed v0 `OperationKind` is either actionable through an appropriate surface flow or visibly unavailable with a canonical reason; reserved kinds not presented as committed. Composer note clarified: `spawn`/`attach` are entry-point actions, not composer actions.
+- **I3 — presentation-component seam overstated enforceability while deferring the enforcer.** Rephrased: the named layer is the *future structural enforcement mechanism*; until implemented, conformance is enforced by UX acceptance criteria + protocol references + later tests/vectors. Added a Risk + follow-up: the first real web cockpit must not proceed without either the component layer or an explicit conformance-test substitute (UX conformance vector).
+- **I4 — mockup pass misclassified as "not v0".** The web cockpit is v0 (`docs/SPEC.md`); the mockup pass is "not this feature," not "not v0." Reclassified as "v0 surface-design follow-up, required before web cockpit implementation"; navigation-pattern decision tracked there.
+
+**Nits** (both applied):
+- **N1** — "Observation/substream honesty" → "Observation/subscription-stream honesty".
+- **N2** — Unit 1 structure now explicitly preserves the current UX benchmark/quality-bar section (relocated, not deleted), per the implementation notes.
+
+**Notes**: Reviewer confirmed the surface-neutrality reframing is directionally sound and symmetric to adapter-neutrality, and the presentation-component seam aligns with `docs/ARCHITECTURE.md:85`/`:152`. The overall reframing survived; the SSOT blocker was the load-bearing fix. No implementation existed to review.
