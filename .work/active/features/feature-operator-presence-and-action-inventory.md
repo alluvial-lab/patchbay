@@ -1,7 +1,7 @@
 ---
 id: feature-operator-presence-and-action-inventory
 kind: feature
-stage: drafting
+stage: review
 tags: [foundation, protocol, adapter]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-research-harness-action-surfaces]
