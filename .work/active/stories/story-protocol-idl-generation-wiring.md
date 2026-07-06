@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-generation-wiring
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: [story-protocol-idl-proto-package]
@@ -32,3 +32,9 @@ See the feature body's Unit 2 for the file list and acceptance criteria.
 ## Notes
 
 If `buf`/`protoc` cannot be installed in the sandbox, fall back to `protoc` + prost-build directly, or to documenting the generation setup + committing hand-verified generated code, and file a follow-on story for live generation wiring. Don't block the whole feature on tooling install — surface it to the operator.
+
+## Review (2026-07-06)
+
+**Verdict**: Approve (fast-lane via feature review)
+
+**Notes**: Reviewed as part of the feature-protocol-idl-and-conformance deep-lane review (gpt-5.5 fresh context). Initial review returned Request changes (3 important findings: failure-vector operation_state contradiction, reply-correlation mis-typing, missing drift check); all fixed in commit 9a2854f; targeted re-review returned READY. Builds pass (cargo build, npm run build); check-vectors.mjs passes (12 vectors); check:drift detects generated-code modifications. Story advanced implementing → review; rolled up to feature.

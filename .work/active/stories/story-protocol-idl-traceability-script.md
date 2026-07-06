@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-traceability-script
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: [story-protocol-idl-conformance-vectors, story-protocol-idl-proto-package]
@@ -27,3 +27,9 @@ See the feature body's Unit 4 for the file list and acceptance criteria.
 - [ ] Script generates a traceability table artifact.
 - [ ] `docs/VERIFICATION.md` references `contracts/vectors/` and the traceability table.
 - [ ] Script fails on a deliberately-broken vector (negative test).
+
+## Review (2026-07-06)
+
+**Verdict**: Approve (fast-lane via feature review)
+
+**Notes**: Reviewed as part of the feature-protocol-idl-and-conformance deep-lane review (gpt-5.5 fresh context). Initial review returned Request changes (3 important findings: failure-vector operation_state contradiction, reply-correlation mis-typing, missing drift check); all fixed in commit 9a2854f; targeted re-review returned READY. Builds pass (cargo build, npm run build); check-vectors.mjs passes (12 vectors); check:drift detects generated-code modifications. Story advanced implementing → review; rolled up to feature.

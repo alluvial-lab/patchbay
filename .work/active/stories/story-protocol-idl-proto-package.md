@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-proto-package
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: []
@@ -28,3 +28,9 @@ See the feature body's Unit 1 for the per-file content and acceptance criteria.
 - [ ] Payloads are `bytes` + `PayloadContentType`, not contract_kind-specific schemas.
 - [ ] `buf lint` passes on the package.
 - [ ] `.proto` derives names from `docs/PROTOCOL.md` registries (no parallel vocabulary).
+
+## Review (2026-07-06)
+
+**Verdict**: Approve (fast-lane via feature review)
+
+**Notes**: Reviewed as part of the feature-protocol-idl-and-conformance deep-lane review (gpt-5.5 fresh context). Initial review returned Request changes (3 important findings: failure-vector operation_state contradiction, reply-correlation mis-typing, missing drift check); all fixed in commit 9a2854f; targeted re-review returned READY. Builds pass (cargo build, npm run build); check-vectors.mjs passes (12 vectors); check:drift detects generated-code modifications. Story advanced implementing → review; rolled up to feature.

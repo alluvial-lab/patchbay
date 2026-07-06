@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-conformance-vectors
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: [story-protocol-idl-proto-package]
@@ -33,3 +33,9 @@ Vectors reference `.proto` message types and enum values by fully-qualified name
 - [ ] Each vector carries the structured envelope (property id, promotion status, `.proto` fields).
 - [ ] Vectors reference real `.proto` types (no forward references to types that don't exist).
 - [ ] `contracts/vectors/README.md` documents the vector format.
+
+## Review (2026-07-06)
+
+**Verdict**: Approve (fast-lane via feature review)
+
+**Notes**: Reviewed as part of the feature-protocol-idl-and-conformance deep-lane review (gpt-5.5 fresh context). Initial review returned Request changes (3 important findings: failure-vector operation_state contradiction, reply-correlation mis-typing, missing drift check); all fixed in commit 9a2854f; targeted re-review returned READY. Builds pass (cargo build, npm run build); check-vectors.mjs passes (12 vectors); check:drift detects generated-code modifications. Story advanced implementing → review; rolled up to feature.

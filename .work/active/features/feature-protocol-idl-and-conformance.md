@@ -1,7 +1,7 @@
 ---
 id: feature-protocol-idl-and-conformance
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-verification-contract-authority, feature-session-identity-adapter-contract, feature-operator-presence-and-action-inventory]
@@ -158,3 +158,13 @@ Author the CI script that reads all `contracts/vectors/*.json` and: (a) fails if
 - **Committed v0:** the `.proto` package, the generation wiring, the conformance vectors, the traceability script.
 - **Reserved extension seams:** contract_kind-specific payload schemas (payloads are opaque `bytes` for v0); per-variant spawn OperationKinds; `agent-send`/`adapter-utility-exec` as wire-present-but-rejected enum values; delegation lineage in the grant shape.
 - **Rejected direction:** a hand-written DTO set as the durable source of truth (the whole point of this feature); markdown conformance vectors (Q3=b rejected); a single monolithic `.proto` file (Q2=a rejected, though refactor-to-single is not forbidden if the package split proves premature).
+
+## Review (2026-07-06)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none (3 findings F1-F3 from the initial review were fixed in commit 9a2854f; targeted re-review confirmed READY)
+**Nits**: none
+
+**Notes**: Substrate feature review, deep lane, fresh-context gpt-5.5. Reviewed the full deliverable across 4 stories: .proto package (7 files), buf generate wiring (Rust prost crate + TS Protobuf-ES package, both building), 12 conformance vectors (JSON with structured envelope), traceability script (check-vectors.mjs) + generated-code drift check (check-generated-drift.mjs). Initial review returned Request changes with 3 important findings (failure vectors contradicted PROTOCOL.md pre-acceptance-refusal semantics; reply-correlation vector was mis-typed as Elicitation response instead of Reply/Observation; generated-code drift check promised by design was missing). All fixed inline; re-review READY. Registry fidelity verified (16/16 PROTOCOL.md registries mapped to .proto). Builds verified: cargo build, npm run build, check-vectors.mjs (12 vectors pass), check:drift (detects modifications). Reserved seams preserved (agent-send/adapter-utility-exec wire-present-but-reserved; freeform + 5 contract kinds reserved; no parent_grant_id; payloads opaque bytes). Generated Contracts principle honored (generated code committed, drift check enforces it). 4 child stories advanced implementing → review; feature rolled up implementing → review.
