@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "gen": "cd .. && buf generate"
+    "gen": "cd .. && buf generate",
+    "check:vectors": "node ../scripts/check-vectors.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1"

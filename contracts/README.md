@@ -58,6 +58,25 @@ npm run build
 
 The package is named `@patchbay/contracts` and re-exports all generated Protobuf-ES modules from `src/index.ts`.
 
+## Conformance vectors and traceability
+
+Draft conformance vectors live in `vectors/*.json`; see `vectors/README.md` for the envelope format and promotion rules.
+
+Validate vectors and regenerate the checked-in `docs/VERIFICATION.md` traceability table from the repository root with:
+
+```sh
+node contracts/scripts/check-vectors.mjs
+```
+
+Or from the TypeScript package directory:
+
+```sh
+cd contracts/ts
+npm run check:vectors
+```
+
+The script fails on unknown property ids, missing promoted vectors for checked-normative properties, and promoted vectors without registered invariant-outcome checkers. Checked-normative is currently empty by design, so checked-model properties without promoted vectors are reported as informational until promotion.
+
 ## Do not edit generated code
 
 Do not edit files under `rust/src/gen/` or `ts/src/gen/` by hand. Edit `proto/patchbay/*.proto`, run `buf generate` from `contracts/`, then rebuild both packages.
