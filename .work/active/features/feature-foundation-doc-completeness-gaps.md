@@ -1,7 +1,7 @@
 ---
 id: feature-foundation-doc-completeness-gaps
 kind: feature
-stage: implementing
+stage: done
 tags: [foundation, protocol]
 parent: epic-foundation-hardening
 depends_on: [feature-operator-presence-and-action-inventory]
@@ -167,3 +167,13 @@ This is a docs-only deliverable. Verification is by adversarial review, not test
 ## Provenance
 
 Filed by the substrate review of `feature-operator-presence-and-action-inventory` (Phase 1 completeness pass, 2026-07-06). Findings P1–P3 recorded in that feature's review record.
+
+## Review (2026-07-06)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: none
+
+**Notes**: Substrate review, standard lane, fresh-context gpt-5.5. Depth calibrated to the change size (docs-only, 3 localized edits, no code/tests/formal models) — reviewed semantic fidelity + cross-doc consistency rather than running verification. Spec fidelity confirmed (Q1/Q2/Q3 applied as locked, no silent widening/weakening). Cross-reference integrity confirmed (PROTOCOL ↔ SECURITY grant shapes agree; later spawn-authority summary consistent with new field list; "delegation lineage" wording correct given v0 has no parent_grant_id field). No silent foreclosure of reserved seams (delegation, recursive spawn, tighter responder binding, no-lifecycle reads, attention routing, multi-answer/quorum). SSOT confirmed: foundation-doc registry is now the live source for per-kind lifecycle; the design body §4 is provenance, not a competing surface. Item advanced to `stage: done`.
