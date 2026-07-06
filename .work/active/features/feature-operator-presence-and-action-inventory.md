@@ -1,7 +1,7 @@
 ---
 id: feature-operator-presence-and-action-inventory
 kind: feature
-stage: review
+stage: done
 tags: [foundation, protocol, adapter]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-research-harness-action-surfaces]
@@ -597,3 +597,18 @@ N1–N3 are resolved and must not be re-opened: v0 Elicitations bind to the oper
 - **Registry bloat risk:** A too-wide `response_contract` registry could overfit non-Pi adapters. Mitigation: registry owns names; adapter capabilities and generated schemas gate concrete payload use.
 - **Spawn authority risk:** Spawn in v0 forces grant semantics for targets that do not exist yet. If fleet authority is underspecified, the security model will accidentally assume per-session grants and reject real spawn or over-authorize supervisors.
 - **Presence blind spot risk:** Even with subscription fan-out, Elicitations can be surfaced poorly — e.g., subscribed surfaces receive the stream event but no foreground attention route makes the pending approval obvious to the operator.
+
+## Review (2026-07-06)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**:
+- P1 — OperationKind registry table omits lifecycle/display fields the section header promises (`docs/PROTOCOL.md:144-167`) -> backlog item `feature-foundation-doc-completeness-gaps`
+- P2 — first-answer-wins notification/reconciliation mechanism is implicit, not stated (`docs/PROTOCOL.md:292-294,418,433-434`) -> backlog item `feature-foundation-doc-completeness-gaps`
+- P3 — spawn descendant grant shape not concrete enough for grant-check derivation (`docs/PROTOCOL.md:455-477`, `docs/SECURITY.md:145-168`) -> backlog item `feature-foundation-doc-completeness-gaps`
+**Nits** (inline, not filed):
+- P4 — VISION success criteria could add an Elicitation-durability bullet ("pending Elicitations remain visible and recoverable until a terminal ElicitationState is reached") (`docs/VISION.md:79-81`)
+- P5 — glossary could add first-class entries for `OperationState`, `agent-send`, `adapter-utility-exec` (currently only `OperationKind` lists the reserved kinds) (`docs/GLOSSARY.md:113-115`)
+
+**Notes**: Substrate feature review, deep lane. Two-phase order: Phase 2 (adversarial) ran to convergence during the implementation workflow — umans-glm-5.2 implementer (operator exception for 400K context) → 3 parallel gpt-5.5 adversarial reviewers (verification-posture, grounding-coverage, coherence-seams) → 2 amendment cycles (defects V1-V3/V4, G1-G3, C1-C2, nits; then VR1/VR3/VR4 + nits) → final re-review READY. Phase 1 (completeness/complementary) ran at review: gpt-5.5 fresh context, augmentation posture, Approve with comments. §12 implementation-scope completeness map confirmed every bullet landed (mostly complete; P1-P3 are the partials). §13 open questions confirmed not accidentally resolved. Cross-model property satisfied (umans orchestrator + gpt-5.5 reviewers). Findings P1-P3 filed as backlog `feature-foundation-doc-completeness-gaps` (a [prose] doc-tightening pass). Item advanced to `stage: done`; not archived (parent epic `epic-foundation-hardening` still implementing).
