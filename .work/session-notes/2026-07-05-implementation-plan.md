@@ -1,5 +1,7 @@
 ## Session bank — 2026-07-05 (action-inventory implementation plan + state)
 
+> **Note (superseded):** This plan was authored before the deep-review amendment. `freeform` was subsequently demoted to a reserved response_contract; `drive` was renamed to `instruct`; and the checked-normative tier was split into checked-model vs checked-normative. Read the current foundation docs for the authoritative state.
+
 **This note is the reboot point for implementing
 `feature-operator-presence-and-action-inventory`.** A fresh context can pick up
 here without re-deriving the design or the plan.

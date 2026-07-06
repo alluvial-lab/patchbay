@@ -34,7 +34,7 @@ Current checked-model properties:
 
 **checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vectors exist or have been promoted yet.
 
-**stated-normative** — documented v0 obligation with a draft model, no model yet, or no promoted conformance vector yet. These are product obligations but must not be claimed checked until promoted through both model and vector gates. Current stated-normative areas include:
+**stated-normative** — documented v0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
 - OperationState transition adjacency and read/query lifecycle refinements: the no-`accepted → completed` adjacency rule and no-direct-to-completed fast-path reads rule are stated-normative until `command_lifecycle.qnt` is strengthened or an OperationState-specific model is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; spawn fleet authority and descendant-grant behavior.
@@ -43,6 +43,7 @@ Current checked-model properties:
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
 - Reply correlation refinements and extensions: duplicate-reply idempotency/rejection, reference-resolution edge cases beyond the checked `TypedCorrelation` core, and response Operation → Elicitation typed correlation.
+- Browser session/CSRF boundary refinement: browser-local state cannot grant authority or override core grant checks; `csrf_browser.qnt` currently records this as a non-promoted documentation invariant, so promotion metadata is pending formal-model realignment.
 
 ### `OperationState` ⇿ `CommandState` refinement (checked-model properties by equivalence)
 
@@ -263,7 +264,7 @@ Properties:
 - A state-changing browser request without an authenticated operator session is rejected before command acceptance.
 - A state-changing browser request without a valid session-bound CSRF proof is rejected before command acceptance.
 - Revoked or expired operator sessions cannot issue new commands.
-- Browser-local state cannot grant authority or override core grant checks.
+- Browser-local state cannot grant authority or override core grant checks. This property is stated-normative: `csrf_browser.qnt` documents `browser_local_state_not_authority` as a non-promoted documentation invariant, so model promotion metadata is pending under the follow-on formal-model realignment work.
 
 Formal models do not prove browser cookie mechanics or cryptographic token strength; they model the server-side effects of valid, missing, expired, and revoked session/CSRF evidence.
 
@@ -397,6 +398,7 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 |---|---|---|
 | `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
+| `specs/seed/csrf_browser.qnt` | Quint | `browser_local_state_not_authority` (non-promoted documentation invariant; model promotion metadata pending) |
 | `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
 | *(no model yet — Elicitation)* | Quint/TLA+ (reserved) | `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality` |
 | *(no model yet — response correlation extension)* | Quint (reserved) | `TypedCorrelation` extension for `Operation(kind=approval-response|elicitation-response) → ElicitationId` (extends `reply_correlation.qnt`) |

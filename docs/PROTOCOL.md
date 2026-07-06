@@ -158,7 +158,7 @@ One registry owns kinds, lifecycle policy, authority matching, adapter capabilit
 | `reconfigure` | Change model, reasoning/thinking level, permission mode, tools/MCP, agent mode, workspace, or adapter config. | Committed v0. |
 | `session-management` | Resume, fork, compact, clear, archive/delete, revert, share/unshare, remove messages, checkpoint restore, disconnect/retire existing sessions/resources. | Committed v0. |
 | `agent-send` | Reserved design seam for agent→agent mesh, op→op routing, adapter→operator service Operations, and other non-operator Operation directions. Informed by remote-pi mesh `agent_send`/`agent_request` prior art (not one of the 7 surveyed harnesses) and by Antigravity trigger / Codex service-request pressure. | Reserved seam; v0 submissions reject with `validation_failed`. |
-| `adapter-utility-exec` | Reserved seam for standalone adapter utility execution that does not create a thread/turn or persistent runtime session. Codex `command/exec` and `process/spawn` are the surveyed pressure `[codex-appserver-readme]` `[codex-appserver-types]`. | Reserved seam; named in registry, not validatable in v0; submissions reject with `validation_failed`. Full lifecycle/idempotency modeling deferred. |
+| `adapter-utility-exec` | Reserved seam for standalone adapter utility execution that does not create a thread/turn or persistent runtime session. Codex `command/exec` and `process/spawn` are the surveyed pressure `[codex-appserver-protocol]{5}` `[codex-appserver-types]{9}` `[codex-appserver-types]{10}`. | Reserved seam; named in registry, not validatable in v0; submissions reject with `validation_failed`. Full lifecycle/idempotency modeling deferred. |
 
 Boundary rules:
 
