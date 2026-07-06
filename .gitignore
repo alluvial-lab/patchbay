@@ -3,3 +3,7 @@
 *.jar
 specs/seed/_apalache-out/
 specs/seed/states/
+contracts/rust/target/
+contracts/ts/node_modules/
+contracts/ts/dist/
+contracts/ts/*.tsbuildinfo

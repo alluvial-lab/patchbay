@@ -1,0 +1,58 @@
+{
+  "vector_id": "terminal-expiration-before-completion",
+  "property_id": "TerminalFinality",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.validity_window",
+    "patchbay.SubmissionResult.operation_state",
+    "patchbay.SubmissionResult.failure_code",
+    "patchbay.Observation.lsn",
+    "patchbay.Observation.correlations"
+  ],
+  "description": "An Operation expires before a late completion event arrives; expired remains the terminal state and the completion cannot rewrite it.",
+  "input": {
+    "operation_type": "patchbay.Operation",
+    "accepted_operation": {
+      "command_id": { "value": "cmd-race-003" },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OPERATION_KIND_INSTRUCT",
+      "target_scope": { "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION", "runtime_session_id": { "value": "sess-003" }, "session_generation": { "value": 8 } },
+      "idempotency_key": "idem-race-003",
+      "validity_window": {
+        "starts_at": "2026-07-06T00:00:00Z",
+        "expires_at": "2026-07-06T00:05:00Z"
+      }
+    },
+    "terminal_sequence": [
+      {
+        "candidate": "expiration",
+        "terminal_lsn": { "value": 401 },
+        "operation_state": "OPERATION_STATE_EXPIRED",
+        "failure_code": "FAILURE_CODE_EXPIRED"
+      },
+      {
+        "candidate": "late_completion",
+        "observation_type": "patchbay.Observation",
+        "observation": {
+          "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 402 } },
+          "authority_domain_id": { "value": "auth-main" },
+          "kind": "OBSERVATION_KIND_RESULT",
+          "correlations": [{ "command_id": { "value": "cmd-race-003" } }],
+          "lsn": { "value": 402 }
+        },
+        "terminal_state": "OPERATION_STATE_COMPLETED"
+      }
+    ]
+  },
+  "expected_outcome": {
+    "operation_state": "OPERATION_STATE_EXPIRED",
+    "terminal_lsn": { "value": 401 },
+    "failure_code": "FAILURE_CODE_EXPIRED",
+    "late_completion": {
+      "audit_only": true,
+      "does_not_rewrite_state": true,
+      "candidate_lsn": { "value": 402 }
+    }
+  },
+  "invariant_check": "TerminalFinality: after expiration terminalizes the Operation, later completion evidence does not mutate OperationState."
+}

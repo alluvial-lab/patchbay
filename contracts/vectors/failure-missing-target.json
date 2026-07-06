@@ -1,0 +1,56 @@
+{
+  "vector_id": "failure-missing-target",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.target_scope",
+    "patchbay.TargetScope.kind",
+    "patchbay.TargetScope.runtime_session_id",
+    "patchbay.TargetScope.session_generation",
+    "patchbay.SubmissionResult.outcome",
+    "patchbay.SubmissionResult.failure_code"
+  ],
+  "description": "An otherwise well-formed Operation whose target scope does not resolve to a known live target is rejected with target_not_found.",
+  "input": {
+    "operation_type": "patchbay.Operation",
+    "operation": {
+      "command_id": { "value": "cmd-missing-target-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "recipient": {
+        "actor_id": { "value": "agent-runner" },
+        "endpoint_id": { "value": "pi-adapter-1" },
+        "device_id": { "value": "host-pi" },
+        "endpoint_generation": { "value": 3 }
+      },
+      "kind": "OPERATION_KIND_INSTRUCT",
+      "target_scope": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": { "value": "pi" },
+        "runtime_session_id": { "value": "sess-does-not-exist" },
+        "session_generation": { "value": 99 }
+      },
+      "idempotency_key": "idem-missing-target-001"
+    },
+    "known_sessions_type": "patchbay.Session",
+    "known_sessions": []
+  },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_REJECTED",
+      "command_id": { "value": "cmd-missing-target-001" },
+      "operation_state": "OPERATION_STATE_REJECTED",
+      "failure_code": "FAILURE_CODE_TARGET_NOT_FOUND",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": false,
+    "delivered_to_adapter": false
+  },
+  "invariant_check": "Boundary validation: target_scope must resolve to an existing authorized target before durable acceptance or delivery."
+}

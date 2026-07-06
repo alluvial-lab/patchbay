@@ -1,0 +1,65 @@
+{
+  "vector_id": "terminal-completion-before-cancellation",
+  "property_id": "PreAppendTerminalChoice",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.command_id",
+    "patchbay.Operation.kind",
+    "patchbay.SubmissionResult.operation_state",
+    "patchbay.Observation.lsn",
+    "patchbay.Observation.kind",
+    "patchbay.Observation.correlations",
+    "patchbay.Observation.failure_code"
+  ],
+  "description": "A completion terminal candidate commits before a cancellation candidate; completion wins and the late cancel is retained only as audit/reconciliation.",
+  "input": {
+    "operation_type": "patchbay.Operation",
+    "accepted_operation": {
+      "command_id": { "value": "cmd-race-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OPERATION_KIND_INSTRUCT",
+      "target_scope": { "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION", "runtime_session_id": { "value": "sess-001" }, "session_generation": { "value": 12 } },
+      "idempotency_key": "idem-race-001"
+    },
+    "terminal_candidates": [
+      {
+        "candidate": "completion",
+        "observation_type": "patchbay.Observation",
+        "observation": {
+          "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 201 } },
+          "authority_domain_id": { "value": "auth-main" },
+          "kind": "OBSERVATION_KIND_RESULT",
+          "correlations": [{ "command_id": { "value": "cmd-race-001" } }],
+          "lsn": { "value": 201 }
+        },
+        "terminal_state": "OPERATION_STATE_COMPLETED"
+      },
+      {
+        "candidate": "cancellation",
+        "operation_type": "patchbay.Operation",
+        "operation": {
+          "command_id": { "value": "cmd-race-001-cancel" },
+          "authority_domain_id": { "value": "auth-main" },
+          "kind": "OPERATION_KIND_CANCEL",
+          "correlations": [{ "command_id": { "value": "cmd-race-001" } }]
+        },
+        "candidate_lsn": { "value": 202 },
+        "terminal_state": "OPERATION_STATE_CANCELLED"
+      }
+    ]
+  },
+  "expected_outcome": {
+    "winning_command_id": { "value": "cmd-race-001" },
+    "operation_state": "OPERATION_STATE_COMPLETED",
+    "terminal_lsn": { "value": 201 },
+    "late_candidates": [
+      {
+        "candidate": "cancellation",
+        "audit_only": true,
+        "does_not_rewrite_state": true,
+        "candidate_lsn": { "value": 202 }
+      }
+    ]
+  },
+  "invariant_check": "PreAppendTerminalChoice: once the first terminal candidate receives a durable LSN, later terminal candidates cannot change the winner."
+}

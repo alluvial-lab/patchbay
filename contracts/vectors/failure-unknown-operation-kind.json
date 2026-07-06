@@ -1,0 +1,46 @@
+{
+  "vector_id": "failure-unknown-operation-kind",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.kind",
+    "patchbay.SubmissionResult.outcome",
+    "patchbay.SubmissionResult.operation_state",
+    "patchbay.SubmissionResult.failure_code"
+  ],
+  "description": "An Operation submitted with an unrecognized raw OperationKind enum value is rejected at the boundary with validation_failed.",
+  "input": {
+    "operation_type": "patchbay.Operation",
+    "operation": {
+      "command_id": { "value": "cmd-invalid-kind-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "recipient": {
+        "actor_id": { "value": "agent-runner" },
+        "endpoint_id": { "value": "pi-adapter-1" },
+        "device_id": { "value": "host-pi" },
+        "endpoint_generation": { "value": 3 }
+      },
+      "kind": 999,
+      "target_scope": { "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION", "runtime_session_id": { "value": "sess-001" }, "session_generation": { "value": 12 } },
+      "idempotency_key": "idem-invalid-kind-001"
+    }
+  },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_REJECTED",
+      "command_id": { "value": "cmd-invalid-kind-001" },
+      "operation_state": "OPERATION_STATE_REJECTED",
+      "failure_code": "FAILURE_CODE_VALIDATION_FAILED",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": false
+  },
+  "invariant_check": "Boundary validation: Operation.kind must resolve to a v0-valid OperationKind before durable acceptance."
+}

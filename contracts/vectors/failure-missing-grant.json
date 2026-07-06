@@ -1,0 +1,56 @@
+{
+  "vector_id": "failure-missing-grant",
+  "property_id": "NoCommandWithoutGrant",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.sender",
+    "patchbay.Operation.kind",
+    "patchbay.Operation.target_scope",
+    "patchbay.Grant.allowed_operation_kinds",
+    "patchbay.SubmissionResult.outcome",
+    "patchbay.SubmissionResult.failure_code"
+  ],
+  "description": "A grant-requiring Operation without a matching live grant is rejected before durable acceptance or delivery.",
+  "input": {
+    "operation_type": "patchbay.Operation",
+    "operation": {
+      "command_id": { "value": "cmd-no-grant-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "recipient": {
+        "actor_id": { "value": "agent-runner" },
+        "endpoint_id": { "value": "pi-adapter-1" },
+        "device_id": { "value": "host-pi" },
+        "endpoint_generation": { "value": 3 }
+      },
+      "kind": "OPERATION_KIND_INSTRUCT",
+      "target_scope": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": { "value": "pi" },
+        "runtime_session_id": { "value": "sess-unauthorized" },
+        "session_generation": { "value": 1 }
+      },
+      "idempotency_key": "idem-no-grant-001"
+    },
+    "available_grants_type": "patchbay.Grant",
+    "available_grants": []
+  },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_REJECTED",
+      "command_id": { "value": "cmd-no-grant-001" },
+      "operation_state": "OPERATION_STATE_REJECTED",
+      "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": false,
+    "delivered_to_adapter": false
+  },
+  "invariant_check": "NoCommandWithoutGrant, generalized to Operation by refinement: an Operation cannot be accepted unless a live matching grant authorizes its OperationKind and target."
+}

@@ -1,0 +1,55 @@
+# Patchbay v0 conformance vectors
+
+This directory contains draft JSON conformance vectors for the v0 protocol contract package. Each `*.json` file is one executable example that constrains a specific protocol behavior and traces it to a formal-model or stated-normative property.
+
+## Vector envelope
+
+Each vector uses this envelope:
+
+```json
+{
+  "vector_id": "unique-kebab-case-id",
+  "property_id": "PropertyIdFromVerificationOrModel",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.Message.field"],
+  "description": "human-readable behavior exercised",
+  "input": {},
+  "expected_outcome": {},
+  "invariant_check": "short property/invariant explanation"
+}
+```
+
+- `vector_id`: Stable unique id, normally matching the filename without `.json`.
+- `property_id`: A property id from `docs/VERIFICATION.md` or a seed model under `specs/seed/`. Boundary-only examples with no formal property use a descriptive draft id such as `boundary-validation`.
+- `promotion_status`: `draft` or `promoted`. All v0 vectors start as `draft`; promotion requires review and traceability checks. A promoted vector is authority only for the executable example, not for invariants or wire shape.
+- `proto_fields_constrained`: Fully-qualified `.proto` field or enum paths constrained by the example, using the `patchbay` package names from `contracts/proto/patchbay/*.proto` (for example `patchbay.Operation.kind`, `patchbay.SubmissionResult.failure_code`, `patchbay.OperationState`).
+- `description`: What scenario the vector exercises.
+- `input`: Proto-shaped JSON inputs. Objects name the referenced protobuf message with a companion `*_type` field, then use the proto field names from the `.proto` files.
+- `expected_outcome`: Proto-shaped JSON result or observable effect, using the same field names and fully-qualified type references when a concrete message is returned.
+- `invariant_check`: A concise statement of how the example exercises the referenced property.
+
+## Promotion status values
+
+- `draft`: Informative example under development. Draft vectors can reference checked-model, stated-normative, or descriptive boundary-validation properties, but they do not make product semantics checked-normative.
+- `promoted`: Reviewed vector that traces to a named property and agrees with that property's invariant. No vectors are promoted yet.
+
+## Property mapping
+
+`property_id` should match the property vocabulary in `docs/VERIFICATION.md` and the inline `@promotion` blocks in `specs/seed/*.qnt` / `*.als`. Examples:
+
+- `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` come from `specs/seed/command_lifecycle.qnt`.
+- `TypedCorrelation` comes from `specs/seed/reply_correlation.qnt`.
+- `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, and `IdempotentLogReplay` are reserved in `specs/seed/snapshot_recovery.qnt` and listed in `docs/VERIFICATION.md` as stated-normative.
+- `NoCommandWithoutGrant` is reserved in `specs/seed/authority.qnt` and generalizes by documented refinement to Operation authorization.
+
+If a vector exercises a boundary validation rule without a formal property id, keep `promotion_status: "draft"` and use a descriptive id such as `boundary-validation` until the property is reserved or modeled.
+
+## Proto field references
+
+Field paths use the protobuf package and message names from `contracts/proto/patchbay/*.proto`:
+
+- Message fields: `patchbay.Operation.command_id`, `patchbay.Operation.target_scope`, `patchbay.SubmissionResult.outcome`.
+- Nested field references can name the containing message and field, e.g. `patchbay.TargetScope.runtime_session_id`.
+- Enum constraints name the field carrying the enum, e.g. `patchbay.Operation.kind`, `patchbay.SubmissionResult.operation_state`, or `patchbay.SubmissionResult.failure_code`.
+
+The vectors intentionally reference the `.proto` contract as the wire-shape authority. They do not introduce hand-written DTOs or new protocol vocabulary.

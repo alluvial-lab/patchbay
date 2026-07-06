@@ -1,0 +1,27 @@
+{
+  "name": "@patchbay/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/gen"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "gen": "cd .. && buf generate"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.12.1"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.12.1",
+    "typescript": "5.9.3"
+  }
+}

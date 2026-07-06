@@ -1,0 +1,7 @@
+export * from "./gen/patchbay/adapter_pb.js";
+export * from "./gen/patchbay/authority_pb.js";
+export * from "./gen/patchbay/common_pb.js";
+export * from "./gen/patchbay/elicitations_pb.js";
+export * from "./gen/patchbay/observations_pb.js";
+export * from "./gen/patchbay/operations_pb.js";
+export * from "./gen/patchbay/sessions_pb.js";

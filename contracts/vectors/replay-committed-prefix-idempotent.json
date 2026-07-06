@@ -1,0 +1,57 @@
+{
+  "vector_id": "replay-committed-prefix-idempotent",
+  "property_id": "BoundaryDedup",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.command_id",
+    "patchbay.Operation.idempotency_key",
+    "patchbay.SubmissionResult.deduplicated",
+    "patchbay.SubmissionResult.accepted_lsn"
+  ],
+  "description": "Replaying the same committed submission prefix is idempotent at the Patchbay boundary: the idempotency key is applied once and subsequent replay returns the existing record.",
+  "input": {
+    "committed_prefix": [
+      {
+        "operation_type": "patchbay.Operation",
+        "operation": {
+          "command_id": { "value": "cmd-replay-001" },
+          "authority_domain_id": { "value": "auth-main" },
+          "kind": "OPERATION_KIND_INSTRUCT",
+          "idempotency_key": "idem-replay-001"
+        },
+        "committed_lsn": { "value": 701 }
+      }
+    ],
+    "replayed_prefix": [
+      {
+        "operation_type": "patchbay.Operation",
+        "operation": {
+          "command_id": { "value": "cmd-replay-001" },
+          "authority_domain_id": { "value": "auth-main" },
+          "kind": "OPERATION_KIND_INSTRUCT",
+          "idempotency_key": "idem-replay-001"
+        },
+        "committed_lsn": { "value": 701 }
+      }
+    ]
+  },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "first_apply": {
+      "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
+      "command_id": { "value": "cmd-replay-001" },
+      "operation_state": "OPERATION_STATE_ACCEPTED",
+      "accepted_lsn": { "value": 701 },
+      "deduplicated": false
+    },
+    "replay_apply": {
+      "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
+      "command_id": { "value": "cmd-replay-001" },
+      "operation_state": "OPERATION_STATE_ACCEPTED",
+      "accepted_lsn": { "value": 701 },
+      "deduplicated": true
+    },
+    "apply_count_for_idempotency_key": 1
+  },
+  "invariant_check": "BoundaryDedup: replaying the same idempotency key cannot double-apply the Operation at the Patchbay boundary."
+}

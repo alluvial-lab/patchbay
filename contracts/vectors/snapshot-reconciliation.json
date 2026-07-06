@@ -1,0 +1,74 @@
+{
+  "vector_id": "snapshot-reconciliation",
+  "property_id": "SnapshotStaleRejected",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.SessionSnapshot.authority_domain_id",
+    "patchbay.SessionSnapshot.snapshot_lsn",
+    "patchbay.SessionSnapshot.core_generation",
+    "patchbay.ObservationSubscription.cursor",
+    "patchbay.Observation.lsn"
+  ],
+  "description": "A cached snapshot older than the current authoritative view is rejected, and reconnect replay after a cursor returns only observations with LSN greater than the cursor.",
+  "input": {
+    "snapshot_type": "patchbay.SessionSnapshot",
+    "cached_snapshot": {
+      "authority_domain_id": { "value": "auth-main" },
+      "snapshot_lsn": { "value": 40 },
+      "core_generation": { "value": 2 },
+      "sessions": [],
+      "view_revisions": [
+        {
+          "target_scope": {
+            "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+            "adapter_id": { "value": "pi" },
+            "runtime_session_id": { "value": "sess-001" },
+            "session_generation": { "value": 12 }
+          },
+          "revision_lsn": { "value": 40 }
+        }
+      ],
+      "materialized_at": "2026-07-06T00:02:00Z"
+    },
+    "current_authoritative_view": {
+      "authority_domain_id": { "value": "auth-main" },
+      "core_generation": { "value": 2 },
+      "current_revision_lsn": { "value": 45 }
+    },
+    "subscription_type": "patchbay.ObservationSubscription",
+    "subscription": {
+      "subscription_id": { "value": "sub-001" },
+      "subscriber": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "authorized_filter": { "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION", "runtime_session_id": { "value": "sess-001" } },
+      "state": "OBSERVATION_SUBSCRIPTION_STATE_RESUMING",
+      "cursor": { "value": 42 },
+      "last_delivered_lsn": { "value": 42 }
+    },
+    "available_observations_type": "patchbay.Observation",
+    "available_observations": [
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 41 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 41 } },
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 42 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 42 } },
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 43 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 43 } },
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 45 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 45 } }
+    ]
+  },
+  "expected_outcome": {
+    "snapshot_decision": {
+      "accepted": false,
+      "failure_code": "FAILURE_CODE_STALE_EVENT",
+      "replacement_required_from_lsn": { "value": 45 }
+    },
+    "replay_result_type": "patchbay.Observation",
+    "replayed_observations": [
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 43 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 43 } },
+      { "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 45 } }, "authority_domain_id": { "value": "auth-main" }, "kind": "OBSERVATION_KIND_DELTA", "lsn": { "value": 45 } }
+    ],
+    "excluded_lsns": [{ "value": 41 }, { "value": 42 }]
+  },
+  "invariant_check": "SnapshotStaleRejected: a snapshot with snapshot_lsn below the current view revision is not authoritative; replay honors LSN > cursor."
+}

@@ -1,0 +1,48 @@
+{
+  "vector_id": "late-terminal-candidate-audit-only",
+  "property_id": "LsnDeterminesTerminalWinner",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.Operation.command_id",
+    "patchbay.SubmissionResult.operation_state",
+    "patchbay.Observation.event_id",
+    "patchbay.Observation.lsn",
+    "patchbay.Observation.correlations",
+    "patchbay.Observation.failure_code"
+  ],
+  "description": "A terminal candidate with a later LSN is retained as audit/reconciliation evidence and does not rewrite the terminal state chosen by the earlier committed LSN.",
+  "input": {
+    "existing_terminal_record": {
+      "command_id": { "value": "cmd-race-004" },
+      "operation_state": "OPERATION_STATE_FAILED",
+      "terminal_lsn": { "value": 601 },
+      "failure_code": "FAILURE_CODE_EXECUTION_FAILED"
+    },
+    "late_terminal_candidate_type": "patchbay.Observation",
+    "late_terminal_candidate": {
+      "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 606 } },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OBSERVATION_KIND_RESULT",
+      "correlations": [{ "command_id": { "value": "cmd-race-004" } }],
+      "lsn": { "value": 606 },
+      "failure_code": "FAILURE_CODE_CANCELLED"
+    },
+    "late_candidate_terminal_state": "OPERATION_STATE_CANCELLED"
+  },
+  "expected_outcome": {
+    "operation_state": "OPERATION_STATE_FAILED",
+    "terminal_lsn": { "value": 601 },
+    "terminal_winner_lsn": { "value": 601 },
+    "audit_record_type": "patchbay.Observation",
+    "audit_record": {
+      "event_id": { "authority_domain_id": { "value": "auth-main" }, "lsn": { "value": 606 } },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OBSERVATION_KIND_RESULT",
+      "correlations": [{ "command_id": { "value": "cmd-race-004" } }],
+      "lsn": { "value": 606 },
+      "failure_code": "FAILURE_CODE_CANCELLED"
+    },
+    "does_not_rewrite_state": true
+  },
+  "invariant_check": "LsnDeterminesTerminalWinner: the terminal winner remains the candidate with the lowest committed terminal LSN."
+}
