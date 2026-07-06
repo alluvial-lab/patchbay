@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-proto-package
 kind: story
-stage: review
+stage: done
 tags: [protocol, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: []

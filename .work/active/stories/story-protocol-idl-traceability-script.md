@@ -1,7 +1,7 @@
 ---
 id: story-protocol-idl-traceability-script
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-protocol-idl-and-conformance
 depends_on: [story-protocol-idl-conformance-vectors, story-protocol-idl-proto-package]

@@ -1,7 +1,7 @@
 ---
 id: feature-protocol-idl-and-conformance
 kind: feature
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-verification-contract-authority, feature-session-identity-adapter-contract, feature-operator-presence-and-action-inventory]
@@ -168,3 +168,7 @@ Author the CI script that reads all `contracts/vectors/*.json` and: (a) fails if
 **Nits**: none
 
 **Notes**: Substrate feature review, deep lane, fresh-context gpt-5.5. Reviewed the full deliverable across 4 stories: .proto package (7 files), buf generate wiring (Rust prost crate + TS Protobuf-ES package, both building), 12 conformance vectors (JSON with structured envelope), traceability script (check-vectors.mjs) + generated-code drift check (check-generated-drift.mjs). Initial review returned Request changes with 3 important findings (failure vectors contradicted PROTOCOL.md pre-acceptance-refusal semantics; reply-correlation vector was mis-typed as Elicitation response instead of Reply/Observation; generated-code drift check promised by design was missing). All fixed inline; re-review READY. Registry fidelity verified (16/16 PROTOCOL.md registries mapped to .proto). Builds verified: cargo build, npm run build, check-vectors.mjs (12 vectors pass), check:drift (detects modifications). Reserved seams preserved (agent-send/adapter-utility-exec wire-present-but-reserved; freeform + 5 contract kinds reserved; no parent_grant_id; payloads opaque bytes). Generated Contracts principle honored (generated code committed, drift check enforces it). 4 child stories advanced implementing → review; feature rolled up implementing → review.
+
+## Final acceptance (2026-07-06)
+
+Fresh-context adversarial review (gpt-5.5, single combined pass) confirmed sufficient by operator to advance. Two-phase convergence loop deferred — the single fresh-context pass caught real defects (3 important findings, all fixed) and the change surface is smaller than the O/O/E roll-forward. Operator authorized advancement to done.
