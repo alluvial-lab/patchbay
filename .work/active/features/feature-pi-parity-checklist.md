@@ -177,3 +177,20 @@ No implementation code; verification is by document consistency, mirroring the s
 - **N2** — Testing section now notes the generated Rust uses `AdapterCapability` for the manifest and identity fields on `Session`/`TargetScope` (not literally `CapabilityManifest`/`SessionIdentity`); parity checks point at the actual generated names.
 
 **Notes**: Reviewer independently verified the load-bearing `session_new`-is-a-replacement claim against remote_pi source (`index.ts`, `handlers.ts`, `rpc_child.ts`, `sdk_session_projection.ts`) and confirmed the adapter-level framing is sound and not overstated as a core checked property. Snapshot tier `partial`, spawn deferral, capability-not-authority discipline, and extension-pressure classification all confirmed directionally correct. No implementation existed to review.
+
+## Review (substrate deep review, 2026-07-06)
+
+**Verdict**: Block → fixed → re-advancing to review
+
+**Reviewer**: fresh-context cross-model deep review on `openai-codex/gpt-5.5` (high thinking) over the implemented `docs/ADAPTER-PI.md` + `docs/ARCHITECTURE.md` forward-reference.
+
+**Blocker** (fixed in-stride):
+- **`question` / `elicitation-response` classification contradicted the canonical registry.** The doc said the Pi manifest includes `elicitation-response` while saying Pi has no distinct non-approval question wire type and that the `question` contract is "reserved pending promotion." Canonically (`docs/PROTOCOL.md:157`, `:331`), `elicitation-response` is committed v0 for `question` contracts and `question` is a committed contract kind; reserved contracts are `freeform`/`secret`/`function_result`/`file_attachment`/`structured_schema`/`service_request`. Fixed: rewrote §4, §7, §9 to frame `elicitation-response` + `question` as committed core, with the Pi adapter's lack of a non-approval question wire type as an adapter-support limitation (declares non-approval `question` Elicitations unsupported at delivery via `unsupported_command` until a Pi question surface is promoted) — an adapter-level reserved seam, not a reclassification of the core `question` contract. (Single-source-of-truth violation; correctly a Blocker.)
+
+**Important findings** (both fixed in-stride):
+- **§2 outbound inventory omitted attested reconfiguration hooks.** Added `model_select`/`thinking_level_select` to §2 (grounded in `.research/attestation/pi-extension.md`) and to the §5 stream/reply Observation mapping.
+- **Manifest column used prose shorthands as "actual fields."** The generated `AdapterCapability` fields are `streaming_support`/`snapshot_support`/`cancellation_support`/`session_replacement_support` (with `_support`). Fixed: §4 intro now lists the actual generated field names and labels the table's shorter names as prose shorthand for the manifest dimensions.
+
+**Nits**: none.
+
+**Notes**: Reviewer verified `session_new` against remote_pi source (`handleSessionNew` → `ctx.newSession`, replacement contexts rebound, `_resetSessionForNew` fans out reset history, daemon `EXIT_DAEMON_FRESH_SESSION` fresh-session path, `--continue` reuse) and confirmed the generation-bump mapping is consistent across §3/§4/§6/§9. Unit 2 (Architecture forward-reference) passes — `git diff 45e7ef4^ 45e7ef4 -- docs/ARCHITECTURE.md` shows only the intended one-sentence change. Re-verified post-fix: all 12 OperationKinds present; `session_new` replacement mapping intact across the four sections; 9 sections intact; no "reserved pending promotion" framing of `question` remains.

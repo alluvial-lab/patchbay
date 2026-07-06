@@ -48,6 +48,7 @@ The migration *from* state is the operator's current Remote Pi control surface. 
 | `message_update` / `message_end` | Streaming and final message content. |
 | `tool_call` | Tool-call request; the approval surface. |
 | `tool_execution_start` / `tool_execution_end` | Tool-call lifecycle. |
+| `model_select` / `thinking_level_select` | Reconfiguration events (model/thinking-level changes). |
 | `session_before_compact` / `session_compact` | Compaction lifecycle. |
 | `agent_end` | Agent/turn completion. |
 | `input` | Input elicitation. |
@@ -81,7 +82,7 @@ This mapping must satisfy the checked properties documented in `docs/VERIFICATIO
 
 ## 4. Required Pi adapter capabilities for v0
 
-This is the core of the checklist. It maps each committed v0 `OperationKind` (the registry is authoritative in `docs/PROTOCOL.md`, `### OperationKind registry`) to the Pi wire action(s) that satisfy it, and records the capability-manifest declarations the Pi adapter makes. Per-Operation delivery mapping and manifest-field declarations are kept in separate columns: manifest fields come from the manifest shape in `docs/PROTOCOL.md` (Adapter capabilities) — `supported_operation_kinds` (includes/excludes), `streaming`, `snapshot` tier, `cancellation`, `session_replacement`, `idempotency_strength`, `attachment_method`, `known_failure_modes`. A delivery outcome such as `unsupported_command` is an adapter-reported delivery result, not a manifest field.
+This is the core of the checklist. It maps each committed v0 `OperationKind` (the registry is authoritative in `docs/PROTOCOL.md`, `### OperationKind registry`) to the Pi wire action(s) that satisfy it, and records the capability-manifest declarations the Pi adapter makes. Per-Operation delivery mapping and manifest-field declarations are kept in separate columns: manifest fields come from the manifest shape in `docs/PROTOCOL.md` (Adapter capabilities) and correspond to the generated `AdapterCapability` fields in `contracts/rust/src/gen/patchbay/patchbay.rs` — `supported_operation_kinds`, `supported_target_spec_shapes`, `streaming_support`, `snapshot_support`, `cancellation_support`, `session_replacement_support`, `idempotency_strength`, `attachment_method`, `known_failure_modes`. The names below use the manifest dimensions as prose shorthand (e.g. `streaming` for the `streaming_support` field); a delivery outcome such as `unsupported_command` is an adapter-reported delivery result, not a manifest field.
 
 | `OperationKind` | Pi wire action(s) | Manifest declaration (actual fields) | v0 disposition |
 |---|---|---|---|
@@ -93,7 +94,7 @@ This is the core of the checklist. It maps each committed v0 `OperationKind` (th
 | `reconfigure` | `model_set` / `thinking_set` | `supported_operation_kinds` includes `reconfigure` | committed v0 |
 | `session-management` | `session_new` / `session_compact` | `session_replacement=true` (`session_new` bumps `session_generation`; `session_compact` does not) | committed v0 |
 | `spawn` | none | `supported_operation_kinds` excludes `spawn`; delivery of a `spawn` Operation returns `unsupported_command` | committed kind; Pi-adapter-unsupported in v0 (reserved seam) |
-| `elicitation-response` | no distinct Pi wire type; the `tool_call` approval gate is the closest | `supported_operation_kinds` includes `elicitation-response`; `question` contract reserved pending promotion | committed kind; Pi question-Elicitation surface reserved |
+| `elicitation-response` | no distinct Pi non-approval question wire type; the `tool_call` approval gate is the closest | `supported_operation_kinds` includes `elicitation-response`; non-approval `question` Elicitations unsupported by the Pi adapter at delivery (`unsupported_command`) until a Pi question surface is promoted | committed core kind + committed `question` contract; Pi-adapter support for non-approval question Elicitations is a reserved adapter-level seam |
 | `agent-send` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0 | reserved seam |
 | `adapter-utility-exec` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0 | reserved seam |
 
@@ -107,7 +108,7 @@ This section covers the specific parity surface the migration floor requires.
 
 - **Discover / attach.** The operator discovers available Pi daemon slots and attaches via `session_sync`-backed reconciliation. `attach` establishes or refreshes endpoint availability and triggers cursor/snapshot reconciliation.
 - **Send prompt.** `user_message` → `instruct` Operation carrying prompt payload. Slash-commands are payload, not separate protocol kinds.
-- **Stream / read replies.** Pi event hooks (`message_update`/`message_end`, `tool_call`, `tool_execution_*`, `agent_end`, `turn_*`) map to `Observation`s — source-authenticated output, lifecycle facts, and status emissions. Observation streams are delivery optimizations; the durable core record and snapshots remain authoritative.
+- **Stream / read replies.** Pi event hooks (`message_update`/`message_end`, `tool_call`, `tool_execution_*`, `model_select`/`thinking_level_select`, `session_before_compact`/`session_compact`, `agent_end`, `turn_*`) map to `Observation`s — source-authenticated output, lifecycle facts, and status emissions (including reconfiguration-status facts). Observation streams are delivery optimizations; the durable core record and snapshots remain authoritative.
 - **Reconnect recovery.** On reconnect the control surface submits its cursor and reconciles against the `partial` snapshot (transcript event log replay) and newer events. The snapshot tier is adapter-declared (`partial`); the core reconciles per the degraded-behavior rules and marks unreconciled axes `unknown` or `stale` rather than synthesizing live state.
 - **Working / idle / stale / offline status.** `turn_start`/`turn_end` → `SessionActivityState`; endpoint connectivity → `SessionConnectivityState` (`live` / `stale` / `offline` / `unknown` / `failed`). Status is protocol-derived, not invented by the UI.
 
@@ -131,7 +132,7 @@ Pi-specific operations are adapter capabilities over committed `OperationKind`s,
 | `pi-supervisord` provisioning | reserved / adapter-external | Out-of-band sysadmin, not an operator Operation in v0. A follow-on feature may promote supervisord-control `spawn` (start/stop/restart a registered daemon). |
 | `pair_request` | transport/pairing | Out of adapter Operation scope (web/transport layer); not an `attach` wire action. |
 | `queued_message_set` / `queued_message_clear` | transport/pairing | Out of adapter Operation scope (web/transport layer). Current operator-visible queued-message behavior being left outside adapter Operation scope; the switch-decision checklist (§8) requires an explicit accept-or-replace decision. |
-| Agent→operator free-form question Elicitation beyond the `tool_call` approval gate | reserved seam | Pi has no distinct free-form question wire type in the surveyed surface. The `question` `response_contract` is reserved pending promotion. |
+| Agent→operator free-form question Elicitation beyond the `tool_call` approval gate | reserved / adapter-level | The core `question` `response_contract` is committed v0 (`docs/PROTOCOL.md` `response_contract` registry). The Pi adapter has no distinct non-approval question wire type in the surveyed surface, so it declares non-approval `question` Elicitations unsupported at delivery (`unsupported_command`) until a Pi question surface is promoted. This is an adapter-support limitation, not a reclassification of the core `question` contract. |
 | `/fork` | reserved / SDK-internal | remote_pi groups fork with the replacement bug-class internally, but fork is not an operator wire action in the surveyed inbound actions; it is SDK-internal. Out of v0 Pi adapter surface. |
 | `/reload` | reserved / out-of-scope-unless-verified | Same-session `session_start:reload` against a re-`require`d module; a Pi-process concern the session-replacement harness explicitly leaves out of scope. Out of v0 Pi adapter parity scope unless a follow-on verifies it. |
 
@@ -156,7 +157,7 @@ This is the local committed-v0 / reserved-seam / rejected classification for the
   - the `session_new` generation-bump mapping (session replacement, not a same-generation clear).
 - **Reserved seams:**
   - supervisord-control `spawn` (follow-on promotion);
-  - free-form question Elicitation (`question` contract pending promotion);
+  - free-form question Elicitation support in the Pi adapter (the core `question` contract is committed; Pi-adapter support is the reserved seam);
   - `/fork` (SDK-internal);
   - tighter Elicitation responder binding (endpoint class / fallback chain).
 - **Rejected for v0:**
