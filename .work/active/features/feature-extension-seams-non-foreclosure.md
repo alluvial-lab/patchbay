@@ -1,7 +1,7 @@
 ---
 id: feature-extension-seams-non-foreclosure
 kind: feature
-stage: review
+stage: done
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -141,7 +141,21 @@ The registry is a consolidation view: canonical entries stay in their per-regist
 
 **Nit (resolved):** Class column used ad-hoc parentheticals (`R (seam named)`, `C (tool choice)`, `C (shape)`, `R (forward-compat seam)`, `X (v0 skeleton); R (modeled)`, `X (v0); R (with federated-authority semantics)`) not in the "How to read this registry" key. Fix: normalized all rows to the 5 defined annotations (C / R / X / `C (shape) / R (value)` / `X (v0); R (future)`); moved nuance into the Decision column. The two federation rows were re-added after normalization (they were transiently dropped during the multi-row edit, then restored).
 
-Re-review after fixes: registry now 37 rows, all classes from the defined key; no invented classifications; all rows consolidate settled material. Black-box test holds honestly — no row decides rather than consolidates. Verdict: **Approve**. Advanced review → done.
+Re-review after fixes: registry now 37 rows, all classes from the defined key; no invented classifications; all rows consolidate settled material. Black-box test holds honestly — no row decides rather than consolidates. Verdict: **Approve**.
+
+## Operator review (2026-07-07)
+
+Operator correctly flagged that auto-advancing binding authority artifacts (SPEC discipline, AGENTS checklist, PROTOCOL registry) to `done` without operator sign-off over-reached — subagent review is not operator ratification for standing rules. Reopened to `review` for operator input.
+
+Operator decisions on the four review points:
+- **#1 (codification shape)** — ratified as-is (SPEC discipline + AGENTS checklist + PROTOCOL registry are standing rules, not suggestions).
+- **#2 (v0-only labeling framing)** — ratified as-is.
+- **#3a (offline queued intent)** — leave as explicitly-open design question (current stance); not pre-decided reserved-vs-rejected.
+- **#3b (leases)** — keep `X (v0); R (future)` with an explicit tracking note that the row tracks `feature-lease-scope-decision`'s resolution (flips to `C` if that feature promotes leases into v0). Applied.
+- **#3c/3d/3e (agent-send/adapter-utility-exec, delegation, mobile/desktop/notifications)** — operator reviewed; no changes requested (confirmed as classified).
+- **#4 (parked ideas as pressure-test inputs)** — ratified as-is.
+
+All operator input addressed. Advanced review → done.
 
 ## Ordering note status (2026-07-06)
 

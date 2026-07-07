@@ -604,7 +604,7 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | multi-human coordination / approval | quorum / multi-answer Elicitations; tighter responder binding (endpoint/class/fallback) | R | PROTOCOL Elicitation; SECURITY |
 | delegation | `parent_grant_id` / delegation lineage field | X (v0); R (future) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
 | delegation | per-spawn-variant authority ("may spawn worktrees but not cloud envs") | R | PROTOCOL spawn authority |
-| leases | lease-backed exclusive coordination (out of v0 executable skeleton; modeled/reserved as a future seam) | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL |
+| leases | lease-backed exclusive coordination (out of v0 executable skeleton; modeled/reserved as a future seam). Tracks `feature-lease-scope-decision` (still drafting) — if that feature promotes leases into v0, this row flips to `C` after its fencing-model / lease-lifecycle-registry design lands. | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL |
 
 ### How to read this registry
 
