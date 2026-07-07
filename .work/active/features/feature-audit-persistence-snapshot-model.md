@@ -81,3 +81,10 @@ Routes through `feature-design`. No pre-mortem per operator direction. Coordinat
 ## Verdict
 
 **holds-with-caveats.** The highest-value check passes: the persistence backend abstraction is a real Ports & Adapters boundary, with local/embedded deployment treated as v0 topology rather than domain semantics. The skipped design gate would mainly have recorded alternatives and clarified verification status. No faulty assumption requires reopening dependents: the crash/snapshot safety claims are coherent product obligations, but crash-specific and snapshot-recovery properties remain stated/draft formal obligations, not checked guarantees. Per operator constraint, no corrective items were filed.
+
+## Operator ratification (2026-07-07)
+
+The audit surfaced that the adapter snapshot capability tiers (authoritative/partial/none) were added during `feature-persistence-snapshot-model` review when the brief's "adapter snapshot capability" item was found unaddressed — an agent-made design decision in the prose lane. Pulled out for explicit ratification.
+
+- **Q — how to model adapter snapshot capability:** (a) three tiers (landed) / (b) boolean / (c) tier every capability.
+- **Operator decision: (a) ratified.** Notably, this decision already received retroactive ratification via `feature-session-identity-adapter-contract` (a real design feature that ran the Phase 4.5 gate and explicitly rejected alternative (b) "boolean snapshot capability" — "forces adapters with partial state into either lying or over-degrading, losing the honest middle ground the degraded-behavior rules depend on"). So the question gate did run, just in a later feature. This operator ratification is confirmatory. The agent's review-time reasoning was sound; the procedural gap (no gate at first introduction) is closed by the later design feature + this ratification. No doc change needed (the landed decision stands).

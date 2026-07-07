@@ -90,3 +90,10 @@ Routes through `feature-design`. No pre-mortem per operator direction. Coordinat
 ## Proposed corrective actions
 
 None — verdict is `holds-with-caveats`, not `faulty-assumption-found`. Do not file corrective items or re-open dependents from this audit.
+
+## Operator ratification (2026-07-07)
+
+The audit surfaced that one decision — the `SubmissionOutcome` enum (introduced during `feature-command-state-ssot` review to fix a blocker, without a Phase 4.5 question gate) — was an agent-made semantic-model decision that the design gate would have surfaced to the operator. Pulled out for explicit ratification.
+
+- **Q — how to represent pre-acceptance refusal:** (a) separate `SubmissionOutcome` enum (landed) / (b) fold into `CommandState = rejected` / (c) audit-only.
+- **Operator decision: (a) ratified.** The separation keeps `accepted` meaning "durably recorded," which the `CommandDurability` checked property depends on; (b) would have broken that invariant by creating durable records for refused submissions. The agent's review-time reasoning was sound; the gap was procedural (no question gate), not substantive. Ratification closes the operator-consent gap; no doc change needed (the landed decision stands).
