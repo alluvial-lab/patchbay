@@ -1,7 +1,7 @@
 ---
 id: feature-audit-persistence-snapshot-model
 kind: feature
-stage: review
+stage: done
 tags: [foundation]
 parent: epic-retroactive-design-gate-audit
 depends_on: [feature-persistence-snapshot-model]

@@ -1,7 +1,7 @@
 ---
 id: feature-audit-v0-walking-skeleton
 kind: feature
-stage: review
+stage: done
 tags: [foundation]
 parent: epic-retroactive-design-gate-audit
 depends_on: [feature-v0-walking-skeleton]

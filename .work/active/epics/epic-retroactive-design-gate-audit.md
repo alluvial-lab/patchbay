@@ -1,7 +1,7 @@
 ---
 id: epic-retroactive-design-gate-audit
 kind: epic
-stage: drafting
+stage: done
 tags: [foundation]
 depends_on: []
 parent: null
@@ -69,3 +69,26 @@ Children have no inter-dependencies (each audits an independent foundational fea
 ## Notes
 
 Origin: 2026-07-07 `[prose]` tag audit (see `epic-foundation-hardening` "Lane routing discipline" § "`[prose]` tag retired"). The retirement of the `[prose]` routing tag (same date) prevents future misroutes; this epic closes the debt on the 4 that already slipped through.
+
+## Audit results (2026-07-07)
+
+All four audits ran in parallel as fresh-context design-gate auditors (`openai-codex/gpt-5.5`). Verdicts:
+
+| Audit | Verdict | Corrective actions |
+|---|---|---|
+| `feature-audit-v0-walking-skeleton` (13 dependents) | **holds** | none |
+| `feature-audit-command-state-ssot` (8 dependents) | **holds-with-caveats** | none |
+| `feature-audit-persistence-snapshot-model` (2 dependents) | **holds-with-caveats** | none |
+| `feature-audit-security-threat-model` (3 dependents) | **holds-with-caveats** | none |
+
+**Zero faulty-assumption-found verdicts. Zero corrective actions filed. Zero dependents re-opened.** The four foundational decisions hold up under honest re-examination. The skipped design gates left *traceability debt* (missing alternatives records), now filled by the audits — but not *faulty-design debt*. No downstream feature propagated a fault from a missed assumption.
+
+The three `holds-with-caveats` caveats are all already-tracked verification/design debt, not hidden problems:
+- `accepted → completed` protocol/model tension → owned by `feature-formal-model-realignment` (drafting).
+- crash-recovery / snapshot-recovery property draftness → VERIFICATION property-graded tier (stated-normative, not checked).
+- `CompoundIssuer` / authority safety draftness + web↔core evidence shape → deferred to `feature-web-core-protocol-seam` (backlog).
+- malicious/compromised enrolled adapter posture → conscious v0 decision (boundary checks + conformance + audit), not an accidental assumption.
+
+The `v0-walking-skeleton` audit (largest propagation surface, 13 dependents) came back a clean **holds** with no caveats — its one weak original area (initial command/action set) was already re-opened and resolved by later grounded harness research and the normative OperationKind registry, evidence that the project's later rigor compensated for the early skipped gate.
+
+Epic complete. The `[prose]` tag retirement (same date) prevents future misroutes; this audit closes the debt on the four that already slipped through.

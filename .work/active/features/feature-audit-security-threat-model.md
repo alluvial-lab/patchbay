@@ -1,7 +1,7 @@
 ---
 id: feature-audit-security-threat-model
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation]
 parent: epic-retroactive-design-gate-audit
 depends_on: [feature-security-threat-model]
