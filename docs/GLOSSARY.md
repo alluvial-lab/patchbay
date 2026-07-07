@@ -96,7 +96,7 @@ Generic operator-originated no-grant Message is not a v0 action: it is rejected 
 
 ## Lease
 
-A time-bounded exclusive claim over a resource or coordination role.
+A time-bounded exclusive claim over a resource or coordination role. V0 does not implement leases; see `docs/PROTOCOL.md` § Leases for the precondition framing.
 
 ## Operator
 

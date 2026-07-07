@@ -510,9 +510,13 @@ A lease is a time-bounded exclusive claim over a resource or coordination role. 
 - renewal rules;
 - release rules.
 
-Within one modeled Patchbay authority domain, two live leases cannot grant exclusive ownership of the same resource and scope at the same time.
+Within one modeled Patchbay authority domain, the following exclusivity properties hold **once a fencing model (lease epochs or fencing tokens) exists and lease-backed behavior is promoted into v0 by a future feature**. They are a modeled precondition required before any such promotion, not a v0 guarantee, and are not checked in v0:
 
-V0 reserves leases as an extension seam. Lease-backed behavior must define its own lifecycle registry before shipping; it must not overload `CommandState` or session state.
+- Two actors cannot simultaneously hold the same exclusive live lease within one authority domain.
+- Expired leases do not authorize new exclusive action.
+- Lease renewal respects holder identity and scope.
+
+V0 reserves leases as an extension seam. A future feature promoting leases into v0 must define the fencing mechanism, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior. That feature must not overload `CommandState` or session state.
 
 ## Adapter capabilities
 
@@ -604,7 +608,7 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | multi-human coordination / approval | quorum / multi-answer Elicitations; tighter responder binding (endpoint/class/fallback) | R | PROTOCOL Elicitation; SECURITY |
 | delegation | `parent_grant_id` / delegation lineage field | X (v0); R (future) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
 | delegation | per-spawn-variant authority ("may spawn worktrees but not cloud envs") | R | PROTOCOL spawn authority |
-| leases | lease-backed exclusive coordination (out of v0 executable skeleton; modeled/reserved as a future seam). Tracks `feature-lease-scope-decision` (still drafting) — if that feature promotes leases into v0, this row flips to `C` after its fencing-model / lease-lifecycle-registry design lands. | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL |
+| leases | lease-backed exclusive coordination (deferred from v0; reserved as a future seam. Promotion requires a future feature to design the fencing model, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior.) | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL § Leases |
 
 ### How to read this registry
 

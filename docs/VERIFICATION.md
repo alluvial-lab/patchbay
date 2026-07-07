@@ -241,11 +241,11 @@ Delegation is not part of v0. The following property is a precondition that must
 
 ### Lease safety
 
-Lease safety remains a required model area before any lease-backed product behavior ships. It is not part of the v0 executable walking skeleton unless later foundation work explicitly promotes a specific lease-backed workflow.
+Lease safety remains a required model area before any lease-backed product behavior ships. It is not part of the v0 executable walking skeleton unless later foundation work explicitly promotes a specific lease-backed workflow. The exclusivity properties are a modeled precondition gated on a future fencing model, not a v0 guarantee (see `docs/PROTOCOL.md` § Leases for the canonical statement).
 
 Properties:
 
-- Two actors cannot simultaneously hold the same exclusive live lease in one authority domain.
+- Two actors cannot simultaneously hold the same exclusive live lease within one authority domain.
 - Expired leases do not authorize new exclusive action.
 - Lease renewal respects holder identity and scope.
 

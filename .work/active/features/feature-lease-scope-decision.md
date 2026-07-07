@@ -1,7 +1,7 @@
 ---
 id: feature-lease-scope-decision
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-security-threat-model]
@@ -150,3 +150,19 @@ No code tests — docs-only foundation feature. Verification is by:
 - **Risk: a future use case needs leases and this framing is too soft.** Mitigation: the stated-normative precondition keeps the safety properties as a target; a promoting feature uplifts rather than starts cold. The framing does not foreclose promotion — that's the point of `X (v0); R (future)`.
 - **Risk: PROTOCOL and VERIFICATION drift on the property wording.** Mitigation: Unit 2 reconciles VERIFICATION to PROTOCOL's list verbatim and adds a cross-reference; PROTOCOL is canonical.
 - **Risk: deferring fencing leaves a future feature with a hard design problem.** Mitigation: that's the correct outcome — fencing is a real design problem that should be solved against a real use case, not speculatively. Recording it as a required precondition makes the debt visible rather than hidden.
+
+## Implementation notes
+
+- **Files changed:**
+  - `docs/PROTOCOL.md` — Leases section: rewrote the bare safety guarantee into a modeled precondition gated on a future fencing model; listed the three properties under the precondition; preserved the "must not overload CommandState or session state" constraint; folded the lifecycle-registry point into the precondition block (no duplication). Also updated the extension-seams registry leases row to reflect the resolved (deferred) state — dropped the "still drafting" tracker note, stated the deferred classification plainly, kept `X (v0); R (future)`.
+  - `docs/VERIFICATION.md` — Lease safety section: added a cross-reference to PROTOCOL § Leases as the canonical statement; reconciled one wording drift ("in one authority domain" → "within one authority domain") so the three properties now match PROTOCOL verbatim.
+  - `docs/SPEC.md` — Verification floor line: tightened to "v0 does not implement leases; lease-safety properties are a stated-normative precondition for future lease-backed behavior (see PROTOCOL § Leases)" (previously "Lease modeling remains required before lease-backed behavior ships, but leases are outside the v0 executable skeleton unless explicitly promoted"). Same semantics, crisper framing.
+  - `docs/GLOSSARY.md` — Lease entry: appended "V0 does not implement leases; see `docs/PROTOCOL.md` § Leases for the precondition framing."
+- **Tests added:** none (docs-only foundation feature). Verification by grep: zero remaining bare/immediate lease-safety guarantees in PROTOCOL/VERIFICATION; three properties verbatim-match across both docs; no doc claims leases are checked-normative or in the v0 executable skeleton.
+- **Discrepancies from design:** none.
+- **Adjacent issues parked:** none. `idea-multi-human-coordination` remains the parked future-pressure for multi-actor lease use cases; unaffected.
+- **Acceptance criteria walk:**
+  - SPEC states leases are post-v0 → met (line 32, explicit "v0 does not implement leases").
+  - PROTOCOL no longer presents underspecified lease safety as an immediate guarantee → met (softened to a precondition gated on a future fencing model).
+  - GLOSSARY defines `authority domain` → already satisfied (line 17; term remains and is defined).
+  - VERIFICATION models only lease properties that are in scope → met (lease-safety properties kept as stated-normative precondition, clearly marked not-checked-in-v0; no fencing/lifecycle modeling added).
