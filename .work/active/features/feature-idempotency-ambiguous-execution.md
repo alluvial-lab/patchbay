@@ -1,7 +1,7 @@
 ---
 id: feature-idempotency-ambiguous-execution
 kind: feature
-stage: review
+stage: done
 tags: [protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-session-identity-adapter-contract]
@@ -190,4 +190,6 @@ No code tests — docs-only foundation feature. Verification by:
 
 **Nit (resolved):** Dense retry-safety sentence → converted to a table for readability.
 
-Re-review after fixes: all three blockers resolved; formal-model alignment holds (per-target consistent, retention no longer contradicts the checked property); stale duplicate rule reconciled; UX no longer overclaims. Verdict: **Approve**. Advanced review → done.
+Re-review after fixes: all three blockers resolved; formal-model alignment holds (per-target consistent, retention no longer contradicts the checked property); stale duplicate rule reconciled; UX no longer overclaims. Verdict: **Approve**.
+
+A second fresh-context re-review (same model class, independent pass) confirmed: all three blockers resolved with no new contradictions introduced; formal-model alignment re-confirmed (`appliedKeys` is an abstract boundary dedup handle, so per-target refinement is consistent; `BoundaryDedup`/`RetryReusesIdAndKey`/`RetryAfterTerminalReturnsExisting` all hold; the retention fix matches the model's `retry(cmd, key)` existing-record no-op). The four operator-confirmed design decisions (Q1–Q4) stand unchanged — the fixes were reconciliations of contradictions, not new semantic commitments, so no new operator ratification was required. Advanced review → done.
