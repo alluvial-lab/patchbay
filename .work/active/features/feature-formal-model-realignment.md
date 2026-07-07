@@ -2,16 +2,20 @@
 id: feature-formal-model-realignment
 kind: feature
 stage: drafting
-tags: [verification, protocol, foundation, prose]
+tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-operator-presence-and-action-inventory, feature-formal-model-seed]
 created: 2026-07-06
-updated: 2026-07-05
+updated: 2026-07-07
 gate_origin: null
 release_binding: null
 ---
 
 # Feature: Re-align seed formal models with the rolled-forward foundation
+
+## Misroute note (2026-07-07)
+
+Stripped `[prose]` — this is a design feature, not prose authoring. The brief itself designs the realignment plan: VR2 metadata schema decision (rename-in-place vs split field — a schema choice with downstream traceability/CI consequences), V1 model approach decision (strengthen `command_lifecycle.qnt` in place with regression risk to 7 checked properties vs author a new `operation_lifecycle.qnt` with refinement-equivalence debt), model-authoring order + per-model bounds/tool invocations, and four new stated-normative model arcs (Elicitation, TypedCorrelation, Subscription authority, Spawn authority) each requiring bounds/properties/promotion-criteria design. The brief lists explicit "Open questions (for the design pass)" and a "Risks / pre-mortem" section — feature-design language. The prose-author lane skips the design gate, pre-mortem, and alternatives evaluation; this item needs them. Routed through `feature-design`; `prose` tag removed. Same misroute pattern documented in the epic's lane-routing discipline and the 2026-07-06 codification of the prose black-box test.
 
 ## Brief
 

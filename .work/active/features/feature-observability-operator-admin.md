@@ -2,16 +2,20 @@
 id: feature-observability-operator-admin
 kind: feature
 stage: drafting
-tags: [prose, foundation]
+tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-persistence-snapshot-model]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-07
 gate_origin: null
 release_binding: null
 ---
 
 # Feature: Define operator/admin observability
+
+## Misroute note (2026-07-07)
+
+Stripped `[prose]` — this is a design feature, not prose authoring. The scope involves genuine design decisions: (1) whether observability is v0 or post-v0 is a scope/classification decision, not consolidation of an already-settled answer (the docs don't currently settle it); (2) "the v0 control surface or CLI has enough diagnostic expectations to debug failed delivery" requires designing what diagnostic surfaces exist (delivery trace, logs, metrics, event inspection) and what "enough" means; (3) "security docs cover what must not be logged" requires deciding redaction/sensitive-payload-handling rules with security consequences. These are choosing-between-approaches / architectural-commitment decisions, not collapsed prose authoring of settled material. Routed through `feature-design`; `prose` tag removed. Same misroute pattern documented in the epic's lane-routing discipline and the 2026-07-06 codification of the prose black-box test.
 
 Review noted that Patchbay should help the operator answer why a command did not deliver. Observability is part of the human control plane, not just implementation plumbing.
 
