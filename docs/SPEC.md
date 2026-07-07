@@ -127,3 +127,35 @@ Adapters do not define Patchbay's core ontology.
 ## Non-goals
 
 Patchbay does not verify LLM output quality, replace cryptographic primitives, guarantee OS background execution, impose a project/workflow substrate, ship native mobile in v0, support multiple human operators in v0, or provide HA/multi-core coordination in v0. Those concerns belong to adapters, deployment configuration, separate tools, or later milestones.
+
+## Non-foreclosure discipline
+
+Patchbay is deliberately a narrow v0 that must not accidentally close off future directions the operator has not yet thought through. This section states the discipline; the standing checklist future design work runs before committing a decision lives in `AGENTS.md` ("Extension pressure-test checklist"), and the cross-cutting per-seam registry lives in `docs/PROTOCOL.md` ("Extension seams registry").
+
+### Three-way classification
+
+Every design decision is one of:
+
+- **Committed v0** — shipped behavior. It lives in the single source-of-truth registry for its kind (OperationKind enum, Session/Operation/Elicitation state registry, adapter capability manifest, failure vocabulary, response_contract registry). Where it carries a normative safety/security claim, it has checked-model + conformance-vector coverage before v0 treats it as product behavior (see `docs/VERIFICATION.md` property-graded baseline). Promotion to committed is the act of adding it to the registry with its coverage.
+- **Reserved seam** — v0 does not implement it, but the design keeps the door open and names the seam. Where wire/forward-compatibility matters (future OperationKinds, future response_contract kinds, future non-operator senders), the reserved value is wire-present in the registry and submission rejects with `validation_failed`/`unsupported_command` in v0 rather than the value being absent. Promotion from reserved to committed is a registry/classification update, not a reversal.
+- **Explicitly rejected** — v0 declines the direction, with rationale recorded. Promotion of a rejected direction is a reversal (a real change of mind with a protocol-change ceremony), not a gap that was merely waiting to be filled.
+
+### Non-foreclosure rule
+
+- **Label v0 assumptions as v0-only.** Write "v0 has one operator," "v0 ships a web cockpit and CLI," "v0 has one authority domain." Do not write the timeless "Patchbay has one operator" / "Patchbay ships a web cockpit" form, which silently promotes a v0 scope choice to permanent architecture.
+- **Name reserved seams; do not omit them.** A reserved seam is present in the relevant registry (wire-present where forward-compatibility matters) and documented as reserved. Omitting a future direction from the registry forecloses it more than naming it reserved, because adding it later looks like new scope rather than the planned promotion of a seam.
+- **Record rejected directions with rationale.** A rejected direction is written down with why, so a future promotion is visibly a reversal requiring a ceremony, not a quiet drift back in.
+- **Treat parked ideas as pressure-test inputs, not v0 requirements.** `idea-multi-human-coordination`, `idea-desktop-app-surface`, `idea-agent-to-agent-mesh-seam`, and `idea-operator-customizable-ux-skins` inform the seam inventory; none is a v0 obligation. Each reserved-seam row that corresponds to a parked idea links back to it.
+
+### Forward-compatibility hygiene
+
+Where a wire/identity shape matters for a future variant, the v0 shape carries the future-relevant demarcator even though v0 has a single value, so the future capability arrives as a layer on top rather than a retroactive data migration:
+
+- Event, cursor, and revision identity is the `(authority_domain_id, LSN)` tuple, not a bare LSN. V0 has one authority domain, but the key shape includes the domain demarcator so federation is additive.
+- Reserved enum values (`agent-send`, `adapter-utility-exec`, `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`) are wire-present in v0 proto and rejected at submission, so promoting them is a validation-rule change, not a wire-format change.
+- Adapter capability manifests declare capability fields (`supported_operation_kinds`, snapshot tier, `session_replacement`, etc.) rather than the core assuming a single adapter's shape.
+- Model intent stays portable across checker backends (Quint primary, TLA+ semantic baseline, Alloy relational) so a tool switch is not a model rewrite.
+
+### What this discipline is not
+
+This is a labeling and registry discipline, not a promise to implement any reserved seam. A reserved seam may never ship. The discipline's guarantee is narrower and load-bearing: a future direction that the operator chooses to pursue can be added as a registry/classification update rather than discovered to be impossible because v0 baked in a single-value assumption.

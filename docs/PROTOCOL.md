@@ -560,6 +560,63 @@ Degraded behavior rules:
 - **Reserved extension seams:** adapter-specific diagnostics, future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation lineage, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
 - **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
 
+## Extension seams registry
+
+This is the cross-cutting consolidation of reserved and rejected seams across the v0 foundation, indexed by extension area. Canonical entries remain in their per-registry homes (OperationKind enum, adapter capability manifest, state registries, failure vocabulary); this section is the cross-cutting index that tags each with its classification and where it was settled. It is the single view to answer "what did v0 leave open?" The standing discipline and pressure-test checklist live in `docs/SPEC.md` ("Non-foreclosure discipline") and `AGENTS.md` ("Extension pressure-test checklist").
+
+Classification key: **C** = committed v0; **R** = reserved seam (v0 does not implement; named in registry, wire-present where forward-compat matters, submission rejects); **X** = explicitly rejected in v0 (promotion is a reversal, not a gap).
+
+| Extension area | Decision | Class | Settled in |
+|---|---|---|---|
+| principals / authority domains | single operator + single authority domain | C | `feature-v0-walking-skeleton`; SECURITY §"V0 authority domain" |
+| principals / authority domains | multi-operator / federated authority domains, shared authority administration, handoffs | R | SECURITY; GLOSSARY "authority domain"; `idea-multi-human-coordination` |
+| adapters | Pi as the first workflow-migration adapter | C | SPEC "Adapter posture" |
+| adapters | other harnesses, shell jobs, CI jobs, project tools, notification systems, human approval surfaces | R | SPEC "Adapter posture" |
+| adapter capabilities | 3-tier snapshot model; capability manifest fields (`supported_operation_kinds`, snapshot tier, `streaming`, `cancellation`, `session_replacement`, `idempotency_strength`, `attachment_method`, `known_failure_modes`) | C | `feature-session-identity-adapter-contract`; PROTOCOL "Adapter capabilities" |
+| adapter capabilities | adapter-specific diagnostic codes | R | PROTOCOL failure vocabulary (extension seam) |
+| human control surfaces | responsive web cockpit + CLI | C | `feature-v0-walking-skeleton`; SPEC "Starting scope" |
+| human control surfaces | native mobile / Expo app | R | SPEC; `idea-desktop-app-surface` (analog) |
+| human control surfaces | native desktop app | R | `idea-desktop-app-surface`; SPEC "Starting scope" |
+| human control surfaces | notification surface as a control surface | R | SPEC; GLOSSARY "control surface" |
+| human control surfaces | operator-customizable skins/layouts above the conformance floor | R | `feature-ux-v0-acceptance`; `idea-operator-customizable-ux-skins` |
+| human control surfaces | shared presentation-component layer implementation | R (seam named) | `feature-ux-v0-acceptance`; ARCHITECTURE "presentation model" |
+| transports / deployment topology | single authoritative core; adapters/surfaces may be separate processes | C | SPEC topology |
+| transports / deployment topology | HA, clustering, split-brain recovery, multiple authoritative cores | R | SPEC non-goals; ARCHITECTURE |
+| storage / persistence backends | local durable event/snapshot store behind ports | C | `feature-persistence-snapshot-model` |
+| storage / persistence backends | WAL shipping, remote replicas, point-in-time clone, storage-engine hot swap | R | ARCHITECTURE; PROTOCOL |
+| protocol contract versions | Protobuf + Buf; `buf lint` + `buf breaking` in CI | C | `feature-protocol-idl-and-conformance` |
+| protocol contract versions | reserved enum values wire-present, rejected at submission (`agent-send`, `adapter-utility-exec`, `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`) | C (shape) / R (value) | `feature-protocol-idl-and-conformance`; PROTOCOL registries |
+| protocol contract versions | `(authority_domain_id, LSN)` tuple key shape (federation seam) | C | PROTOCOL event/cursor identity |
+| protocol contract versions | JSON Schema / TypeBox / Zod for JSON-native local validation; TypeSpec for multi-output authoring | R | `feature-verification-contract-authority` |
+| formal-model / checker backends | Quint primary; TLA+ semantic baseline; Alloy 6 relational; model-intent portable across backends | C (tool choice) | `feature-research-formal-methods-tooling`; VERIFICATION |
+| formal-model / checker backends | switching checker backend / authoring language | R (seam preserved by portability) | VERIFICATION |
+| formal-model / checker backends | Elicitation, spawn-authority, subscription, response-correlation models | R (stated-normative, reserved model ids) | VERIFICATION model table |
+| notification providers | notification provider as a future control surface / delivery channel | R | SPEC; GLOSSARY |
+| third-party tool integrations | `agent-send` OperationKind (agent→agent mesh, op→op routing, adapter→operator service) | R | PROTOCOL OperationKind registry; `idea-agent-to-agent-mesh-seam` |
+| third-party tool integrations | `adapter-utility-exec` OperationKind (standalone adapter utility exec) | R | PROTOCOL OperationKind registry |
+| offline / queued operator intent | `queued_message_set` / `queued_message_clear` as transport/pairing, out of adapter Operation scope | X (v0); accept-or-replace decision at switch | `feature-pi-parity-checklist` §7-8 |
+| offline / queued operator intent | offline queued operator intent as a first-class Operation | R (no v0 OperationKind) | PROTOCOL OperationKind registry |
+| encryption / key-management | passphrase primary authenticator for v0 | C | SECURITY |
+| encryption / key-management | passkeys / MFA | R | SECURITY |
+| encryption / key-management | adapter-proves-identity; mechanism deferred (not mTLS-mandated) | C (shape) | `feature-session-identity-adapter-contract` |
+| federation / relay / multi-core | federated authority; relay; multi-core coordination | X (v0); R (future) | SPEC non-goals; PROTOCOL delegation |
+| federation / relay / multi-core | cross-domain coordination as a layer on per-domain keys | R (forward-compat seam) | PROTOCOL `(authority_domain_id, LSN)` |
+| multi-human coordination / approval | multi-human grants, audit, handoffs, approval workflows | X (v0); R (future) | SECURITY; `idea-multi-human-coordination` |
+| multi-human coordination / approval | quorum / multi-answer Elicitations; tighter responder binding (endpoint/class/fallback) | R | PROTOCOL Elicitation; SECURITY |
+| delegation | `parent_grant_id` / delegation lineage field | X (v0); R (with federated-authority semantics) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
+| delegation | per-spawn-variant authority ("may spawn worktrees but not cloud envs") | R | PROTOCOL spawn authority |
+| leases | lease-backed exclusive coordination | X (v0 skeleton); R (modeled) | `feature-lease-scope-decision`; PROTOCOL |
+
+### How to read this registry
+
+- A row tagged **C** is v0-committed behavior with its canonical home in the named registry; this table does not override that home.
+- A row tagged **R** is a named seam v0 declines to implement. Where forward-compatibility matters it is wire-present and rejected at submission; otherwise it is named as reserved in docs. Promotion to committed is a registry/classification update.
+- A row tagged **X** is a direction v0 explicitly rejects with rationale. Promotion is a reversal requiring a protocol-change ceremony, not a gap-fill.
+- A row tagged **C (shape) / R (value)** means the v0 shape is committed (e.g. reserved enum values are wire-present) while the individual value is reserved (rejected at submission). The shape preserves the seam; the value is the future capability.
+- A row tagged **X (v0); R (future)** is a direction rejected for v0 but explicitly preserved as a future seam (the distinction from pure X is that the design keeps the door open and names the seam).
+
+This registry consolidates; it does not decide. If a future design surfaces a classification this table gets wrong, the fix is to update the canonical registry entry and this row together, not to edit this table in isolation.
+
 ## Security and trust boundary
 
 Patchbay protocol assumes cryptographic primitives work as specified by their libraries and deployments. Formal models cover authority and identity relationships, not primitive cryptographic correctness.

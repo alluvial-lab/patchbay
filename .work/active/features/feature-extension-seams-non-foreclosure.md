@@ -1,7 +1,7 @@
 ---
 id: feature-extension-seams-non-foreclosure
 kind: feature
-stage: implementing
+stage: review
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -121,6 +121,17 @@ The registry is a consolidation view: canonical entries stay in their per-regist
 - Do NOT invent new registries; reference the existing single-source-of-truth registries.
 - Do NOT edit the settled docs' semantics; this adds a SPEC section, an AGENTS section, and a PROTOCOL consolidation view only. If a consolidation row surfaces an inconsistency with a settled doc, record the inconsistency as a finding for operator direction, do not silently reconcile.
 - The Unit 3 registry is a cross-cutting index, not a new source of truth — the per-registry entries remain authoritative.
+
+## Implementation notes
+
+- **Files changed:**
+  - `docs/SPEC.md` — added "## Non-foreclosure discipline" section (three-way classification vocabulary, non-foreclosure rule, forward-compatibility hygiene, what-this-is-not) after "## Non-goals."
+  - `AGENTS.md` — added "## Extension pressure-test checklist" section after "## Verification posture": classify-the-decision, check-the-framing, check-the-seams (adapter/surface neutrality), check-the-parked-ideas.
+  - `docs/PROTOCOL.md` — added "## Extension seams registry" cross-cutting consolidation table (38 rows across all 12 scope areas + multi-human/delegation) before "## Security and trust boundary." Restored the "## Security and trust boundary" heading that was the replacement anchor.
+- **Tests added:** none (prose; no code surface). Acceptance verified by grep: all 5 acceptance criteria map to a written artifact; all 12 scope areas appear in the registry.
+- **Discrepancies from design:** none. The consolidation surfaced no inconsistencies with settled docs — every registry row's classification matches the `done` feature / foundation doc it points at. The `feature-lease-scope-decision` row is tagged `X (v0 skeleton); R (modeled)` to match that item's still-drafting status (leases are rejected from the v0 executable skeleton but remain modeled); flagged here because the source item is not yet `done`. If `feature-lease-scope-decision` resolves leases differently, this row updates with it.
+- **Adjacent issues parked:** none. The four parked ideas (`idea-multi-human-coordination`, `idea-desktop-app-surface`, `idea-agent-to-agent-mesh-seam`, `idea-operator-customizable-ux-skins`) are referenced as pressure-test inputs per acceptance criteria, not re-scoped.
+- **Constraint honored:** no classifications re-decided; no new registries invented; no settled-doc semantics edited. The three artifacts are additive prose consuming already-settled material.
 
 ## Ordering note status (2026-07-06)
 
