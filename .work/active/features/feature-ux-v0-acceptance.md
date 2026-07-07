@@ -1,7 +1,7 @@
 ---
 id: feature-ux-v0-acceptance
 kind: feature
-stage: review
+stage: done
 tags: [ux, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-operator-presence-and-action-inventory]
@@ -189,3 +189,15 @@ No implementation code; verification is by document consistency:
 - **N2** — Unit 1 structure now explicitly preserves the current UX benchmark/quality-bar section (relocated, not deleted), per the implementation notes.
 
 **Notes**: Reviewer confirmed the surface-neutrality reframing is directionally sound and symmetric to adapter-neutrality, and the presentation-component seam aligns with `docs/ARCHITECTURE.md:85`/`:152`. The overall reframing survived; the SSOT blocker was the load-bearing fix. No implementation existed to review.
+
+## Review (substrate deep review, 2026-07-06)
+
+**Verdict**: Approve
+
+**Reviewer**: fresh-context cross-model deep review on `openai-codex/gpt-5.5` (high thinking) over the implemented `docs/UX.md` + `docs/ARCHITECTURE.md` cross-reference.
+
+**Blockers**: none.
+**Important**: none.
+**Nits**: none.
+
+**Notes**: Reviewer applied both completeness/complementary and adversarial lenses, verified against `docs/UX.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/VISION.md`, `docs/SPEC.md`, `docs/GLOSSARY.md`, the substrate features, AGENTS/rules, and `git diff HEAD^ HEAD`. Key confirmations: no re-listing of `CommandState`/session-state-axes/`ElicitationState` members in UX.md (B1/SSOT satisfied); Operation affordance floor lists exactly the 10 committed + 2 reserved OperationKinds (I2); `subscription-stream` spelling correct (N1); benchmark section preserved (N2); mockup pass treated as a v0 surface-design follow-up, not "not v0" (I4); ARCHITECTURE.md diff limited to the intended one-sentence cross-reference at line 152. No single-pass confirmatory re-review warranted — the implementation is a faithful realization of the corrected design and the single deep pass found nothing.
