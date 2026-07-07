@@ -1,7 +1,7 @@
 ---
 id: feature-ux-v0-acceptance
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-operator-presence-and-action-inventory]

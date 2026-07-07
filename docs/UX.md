@@ -1,31 +1,61 @@
 # Patchbay UX
 
-Patchbay UX is human-control-surface first. The operator experience must make remote/headless agent work feel trustworthy, inspectable, and recoverable across phone, laptop, desktop, and CLI.
+## Purpose and scope
 
-## UX benchmark
+This document defines Patchbay's **surface-neutral UX conformance floor** — the minimum obligations any conformant human control surface must meet — and the **v0 web cockpit as the first conformant instance** of that floor.
 
-Patchbay targets the confidence and continuity of a mature first-party remote agent app while keeping the infrastructure self-hosted and adapter-neutral.
+**Surface-neutrality** is a principle symmetric to adapter-neutrality: just as adapter-specific capabilities are adapter-declared features rather than core protocol primitives, surface-specific presentation is a surface-declared feature, not a core UX primitive. A surface is conformant when it meets the floor; skins, layouts, and surface-native affordances are surface-declared above the floor.
 
-Remote Pi compatibility is the immediate migration floor. Claude-app-style continuity, delivery clarity, and mobile ergonomics are the quality benchmark.
+The floor is **registry-derived**: it references the canonical registries in `docs/PROTOCOL.md` (state machines, failure vocabulary, authority, snapshot/reconnect rules) and the operator-domain positioning in `docs/ARCHITECTURE.md`. It does not re-declare them. Where this document and `docs/PROTOCOL.md` appear to diverge, `docs/PROTOCOL.md` is authoritative and this document has a bug. (`feature-command-state-ssot` requires `docs/UX.md` to reference rather than redefine protocol state machines.)
 
-## First surface
+UI labels such as "Live idle", "Stale working", or "Completed before cancellation arrived" are **non-authoritative presentation labels** over the protocol axes — examples of how a surface may render canonical states, not a restatement of the registry.
 
-The first full control surface is a responsive web cockpit with mobile-first layout. It uses the shared TypeScript operator domain so the future Expo app can reuse the same delivery, reconnect, and session-state logic.
+## Surface-neutral conformance floor
 
-The web cockpit must work well from:
+Any conformant control surface must meet these obligations. Each references the canonical source rather than re-listing the registry members.
 
-- phone browser;
-- laptop browser;
-- desktop browser;
-- constrained remote/network environments.
+- **State presentation honesty.** Present every canonical member of `CommandState`, `SessionConnectivityState`, `SessionActivityState`, and `ElicitationState` **as defined in `docs/PROTOCOL.md`** (Command lifecycle state; Session state axes; ElicitationState lifecycle) without inventing divergent states. Stale or unknown states must not be styled as live. Session display composes connectivity × activity; a stale or unknown connectivity value dominates presentation.
+- **Liveness vs delivery separation.** Separate session liveness (connectivity × activity) from command delivery (`CommandState`). Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
+- **Identity-before-intent.** Show stable target identity (adapter id, deployment scope, runtime session id, session generation) before the operator can submit an Operation. Human-readable labels (project, cwd, name) are metadata, not identity — they must not override verified target identity.
+- **Authority/grant visibility.** The control surface must answer the operator's question "Who is allowed to control this session or resource?" (`docs/VISION.md`). Action availability is derived from grants and adapter capabilities, but **UI availability is never authority** (`docs/PROTOCOL.md`, Authority grants: control surfaces may hide unavailable actions, but UI availability is never authority). A surface must distinguish denial (`authorization_denied`) from unsupported (`unsupported_command`) from revoked, and surface operator-visible grant and audit context where needed (current-session/endpoint/adapter revocation, security lockdown). Revocation prevents future authority; already-accepted commands follow the policy attached to their grant and OperationKind.
+- **Operation affordance coverage.** Every committed v0 `OperationKind` (`spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` per `docs/PROTOCOL.md`, OperationKind registry) is either actionable through an appropriate surface flow or visibly presented as unavailable/unsupported with a canonical reason. Reserved kinds (`agent-send`, `adapter-utility-exec`) are not presented as committed v0 actions. The composer need not surface every kind — `spawn` and `attach` may be entry-point actions rather than composer actions — but the surface as a whole must cover them.
+- **Failure vocabulary mapping.** Map failure text to the protocol failure/outcome vocabulary in `docs/PROTOCOL.md` so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct. Show what is safe to retry.
+- **Reconnect reconciliation.** On reconnect, the surface submits its last-known cursor and the core returns newer events and/or a snapshot materialized at a later log sequence number. An older snapshot is never rendered as live; the view stays marked stale until a newer authoritative snapshot or live event stream confirms it. Reconnect does not rely on wall-clock freshness alone.
+- **Elicitation presentation.** Surface pending Elicitations (approvals and questions) as attention-required state. V0 Elicitations target the operator actor (not a specific endpoint) and fan out to all subscribed operator surfaces; any authenticated endpoint may answer, and the first valid answer clears the Elicitation everywhere. The endpoint that actually answered is captured in the response Operation audit. Tighter binding (endpoint class, fallback chain) is reserved.
+- **Observation/subscription-stream honesty.** Present Observations (output, lifecycle facts, status emissions) from subscription streams but never as authoritative alone; snapshots and core records reconcile. Streams are delivery optimizations.
+- **Terminal-race explanation.** Command timelines can explain terminal races — for example "Completed before cancellation arrived", "Cancelled before completion", or "Expired before adapter completion" — without adding protocol states, following `docs/PROTOCOL.md` (Cancellation, expiration, supersession, and race semantics). These are UI labels, not protocol states.
+- **No optimistic-state authority.** Optimistic UI state is never authority for command submission, grant status, or session liveness.
 
-The CLI provides setup, administration, debugging, and scriptable access.
+## Shared presentation-component layer (architectural seam)
 
-## Core operator flows
+The floor is enforced structurally by a **shared presentation-component layer** — the layer that binds canonical protocol states to skin-able presentable primitives (`StateBadge`, `CommandTimeline`, `Composer`, `ElicitationCard`, and similar) that any conformant surface composes. This refines the "presentation model" already named as part of the shared TypeScript operator domain in `docs/ARCHITECTURE.md`.
 
-### Discover sessions
+The layer's obligations:
 
-The operator can see available sessions and understand:
+- bind canonical protocol states to presentable primitives (present the registry; never invent divergent state names);
+- be skin-able via design tokens, so an operator can customize the visual language without forking protocol semantics;
+- be composable by any conformant surface (web, CLI, future Expo).
+
+Implementation is **deferred**. The named layer is the future structural enforcement mechanism that makes the floor machine-checkable and skins possible; until it is implemented, conformance is enforced by the UX acceptance criteria in this document, protocol references, and later tests/vectors. The `ux-ui-design` `components` skill is the mockup-time analog of this layer. **The first real web cockpit must not proceed without either this component layer or an explicit conformance-test substitute** (a UX conformance vector/checklist that gates the web cockpit) — see Reserved follow-up.
+
+## v0 web cockpit — first conformant instance
+
+The first full control surface is a responsive web cockpit with mobile-first layout. It uses the shared TypeScript operator domain so the future Expo app can reuse the same delivery, reconnect, and session-state logic. The CLI provides setup, administration, debugging, and scriptable access.
+
+### UX benchmark
+
+Patchbay targets the confidence and continuity of a mature first-party remote agent app while keeping the infrastructure self-hosted and adapter-neutral. Remote Pi compatibility is the immediate migration floor (see `docs/ADAPTER-PI.md`); Claude-app-style continuity, delivery clarity, and mobile ergonomics are the quality benchmark.
+
+### Required v0 screens
+
+- **Session list.**
+- **Session detail** — message timeline + command delivery timeline.
+- **Composer.**
+- **Elicitation/attention surface.** — pending approvals and questions.
+
+The navigation pattern between these screens is an instance decision, deferred to the v0 surface-design mockup follow-on (see Reserved follow-up); the floor requires the screens exist, not their layout.
+
+### Session list visible fields
 
 - machine/deployment;
 - adapter;
@@ -35,77 +65,50 @@ The operator can see available sessions and understand:
 - protocol-derived connectivity/activity status;
 - last authoritative update time.
 
-### Send intent
+### Session detail / message timeline behavior
 
-The operator can submit Operations to a selected target: spawn or attach where supported, instruct a turn with prompt payload, cancel or interrupt active work, answer approvals or Elicitations, query status/snapshots, reconfigure adapter-declared settings, or perform session-management actions.
+Render Observations (assistant messages, tool calls and results, lifecycle facts) with source authentication and correlation context. Render command delivery states (`CommandState`) distinctly from message content.
 
-The UI displays local submission state and durable command state using the canonical registries in `docs/PROTOCOL.md`. Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
+### Composer requirements
 
-### Answer Elicitations
+The composer surfaces the in-session OperationKinds: `instruct` with prompt payload, `cancel`/`interrupt`, `approval-response`/`elicitation-response`, `query`, `reconfigure`, and `session-management`. `spawn` and `attach` are surfaced as entry-point actions elsewhere (per the Operation affordance coverage obligation). The composer displays local submission state and durable `CommandState` using the canonical registries in `docs/PROTOCOL.md`, and shows idempotency behavior on retry.
 
-V0 Elicitations target the operator actor (not a specific endpoint) and fan out to all subscribed operator surfaces. The UI surfaces pending Elicitations (approvals and questions) as attention-required state. The operator may answer from any authenticated operator endpoint; the first valid answer clears the Elicitation everywhere. The endpoint that actually answered is captured in the response Operation audit. Tighter binding (endpoint class, fallback chain) is reserved.
+### Reconnect/stale/offline banners
 
-### Recover after disconnect
+Visible connectivity-state banners; a stale view stays marked stale until a newer authoritative snapshot or live event stream confirms it.
 
-When the control surface reconnects, it requests authoritative snapshots and reconciles local state. Stale data is shown as stale until corrected.
-
-Reconnect does not rely on wall-clock freshness alone. The control surface submits its last-known cursor and the core returns newer events and/or a snapshot materialized at a later log sequence number. The UI keeps a view marked stale until a newer authoritative snapshot or live event stream confirms it; an older snapshot is never rendered as live.
-
-### Continue across devices
+### Multi-device continuity
 
 A command sent from phone is visible from laptop. A session inspected from desktop reflects accepted commands and authoritative replies from other control surfaces.
 
-### Handle failure
+### Empty/error/loading states
 
-Failures are explicit and use the layer-aware vocabulary in `docs/PROTOCOL.md`:
+Explicit states for no sessions, no messages, target-not-found, adapter-unavailable, and failure cases — all using the failure vocabulary in `docs/PROTOCOL.md`.
 
-- authorization denied;
-- target offline or not found;
-- adapter unavailable;
-- command unsupported;
-- command expired, cancelled, or superseded;
-- delivery or submission unknown;
-- execution failed.
+### Mobile-first responsive
 
-The operator sees what is safe to retry.
+The responsive web cockpit prioritizes: a readable session list on phone; clear target identity before sending; composer ergonomics for prompts and commands; visible protocol-derived pending, delivery, and failure states; rich message rendering where safe; low-friction reconnect; minimal reliance on continuous foreground connection; and fast switching among sessions. It must work well from phone, laptop, desktop, and constrained remote/network environments.
 
-## Presentation states
+### CLI
 
-Patchbay UI presentation derives from the canonical protocol registries in `docs/PROTOCOL.md` rather than redefining state machines locally.
+The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics.
 
-- Command display composes protocol-defined local submission state with durable `CommandState` once a command id exists.
-- Session display composes `SessionConnectivityState` with `SessionActivityState`. Labels such as **Live idle**, **Working**, **Stale working**, **Offline**, **Unknown**, or **Failed** are UI labels over those protocol axes, not additional protocol states.
-- Pending Elicitations (approvals, questions) and Observations (output, lifecycle facts, status emissions) are presented from subscription streams but never treated as authoritative alone; snapshots and core records reconcile.
-- Failure text maps to the protocol failure/outcome vocabulary so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct.
-- Command timelines can explain terminal races without adding protocol states, following `docs/PROTOCOL.md` "Cancellation, expiration, supersession, and race semantics"; examples include **Completed before cancellation arrived**, **Cancelled before completion**, or **Expired before adapter completion**.
+## Reserved seams
 
-Stale or unknown state must not be styled as live.
+- **Operator-customizable skins/layouts** — e.g. "Codex-style vs Claude-style vs CLI" presentations; an operator may customize the visual language without forking protocol semantics.
+- **Design tokens / visual language** — the token vocabulary (colors, type, spacing, motion) a skin consumes.
+- **Shared presentation-component layer implementation** — the component library that binds canonical states to skin-able primitives. Named above; build is deferred.
+- **Native/mobile/Expo affordances** — push notifications, biometric/local unlock, richer offline local cache, share sheet/attachments, app-specific notification routing, native-background handling. The Expo app must not fork protocol semantics from the web cockpit.
+- **Multi-surface presence-leak prevention** — filter-scoped subscriptions for multi-operator presence; reserved until multi-operator work arrives.
 
-## Mobile-first web expectations
+## Rejected directions
 
-The responsive web cockpit prioritizes:
-
-- readable session list on phone;
-- clear target identity before sending;
-- composer ergonomics for prompts and commands;
-- visible protocol-derived pending, delivery, and failure states;
-- rich message rendering where safe;
-- low-friction reconnect;
-- minimal reliance on continuous foreground connection;
-- fast switching among sessions.
-
-## Future Expo app
-
-The Expo app is a later control surface using the same TypeScript operator domain. It adds native affordances when they become load-bearing:
-
-- push notifications;
-- biometric/local unlock;
-- richer offline local cache;
-- share sheet / attachments;
-- app-specific notification routing;
-- native background limitations handled explicitly rather than hidden.
-
-The Expo app must not fork protocol semantics from the web cockpit.
+- Pi-specific concepts mandatory in the core UI model.
+- Mobile-only assumptions built into the shared operator domain.
+- Treating optimistic UI state as authoritative.
+- Hiding accepted/delivered/completed distinctions.
+- A pinned single visual design as the floor (the floor is behavioral + state-binding; visual design is surface-declared).
+- Collapsing failure outcomes into a generic "failed".
 
 ## Anti-patterns
 
@@ -116,3 +119,6 @@ The Expo app must not fork protocol semantics from the web cockpit.
 - Retrying commands without showing idempotency behavior.
 - Building mobile-only assumptions into the shared operator domain.
 - Making Pi-specific concepts mandatory in the core UI model.
+- Inventing divergent state names.
+- Rendering a stale snapshot as live.
+- Binding Elicitation responses to a specific endpoint rather than the operator actor.

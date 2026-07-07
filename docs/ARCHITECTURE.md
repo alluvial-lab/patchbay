@@ -149,7 +149,7 @@ V0 runs two logical processes, not one:
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
 
-The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics.
+The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics. The presentation model is refined in `docs/UX.md` as the **shared presentation-component layer** — a named architectural seam that binds canonical protocol states to skin-able presentable primitives, making the surface-neutral UX conformance floor enforceable; its implementation is deferred (see `docs/UX.md`).
 
 Reserved seams:
 
