@@ -1,7 +1,7 @@
 ---
 id: feature-extension-seams-non-foreclosure
 kind: feature
-stage: done
+stage: review
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
