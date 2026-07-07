@@ -1,7 +1,7 @@
 ---
 id: feature-lease-scope-decision
 kind: feature
-stage: review
+stage: done
 tags: [protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-security-threat-model]
@@ -166,3 +166,15 @@ No code tests — docs-only foundation feature. Verification is by:
   - PROTOCOL no longer presents underspecified lease safety as an immediate guarantee → met (softened to a precondition gated on a future fencing model).
   - GLOSSARY defines `authority domain` → already satisfied (line 17; term remains and is defined).
   - VERIFICATION models only lease properties that are in scope → met (lease-safety properties kept as stated-normative precondition, clearly marked not-checked-in-v0; no fencing/lifecycle modeling added).
+
+## Review
+
+**Notes**: Deep substrate review, fresh-context `openai-codex/gpt-5.5` (cross-model, different class from the umans orchestrator). Verdict: **Approve** — no blockers, no important findings, no nits.
+
+The reviewer specifically confirmed the two risk areas flagged in the design:
+- "lease epochs or fencing tokens" reads as **illustrative examples** under a generic future "fencing model," not as choosing a mechanism (Q3 honored — no fencing commitment made).
+- "lessor authority" appears only as something a future promoting feature must define, so it does **not** introduce undefined v0 protocol vocabulary.
+
+All 4 acceptance criteria verified met with file:line evidence. Cross-references to `PROTOCOL § Leases` resolve. The three safety properties are verbatim-identical across PROTOCOL (line 515-517) and VERIFICATION (line 248-250). The `X (v0); R (future)` registry classification matches the sibling non-foreclosure registry key and preserves non-foreclosure (promotion is a routine uplift, not a reversal). No rolling-foundation drift; no doc reads leases as a v0 implementation obligation.
+
+Design decisions were operator-confirmed upfront (Q1 defer / Q2 stated-normative precondition / Q3 no fencing design), so the clean review introduces no new semantic commitment requiring operator ratification. Advanced review → done.
