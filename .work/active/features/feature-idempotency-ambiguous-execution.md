@@ -174,3 +174,20 @@ No code tests — docs-only foundation feature. Verification by:
   - PROTOCOL no longer overclaims end-to-end idempotency → met (rewritten to boundary-scoped; overclaim phrases removed).
   - UX explains retry affordances using precise execution state → met (derived retry-safety matrix using `execution_outcome_unknown` + `idempotency_strength`).
   - VERIFICATION scopes the formal guarantee to Patchbay acceptance unless adapter capability declares stronger → met (boundary scope statement + presentation-signal classification; spawn note cross-referenced).
+
+## Review
+
+**Notes**: Deep substrate review, fresh-context `openai-codex/gpt-5.5` (cross-model). Initial verdict: **Block** — three blockers + one important + one nit, all legitimate.
+
+**Formal-model alignment (the load-bearing check): PASSED.** The reviewer verified per-target scoping is consistent with `command_lifecycle.qnt`: the model's `appliedKeys` is an abstract dedup handle, the model never exercises cross-target key reuse (each key is bound to one command), and `BoundaryDedup` only proves no modeled handle is applied twice. Per-target scoping does not weaken any checked guarantee.
+
+**Blockers (all resolved):**
+1. **Post-terminal key retention contradicted `RetryAfterTerminalReturnsExisting`.** My wording ("retention beyond terminal is implementation-defined") implied the key could expire after terminal, breaking the checked property that retry-after-terminal returns the existing record. Fix: reworded to pin retention to at-least-until-terminal *for the checked guarantee* (the terminal command record is durable and the key remains bound to it), and scoped the implementation-defined post-terminal policy to *whether a later same-key submission is treated as a duplicate of the terminal record or as a new command* — which does not affect the checked guarantee. Updated both PROTOCOL § Idempotency and retry and VERIFICATION § Idempotent retry to state this consistently.
+2. **Stale duplicate rule at PROTOCOL line 135.** The boundary rule still said a duplicate with "the same command id **or** idempotency key" returns existing, contradicting the new same-target + payload-equivalence rules and the "retry reuses both" rule. Fix: rewrote to "same command id and idempotency key to the same target, with an identical payload" and cross-referenced § Idempotency and retry for the dedup-scope/payload-equivalence/key-retention rules.
+3. **UX overclaimed plain `failed` as safe to retry by default.** `failed` includes `execution_failed` (target began executing) — not unconditionally safe. Fix: removed the "plain failed = safe by default" claim; retry safety is now derived from the specific failure term + `idempotency_strength`, never from `CommandState` alone. Replaced the dense prose with a 5-row table.
+
+**Important (resolved):** Missing intentional-duplicate UX language. Fix: added an explicit UX obligation that an intentional duplicate is presented as a new action requiring a new command id and idempotency key, never as a retry.
+
+**Nit (resolved):** Dense retry-safety sentence → converted to a table for readability.
+
+Re-review after fixes: all three blockers resolved; formal-model alignment holds (per-target consistent, retention no longer contradicts the checked property); stale duplicate rule reconciled; UX no longer overclaims. Verdict: **Approve**. Advanced review → done.

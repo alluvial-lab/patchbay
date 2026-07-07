@@ -132,7 +132,7 @@ Boundary rules:
 
 - `accepted` is the only initial durable `CommandState` for a newly accepted command.
 - Terminal states are final for that command id. Late adapter events are recorded as events for audit/reconciliation but do not mutate the command state.
-- A duplicate submission with the same command id or idempotency key returns the existing command record and state; it does not create a new state transition.
+- A duplicate submission with the same command id and idempotency key to the same target, with an identical payload, returns the existing command record and state; it does not create a new state transition. (See § Idempotency and retry for the dedup-scope, payload-equivalence, and key-retention rules. A payload mismatch is rejected at submission with `validation_failed`; a key reused against a different target is treated as a new command.)
 - `rejected` means a known actor refused the command by semantics or policy. `failed` means an accepted attempt encountered an error. `expired`, `cancelled`, and `superseded` are distinct terminal outcomes and must not be collapsed into `failed`.
 
 ### `OperationState` ⇿ `CommandState` refinement equivalence
@@ -377,7 +377,7 @@ Commands are deduplicated at the Patchbay acceptance boundary. Retrying the same
 
 **Payload equivalence.** A retry must carry the same payload as the original. A submission arriving with an idempotency key already applied to a command to the same target, but with a non-identical payload, is rejected at submission with `validation_failed` before acceptance. An intentional duplicate action uses a new command id and a new idempotency key.
 
-**Key retention.** An idempotency key stays dedup-eligible at least until its command reaches a terminal `CommandState`, so a retry before terminal returns the existing record. Retention beyond terminal is an implementation-defined window for late retries, not a protocol constant.
+**Key retention.** An idempotency key stays dedup-eligible at least until its command reaches a terminal `CommandState`; this is what makes a retry before or at terminal return the existing record (the checked `RetryAfterTerminalReturnsExisting` holds because the terminal command record is durable and the key remains bound to it). Whether a later submission reusing a key whose command is already terminal is treated as a duplicate of that terminal record or as a new command is an implementation-defined post-terminal policy, not a protocol constant; it does not affect the checked guarantee, which covers retries that return the existing terminal record.
 
 Adapters that cannot guarantee idempotent external execution must report that limitation as a capability constraint (`idempotency_strength`). Patchbay still deduplicates at the coordination boundary and exposes the adapter limitation to control surfaces.
 
