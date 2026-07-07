@@ -1,7 +1,7 @@
 ---
 id: feature-idempotency-ambiguous-execution
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-command-state-ssot, feature-session-identity-adapter-contract]
@@ -160,3 +160,17 @@ No code tests — docs-only foundation feature. Verification by:
 - **Risk: `execution_outcome_unknown` is confused with a checked property.** Mitigation: Unit 3 explicitly marks it as a presentation/audit signal, not a checked property; the surface matrix in Unit 2 derives retry safety from it + the capability, not from a formal guarantee.
 - **Risk: payload-reject is too strict for clients that legitimately vary metadata.** Mitigation: payloads that vary only in non-semantic metadata should be canonicalized before submission (a client concern); the protocol's contract is byte-identical-or-reject on the payload it receives. If real-world pressure shows this is too strict, a follow-on feature can define equivalence — but v0 ships strict and fail-fast per the design principle.
 - **Risk: at-least-until-terminal retention leaves late-retry-after-terminal behavior unspecified.** Mitigation: this is intentional — post-terminal retention is implementation-defined; the protocol pins only the minimum (`RetryAfterTerminalReturnsExisting` before terminal). A late retry after terminal and after the implementation's retention window is treated as a new command, which is the safe default.
+
+## Implementation notes
+
+- **Files changed:**
+  - `docs/PROTOCOL.md` — (a) § Idempotency and retry: rewrote to boundary-scoped language ("boundary guarantee, not an end-to-end execution guarantee"); added per-target dedup scope, payload-equivalence (reject on mismatch with `validation_failed`), and at-least-until-terminal key retention statements. (b) § Failure and outcome vocabulary: added `execution_outcome_unknown` row in the execution layer, adjacent to `execution_failed`, mapping to `failed` with an ambiguity signal. (c) Extension seams registry: added an explicit row for end-to-end adapter execution idempotency as a reserved seam (declared via `idempotency_strength`, not a formal property).
+  - `docs/UX.md` — § Failure vocabulary mapping: expanded "Show what is safe to retry" into the derived retry-safety matrix (`execution_outcome_unknown` + `idempotency_strength` → end-to-end safe / at-boundary may-double-execute / none will-double-execute; plain `failed` = safe by default). Strengthened the retry anti-pattern.
+  - `docs/VERIFICATION.md` — § Idempotent retry: added the boundary-vs-end-to-end scope statement (checked properties are per-target boundary dedup, not end-to-end execution guarantees; `execution_outcome_unknown` is a presentation signal, not a checked property). Cross-referenced the spawn-idempotency note to the new scope statement.
+- **Tests added:** none (docs-only foundation feature). Verification by grep: zero remaining end-to-end overclaim; `execution_outcome_unknown` in vocab; UX three-tier matrix present; VERIFICATION boundary-scoped; no `maybe_executed` CommandState added; registry row present; per-target scope stated. The checked `command_lifecycle.qnt` model needs no change (`appliedKeys` abstraction unchanged; per-target is a protocol refinement).
+- **Discrepancies from design:** none.
+- **Adjacent issues parked:** none.
+- **Acceptance criteria walk:**
+  - PROTOCOL no longer overclaims end-to-end idempotency → met (rewritten to boundary-scoped; overclaim phrases removed).
+  - UX explains retry affordances using precise execution state → met (derived retry-safety matrix using `execution_outcome_unknown` + `idempotency_strength`).
+  - VERIFICATION scopes the formal guarantee to Patchbay acceptance unless adapter capability declares stronger → met (boundary scope statement + presentation-signal classification; spawn note cross-referenced).

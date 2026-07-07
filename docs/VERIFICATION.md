@@ -183,9 +183,13 @@ Properties:
 
 ### Idempotent retry
 
+The checked idempotency properties (`BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`) are guarantees about deduplication at the Patchbay acceptance boundary, not end-to-end execution guarantees. They hold per-target: a key dedups against commands to the same target. They do not claim that an adapter executes a given Operation exactly once on retry; adapter-side execution idempotency is governed by the adapter's declared `idempotency_strength` capability and is not a formal property until a future adapter contract model is scoped (see the spawn-idempotency note below).
+
+The `execution_outcome_unknown` failure term is a presentation/audit signal, not a checked property: it surfaces ambiguity to control surfaces so retry safety can be evaluated, but the protocol does not formally model adapter-side execution determinism.
+
 Properties:
 
-- Retrying the same idempotency key cannot double-apply a command at the Patchbay boundary.
+- Retrying the same idempotency key cannot double-apply a command at the Patchbay boundary (per-target: the key dedups against commands to the same target).
 - A retry reuses both the command id and the idempotency key; an intentional duplicate action uses a new command id and a new idempotency key.
 - Duplicate submission returns existing command state.
 - Retrying after a command is terminal returns the existing terminal command record rather than creating a later terminal candidate.
@@ -323,7 +327,7 @@ Reserve the following conformance-vector families. Each is draft until its refer
 - `subscription-audited`: subscription allow/deny decisions create security audit records without creating Operation records.
 - `subscription-cursor-replay-authorized`: reconnect replay by cursor returns only events within the authorized subscription filter.
 
-Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt`; adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
+Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt` (see § Idempotent retry above for the boundary-vs-end-to-end scope statement); adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
 
 A protocol semantic change updates `docs/PROTOCOL.md`, the model, generated contract, conformance vectors, and implementation together.
 

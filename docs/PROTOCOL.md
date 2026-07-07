@@ -353,6 +353,7 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 | `transport_timeout` | submission/delivery | A transport layer did not answer within its timeout. Timeout never implies success or denial. | local `unknown`/`submit_failed`, or durable `failed`/continued `accepted` by policy |
 | `delivery_rejected` | delivery | The adapter received the command but refused delivery responsibility. | `rejected` |
 | `execution_failed` | execution | The target began or accepted execution and reported failure. | `failed` |
+| `execution_outcome_unknown` | execution | The target may have begun or completed execution, but Patchbay cannot determine the outcome (e.g. adapter crash after execute-before-ack, transport loss after delivery). The command transitions to `failed`; the ambiguity is surfaced to control surfaces so retry safety can be evaluated against the adapter's `idempotency_strength`. | `failed` (with ambiguity signal) |
 | `expired` | policy/time | The command validity window closed. | `expired` |
 | `cancelled` | policy/operator | Cancellation became the authoritative result. | `cancelled` |
 | `superseded` | policy/operator | A newer command or policy replaced this command. | `superseded` |
@@ -370,11 +371,15 @@ Acceptance creates a command record only after boundary validation, authority ch
 
 ## Idempotency and retry
 
-Commands are idempotent by default at the Patchbay boundary. Retrying the same command id or idempotency key does not apply the command twice.
+Commands are deduplicated at the Patchbay acceptance boundary. Retrying the same command id and idempotency key returns the existing command record and does not create a new accepted record at the boundary. This is a boundary guarantee, not an end-to-end execution guarantee: an adapter that does not track idempotency internally may execute the same logical Operation more than once on retry, and that adapter-side behavior is governed by the adapter's declared `idempotency_strength` capability, not by Patchbay's boundary dedup.
 
-A duplicate command returns the existing command state unless the operator explicitly creates a new command with a new command id and idempotency key.
+**Idempotency-key dedup scope.** A key dedups only against existing commands to the same target. A retry is always a retry of the same command to the same target; a key reused across different targets does not dedup and is treated as a new command. (The checked `command_lifecycle.qnt` models the dedup handle abstractly as `appliedKeys`; per-target scoping is the protocol-level refinement of what that set represents.)
 
-Adapters that cannot guarantee idempotent external execution must report that limitation as a capability constraint. Patchbay still deduplicates at the coordination boundary and exposes the adapter limitation to control surfaces.
+**Payload equivalence.** A retry must carry the same payload as the original. A submission arriving with an idempotency key already applied to a command to the same target, but with a non-identical payload, is rejected at submission with `validation_failed` before acceptance. An intentional duplicate action uses a new command id and a new idempotency key.
+
+**Key retention.** An idempotency key stays dedup-eligible at least until its command reaches a terminal `CommandState`, so a retry before terminal returns the existing record. Retention beyond terminal is an implementation-defined window for late retries, not a protocol constant.
+
+Adapters that cannot guarantee idempotent external execution must report that limitation as a capability constraint (`idempotency_strength`). Patchbay still deduplicates at the coordination boundary and exposes the adapter limitation to control surfaces.
 
 ## Cancellation, expiration, supersession, and race semantics
 
@@ -578,6 +583,7 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | adapters | other harnesses, shell jobs, CI jobs, project tools, notification systems, human approval surfaces | R | SPEC "Adapter posture" |
 | adapter capabilities | 3-tier snapshot model; capability manifest fields (`supported_operation_kinds`, snapshot tier, `streaming`, `cancellation`, `session_replacement`, `idempotency_strength`, `attachment_method`, `known_failure_modes`) | C | `feature-session-identity-adapter-contract`; PROTOCOL "Adapter capabilities" |
 | adapter capabilities | adapter-specific diagnostic codes | R | PROTOCOL failure vocabulary (extension seam) |
+| adapter execution idempotency | end-to-end adapter-side execution idempotency (no double-execute on retry); declared via the `idempotency_strength` capability, not a formal property until a future adapter contract model is scoped | R | PROTOCOL `idempotency_strength`; VERIFICATION spawn-idempotency note |
 | human control surfaces | responsive web cockpit + CLI | C | `feature-v0-walking-skeleton`; SPEC "Starting scope" |
 | human control surfaces | native mobile / Expo app | R | SPEC; `idea-desktop-app-surface` (analog) |
 | human control surfaces | native desktop app | R | `idea-desktop-app-surface`; SPEC "Starting scope" |
