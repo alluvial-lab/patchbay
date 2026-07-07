@@ -42,13 +42,13 @@ research_dials:
 
 ## Tags
 
-- `[prose]` — docs, specifications, conventions, or config-as-prose. Route drafting features through prose-author; implementation is usually the writing pass.
+Patchbay routes all design-bearing work (including docs-only features) through `feature-design`. There is no separate `[prose]` routing tag or `prose-author` lane. The historical `[prose]` tag was removed from the routing vocabulary on 2026-07-07 after an audit found a 56% misroute rate (9 of 16 items that ever carried `[prose]` in the `epic-foundation-hardening` arc were misroutes — 7 caught and stripped, 2 caught this session, 4 slipped through to `done` still tagged and are under retroactive design-gate audit). The tag was applied by deliverable format ("it produces docs") rather than work-nature ("does it involve choosing between approaches"), and the asymmetry of harm — a misroute skips the design gate, alternatives evaluation, and pre-mortem on *foundational* decisions, and the cost propagates downward — made the tag net-negative.
 
-### Prose black-box test (lane routing)
+### Work-nature test (applied inside feature-design)
 
-Apply this honestly to every candidate `[prose]` item before routing. **`[prose]` is for items whose deliverable is authored prose and whose design collapses into the writing** — authoring a checklist, classification rule, inventory, mapping, or config-as-prose where the choices are settled or obvious. If the scope item involves **choosing between approaches, pinning a semantic model, or making an architectural commitment**, route to `feature-design` instead, even when the deliverable is docs-only. The prose-author lane skips the design gate, pre-mortem, and alternatives evaluation; a semantic commitment made silently through prose is high-cost and hard to reverse.
+Docs-only features are not exempt from the design gate. `feature-design` Phase 4.5 applies the same work-nature test that the old prose black-box gate performed *before* routing: surface genuine ambiguities (choosing between approaches, pinning a semantic model, making an architectural commitment, an integration seam, an error path). If the surface is genuinely zero — authoring a checklist, inventory, mapping, or config-as-prose of *already-settled* material — Phase 4.5 records "zero questions" and the design collapses into a lightweight design-body + the writing pass (roughly what `prose-author` did, but inside the design lane so the gate is not structurally skipped). When in doubt, prefer surfacing the question: the design gate's cost is low; the cost of a semantic commitment made silently through prose is high.
 
-**Going forward:** when in doubt, prefer design — the design gate's cost is low; the cost of a semantic commitment made silently through prose is high. (Origin: `epic-foundation-hardening` lane-routing discipline, 2026-06-28; codified project-wide 2026-07-06 after `feature-foundation-doc-completeness-gaps` was initially misrouted as `[prose]`.)
+Items that currently still carry `[prose]` in `tags:` (legacy, from before the retirement) are inert for routing — treat them as design features and route through `feature-design`. Do not add `[prose]` to new items.
 - `[research]` — grounded research engagement. Route to agentic-research research-orchestrator. Do not bind research items to releases.
 - `[protocol]` — protocol semantics, schemas, state machines, wire contracts, or conformance vectors.
 - `[security]` — threat model, grants, principals, auth, revocation, replay resistance.

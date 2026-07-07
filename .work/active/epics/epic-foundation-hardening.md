@@ -6,7 +6,7 @@ tags: [foundation]
 depends_on: []
 parent: null
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-07
 gate_origin: null
 release_binding: null
 ---
@@ -57,6 +57,10 @@ Three reopened semantic decisions from already-done prose features were filed as
 - `feature-design-grant-shape` — grant field list and delegation seam.
 - `feature-session-identity-adapter-contract` also carries the three-tier adapter snapshot model reopened from `feature-persistence-snapshot-model`.
 
-Remaining prose features (`extension-seams-non-foreclosure`, `observability-operator-admin`, `pi-parity-checklist`) are genuine prose — authoring checklists, classification rules, inventories, and mappings — and stay in the prose lane.
+### `[prose]` tag retired (2026-07-07)
 
-**Going forward:** apply the prose-author black-box test honestly to every `[prose]` item. If the scope item involves choosing between approaches, pinning a semantic model, or making an architectural commitment, route to `feature-design` instead. When in doubt, prefer design — the design gate's cost is low; the cost of a semantic commitment made silently through prose is high.
+A full audit of every item that ever carried `[prose]` found a 56% misroute rate (9 of 16: the 7 retagged above + `feature-foundation-doc-completeness-gaps` + `feature-pi-parity-checklist` caught 2026-07-06, + `feature-formal-model-realignment` and `feature-observability-operator-admin` caught 2026-07-07). Two were genuine prose (`feature-bank-formal-methods-skills`, `feature-extension-seams-non-foreclosure`). The remaining 4 slipped through to `done` still tagged `[prose]` — `feature-v0-walking-skeleton`, `feature-command-state-ssot`, `feature-persistence-snapshot-model`, `feature-security-threat-model` — and are under retroactive design-gate audit (epic `epic-retroactive-design-gate-audit`) because they are foundational decisions whose skipped alternatives/pre-mortem debt propagates downward.
+
+The `[prose]` routing tag and the `prose-author` lane are retired project-wide (see `.work/CONVENTIONS.md`). All design-bearing work, including docs-only features, routes through `feature-design`; its Phase 4.5 applies the same work-nature test the old black-box gate did, but inside the design lane so the gate is never structurally skipped. Do not add `[prose]` to new items; legacy `[prose]` tags on done items are inert.
+
+**Going forward:** when in doubt, prefer design — the design gate's cost is low; the cost of a semantic commitment made silently through prose is high.

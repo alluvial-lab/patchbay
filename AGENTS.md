@@ -36,7 +36,7 @@ When standing up or refreshing these substrates, follow the installed plugin dis
 ## Work item routing
 
 - `[research]` items route to agentic-research research-orchestrator.
-- `[prose]` items are documentation/config-as-prose work and route through prose-author before implementation.
+- All design-bearing work — including docs-only features — routes through `feature-design`. There is no `[prose]` routing tag or `prose-author` lane (retired 2026-07-07; see `.work/CONVENTIONS.md`). `feature-design` Phase 4.5 applies the work-nature test and collapses to a lightweight writing pass when the design surface is genuinely zero.
 - `[refactor]` is behavior-preserving only.
 - `[perf]` is performance work.
 
