@@ -1,7 +1,7 @@
 ---
 id: feature-extension-seams-non-foreclosure
 kind: feature
-stage: review
+stage: done
 tags: [prose, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton]
@@ -132,6 +132,16 @@ The registry is a consolidation view: canonical entries stay in their per-regist
 - **Discrepancies from design:** none. The consolidation surfaced no inconsistencies with settled docs — every registry row's classification matches the `done` feature / foundation doc it points at. The `feature-lease-scope-decision` row is tagged `X (v0 skeleton); R (modeled)` to match that item's still-drafting status (leases are rejected from the v0 executable skeleton but remain modeled); flagged here because the source item is not yet `done`. If `feature-lease-scope-decision` resolves leases differently, this row updates with it.
 - **Adjacent issues parked:** none. The four parked ideas (`idea-multi-human-coordination`, `idea-desktop-app-surface`, `idea-agent-to-agent-mesh-seam`, `idea-operator-customizable-ux-skins`) are referenced as pressure-test inputs per acceptance criteria, not re-scoped.
 - **Constraint honored:** no classifications re-decided; no new registries invented; no settled-doc semantics edited. The three artifacts are additive prose consuming already-settled material.
+
+## Review
+
+**Notes**: Deep substrate review, fresh-context `openai-codex/gpt-5.5` (cross-model, different class from the umans orchestrator). Initial verdict: **Block** — one blocker + one nit, both legitimate.
+
+**Blocker (resolved):** The registry row "offline queued operator intent as a first-class Operation | R (no v0 OperationKind)" invented a new classification the prose lane was forbidden to make. The settled source (`feature-pi-parity-checklist` §7-8, ADAPTER-PI.md) only classifies `queued_message_set`/`queued_message_clear` as transport/pairing out of adapter Operation scope; whether Patchbay later adds an offline-queued-intent OperationKind is an open design question, not a wire-present reserved value. Fix: removed the speculative row; merged its only settled content into the existing offline/intent row as prose ("Whether Patchbay later adds an offline-queued-intent OperationKind is an open design question, not a settled classification — it is not a wire-present reserved value in v0."), classified `X` for the settled transport/pairing rejection only.
+
+**Nit (resolved):** Class column used ad-hoc parentheticals (`R (seam named)`, `C (tool choice)`, `C (shape)`, `R (forward-compat seam)`, `X (v0 skeleton); R (modeled)`, `X (v0); R (with federated-authority semantics)`) not in the "How to read this registry" key. Fix: normalized all rows to the 5 defined annotations (C / R / X / `C (shape) / R (value)` / `X (v0); R (future)`); moved nuance into the Decision column. The two federation rows were re-added after normalization (they were transiently dropped during the multi-row edit, then restored).
+
+Re-review after fixes: registry now 37 rows, all classes from the defined key; no invented classifications; all rows consolidate settled material. Black-box test holds honestly — no row decides rather than consolidates. Verdict: **Approve**. Advanced review → done.
 
 ## Ordering note status (2026-07-06)
 
