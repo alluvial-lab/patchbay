@@ -26,7 +26,7 @@ Each required model area below is obligated at v0. Properties within each area a
 
 Current checked-model properties:
 
-- Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting`.
+- Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`, and `NoAcceptedToCompleted`.
 - Wrong-session prevention from `session_generation.qnt`: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `GenerationMonotonic`, and `LateGenerationInert`.
 - Reply correlation core from `reply_correlation.qnt`: `TypedCorrelation` for Reply → Command/Message only; response Operation → Elicitation is not covered.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
@@ -36,7 +36,7 @@ Current checked-model properties:
 
 **stated-normative** — documented v0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
-- OperationState transition adjacency and read/query lifecycle refinements: the no-`accepted → completed` adjacency rule and no-direct-to-completed fast-path reads rule are stated-normative until `command_lifecycle.qnt` is strengthened or an OperationState-specific model is promoted.
+- OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; spawn fleet authority and descendant-grant behavior.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
 - Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
@@ -56,8 +56,9 @@ Current checked-model properties:
 | terminal finality | existing `TerminalFinality` |
 | first durable terminal commit | existing `PreAppendTerminalChoice` + `LsnDeterminesTerminalWinner` |
 | idempotent retry | existing `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` |
+| no direct accepted-to-completed transition | existing `NoAcceptedToCompleted` |
 
-Classification: **checked-model by refinement only** for the listed properties. The full transition graph is **stated-normative**, not checked: the current `command_lifecycle.qnt` terminal-commit action allows any non-terminal state to commit any terminal candidate, so adjacency rules such as no `accepted → completed` require a strengthened lifecycle model or an OperationState-specific model before they can be claimed checked. Read/query Operations use the same lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
+Classification: **checked-model by refinement only** for the listed properties. The specific no-`accepted → completed` adjacency is checked by `NoAcceptedToCompleted`; the full transition graph remains **stated-normative**, not fully checked. Read/query Operations use the same lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
 
 ### New Elicitation model obligations (stated-normative)
 
@@ -372,7 +373,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 29 modeled properties (17 promoted, 12 draft), 17 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 30 modeled properties (18 promoted, 12 draft), 17 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -402,6 +403,7 @@ Summary: 29 modeled properties (17 promoted, 12 draft), 17 reserved-unmodeled st
 | `LateEventNoRewrite` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view |
 | `LateGenerationInert` | promoted | checked-model | specs/seed/session_generation.qnt | apalache-temporal | — | echo y \| quint verify session_generation.qnt --temporal late_generation_inert --max-steps 10 | late replies/events for tombstoned generations are stale_event audit records and do not mutate the live generation |
 | `LsnDeterminesTerminalWinner` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal lsn_determines_terminal_winner --max-steps 10 | for competing valid terminal candidates, the terminal winner is the one with the lowest committed LSN in the authority domain; once terminal, exactly one LSN records it |
+| `NoAcceptedToCompleted` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal no_accepted_to_completed --max-steps 10 | a command cannot transition directly from 'accepted' to 'completed'; it must pass through 'delivered' |
 | `NoCommandWithoutGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | commands that reach accepted state do so only with a live matching grant |
 | `NoOperationWithoutGrant` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `PreAppendTerminalChoice` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal pre_append_terminal_choice --max-steps 10 | before an LSN is assigned, the terminal winner may be chosen nondeterministically; after assignment, the LSN order is stable and determines all later snapshots/replay |
@@ -462,6 +464,7 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `LateEventNoRewrite` | stated-normative | — | — |
 | `LateGenerationInert` | checked-model | — | — |
 | `LsnDeterminesTerminalWinner` | checked-model | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |
+| `NoAcceptedToCompleted` | checked-model | — | — |
 | `NoCommandWithoutGrant` | stated-normative | [failure-missing-grant](../contracts/vectors/failure-missing-grant.json) (draft) | patchbay.Grant.allowed_operation_kinds<br>patchbay.Operation.kind<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome |
 | `NoOperationWithoutGrant` | stated-normative | — | — |
 | `PreAppendTerminalChoice` | checked-model | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |

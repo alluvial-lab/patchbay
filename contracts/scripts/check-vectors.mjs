@@ -23,6 +23,7 @@ const CHECKED_MODEL_PROPERTIES = [
   'LabelsCannotOverrideIdentity',
   'LateGenerationInert',
   'LsnDeterminesTerminalWinner',
+  'NoAcceptedToCompleted',
   'PreAppendTerminalChoice',
   'RetryAfterTerminalReturnsExisting',
   'RetryReusesIdAndKey',
