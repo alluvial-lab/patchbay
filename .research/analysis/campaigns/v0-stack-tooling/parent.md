@@ -12,7 +12,7 @@ Cross-specialist synthesis over four within-facet briefs (`internal-seam-connect
 
 ## Bottom line
 
-The v0 stack story is **coherent and does not reopen any committed architectural decision**. Each layer has a credible off-the-shelf primitive; none of the load-bearing picks is weak enough to revisit the topology, persistence, or walking-skeleton decisions. Patchbay's semantic core (LSN invariant, registry-driven state machines, authority) remains self-owned — the libraries are durable substrates, not protocol sources.
+The v0 stack story is **coherent and does not reopen any committed architectural decision** {inferred: composed-synthesis-judgment}. Each layer has a credible off-the-shelf primitive; none of the load-bearing picks is weak enough to revisit the topology, persistence, or walking-skeleton decisions. Patchbay's semantic core (LSN invariant, registry-driven state machines, authority) remains self-owned — the libraries are durable substrates, not protocol sources.
 
 The recommended v0 stack, per layer, with the decision each grounds:
 
@@ -20,7 +20,7 @@ The recommended v0 stack, per layer, with the decision each grounds:
 |---|---|---|
 | TS web framework | **Fastify** | First-party session/cookie/CSRF/WebSocket plugins + first-party Connect-ES Fastify server plugin path [fastify-session]{3} [fastify-csrf]{4} [fastify-websocket]{1} [connect-es-node]{6} |
 | Browser→web-server RPC | **Connect-Web** (`@connectrpc/connect-web`) | Typed client, fetch transport, server-streaming async iterables [connect-es-web]{1} [connect-es-web]{5} |
-| Web-server→Rust-core seam | **Connect-ES Node client over gRPC/HTTP2 to tonic** | Connect-ES is a first-class Node client library (not server-only); tonic is mature Rust gRPC [connect-node-client-transports]{1} [connect-node-client-transports]{6} [tonic-docs-current]{2} |
+| Web-server→Rust-core seam | **Connect-ES Node client over gRPC/HTTP2 to tonic** | Connect-ES is a first-class Node client library (not server-only); tonic is a documented Rust gRPC-over-HTTP/2 implementation [connect-node-client-transports]{1} [connect-node-client-transports]{6} [tonic-docs-current]{2} |
 | Rust durable log | **SQLite (WAL, `synchronous=FULL`) via rusqlite** | Single-writer-friendly durable substrate; Patchbay owns the LSN invariant [sqlite-wal]{2} [sqlite-isolation]{2} [rusqlite]{3} [rusqlite]{4} |
 | Rust async runtime | **tokio** | Non-blocking runtime covering timers, signals, fs, process [tokio]{4} [tokio]{5} |
 | Rust gRPC server | **tonic** | Documented Rust gRPC-over-HTTP/2 implementation with streaming request/response types, built on hyper/tower/tokio [tonic-docs-current]{1} [tonic-docs-current]{5} |
@@ -51,7 +51,7 @@ SQLite with WAL mode and `synchronous=FULL` provides a single-writer, crash-reco
 
 ### `feature-v0-walking-skeleton` — NOT reopened
 
-No reference project models a deployment-neutral human control plane for agent sessions with Patchbay's full semantic bundle (durable command acceptance/delivery/execution state, reconnectable snapshots, typed response slots, explicit authority across adapters) [claude-code-remote-control-current]{2} [cursor-cloud-agents-current]{3} [codex-appserver-current]{2} [opencode-server-docs-current]{4} {inferred: cross-source comparison}. The high-overlap precedents (Claude Code Remote Control, Cursor Cloud Agents, Codex app-server, OpenCode) are each product/vendor-bound control surfaces, not neutral authority-bearing cores. The walking-skeleton scope does not change: Patchbay remains self-grounded, not pattern-borrowed.
+No fetched reference project models a deployment-neutral human control plane for agent sessions with Patchbay's full semantic bundle (durable command acceptance/delivery/execution state, reconnectable snapshots, typed response slots, explicit authority across adapters) {inferred: cross-source comparison} {confidence: fetched-corpus-limited} [claude-code-remote-control-current]{2} [cursor-cloud-agents-current]{3} [codex-appserver-current]{2} [opencode-server-docs-current]{4}. The high-overlap precedents (Claude Code Remote Control, Cursor Cloud Agents, Codex app-server, OpenCode) are each product/vendor-bound control surfaces, not neutral authority-bearing cores. The walking-skeleton scope does not change: Patchbay remains self-grounded, not pattern-borrowed.
 
 Partial analogues worth borrowing patterns from (not forking): process supervisors for state-axis separation and restart/backoff vocabulary [systemd-systemctl]{2} [systemd-service-semantics]{3} [supervisor-process-states]{1}; tmux/screen for attach/reconnect persistence [tmux-session-persistence]{3} [gnu-screen-session-persistence]{4}; Jupyter for `parent_header` correlation [jupyter-kernel-messaging]{2}; the vendor agent APIs for generated-contract and event-stream shapes [codex-appserver-current]{5} [opencode-server-docs-current]{8}.
 
@@ -72,7 +72,7 @@ No direct source contradiction surfaced across or within the four briefs. The in
 
 - **tonic as Rust server half** — independently attested by `internal-seam-connect` (gRPC/HTTP2 fit) and `rust-core-primitives` (maturity + streaming) [tonic-docs-current]{2} [tonic]{1}.
 - **Registry-as-SSOT for state machines** — `rust-core-primitives` (Rust side: hand-roll or generate registry-driven tables; statig/smlang only downstream [statig]{3} [smlang]{3}) and `ts-web-and-browser` (browser side: generated reducer first; XState must not duplicate protocol registries [xstate-docs]{3} [xstate-docs]{12}) reach the identical conclusion.
-- **Connect-Web browser streaming limit** — independently confirmed by `internal-seam-connect` and `ts-web-and-browser` [connect-web-client-streaming]{2} [connect-es-web]{2}.
+- **Connect-Web browser streaming limit** — independently confirmed by `internal-seam-connect` and `ts-web-and-browser` [connect-es-web]{2}.
 
 Within-specialist architectural tensions were surfaced honestly as `qualifies`/`incommensurable` (e.g. Connect-Web typed streaming vs WebSocket bidirectional messaging are incommensurable — adjacent but different problems [connect-es-web]{2} [fastify-websocket]{6}).
 

@@ -81,3 +81,52 @@ No thin-attestation failure surfaced.
 
 - `cursor-cloud-agents-current` is not currently re-fetchable from this host, but the attestation body is substantive: it has a summary plus 12 specific key passages covering beta status, durable agent/run split, concurrency, run status, SSE, resume scope, cancellation, archive/delete, and creation configuration. It is acceptable as an attested record, with the synthesis's re-verify caveat retained.
 - `gnu-screen-session-persistence` is also substantive despite the unreachable source: it has a summary plus 7 specific key passages covering detached continuation, detach/reattach modes, session listing/status labels, detached creation, auth/multiuser hints, and remote query. It is a minor analogue, not load-bearing.
+
+## Re-verification (after revision)
+
+**Verdict: NEEDS-REVISION.** The revision fixed the malformed citation tokens, the Proptest/Tokio/security citation details, and the SQLite fit marking, but two load-bearing prior findings remain unresolved: the novelty claim still lacks the fetched-corpus-limited qualifier at the claim site, and the cross-specialist Connect-Web streaming-limit sentence still cites the wrong attestation. The qualitative `tonic is mature Rust gRPC` wording and unmarked `does not reopen` synthesis language also remain.
+
+### (a) Semantic citation-chain walk — PARTIAL
+
+- **FIXED:** Proptest table row now cites `[proptest]{1} [proptest]{2} [proptest]{3} [proptest]{8}`, covering property testing, shrinking, strategy composition, and state-machine testing.
+- **FIXED:** `feature-persistence-snapshot-model` now marks the SQLite fit as `{inferred: fits-the-LSN-ordered-log-contract}` and cites `[patchbay-architecture-v0-topology]{1}` for the storage-port/topology assertion.
+- **STILL-BROKEN:** `feature-v0-walking-skeleton` still says `No reference project models...` rather than `No fetched reference project...`, and the claim site has `{inferred: cross-source comparison}` but no `{confidence: fetched-corpus-limited}` marker. The later verification note says such a marker exists, but it is not present on the claim.
+- **STILL-BROKEN:** Cross-specialist convergence still cites `[connect-web-client-streaming]{2} [connect-es-web]{2}` for the browser streaming limit. `[connect-web-client-streaming]{2}` is only a `createClient` example; `[connect-es-web]{2}` is the attestation that supports the browser-only-server-streaming limit.
+- **FIXED:** Security wiring now cites `[fastify-csrf]{9}` for the custom CSRF header extractor, marks `saveUninitialized: false` as inferred/extended, and uses `[mdn-set-cookie]{4}`/`{5}` plus `[owasp-session-management]{7}` for `__Host-` constraints.
+
+### (b) Claim-shapes the mechanical lint missed — PARTIAL
+
+- **STILL-BROKEN:** The novelty claim still lacks `{confidence: fetched-corpus-limited}` at the claim site and still uses universal-sounding `No reference project models...` phrasing.
+- **STILL-BROKEN:** The bottom table still says `tonic is mature Rust gRPC`; the prior requested rewording to source-attested language such as documented Rust gRPC-over-HTTP/2 / production-systems building block unless a maintenance/adoption source was added.
+- **PARTIAL:** `fits the LSN-ordered log contract` is now marked as inferred, but the Bottom line still states the stack `does not reopen any committed architectural decision` without an epistemic marker even though that is a composed synthesis judgment.
+
+### (c) Coherence-read for smoothed contradictions — FIXED
+
+The Registry-as-SSOT convergence is now framed as specialist convergence on Patchbay's principle (`rust-core-primitives` and `ts-web-and-browser` reaching the same conclusion), not as a direct external-source attestation by statig/smlang/XState docs. No new smoothed contradiction surfaced.
+
+### (d) Noise-domination / relevance-weighting — PARTIAL
+
+- **FIXED:** Proptest now uses the more complete `{1}{2}{3}{8}` citation set.
+- **STILL-BROKEN:** The cross-specialist Connect-Web streaming-limit sentence still includes the less-relevant/wrong `[connect-web-client-streaming]{2}` citation instead of citing only `[connect-es-web]{2}` or another passage that explicitly states the browser streaming limitation.
+- **FIXED:** Security config now uses `[fastify-csrf]{9}` for token extraction and `[mdn-set-cookie]{4}`/`{5}` plus `[owasp-session-management]{7}` for `__Host-` constraints.
+- **FIXED:** Tokio row now cites `[tokio]{4}`/`{5}` for fs/process/signals/runtime coverage and no longer relies on the weaker `{1}`/`{3}` pairing for that claim.
+
+### (e) Quote-context walk (GR.4) — FIXED / CLEAN
+
+Re-confirmed no issue. The revision did not introduce verbatim source-quote framing problems.
+
+### (f) Analytical-tier-inheritance walk — FIXED / CLEAN
+
+Re-confirmed no lens-substrate citation violation in `parent.md`: well-formed `[handle]{N}` citations still resolve to attestation-tier files rather than specialist briefs or campaign synthesis artifacts.
+
+### (g) Line-reference walk — FIXED
+
+A whole-file scan found no malformed `{N]` citation closers. The prior `[sqlite-isolation]{3]`, `[sqlite-wal]{8]`, and `[owasp-session-management]{7]` issues are now proper `{N}` tokens.
+
+### (h) Thin-attestation check (GR.5, semantic) — FIXED / CLEAN
+
+Re-confirmed no thin-attestation failure. The previously noted unreachable-source caveats remain transparently documented and do not become load-bearing failures.
+
+### New issues introduced by the revision
+
+No separate new issue surfaced beyond the still-unfixed or partially fixed prior findings above. One internal inconsistency should be corrected as part of the novelty fix: the verification notes now claim there is a residual `{confidence: fetched-corpus-limited}` marker on the novelty claim, but the marker is absent from the actual claim site.
