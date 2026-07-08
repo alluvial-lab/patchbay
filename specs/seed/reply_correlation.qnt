@@ -1,6 +1,6 @@
 // Patchbay seed model: typed reply correlation across separate id spaces
 //
-// This model covers the checked-normative TypedCorrelation property from
+// This model covers the promoted TypedCorrelation model property from
 // docs/PROTOCOL.md "Messages, commands, and replies". It models command ids,
 // message ids, reply ids, and the event id space (implicitly: event id = LSN,
 // never accepted as a reply correlation target) as separate spaces.
@@ -136,12 +136,11 @@ module reply_correlation {
   }
 
   // ---------------------------------------------------------------------------
-  // Checked property
+  // Promoted model property
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    TypedCorrelation
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/reply_correlation.qnt
   //   language:    quint

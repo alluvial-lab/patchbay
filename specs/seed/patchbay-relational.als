@@ -28,13 +28,12 @@ sig Message {
 }
 
 // ---------------------------------------------------------------------------
-// Checked-normative: the one relational invariant that is genuinely checkable
+// Promoted model: the one relational invariant that is genuinely checkable
 // in a v0 static snapshot without becoming tautological.
 // ---------------------------------------------------------------------------
 
 // @promotion {
 //   property:    ActorIdsUnique
-//   tier:        checked-normative
 //   status:      promoted
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
@@ -64,7 +63,6 @@ assert ActorIdsUniqueAssert {
 
 // @promotion {
 //   property:    AuthorityGraphAcyclic
-//   tier:        stated-normative
 //   status:      draft
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
@@ -89,7 +87,6 @@ assert ActorIdsUniqueAssert {
 
 // @promotion {
 //   property:    SenderMatchesClaim
-//   tier:        stated-normative
 //   status:      draft
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy

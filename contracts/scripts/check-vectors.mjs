@@ -15,6 +15,7 @@ const verificationPath = path.join(repoRoot, 'docs', 'VERIFICATION.md');
 const CHECKED_MODEL_PROPERTIES = [
   'ActorIdsUnique',
   'BoundaryDedup',
+  'browser_local_state_not_authority',
   'CommandDurability',
   'CsrfRejectsMissingProof',
   'CsrfRejectsUnauthenticated',
@@ -67,7 +68,6 @@ const STATED_NORMATIVE_PROPERTIES = [
   'SubscriptionCursorReplayAuthorized',
   'SubscriptionGrantChecked',
   'TimeoutNeitherSuccessNorDenial',
-  'browser_local_state_not_authority',
 ];
 
 // Descriptive, non-formal ids that may appear in draft boundary vectors. They

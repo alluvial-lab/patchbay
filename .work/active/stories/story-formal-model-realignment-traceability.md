@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-traceability
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: []
@@ -64,3 +64,27 @@ Update `check-vectors.mjs` arrays: move `browser_local_state_not_authority` from
 ## Environment note (mechanical — resolve in-stride)
 
 `quint` and `buf` are installed as npm globals but their bin dir (`/home/agent/.npm-global/bin`) is not on PATH in this harness. The implementer must prefix invocations with that PATH: `export PATH="/home/agent/.npm-global/bin:$PATH"` at the start of the verification run, or invoke via the full path `/home/agent/.npm-global/bin/quint`. Version: Quint 0.32.0. This is a mechanical environment detail, not a semantic question — resolve it in-stride and log under Implementation notes. The `@promotion` block `invocation` fields use bare `quint verify ...`; that's the canonical form for docs — the implementer applies the PATH fix at run time, it does not change the recorded invocation.
+
+## Implementation notes
+
+- Files changed:
+  - `contracts/scripts/check-models.mjs` (new model-promotion traceability/tier-derivation check)
+  - `contracts/scripts/check-vectors.mjs` (`browser_local_state_not_authority` moved to checked-model registry)
+  - `contracts/ts/package.json` (`check:models` script)
+  - `docs/VERIFICATION.md` (checked-model list, generated model traceability table, vector table refresh)
+  - `specs/seed/command_lifecycle.qnt`, `session_generation.qnt`, `reply_correlation.qnt`, `csrf_browser.qnt`, `patchbay-relational.als`, `snapshot_recovery.qnt`, `authority.qnt` (dropped `tier:` from promotion blocks and updated stale tier headers)
+- Tests added: no standalone unit tests; added executable `check-models.mjs` acceptance checks and generated-table drift failure behavior.
+- Mechanical deviations / rationale:
+  - Used source parsing for `check-vectors.mjs` arrays rather than refactoring a shared registry module. Rationale: zero-refactor path avoids changing the side-effecting `check-vectors.mjs` import behavior in this story while still preventing docs mutation by import.
+  - Applied the required runtime PATH fix for Quint commands: `export PATH="/home/agent/.npm-global/bin:$PATH"`. Promotion `invocation` fields intentionally remain bare canonical commands.
+  - `check-models.mjs` writes the generated model traceability block and exits non-zero if that block was stale; a clean second run exits 0. This makes CI drift visible while still providing the regeneration path.
+- Verification output:
+  - `node contracts/scripts/check-models.mjs`: passed. Summary: 29 promotion blocks, 46 registered property ids, 17 checked-model, 0 checked-normative, 29 stated-normative, generated table already current.
+  - `node contracts/scripts/check-vectors.mjs`: passed. Summary: 12 vectors, 0 promoted vectors, 17 checked-model properties without promoted vectors (informational).
+  - VR4 pass: `quint verify csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12` exited 0 with `[ok] No violation found`.
+  - VR4 mutation: changed `serverAccepts` to accept authenticated active sessions without `validCsrfProof`; `quint verify ... browser_local_state_not_authority ...` exited 1 with `[violation] Found an issue` and `error: found a counterexample`.
+  - Checked Quint model syntax/typecheck: `quint parse` + `quint compile` passed for `command_lifecycle.qnt`, `session_generation.qnt`, `reply_correlation.qnt`, and `csrf_browser.qnt`.
+  - Coverage failure check: temporarily removed the `browser_local_state_not_authority` promotion block; `node contracts/scripts/check-models.mjs` exited 1 and named the property as missing/derived stated-normative against a checked-model registry entry.
+  - Tier field check: `grep -R "tier:" specs/seed/*.qnt specs/seed/*.als` found no remaining `tier:` lines.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

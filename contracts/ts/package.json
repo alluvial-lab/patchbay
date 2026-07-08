@@ -17,6 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "gen": "cd .. && buf generate",
     "check:vectors": "node ../scripts/check-vectors.mjs",
+    "check:models": "node ../scripts/check-models.mjs",
     "check:drift": "node ../scripts/check-generated-drift.mjs"
   },
   "dependencies": {

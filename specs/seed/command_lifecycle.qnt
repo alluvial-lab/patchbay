@@ -2,7 +2,7 @@
 //
 // This is the fused state machine for operator-intent delivery. It models accepted-command
 // durability, the first-durable-terminal-commit-wins race, and idempotency-boundary dedup in
-// one model. It carries 7 checked-normative properties of feature-formal-model-seed.
+// one model. It carries 7 promoted model properties of feature-formal-model-seed.
 //
 // Model variables trace to docs/PROTOCOL.md:
 //   state       <-> CommandState (the canonical registry: accepted/delivered/running/terminal)
@@ -116,12 +116,11 @@ module command_lifecycle {
   }
 
   // ---------------------------------------------------------------------------
-  // Checked properties (each with an inline @promotion block)
+  // Promoted model properties (each with an inline @promotion block)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    CommandDurability
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -136,7 +135,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    TerminalFinality
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -159,7 +157,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    PreAppendTerminalChoice
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -180,7 +177,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    LsnDeterminesTerminalWinner
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -198,7 +194,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    BoundaryDedup
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -216,7 +211,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    RetryReusesIdAndKey
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
@@ -236,7 +230,6 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    RetryAfterTerminalReturnsExisting
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint

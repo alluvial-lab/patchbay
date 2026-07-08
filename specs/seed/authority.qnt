@@ -309,12 +309,11 @@ module authority {
   }
 
   // ---------------------------------------------------------------------------
-  // Checked properties (DRAFT — reserved IDs are intentionally draft-status)
+  // Draft model properties (reserved IDs are intentionally draft-status)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    NoCommandWithoutGrant
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
@@ -332,7 +331,6 @@ module authority {
 
   // @promotion {
   //   property:    CompoundIssuer
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
@@ -352,7 +350,6 @@ module authority {
 
   // @promotion {
   //   property:    GrantAuthorityIsCommandKinds
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
@@ -371,7 +368,6 @@ module authority {
 
   // @promotion {
   //   property:    RevocationPreventsFuture
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint

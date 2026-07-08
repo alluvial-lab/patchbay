@@ -105,12 +105,11 @@ module session_generation {
   }
 
   // ---------------------------------------------------------------------------
-  // Checked properties (each with inline promotion metadata)
+  // Promoted model properties (each with inline promotion metadata)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    SessionIdentityTuple
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
@@ -133,7 +132,6 @@ module session_generation {
 
   // @promotion {
   //   property:    GenerationMonotonic
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
@@ -163,7 +161,6 @@ module session_generation {
 
   // @promotion {
   //   property:    LateGenerationInert
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
@@ -188,7 +185,6 @@ module session_generation {
 
   // @promotion {
   //   property:    LabelsCannotOverrideIdentity
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint

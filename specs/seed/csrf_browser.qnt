@@ -136,12 +136,11 @@ module csrf_browser {
   }
 
   // ---------------------------------------------------------------------------
-  // Checked properties (each with an inline @promotion block)
+  // Promoted model properties (each with an inline @promotion block)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    CsrfRejectsUnauthenticated
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/csrf_browser.qnt
   //   language:    quint
@@ -161,7 +160,6 @@ module csrf_browser {
 
   // @promotion {
   //   property:    CsrfRejectsMissingProof
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/csrf_browser.qnt
   //   language:    quint
@@ -185,7 +183,6 @@ module csrf_browser {
 
   // @promotion {
   //   property:    RevokedSessionCannotCommand
-  //   tier:        checked-normative
   //   status:      promoted
   //   model:       specs/seed/csrf_browser.qnt
   //   language:    quint
@@ -199,11 +196,22 @@ module csrf_browser {
   val revoked_session_cannot_command =
     accepted.implies(not(sessionStatus.get(attemptedSession).in(DEAD_STATUSES)))
 
-  // Non-promoted documentation invariant for the local-UI authority rule from
-  // docs/VERIFICATION.md. INDEPENDENT oracle: asserts raw operatorSessions + csrfProofs +
-  // sessionStatus facts against the ATTEMPTED evidence, not the serverAccepts helper or the
-  // recorded trace. Mutation test: breaking serverAccepts' sub-helpers, or an action lying
-  // about the recorded trace, would still be caught here.
+  // @promotion {
+  //   property:    browser_local_state_not_authority
+  //   status:      promoted
+  //   model:       specs/seed/csrf_browser.qnt
+  //   language:    quint
+  //   backend:     apalache
+  //   invocation:  quint verify csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12
+  //   bounds:      { sessions: 4, proofs: 5, max_steps: 12 }
+  //   expected:    pass
+  //   proto_fields: [none]
+  //   semantics:   browser-local UI claims cannot grant authority or override server-side session/CSRF grant checks
+  // }
+  // Promoted local-UI authority invariant from docs/VERIFICATION.md. INDEPENDENT oracle:
+  // asserts raw operatorSessions + csrfProofs + sessionStatus facts against the ATTEMPTED
+  // evidence, not the serverAccepts helper or the recorded trace. Mutation test: breaking
+  // serverAccepts' sub-helpers, or an action lying about the recorded trace, is caught here.
   val browser_local_state_not_authority =
     accepted.implies(
       operatorSessions.contains(attemptedSession)

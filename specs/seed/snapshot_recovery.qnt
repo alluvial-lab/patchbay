@@ -340,7 +340,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    SnapshotStaleRejected
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
@@ -358,7 +357,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    SnapshotCrossDomainRejected
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
@@ -375,7 +373,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    SnapshotConsistentPrefix
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
@@ -398,7 +395,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    LateEventNoRewrite
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
@@ -417,7 +413,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    CrashNoAcceptedLost
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
@@ -436,7 +431,6 @@ module snapshot_recovery {
 
   // @promotion {
   //   property:    IdempotentLogReplay
-  //   tier:        stated-normative
   //   status:      draft
   //   model:       specs/seed/snapshot_recovery.qnt
   //   language:    quint
