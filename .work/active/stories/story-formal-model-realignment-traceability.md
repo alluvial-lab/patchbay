@@ -60,3 +60,7 @@ Update `check-vectors.mjs` arrays: move `browser_local_state_not_authority` from
 - Edit (arrays): `contracts/scripts/check-vectors.mjs`
 - Edit (generated table): `docs/VERIFICATION.md`
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Units TR + M
+
+## Environment note (mechanical — resolve in-stride)
+
+`quint` and `buf` are installed as npm globals but their bin dir (`/home/agent/.npm-global/bin`) is not on PATH in this harness. The implementer must prefix invocations with that PATH: `export PATH="/home/agent/.npm-global/bin:$PATH"` at the start of the verification run, or invoke via the full path `/home/agent/.npm-global/bin/quint`. Version: Quint 0.32.0. This is a mechanical environment detail, not a semantic question — resolve it in-stride and log under Implementation notes. The `@promotion` block `invocation` fields use bare `quint verify ...`; that's the canonical form for docs — the implementer applies the PATH fix at run time, it does not change the recorded invocation.
