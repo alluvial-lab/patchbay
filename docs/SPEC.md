@@ -56,6 +56,19 @@ Patchbay components may run wherever the operator chooses:
 
 The core model does not assume shared filesystem access, shared process trees, colocated sessions, or a single machine. Adapters declare the capabilities and state they expose.
 
+## V0 performance posture
+
+V0 commits to **no quantitative performance target** — no p99/p95 latency budget, no throughput floor, no concurrent-session cap, no event-stream lag bound, no WAL-append latency target. v0 is single-operator, single-core, and local-first; there is no load profile to target and no second operator to contend with. Setting fabricated numbers now would constrain the implementation before a real usage pattern exists to measure against.
+
+What v0 does carry is a **qualitative responsiveness floor**, stated v0-only: the operator should not *perceive* Patchbay as laggy or lossy during normal single-operator Remote-Pi-style workflows — sending a prompt, switching sessions, reconnecting after a drop, viewing delivery state. This is the product-feel floor already implied by [`docs/UX.md`](UX.md) ("confidence and continuity of a mature first-party remote agent app," "low-friction reconnect," "fast switching"); this section makes it an explicit posture rather than an accidental one. It is testable as "feels responsive under normal single-operator use," not against a number.
+
+Consequences for downstream work:
+- Performance budgets, SLAs, and quantitative targets are **deferred** until a real load profile exists (multi-operator contention, HA, replicated cores, or a measured bottleneck demanding a budget). Adding them is a future scoping act, not a v0 obligation.
+- Revisit-triggers that reference "v0 latency targets" (e.g., the `v0-stack-tooling` research finding on SQLite + `synchronous=FULL`) test against this qualitative floor in actual single-operator use, not against a committed number. A revisit fires if the implementation *feels* unresponsive or drops accepted work under normal use, not if it misses a fabricated budget.
+- Observability surfaces (`feature-observability-operator-admin`) answer "is this fast enough?" operationally against this floor, not by reporting against a spec'd SLA.
+
+This posture is v0-only. "v0 has no quantitative performance target" is the v0 scope statement; it is not a timeless "Patchbay has no performance requirements" architecture claim. A future milestone that needs a budget adds it as a scope act.
+
 ## Primary stack choices
 
 ### Core daemon
