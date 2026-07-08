@@ -1,7 +1,7 @@
 ---
 id: feature-observability-operator-admin
 kind: feature
-stage: done
+stage: review
 tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-persistence-snapshot-model]
