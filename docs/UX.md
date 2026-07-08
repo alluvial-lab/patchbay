@@ -108,9 +108,9 @@ V0 CLI diagnostic commands are read-only projections of existing durable state. 
 | Command | Surfaces | Data source |
 |---|---|---|
 | `audit-query` | Filter audit records by actor / command / target / time / outcome. | audit log, read via a `query` Operation against the core (the audit log is durable and queryable per `docs/SECURITY.md` Audit events) |
-| `inspect-command <id>` | Full lifecycle + audit trail for one command: accepted → routed → delivered → running → terminal, with timestamps + LSNs. Answers "why didn't my command deliver?" without a separate trace store. | event log + audit records, read via a `query` Operation filtered by command id / correlation id |
+| `inspect-command <id>` | Full lifecycle + audit trail for one command: accepted → routed → delivered → running → terminal, with timestamps + LSNs. Answers "why didn't my command deliver?" without a separate trace store. (`routed` is a routing audit entry, not a canonical `CommandState` — see `docs/PROTOCOL.md` CommandState registry.) | event log + audit records, read via a `query` Operation filtered by command id / correlation id |
 | `session-health` | Session connectivity × activity axes — the full canonical registries: `SessionConnectivityState` (`live`/`stale`/`offline`/`unknown`/`failed`) × `SessionActivityState` (`idle`/`working`/`unknown`) — for one or all sessions. | session state axes (`docs/PROTOCOL.md` Session state axes) |
-| `adapter-status` | Attached adapters, capability manifests, attach LSN, adapter generation. | adapter registry (`docs/ARCHITECTURE.md` Adapter plane; adapter lifecycle is audited per PROTOCOL.md) |
+| `adapter-status` | Attached adapters, capability manifests (excluding raw `attachment_method.descriptor` — see SECURITY redaction), attach LSN, adapter generation. | adapter registry (`docs/ARCHITECTURE.md` Adapter plane; adapter lifecycle is audited per PROTOCOL.md) |
 
 The delivery trace surfaced by `inspect-command` is a **projection**, not an authoritative command state; canonical `CommandState` remains as defined in `docs/PROTOCOL.md`. The trace is consistent with the snapshot-correctness rule that UI/presentation state is never authoritative (`docs/ARCHITECTURE.md` State and snapshot plane).
 
