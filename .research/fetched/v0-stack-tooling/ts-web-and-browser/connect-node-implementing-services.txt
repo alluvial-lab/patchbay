@@ -1,0 +1,407 @@
+# URL: https://connectrpc.com/docs/node/implementing-services/
+    Skip to content
+
+   Connect
+   Docs GitHub Slack Demo
+   (BUTTON) Search CtrlK
+   (BUTTON) Cancel
+   (BUTTON) Created by
+   (BUTTON)
+   (BUTTON)
+     * Introduction
+     * Governance
+          + Governance
+          + Security
+          + RFCs
+               o 002: CORS and authn for Go
+               o 003: Amend Connect HTTP codes
+               o 004: Dart Implementation
+               o 005: Python Implementation
+               o 006: Request validation for ECMAScript
+               o 007: Rust Implementation
+     * Connect for Go
+          + Getting started
+          + Routing
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Observability
+          + Streaming
+          + Deployment & h2c
+          + Get Requests and Caching
+          + gRPC compatibility
+          + Common errors
+          + Godoc
+     * Connect for Web
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Headers & trailers
+          + Cancellation & Timeouts
+          + Interceptors
+          + Choosing a protocol
+          + Supported browsers & frameworks
+          + Testing
+          + Get Requests and Caching
+          + Server-Side Rendering (SSR)
+          + Connect for TanStack Query
+          + Migrating to v2
+     * Connect for Node.js
+          + Migrating to v2
+          + Getting started
+          + Implementing services
+          + Server plugins
+          + Interceptors
+          + Using clients
+          + Get Requests and Caching
+          + Testing
+          + Timeouts
+     * Connect for Python
+          + Getting started
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Streaming
+          + Deployment
+          + Get Requests and Caching
+          + gRPC Compatibility
+          + Observability
+          + Testing
+     * Connect for Kotlin
+          + Getting started
+          + Android example
+          + Generating code
+          + Using clients
+          + Get Requests and Caching
+          + Errors
+          + Interceptors
+     * Connect for Swift
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing & mocking
+     * Connect for Dart
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing
+     * cURL & other clients
+     * Multi-Protocol Support
+     * CORS
+     * Connect Protocol
+     * FAQs
+
+   GitHubSlack
+   (BUTTON)
+   On this page
+     * Overview
+     * Register a service
+     * Plain functions
+     * Context
+     * Errors
+     * Error details
+     * Streaming
+     * Helper Types
+
+On this page
+
+     * Overview
+     * Register a service
+     * Plain functions
+     * Context
+     * Errors
+     * Error details
+     * Streaming
+     * Helper Types
+
+Implementing services
+
+   Connect handles HTTP routes and most plumbing for you, but implementing
+   the actual business logic is still up to you.
+
+   You always register your implementation on the ConnectRouter. We
+   recommend creating a connect.ts file with a registration function in
+   your project:
+
+   import { ConnectRouter } from "@connectrpc/connect";
+
+   export default (router: ConnectRouter) => {}
+   (BUTTON)
+
+Register a service
+
+   Section titled “Register a service”
+
+   Let’s say you’ve defined a simple service in Protobuf:
+
+   message SayRequest {
+
+   string sentence = 1 [
+   (buf.validate.field).string.min_len = 1,
+   (buf.validate.field).string.max_len = 250
+   ];
+   }
+   message SayResponse {
+   string sentence = 1;
+   }
+   service ElizaService {
+   rpc Say(SayRequest) returns (SayResponse) {}
+   }
+   (BUTTON)
+
+   To register this service, call router.service():
+
+   import { ConnectRouter, HandlerContext } from "@connectrpc/connect";
+
+   import { ElizaService, SayRequest } from
+   "./gen/connectrpc/eliza/v1/eliza_pb";
+   import { create } from "@bufbuild/protobuf";
+   export default (router: ConnectRouter) =>
+   router.service(ElizaService, {
+   async say(req: SayRequest, context: HandlerContext) {
+   return {
+   sentence: `You said ${req.sentence}`,
+   };
+   }
+   });
+   (BUTTON)
+
+   Your method say() receives the request message and a context object,
+   and returns a response message. It’s a plain function!
+
+Plain functions
+
+   Section titled “Plain functions”
+
+   Your function can return a response message, or a promise for a
+   response message, or just an initializer for a response message:
+
+   function say(req: SayRequest) {
+
+   return create(SayResponseSchema, { sentence: `You said ${req.sentence}`
+   });
+   }
+   (BUTTON)
+
+   async function say(req: SayRequest) {
+
+   return { sentence: `You said ${req.sentence}` };
+   }
+   (BUTTON)
+
+   const say = (req: SayRequest) => ({ sentence: `You said
+   ${req.sentence}` });
+
+   (BUTTON)
+
+   You can register any of these functions for the ElizaService.
+
+Context
+
+   Section titled “Context”
+
+   The context argument gives you access to headers and service metadata:
+
+   import { HandlerContext } from "@connectrpc/connect";
+
+   import { create } from "@bufbuild/protobuf";
+   import { SayRequest } from "./gen/connectrpc/eliza/v1/eliza_pb";
+   function say(req: SayRequest, context: HandlerContext) {
+   console.log("Handling", context.service.typeName, context.method.name)
+   console.log("Foo:", context.requestHeader.get("Foo"))
+   context.responseHeader.set("Foo", "Bar");
+   return { sentence: `You said ${req.sentence}` };
+   }
+   (BUTTON)
+
+   It can also be used to access arbitrary values that are passed from
+   either server plugins or interceptors. Please refer to the docs on
+   interceptors to learn more.
+
+Errors
+
+   Section titled “Errors”
+
+   Instead of returning a response, your method can also raise an error:
+
+   import { Code, ConnectError } from "@connectrpc/connect";
+
+   function say() {
+   throw new ConnectError("I have no more words.",
+   Code.ResourceExhausted);
+   }
+   (BUTTON)
+
+   Code is one of Connect’s error codes. Besides the code and a message,
+   errors can also contain metadata (a Headers object) and error details.
+
+Error details
+
+   Section titled “Error details”
+
+   Error details are a powerful feature. Any Protobuf message can be
+   transmitted as an error detail. Let’s use google.rpc.LocalizedMessage
+   to localize our error message:
+
+   Terminal window
+
+   $ npx buf generate buf.build/googleapis/googleapis
+
+   (BUTTON)
+
+   import { Code, ConnectError } from "@connectrpc/connect";
+
+   import { ElizaService } from "./gen/connectrpc/eliza/v1/eliza_pb";
+   import { LocalizedMessageSchema } from
+   "./gen/google/rpc/error_details_pb";
+   function say() {
+   const details = [
+   {
+   desc: LocalizedMessageSchema,
+   value: {
+   locale: "fr-CH",
+   message: "Je n'ai plus de mots.",
+   }
+   },
+   {
+   desc: LocalizedMessageSchema,
+   value: {
+   locale: "ja-JP",
+   message: "もう言葉がありません。",
+   }
+   },
+   ];
+   const metadata = new Headers({
+   "words-left": "none"
+   });
+   throw new ConnectError(
+   "I have no more words.",
+   Code.ResourceExhausted,
+   metadata,
+   details
+   );
+   }
+   (BUTTON)
+
+Streaming
+
+   Section titled “Streaming”
+
+   Before showing the various handlers for streaming endpoints, we’d like
+   to reference the Streaming page from Connect-Go as a caveat. While
+   Connect for Node.js does support all three variations of streaming
+   endpoints, there are tradeoffs that should be considered before diving
+   in.
+
+   Streaming can be a very powerful approach to APIs in the right
+   circumstances, but it also requires great care. Remember, with great
+   power comes great responsibility.
+
+   In client streaming, the client sends multiple messages. Once the
+   server receives all the messages, it responds with a single message. In
+   Protobuf schemas, client streaming methods look like this:
+
+   service ElizaService {
+
+   rpc Vent(stream VentRequest) returns (VentResponse) {}
+   }
+   (BUTTON)
+
+   In TypeScript, client streaming methods receive an asynchronous
+   iterable of request messages (you can iterate over them with a for
+   await…of loop):
+
+   async function vent(reqs: AsyncIterable<VentRequest>):
+   Promise<VentResponse> {}
+
+   (BUTTON)
+
+   In server streaming, the client sends a single message, and the server
+   responds with multiple messages. In Protobuf schemas, server streaming
+   methods look like this:
+
+   service ElizaService {
+
+   rpc Introduce(IntroduceRequest) returns (stream IntroduceResponse) {}
+   }
+   (BUTTON)
+
+   In TypeScript, server streaming methods receive a request message, and
+   return an asynchronous iterable of response messages, typically with a
+   generator function.
+
+   async function *introduce(req: IntroduceRequest) {
+
+   yield { sentence: `Hi ${req.name}, I'm Eliza` };
+   yield { sentence: `How are you feeling today?` };
+   }
+   (BUTTON)
+
+   In bidirectional streaming (often called bidi), the client and server
+   may both send multiple messages. Often, the exchange is structured like
+   a conversation: the client sends a message, the server responds, the
+   client sends another message, and so on. Keep in mind that this always
+   requires end-to-end HTTP/2 support (regardless of RPC protocol)!
+
+Helper Types
+
+   Section titled “Helper Types”
+
+   Service implementations are type-safe. The service() method of the
+   ConnectRouter accepts a ServiceImpl<T>, where T is a service type. A
+   ServiceImpl has a method for each RPC, typed as MethodImp<M>, where M
+   is a method info object.
+
+   You can use these types to compose your service without registering it
+   right away:
+
+   import type { MethodImpl, ServiceImpl } from "@connectrpc/connect";
+
+   export const say: MethodImpl<typeof ElizaService.method.say> = ...
+   export const eliza: ServiceImpl<typeof ElizaService> = {
+   // ...
+   };
+   export class Eliza implements ServiceImpl<typeof ElizaService> {
+   say(req: SayRequest) {
+   return {
+   sentence: `You said ${req.sentence}`,
+   };
+   }
+   }
+   (BUTTON)
+
+   Registering the examples above:
+
+   import { ConnectRouter } from "@connectrpc/connect";
+
+   import { ElizaService } from "./gen/connectrpc/eliza/v1/eliza_pb";
+   import { say, eliza, Eliza } from "./other-file";
+   export default (router: ConnectRouter) => {
+   // using const say
+   router.service(ElizaService, { say });
+   // alternative for using const say
+   router.rpc(
+   ElizaService.method.say,
+   say
+   );
+   // using const eliza
+   router.service(ElizaService, eliza);
+   // using class Eliza
+   router.service(ElizaService, new Eliza());
+   }
+   (BUTTON)
+
+   Note that ConnectRouter.service allows you to omit methods. The router
+   will automatically add a method that responds with an error code
+   unimplemented.
+
+   Terms Privacy Trademarks License
+   Copyright © 2022–2026 The Connect Authors
+   We are a Cloud Native Computing Foundation sandbox project

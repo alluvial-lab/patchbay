@@ -1,0 +1,244 @@
+# URL: https://connectrpc.com/docs/web/choosing-a-protocol/
+    Skip to content
+
+   Connect
+   Docs GitHub Slack Demo
+   (BUTTON) Search CtrlK
+   (BUTTON) Cancel
+   (BUTTON) Created by
+   (BUTTON)
+   (BUTTON)
+     * Introduction
+     * Governance
+          + Governance
+          + Security
+          + RFCs
+               o 002: CORS and authn for Go
+               o 003: Amend Connect HTTP codes
+               o 004: Dart Implementation
+               o 005: Python Implementation
+               o 006: Request validation for ECMAScript
+               o 007: Rust Implementation
+     * Connect for Go
+          + Getting started
+          + Routing
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Observability
+          + Streaming
+          + Deployment & h2c
+          + Get Requests and Caching
+          + gRPC compatibility
+          + Common errors
+          + Godoc
+     * Connect for Web
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Headers & trailers
+          + Cancellation & Timeouts
+          + Interceptors
+          + Choosing a protocol
+          + Supported browsers & frameworks
+          + Testing
+          + Get Requests and Caching
+          + Server-Side Rendering (SSR)
+          + Connect for TanStack Query
+          + Migrating to v2
+     * Connect for Node.js
+          + Migrating to v2
+          + Getting started
+          + Implementing services
+          + Server plugins
+          + Interceptors
+          + Using clients
+          + Get Requests and Caching
+          + Testing
+          + Timeouts
+     * Connect for Python
+          + Getting started
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Streaming
+          + Deployment
+          + Get Requests and Caching
+          + gRPC Compatibility
+          + Observability
+          + Testing
+     * Connect for Kotlin
+          + Getting started
+          + Android example
+          + Generating code
+          + Using clients
+          + Get Requests and Caching
+          + Errors
+          + Interceptors
+     * Connect for Swift
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing & mocking
+     * Connect for Dart
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing
+     * cURL & other clients
+     * Multi-Protocol Support
+     * CORS
+     * Connect Protocol
+     * FAQs
+
+   GitHubSlack
+   (BUTTON)
+   On this page
+     * Overview
+     * Connect
+     * gRPC-web
+     * fetch()
+     * JSON options
+
+On this page
+
+     * Overview
+     * Connect
+     * gRPC-web
+     * fetch()
+     * JSON options
+
+Choosing a protocol
+
+   In addition to the Connect protocol, @connectrpc/connect-web ships with
+   support for the gRPC-web protocol. If your backend does not support the
+   Connect protocol, you can still use Connect clients to interface with
+   it.
+
+Connect
+
+   Section titled “Connect”
+
+   The function createConnectTransport() creates a transport for the
+   Connect protocol. It uses the fetch API for the actual network
+   operations, which is widely supported in web browsers. The most
+   important options for the Connect transport are as follows:
+
+   import { createConnectTransport } from "@connectrpc/connect-web";
+
+   const transport = createConnectTransport({
+   // Requests will be made to <baseUrl>/<package>.<service>/method
+   baseUrl: "https://demo.connectrpc.com",
+   // By default, this transport uses the JSON format.
+   // Set this option to true to use the binary format.
+   useBinaryFormat: false,
+   // Interceptors apply to all calls running through this transport.
+   interceptors: [],
+   // By default, all requests use POST. Set this option to true to use
+   GET
+   // for side-effect free RPCs.
+   useHttpGet: false,
+   // Optional override of the fetch implementation used by the transport.
+   fetch: globalThis.fetch,
+   // Options for Protobuf JSON serialization.
+   jsonOptions: {},
+   });
+   (BUTTON)
+
+   We generally recommend the JSON format for web browsers, because it
+   makes it trivial to follow what exactly is sent over the wire with the
+   browser's network inspector.
+
+   Connect supports optionally using HTTP GET requests for side-effect
+   free RPC calls, to enable easy use of request caching and more. For
+   more information on HTTP GET requests, see Get Requests.
+
+gRPC-web
+
+   Section titled “gRPC-web”
+
+   The function createGrpcWebTransport() creates a Transport for the
+   gRPC-web protocol. Any gRPC service can be made available to gRPC-web
+   with the Envoy Proxy. ASP.NET Core supports gRPC-web with a middleware.
+   Connect for Node and connect-go support gRPC-web out of the box.
+
+   import { createGrpcWebTransport } from "@connectrpc/connect-web";
+
+   const transport = createGrpcWebTransport({
+   // Requests will be made to <baseUrl>/<package>.<service>/method
+   baseUrl: "https://demo.connectrpc.com",
+   // By default, this transport uses the binary format, because
+   // not all gRPC-web implementations support JSON.
+   useBinaryFormat: true,
+   // Interceptors apply to all calls running through this transport.
+   interceptors: [],
+   // Optional override of the fetch implementation used by the transport.
+   fetch: globalThis.fetch,
+   // Options for Protobuf JSON serialization.
+   jsonOptions: {},
+   });
+   (BUTTON)
+
+fetch()
+
+   Section titled “fetch()”
+
+   When creating your transport, you have the option of providing your own
+   custom Fetch function. You can use it to provide Fetch options, such as
+   redirect, or credentials:
+
+   import { createConnectTransport } from "@connectrpc/connect-web";
+
+   createConnectTransport({
+   baseUrl: "https://demo.connectrpc.com",
+   // Include cookies in cross-origin requests:
+   fetch: (input, init) => fetch(input, {...init, credentials:
+   "include"}),
+   });
+   (BUTTON)
+
+   If your framework provides a custom fetch function for server-side
+   rendering, you can pass it to the transport - visit our documentation
+   on SSR to learn more.
+
+JSON options
+
+   Section titled “JSON options”
+
+   With jsonOptions, you can pass any of the JSON serialization options
+   from Protobuf-ES:
+
+   import { createRegistry } from "@bufbuild/protobuf";
+
+   import { MyMessageSchema } from "./my_message_pb";
+   createConnectTransport({
+   baseUrl: "https://demo.connectrpc.com",
+   jsonOptions: {
+   ignoreUnknownFields: true,
+   alwaysEmitImplicit: false,
+   enumAsInteger: false,
+   useProtoFieldName: false,
+   registry: createRegistry(MyMessageSchema),
+   },
+   });
+   (BUTTON)
+
+   The registry is important if you use google.protobuf.Any. It's a
+   special message that can hold any message. But to serialize it to JSON
+   and to parse it from JSON, it's necessary to look up the contained
+   message by name, and the registry provides this lookup.
+
+   Note that all transports use ignoreUnknownFields: true by default.
+   Otherwise, adding a field to a response would cause clients to fail
+   until they are updated.
+
+   Terms Privacy Trademarks License
+   Copyright © 2022–2026 The Connect Authors
+   We are a Cloud Native Computing Foundation sandbox project

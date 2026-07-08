@@ -1,0 +1,334 @@
+# URL: https://hono.dev/docs/helpers/streaming
+   #Markdown source
+
+   Skip to content
+
+   Hono
+   (BUTTON) SearchK
+
+   Main Navigation DocsExamplesDiscussions
+   (BUTTON)
+   (BUTTON)
+
+   Appearance
+   (BUTTON)
+   (BUTTON)
+   (BUTTON) Menu
+   (BUTTON) Return to top
+
+   Sidebar Navigation
+
+Concepts
+
+   Motivation
+
+   Routers
+
+   Benchmarks
+
+   Web Standard
+
+   Middleware
+
+   Developer Experience
+
+   Hono Stacks
+
+Getting Started
+
+   Basic
+
+   Cloudflare Workers
+
+   Cloudflare Workers + Vite
+
+   Deno
+
+   Bun
+
+   Fastly Compute
+
+   Vercel
+
+   Next.js
+
+   Netlify
+
+   AWS Lambda
+
+   Lambda@Edge
+
+   Azure Functions
+
+   Google Cloud Run
+
+   Supabase Functions
+
+   Ali Function Compute
+
+   WebAssembly
+
+   Service Worker
+
+   Node.js
+
+API
+
+   App
+
+   Routing
+
+   Context
+
+   HonoRequest
+
+   Exception
+
+   Presets
+
+Guides
+
+   create-hono
+
+   Middleware
+
+   Helpers
+
+   JSX
+
+   Client Components
+
+   Testing
+
+   Validation
+
+   RPC
+
+   Best Practices
+
+   Miscellaneous
+
+   FAQs
+
+Helpers
+
+   Accepts
+
+   Adapter
+
+   ConnInfo
+
+   Cookie
+
+   css
+
+   Dev
+
+   Factory
+
+   html
+
+   JWT
+
+   Proxy
+
+   Route
+
+   SSG
+
+   Streaming
+
+   Testing
+
+   WebSocket
+
+Middleware
+
+   Basic Authentication
+
+   Bearer Authentication
+
+   Body Limit
+
+   Cache
+
+   Combine
+
+   Compress
+
+   Context Storage
+
+   CORS
+
+   CSRF Protection
+
+   ETag
+
+   IP Restriction
+
+   JSX Renderer
+
+   JWK
+
+   JWT
+
+   Logger
+
+   Language
+
+   Method Override
+
+   Pretty JSON
+
+   Request ID
+
+   Secure Headers
+
+   Timeout
+
+   Timing
+
+   Trailing Slash
+
+   3rd-party Middleware
+
+LLM
+
+   Docs List
+
+   Full Docs
+
+   Tiny Docs
+
+   On this page
+
+Streaming Helper ​
+
+   The Streaming Helper provides methods for streaming responses.
+
+Import ​
+
+   (BUTTON) ts
+import { Hono } from 'hono'
+import { stream, streamText, streamSSE } from 'hono/streaming'
+
+stream() ​
+
+   It returns a simple streaming response as Response object.
+   (BUTTON) ts
+app.get('/stream', (c) => {
+  return stream(c, async (stream) => {
+    // Write a process to be executed when aborted.
+    stream.onAbort(() => {
+      console.log('Aborted!')
+    })
+    // Write a Uint8Array.
+    await stream.write(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]))
+    // Pipe a readable stream.
+    await stream.pipe(anotherReadableStream)
+  })
+})
+
+streamText() ​
+
+   It returns a streaming response with Content-Type: text/plain,
+   Transfer-Encoding: chunked, and X-Content-Type-Options: nosniff
+   headers.
+   (BUTTON) ts
+app.get('/streamText', (c) => {
+  return streamText(c, async (stream) => {
+    // Write a text with a new line ('\n').
+    await stream.writeln('Hello')
+    // Wait 1 second.
+    await stream.sleep(1000)
+    // Write a text without a new line.
+    await stream.write(`Hono!`)
+  })
+})
+
+   WARNING
+
+   If you are developing an application for Cloudflare Workers, streaming
+   may not work well on Wrangler. If so, add Identity for Content-Encoding
+   header.
+   (BUTTON) ts
+app.get('/streamText', (c) => {
+  c.header('Content-Encoding', 'Identity')
+  return streamText(c, async (stream) => {
+    // ...
+  })
+})
+
+streamSSE() ​
+
+   It allows you to stream Server-Sent Events (SSE) seamlessly.
+   (BUTTON) ts
+const app = new Hono()
+let id = 0
+
+app.get('/sse', async (c) => {
+  return streamSSE(c, async (stream) => {
+    while (!stream.aborted) {
+      const message = `It is ${new Date().toISOString()}`
+      await stream.writeSSE({
+        data: message,
+        event: 'time-update',
+        id: String(id++),
+      })
+      await stream.sleep(1000)
+    }
+  })
+})
+
+Error Handling ​
+
+   The third argument of the streaming helper is an error handler. This
+   argument is optional, if you don't specify it, the error will be output
+   as a console error.
+   (BUTTON) ts
+app.get('/stream', (c) => {
+  return stream(
+    c,
+    async (stream) => {
+      // Write a process to be executed when aborted.
+      stream.onAbort(() => {
+        console.log('Aborted!')
+      })
+      // Write a Uint8Array.
+      await stream.write(
+        new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f])
+      )
+      // Pipe a readable stream.
+      await stream.pipe(anotherReadableStream)
+    },
+    (err, stream) => {
+      stream.writeln('An error occurred!')
+      console.error(err)
+    }
+  )
+})
+
+   The stream will be automatically closed after the callbacks are
+   executed.
+
+   WARNING
+
+   If the callback function of the streaming helper throws an error, the
+   onError event of Hono will not be triggered.
+
+   onError is a hook to handle errors before the response is sent and
+   overwrite the response. However, when the callback function is
+   executed, the stream has already started, so it cannot be overwritten.
+
+   Edit this page on GitHub
+
+   Last updated:
+
+   Pager
+   Previous pageSSG
+   Next pageTesting
+
+   Released under the MIT License.
+
+   Copyright © 2022-present Yusuke Wada & Hono contributors. "kawaii" logo
+   is created by SAWARATSUKI.

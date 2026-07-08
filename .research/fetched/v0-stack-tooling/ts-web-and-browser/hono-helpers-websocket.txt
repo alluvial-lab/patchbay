@@ -1,0 +1,427 @@
+# URL: https://hono.dev/docs/helpers/websocket
+   #Markdown source
+
+   Skip to content
+
+   Hono
+   (BUTTON) SearchK
+
+   Main Navigation DocsExamplesDiscussions
+   (BUTTON)
+   (BUTTON)
+
+   Appearance
+   (BUTTON)
+   (BUTTON)
+   (BUTTON) Menu
+   (BUTTON) Return to top
+
+   Sidebar Navigation
+
+Concepts
+
+   Motivation
+
+   Routers
+
+   Benchmarks
+
+   Web Standard
+
+   Middleware
+
+   Developer Experience
+
+   Hono Stacks
+
+Getting Started
+
+   Basic
+
+   Cloudflare Workers
+
+   Cloudflare Workers + Vite
+
+   Deno
+
+   Bun
+
+   Fastly Compute
+
+   Vercel
+
+   Next.js
+
+   Netlify
+
+   AWS Lambda
+
+   Lambda@Edge
+
+   Azure Functions
+
+   Google Cloud Run
+
+   Supabase Functions
+
+   Ali Function Compute
+
+   WebAssembly
+
+   Service Worker
+
+   Node.js
+
+API
+
+   App
+
+   Routing
+
+   Context
+
+   HonoRequest
+
+   Exception
+
+   Presets
+
+Guides
+
+   create-hono
+
+   Middleware
+
+   Helpers
+
+   JSX
+
+   Client Components
+
+   Testing
+
+   Validation
+
+   RPC
+
+   Best Practices
+
+   Miscellaneous
+
+   FAQs
+
+Helpers
+
+   Accepts
+
+   Adapter
+
+   ConnInfo
+
+   Cookie
+
+   css
+
+   Dev
+
+   Factory
+
+   html
+
+   JWT
+
+   Proxy
+
+   Route
+
+   SSG
+
+   Streaming
+
+   Testing
+
+   WebSocket
+
+Middleware
+
+   Basic Authentication
+
+   Bearer Authentication
+
+   Body Limit
+
+   Cache
+
+   Combine
+
+   Compress
+
+   Context Storage
+
+   CORS
+
+   CSRF Protection
+
+   ETag
+
+   IP Restriction
+
+   JSX Renderer
+
+   JWK
+
+   JWT
+
+   Logger
+
+   Language
+
+   Method Override
+
+   Pretty JSON
+
+   Request ID
+
+   Secure Headers
+
+   Timeout
+
+   Timing
+
+   Trailing Slash
+
+   3rd-party Middleware
+
+LLM
+
+   Docs List
+
+   Full Docs
+
+   Tiny Docs
+
+   On this page
+
+WebSocket Helper ​
+
+   WebSocket Helper is a helper for server-side WebSockets in Hono
+   applications. Currently Cloudflare Workers / Pages, Deno, Bun, and
+   Node.js adapters are available.
+
+Import ​
+
+   (*) Cloudflare Workers ( ) Deno ( ) Bun ( ) Node.js
+   (BUTTON) ts
+import { Hono } from 'hono'
+import { upgradeWebSocket } from 'hono/cloudflare-workers'
+
+   (BUTTON) ts
+import { Hono } from 'hono'
+import { upgradeWebSocket } from 'hono/deno'
+
+   (BUTTON) ts
+import { Hono } from 'hono'
+import { upgradeWebSocket, websocket } from 'hono/bun'
+
+// ...
+
+export default {
+  fetch: app.fetch,
+  websocket,
+}
+
+   (BUTTON) ts
+import { serve, upgradeWebSocket } from '@hono/node-server'
+import { Hono } from 'hono'
+import { WebSocketServer } from 'ws'
+
+   On Node.js, WebSocket support is built into @hono/node-server. To
+   enable it, install ws and, if you use TypeScript, @types/ws. Then
+   create a WebSocketServer with { noServer: true } and pass it to serve()
+   via the websocket option.
+
+   @hono/node-ws is deprecated.
+
+upgradeWebSocket() ​
+
+   upgradeWebSocket() returns a handler for handling WebSocket.
+   (BUTTON) ts
+const app = new Hono()
+
+app.get(
+  '/ws',
+  upgradeWebSocket((c) => {
+    return {
+      onMessage(event, ws) {
+        console.log(`Message from client: ${event.data}`)
+        ws.send('Hello from server!')
+      },
+      onClose: () => {
+        console.log('Connection closed')
+      },
+    }
+  })
+)
+
+   Available events:
+     * onOpen - Currently, Cloudflare Workers does not support it.
+     * onMessage
+     * onClose
+     * onError
+
+   WARNING
+
+   If you use middleware that modifies headers (e.g., applying CORS) on a
+   route that uses WebSocket Helper, you may encounter an error saying you
+   can't modify immutable headers. This is because upgradeWebSocket() also
+   changes headers internally.
+
+   Therefore, please be cautious if you are using WebSocket Helper and
+   middleware at the same time.
+
+RPC-mode ​
+
+   Handlers defined with WebSocket Helper support RPC mode.
+   (BUTTON) ts
+// server.ts
+const wsApp = app.get(
+  '/ws',
+  upgradeWebSocket((c) => {
+    //...
+  })
+)
+
+export type WebSocketApp = typeof wsApp
+
+// client.ts
+const client = hc<WebSocketApp>('http://localhost:8787')
+const socket = client.ws.$ws() // A WebSocket object for a client
+
+Examples ​
+
+   See the examples using WebSocket Helper.
+
+Server and Client ​
+
+   (BUTTON) ts
+// server.ts
+import { Hono } from 'hono'
+import { upgradeWebSocket } from 'hono/cloudflare-workers'
+
+const app = new Hono().get(
+  '/ws',
+  upgradeWebSocket(() => {
+    return {
+      onMessage: (event) => {
+        console.log(event.data)
+      },
+    }
+  })
+)
+
+export default app
+
+   (BUTTON) ts
+// client.ts
+import { hc } from 'hono/client'
+import type app from './server'
+
+const client = hc<typeof app>('http://localhost:8787')
+const ws = client.ws.$ws(0)
+
+ws.addEventListener('open', () => {
+  setInterval(() => {
+    ws.send(new Date().toString())
+  }, 1000)
+})
+
+Bun with JSX ​
+
+   (BUTTON) tsx
+import { Hono } from 'hono'
+import { upgradeWebSocket, websocket } from 'hono/bun'
+import { html } from 'hono/html'
+
+const app = new Hono()
+
+app.get('/', (c) => {
+  return c.html(
+    <html>
+      <head>
+        <meta charset='UTF-8' />
+      </head>
+      <body>
+        <div id='now-time'></div>
+        {html`
+          <script>
+            const ws = new WebSocket('ws://localhost:3000/ws')
+            const $nowTime = document.getElementById('now-time')
+            ws.onmessage = (event) => {
+              $nowTime.textContent = event.data
+            }
+          </script>
+        `}
+      </body>
+    </html>
+  )
+})
+
+const ws = app.get(
+  '/ws',
+  upgradeWebSocket((c) => {
+    let intervalId
+    return {
+      onOpen(_event, ws) {
+        intervalId = setInterval(() => {
+          ws.send(new Date().toString())
+        }, 200)
+      },
+      onClose() {
+        clearInterval(intervalId)
+      },
+    }
+  })
+)
+
+export default {
+  fetch: app.fetch,
+  websocket,
+}
+
+Node.js ​
+
+   (BUTTON) ts
+import { serve, upgradeWebSocket } from '@hono/node-server'
+import { Hono } from 'hono'
+import { WebSocketServer } from 'ws'
+
+const app = new Hono()
+
+app.get(
+  '/ws',
+  upgradeWebSocket(() => ({
+    onMessage(event, ws) {
+      ws.send(event.data)
+    },
+  }))
+)
+
+const wss = new WebSocketServer({ noServer: true })
+
+serve({
+  fetch: app.fetch,
+  websocket: { server: wss },
+})
+
+   Edit this page on GitHub
+
+   Last updated:
+
+   Pager
+   Previous pageTesting
+   Next pageBasic Authentication
+
+   Released under the MIT License.
+
+   Copyright © 2022-present Yusuke Wada & Hono contributors. "kawaii" logo
+   is created by SAWARATSUKI.

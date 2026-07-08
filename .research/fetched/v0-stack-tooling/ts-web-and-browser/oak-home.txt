@@ -1,0 +1,86 @@
+# URL: https://oakserver.org/
+    a cartoon squirrel holding an acorn
+
+A middleware framework for JavaScript and TypeScript
+
+   oak is a middleware framework for handling HTTP requests across Deno,
+   Node.js, Bun and Cloudflare Workers.
+   (*) ( ) ( ) ( ) ( )
+
+Use with
+
+   Deno logo
+   Deno
+   npm logo
+   npm
+   Yarn logo
+   Yarn
+   pnpm logo
+   pnpm
+   Bun logo
+   Bun
+   Deno logo
+   Deno
+   npm logo
+   npm
+   yarn logo
+   Yarn
+   pnpm logo
+   pnpm
+   bun logo
+   Bun
+deno add jsr:@oak/oak
+
+   (BUTTON)
+npx jsr add @oak/oak
+
+   (BUTTON)
+yarn dlx jsr add @oak/oak
+
+   (BUTTON)
+pnpm dlx jsr add @oak/oak
+
+   (BUTTON)
+bunx jsr add @oak/oak
+
+   (BUTTON)
+
+import { Application, Router } from "@oak/oak";
+
+const router = new Router();
+
+router.get("/", (ctx) => {
+  ctx.response.body = "Hello world";
+});
+
+const app = new Application();
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+app.listen();
+
+Familiar API
+
+   oak was inspired by Express.js and koa and originally written for the
+   Deno runtime. This makes it easy to adapt existing approaches with out
+   of the box cross platform support.
+   See the docs
+
+   oak Logo oak
+
+Projects
+
+     * acorn
+     * Commons
+
+Source
+
+     * JSR
+     * GitHub
+
+Guidelines
+
+     * Code of Conduct
+     __________________________________________________________________
+
+   © 2024 oak. All Rights Reserved.

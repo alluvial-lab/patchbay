@@ -1,0 +1,216 @@
+# URL: https://connectrpc.com/docs/node/using-clients/
+    Skip to content
+
+   Connect
+   Docs GitHub Slack Demo
+   (BUTTON) Search CtrlK
+   (BUTTON) Cancel
+   (BUTTON) Created by
+   (BUTTON)
+   (BUTTON)
+     * Introduction
+     * Governance
+          + Governance
+          + Security
+          + RFCs
+               o 002: CORS and authn for Go
+               o 003: Amend Connect HTTP codes
+               o 004: Dart Implementation
+               o 005: Python Implementation
+               o 006: Request validation for ECMAScript
+               o 007: Rust Implementation
+     * Connect for Go
+          + Getting started
+          + Routing
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Observability
+          + Streaming
+          + Deployment & h2c
+          + Get Requests and Caching
+          + gRPC compatibility
+          + Common errors
+          + Godoc
+     * Connect for Web
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Headers & trailers
+          + Cancellation & Timeouts
+          + Interceptors
+          + Choosing a protocol
+          + Supported browsers & frameworks
+          + Testing
+          + Get Requests and Caching
+          + Server-Side Rendering (SSR)
+          + Connect for TanStack Query
+          + Migrating to v2
+     * Connect for Node.js
+          + Migrating to v2
+          + Getting started
+          + Implementing services
+          + Server plugins
+          + Interceptors
+          + Using clients
+          + Get Requests and Caching
+          + Testing
+          + Timeouts
+     * Connect for Python
+          + Getting started
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Streaming
+          + Deployment
+          + Get Requests and Caching
+          + gRPC Compatibility
+          + Observability
+          + Testing
+     * Connect for Kotlin
+          + Getting started
+          + Android example
+          + Generating code
+          + Using clients
+          + Get Requests and Caching
+          + Errors
+          + Interceptors
+     * Connect for Swift
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing & mocking
+     * Connect for Dart
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing
+     * cURL & other clients
+     * Multi-Protocol Support
+     * CORS
+     * Connect Protocol
+     * FAQs
+
+   GitHubSlack
+   (BUTTON)
+   On this page
+     * Overview
+     * Connect
+     * gRPC
+     * gRPC-web
+
+On this page
+
+     * Overview
+     * Connect
+     * gRPC
+     * gRPC-web
+
+Using clients
+
+   On Node.js, you use the same clients as you do with Connect for Web,
+   but with a transport from @connectrpc/connect-node instead of from
+   @connectrpc/connect-web:
+
+   import { createClient } from "@connectrpc/connect";
+
+   import { ElizaService } from
+   "@buf/connectrpc_eliza.bufbuild_es/connectrpc/eliza/v1/eliza_pb";
+   import { createConnectTransport } from "@connectrpc/connect-node";
+   const transport = createConnectTransport({
+   httpVersion: "1.1",
+   baseUrl: "https://demo.connectrpc.com",
+   });
+   async function main() {
+   const client = createClient(ElizaService, transport);
+   const res = await client.say({
+   sentence: "I feel happy.",
+   });
+   console.log(res.sentence);
+   }
+   void main();
+   (BUTTON)
+
+   For details on clients (including error handling, interceptors, and
+   accessing headers and trailers), please refer to the documentation for
+   Web.
+
+   Under the hood, the transports from @connectrpc/connect-node use the
+   built-in Node modules http, https, and http2 instead of the fetch API.
+   With HTTP/2, clients can use the Connect, gRPC, or gRPC-Web protocol,
+   and call all types of RPCs. With HTTP 1.1, the gRPC protocol and
+   bidirectional streaming are not supported.
+
+Connect
+
+   Section titled “Connect”
+
+   The function createConnectTransport() creates a transport for the
+   Connect protocol. The most important options for the Connect transport
+   are as follows:
+
+   import { createConnectTransport } from "@connectrpc/connect-node";
+
+   const transport = createConnectTransport({
+   // Requests will be made to <baseUrl>/<package>.<service>/method
+   baseUrl: "https://demo.connectrpc.com",
+   // You have to tell the Node.js http API which HTTP version to use.
+   httpVersion: "2",
+   // Interceptors apply to all calls running through this transport.
+   interceptors: [],
+   });
+   (BUTTON)
+
+gRPC
+
+   Section titled “gRPC”
+
+   The function createGrpcTransport() creates a transport for the gRPC
+   protocol. The most important options for the gRPC transport are as
+   follows:
+
+   import { createGrpcTransport } from "@connectrpc/connect-node";
+
+   const transport = createGrpcTransport({
+   // Requests will be made to <baseUrl>/<package>.<service>/method
+   baseUrl: "https://demo.connectrpc.com",
+   // Interceptors apply to all calls running through this transport.
+   interceptors: [],
+   });
+   (BUTTON)
+
+   Note
+
+   The gRPC transport requires HTTP/2.
+
+gRPC-web
+
+   Section titled “gRPC-web”
+
+   The function createGrpcWebTransport() creates a Transport for the
+   gRPC-web protocol. Any gRPC service can be made available to gRPC-web
+   with the Envoy Proxy. ASP.NET Core supports gRPC-web with a middleware.
+   Connect for Node and connect-go support gRPC-web out of the box.
+
+   import { createGrpcWebTransport } from "@connectrpc/connect-node";
+
+   const transport = createGrpcWebTransport({
+   // Requests will be made to <baseUrl>/<package>.<service>/method
+   baseUrl: "https://demo.connectrpc.com",
+   // You have to tell the Node.js http API which HTTP version to use.
+   httpVersion: "2",
+   // Interceptors apply to all calls running through this transport.
+   interceptors: [],
+   });
+   (BUTTON)
+
+   Terms Privacy Trademarks License
+   Copyright © 2022–2026 The Connect Authors
+   We are a Cloud Native Computing Foundation sandbox project

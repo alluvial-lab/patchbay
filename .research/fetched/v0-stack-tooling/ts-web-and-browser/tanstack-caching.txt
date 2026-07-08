@@ -1,0 +1,372 @@
+# URL: https://tanstack.com/query/latest/docs/framework/react/guides/caching
+
+   TanStack (BUTTON)
+   Query v5v5
+   Libraries
+   Framework
+   StartRC
+   Docs
+   Router
+   Docs
+   Data & State Management
+   Query
+   Docs
+   DBbeta
+   Docs
+   Storealpha
+   Docs
+   AIbeta
+   Docs
+   UI & UX
+   Table
+   Docs
+   Formnew
+   Docs
+   Hotkeysalpha
+   Docs
+   Performance
+   Virtual
+   Docs
+   Pacerbeta
+   Docs
+   Tooling
+   Devtoolsalpha
+   Docs
+   Config
+   Docs
+   CLIalpha
+   Docs
+   Intentalpha
+   Docs
+   Blog
+   Resources
+   BlogRelease notes, architecture notes, and essays.YouTubeThe official
+   TanStack channel.
+   Workshops
+   Learn from maintainers
+
+   Remote and in-person TanStack workshops for teams that need depth.
+   Professional Workshops
+   (BUTTON) Community
+   Channels
+   DiscordCommunity support and real-time discussion.GitHubSource, issues,
+   discussions, and releases.
+   People & Work
+   MaintainersMeet the people maintaining the stack.ContributorsCore,
+   library, and community contributors.ShowcaseProducts and teams building
+   with TanStack.
+   (BUTTON) Tools
+   Tools
+   BuilderAlphaGenerate TanStack app starters.StatsNPM and ecosystem usage
+   data.
+   Merch
+   Recent Products
+   All MerchBrowse all TanStack apparel, accessories, and stickers.
+   (BUTTON) Support
+   Support
+   Support OverviewFind the right support path.PartnersCompanies
+   supporting TanStack.OSS SponsorsSponsors keeping TanStack open
+   source.Enterprise SupportPrivate consulting and expert
+   support.ContactGet in touch with the TanStack team.
+   About
+   EthosHow we think about open source and products.TenetsThe values that
+   shape TanStack libraries.Brand GuideLogos, colors, and brand usage.
+   Partners
+   Work with TanStack
+
+   Sponsorships, placements, and partner pages.
+   Partnership Inquiry
+   (BUTTON)
+   (BUTTON) (BUTTON) Search (BUTTON) AIAsk AI
+   Log In
+   (BUTTON)
+
+   (BUTTON) Log In
+   (BUTTON) Libraries
+   All LibrariesBrowse the full set of public packages.
+   Framework
+   StartRC
+   Docs
+   Router
+   Docs
+   Data & State Management
+   Query
+   Docs
+   DBbeta
+   Docs
+   Storealpha
+   Docs
+   AIbeta
+   Docs
+   UI & UX
+   Table
+   Docs
+   Formnew
+   Docs
+   Hotkeysalpha
+   Docs
+   Performance
+   Virtual
+   Docs
+   Pacerbeta
+   Docs
+   Tooling
+   Devtoolsalpha
+   Docs
+   Config
+   Docs
+   CLIalpha
+   Docs
+   Intentalpha
+   Docs
+   (BUTTON) Blog
+   Resources
+   BlogRelease notes, architecture notes, and essays.YouTubeThe official
+   TanStack channel.
+   Professional Workshops
+   (BUTTON) Community
+   Channels
+   DiscordCommunity support and real-time discussion.GitHubSource, issues,
+   discussions, and releases.
+   People & Work
+   MaintainersMeet the people maintaining the stack.ContributorsCore,
+   library, and community contributors.ShowcaseProducts and teams building
+   with TanStack.
+   (BUTTON) Tools
+   Tools
+   BuilderAlphaGenerate TanStack app starters.StatsNPM and ecosystem usage
+   data.
+   (BUTTON) Merch
+   Recent Products
+   All MerchBrowse all TanStack apparel, accessories, and stickers.
+   (BUTTON) Support
+   Support
+   Support OverviewFind the right support path.PartnersCompanies
+   supporting TanStack.OSS SponsorsSponsors keeping TanStack open
+   source.Enterprise SupportPrivate consulting and expert
+   support.ContactGet in touch with the TanStack team.
+   About
+   EthosHow we think about open source and products.TenetsThe values that
+   shape TanStack libraries.Brand GuideLogos, colors, and brand usage.
+   Partnership Inquiry
+
+   [ ]
+   Docs (BUTTON)
+   (BUTTON) React React
+   (BUTTON) Latest
+   (BUTTON) Search...
+   K
+   Guides & Concepts
+     * Important Defaults
+     * Queries
+     * Query Keys
+     * Query Functions
+     * Query Options
+     * Network Mode
+     * Parallel Queries
+     * Dependent Queries
+     * Background Fetching Indicators
+     * Window Focus Refetching
+     * Polling
+     * Disabling/Pausing Queries
+     * Query Retries
+     * Paginated Queries
+     * Infinite Queries
+     * Initial Query Data
+     * Placeholder Query Data
+     * Mutations
+     * Query Invalidation
+     * Invalidation from Mutations
+     * Updates from Mutation Responses
+     * Optimistic Updates
+     * Query Cancellation
+     * Scroll Restoration
+     * Filters
+     * Performance & Request Waterfalls
+     * Prefetching & Router Integration
+     * Server Rendering & Hydration
+     * Advanced Server Rendering
+     * Caching
+     * Render Optimizations
+     * Default Query Fn
+     * Suspense
+     * Testing
+     * Does this replace [Redux, MobX, etc]?
+     * Migrating to v3
+     * Migrating to v4
+     * Migrating to v5
+
+   ESLint
+     * ESLint Plugin Query
+     * Exhaustive Deps
+     * Stable Query Client
+     * No Rest Destructuring
+     * No Unstable Deps
+     * Infinite Query Property Order
+     * No void Query Functions
+     * Mutation Property Order
+     * Prefer Query Options
+
+   Plugins
+     * persistQueryClient
+     * createSyncStoragePersister
+     * createAsyncStoragePersister
+     * broadcastQueryClient (Experimental)
+     * createPersister (Experimental)
+
+   (BUTTON) Menu (BUTTON) Menu
+   HomeGet StartedGuidesAPIExamples
+   (BUTTON) React React
+   (BUTTON) Latest
+   Guides & Concepts
+     * Important Defaults
+     * Queries
+     * Query Keys
+     * Query Functions
+     * Query Options
+     * Network Mode
+     * Parallel Queries
+     * Dependent Queries
+     * Background Fetching Indicators
+     * Window Focus Refetching
+     * Polling
+     * Disabling/Pausing Queries
+     * Query Retries
+     * Paginated Queries
+     * Infinite Queries
+     * Initial Query Data
+     * Placeholder Query Data
+     * Mutations
+     * Query Invalidation
+     * Invalidation from Mutations
+     * Updates from Mutation Responses
+     * Optimistic Updates
+     * Query Cancellation
+     * Scroll Restoration
+     * Filters
+     * Performance & Request Waterfalls
+     * Prefetching & Router Integration
+     * Server Rendering & Hydration
+     * Advanced Server Rendering
+     * Caching
+     * Render Optimizations
+     * Default Query Fn
+     * Suspense
+     * Testing
+     * Does this replace [Redux, MobX, etc]?
+     * Migrating to v3
+     * Migrating to v4
+     * Migrating to v5
+
+   ESLint
+     * ESLint Plugin Query
+     * Exhaustive Deps
+     * Stable Query Client
+     * No Rest Destructuring
+     * No Unstable Deps
+     * Infinite Query Property Order
+     * No void Query Functions
+     * Mutation Property Order
+     * Prefer Query Options
+
+   Plugins
+     * persistQueryClient
+     * createSyncStoragePersister
+     * createAsyncStoragePersister
+     * broadcastQueryClient (Experimental)
+     * createPersister (Experimental)
+
+   AI/LLM: This documentation page is available in plain markdown format
+   at/query/latest/docs/framework/react/guides/caching.md
+   Guides & Concepts
+
+Caching Examples
+
+   (BUTTON) Copy page (BUTTON)
+   (BUTTON)
+
+     Please thoroughly read the Important Defaults before reading this
+     guide
+
+Basic Example#
+
+   This caching example illustrates the story and lifecycle of:
+     * Query Instances with and without cache data
+     * Background Refetching
+     * Inactive Queries
+     * Garbage Collection
+       Let's assume we are using the default gcTime of 5 minutes and the
+       default staleTime of 0.
+     * A new instance of useQuery({ queryKey: ['todos'], queryFn:
+       fetchTodos }) mounts.
+          + Since no other queries have been made with the ['todos'] query
+            key, this query will show a hard loading state and make a
+            network request to fetch the data.
+          + When the network request has completed, the returned data will
+            be cached under the ['todos'] key.
+          + The data will be marked as stale after the configured
+            staleTime (defaults to 0, or immediately).
+     * A second instance of useQuery({ queryKey: ['todos'], queryFn:
+       fetchTodos }) mounts elsewhere.
+          + Since the cache already has data for the ['todos'] key from
+            the first query, that data is immediately returned from the
+            cache.
+          + The new instance triggers a new network request using its
+            query function.
+               o Note that regardless of whether both fetchTodos query
+                 functions are identical or not, both queries' status are
+                 updated (including isFetching, isPending, and other
+                 related values) because they have the same query key.
+          + When the request completes successfully, the cache's data
+            under the ['todos'] key is updated with the new data, and both
+            instances are updated with the new data.
+     * Both instances of the useQuery({ queryKey: ['todos'], queryFn:
+       fetchTodos }) query are unmounted and no longer in use.
+          + Since there are no more active instances of this query, a
+            garbage collection timeout is set using gcTime to delete and
+            garbage collect the query (defaults to 5 minutes).
+     * Before the cache timeout (gcTime) has completed, another instance
+       of useQuery({ queryKey: ['todos'], queryFn: fetchTodos }) mounts.
+       The query immediately returns the available cached data while the
+       fetchTodos function is being run in the background. When it
+       completes successfully, it will populate the cache with fresh data.
+     * The final instance of useQuery({ queryKey: ['todos'], queryFn:
+       fetchTodos }) unmounts.
+     * No more instances of useQuery({ queryKey: ['todos'], queryFn:
+       fetchTodos }) appear within 5 minutes.
+          + The cached data under the ['todos'] key is deleted and garbage
+            collected.
+
+   Edit on GitHub
+   PreviousAdvanced Server Rendering
+   NextRender Optimizations
+   Blog
+   @Tan_Stack on X.com
+   @TannerLinsley on X.com
+   GitHub
+   YouTube
+   Nozzle.io - Keyword Rank Tracker
+   Ethos
+   Tenets
+   Privacy Policy
+   Terms of Service
+   © 2026 TanStack LLC
+   PartnersBecome a Partner
+   Gold
+   Lovable Lovable
+   CodeRabbit CodeRabbit
+   Cloudflare Cloudflare
+   Netlify Netlify
+   Railway Railway
+   Silver
+   SerpAPI SerpAPI
+   WorkOS WorkOS
+   AG Grid AG Grid
+   Clerk Clerk
+   OpenRouter OpenRouter
+   Bronze
+   Electric Electric
+   Unkey Unkey
+   Prisma Prisma
+   Sentry Sentry
+   Latest Posts

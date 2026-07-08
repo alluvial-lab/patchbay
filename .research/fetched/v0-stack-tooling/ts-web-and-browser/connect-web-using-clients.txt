@@ -1,0 +1,235 @@
+# URL: https://connectrpc.com/docs/web/using-clients/
+    Skip to content
+
+   Connect
+   Docs GitHub Slack Demo
+   (BUTTON) Search CtrlK
+   (BUTTON) Cancel
+   (BUTTON) Created by
+   (BUTTON)
+   (BUTTON)
+     * Introduction
+     * Governance
+          + Governance
+          + Security
+          + RFCs
+               o 002: CORS and authn for Go
+               o 003: Amend Connect HTTP codes
+               o 004: Dart Implementation
+               o 005: Python Implementation
+               o 006: Request validation for ECMAScript
+               o 007: Rust Implementation
+     * Connect for Go
+          + Getting started
+          + Routing
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Observability
+          + Streaming
+          + Deployment & h2c
+          + Get Requests and Caching
+          + gRPC compatibility
+          + Common errors
+          + Godoc
+     * Connect for Web
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Headers & trailers
+          + Cancellation & Timeouts
+          + Interceptors
+          + Choosing a protocol
+          + Supported browsers & frameworks
+          + Testing
+          + Get Requests and Caching
+          + Server-Side Rendering (SSR)
+          + Connect for TanStack Query
+          + Migrating to v2
+     * Connect for Node.js
+          + Migrating to v2
+          + Getting started
+          + Implementing services
+          + Server plugins
+          + Interceptors
+          + Using clients
+          + Get Requests and Caching
+          + Testing
+          + Timeouts
+     * Connect for Python
+          + Getting started
+          + Serialization & compression
+          + Errors
+          + Headers & trailers
+          + Interceptors
+          + Streaming
+          + Deployment
+          + Get Requests and Caching
+          + gRPC Compatibility
+          + Observability
+          + Testing
+     * Connect for Kotlin
+          + Getting started
+          + Android example
+          + Generating code
+          + Using clients
+          + Get Requests and Caching
+          + Errors
+          + Interceptors
+     * Connect for Swift
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing & mocking
+     * Connect for Dart
+          + Getting started
+          + Generating code
+          + Using clients
+          + Errors
+          + Interceptors
+          + Testing
+     * cURL & other clients
+     * Multi-Protocol Support
+     * CORS
+     * Connect Protocol
+     * FAQs
+
+   GitHubSlack
+   (BUTTON)
+   On this page
+     * Overview
+     * Callbacks
+     * Managing clients and transports
+     * Roll your own client
+
+On this page
+
+     * Overview
+     * Callbacks
+     * Managing clients and transports
+     * Roll your own client
+
+Using clients
+
+   We have already been using the function createClient in the tutorial.
+   The function gives us a client that uses ECMAScript promise objects. In
+   combination with the await keyword, this lets you write asynchronous
+   code in a natural and easily readable way:
+
+   import { createClient } from "@connectrpc/connect";
+
+   import { ElizaService } from
+   "@buf/connectrpc_eliza.bufbuild_es/connectrpc/eliza/v1/eliza_pb";
+   const client = createClient(ElizaService, transport);
+   const res = await client.say({
+   sentence: "I feel happy.",
+   });
+   console.log(res.sentence);
+   (BUTTON)
+
+   For server-streaming RPCs, the corresponding method on the client will
+   return an async iterable stream of response messages that can be used
+   with the for await...of statement:
+
+   for await (const res of client.introduce({ name: "Joseph" })) {
+
+   console.log(res);
+   }
+   (BUTTON)
+
+Callbacks
+
+   Section titled “Callbacks”
+
+   If you prefer a callback-based approach, the client returned by the
+   function createCallbackClient should suit you:
+
+   import { createCallbackClient } from "@connectrpc/connect";
+
+   import { ElizaService } from
+   "@buf/connectrpc_eliza.bufbuild_es/connectrpc/eliza/v1/eliza_pb";
+   const client = createCallbackClient(ElizaService, transport);
+   client.say({ sentence: "I feel happy." }, (err, res) => {
+   if (!err) {
+   console.log(res.sentence);
+   }
+   });
+   (BUTTON)
+
+   For server-streaming RPCs, the corresponding method on the client takes
+   two callback functions: one that is called every time a response
+   message arrives, and one that is called at the end of the stream.
+
+   import {ConnectError} from "@connectrpc/connect";
+
+   client.introduce({name: "Joseph"}, (res) => {
+   console.log(res);
+   }, (err?: ConnectError) => {
+   if (err) {
+   console.error(err);
+   }
+   });
+   (BUTTON)
+
+   The callback client is particularly useful if you want to migrate an
+   existing code base from gRPC-web to Connect clients.
+
+Managing clients and transports
+
+   Section titled “Managing clients and transports”
+
+   In practice, you will likely want to avoid creating a new transport
+   every time you want to use a client. It really depends on the framework
+   of your choice, but there usually is a simple solution to avoid
+   repetition.
+
+   For example, you can easily create a custom hook in React:
+   use-client.ts
+
+   import { useMemo } from "react";
+
+   import { type DescService } from "@bufbuild/protobuf";
+   import { createConnectTransport } from "@connectrpc/connect-web";
+   import { createClient, type Client } from "@connectrpc/connect";
+   // This transport is going to be used throughout the app
+   const transport = createConnectTransport({
+   baseUrl: "https://demo.connectrpc.com",
+   });
+   /**
+   * Get a promise client for the given service.
+   */
+   export function useClient<T extends DescService>(service: T): Client<T>
+   {
+   // We memoize the client, so that we only create one instance per
+   service.
+   return useMemo(() => createClient(service, transport), [service]);
+   }
+   (BUTTON)
+
+   Usage:
+
+   await useClient(ElizaService).say({sentence: "I feel happy."});
+
+   (BUTTON)
+
+Roll your own client
+
+   Section titled “Roll your own client”
+
+   If you find that neither client suits your needs perfectly, it might be
+   an option for you to roll your own. For example, you might prefer
+   Rust-style result types over promise rejections, and could write your
+   own constructor function that uses the neverthrow library for method
+   return values.
+
+   For a working example, see the custom-client in the examples-es repo,
+   or take a look at the implementation of createClient and
+   createCallbackClient.
+
+   Terms Privacy Trademarks License
+   Copyright © 2022–2026 The Connect Authors
+   We are a Cloud Native Computing Foundation sandbox project

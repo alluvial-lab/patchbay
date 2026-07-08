@@ -1,0 +1,343 @@
+# URL: https://fastify.dev/docs/latest/Reference/Plugins/
+   #alternate alternate
+
+   Skip to main content
+
+   (BUTTON)
+   Fastify Cheetah Logo Fastify Cheetah Logo
+   HomeDocsEcosystemBenchmarksAdoptersContributeResourcesSupport
+   latest (v5.9.x)
+     * latest (v5.9.x)
+     * v5.9.x
+     * v5.8.x
+     * v5.7.x
+     * v5.6.x
+     * v5.5.x
+     * v5.4.x
+     * v5.3.x
+     * v5.2.x
+     * v5.1.x
+     * v5.0.x
+     * v4.29.x
+     * v3.29.x
+
+   (BUTTON)
+   ____________________
+
+   Fastify Cheetah Logo Fastify Cheetah Logo
+   Home
+   (BUTTON)
+   (BUTTON)
+     * Docs
+     * Ecosystem
+     * Benchmarks
+     * Adopters
+     * Contribute
+     * Resources
+     * Support
+     * Versions (BUTTON)
+          + latest (v5.9.x)
+          + v5.9.x
+          + v5.8.x
+          + v5.7.x
+          + v5.6.x
+          + v5.5.x
+          + v5.4.x
+          + v5.3.x
+          + v5.2.x
+          + v5.1.x
+          + v5.0.x
+          + v4.29.x
+          + v3.29.x
+     *
+
+   (BUTTON) ← Back to main menu
+
+   (BUTTON)
+
+     * Introduction
+     * Guides (BUTTON)
+     * Reference (BUTTON)
+          + ContentTypeParser
+          + Decorators
+          + Encapsulation
+          + Errors
+          + HTTP2
+          + Hooks
+          + LTS
+          + Lifecycle
+          + Logging
+          + Middleware
+          + Plugins
+          + Technical Principles
+          + Reply
+          + Request
+          + Routes
+          + Server
+          + Type-Providers
+          + TypeScript
+          + Validation-and-Serialization
+          + Warnings
+
+     *
+     * Reference
+     * Plugins
+
+   Version: latest (v5.9.x)
+   (BUTTON) On this page
+
+Plugins
+
+Plugins​
+
+   Fastify can be extended with plugins, which can be a set of routes, a
+   server decorator, or other functionality. Use the register API to add
+   one or more plugins.
+
+   By default, register creates a new scope, meaning changes to the
+   Fastify instance (via decorate) will not affect the current context
+   ancestors, only its descendants. This feature enables plugin
+   encapsulation and inheritance, creating a directed acyclic graph (DAG)
+   and avoiding cross-dependency issues.
+
+   The Getting Started guide includes an example of using this API:
+
+   fastify.register(plugin, [options])
+
+Plugin Options​
+
+   The optional options parameter for fastify.register supports a
+   predefined set of options that Fastify itself will use, except when the
+   plugin has been wrapped with fastify-plugin. This options object will
+   also be passed to the plugin upon invocation, regardless of whether or
+   not the plugin has been wrapped. The currently supported list of
+   Fastify specific options is:
+     * logLevel
+     * logSerializers
+     * prefix
+
+   These options will be ignored when used with fastify-plugin.
+
+   To avoid collisions, a plugin should consider namespacing its options.
+   For example, a plugin foo might be registered like so:
+
+   fastify.register(require('fastify-foo'), {
+
+   prefix: '/foo',
+   foo: {
+   fooOption1: 'value',
+   fooOption2: 'value'
+   }
+   })
+
+   If collisions are not a concern, the plugin may accept the options
+   object as-is:
+
+   fastify.register(require('fastify-foo'), {
+
+   prefix: '/foo',
+   fooOption1: 'value',
+   fooOption2: 'value'
+   })
+
+   The options parameter can also be a Function evaluated at plugin
+   registration, providing access to the Fastify instance via the first
+   argument:
+
+   const fp = require('fastify-plugin')
+
+   fastify.register(fp((fastify, opts, done) => {
+   fastify.decorate('foo_bar', { hello: 'world' })
+   done()
+   }))
+   // The opts argument of fastify-foo will be { hello: 'world' }
+   fastify.register(require('fastify-foo'), parent => parent.foo_bar)
+
+   The Fastify instance passed to the function is the latest state of the
+   external Fastify instance the plugin was declared on, allowing access
+   to variables injected via decorate by preceding plugins according to
+   the order of registration. This is useful if a plugin depends on
+   changes made to the Fastify instance by a preceding plugin, such as
+   utilizing an existing database connection.
+
+   Keep in mind that the Fastify instance passed to the function is the
+   same as the one passed into the plugin, a copy of the external Fastify
+   instance rather than a reference. Any usage of the instance will behave
+   the same as it would if called within the plugin's function. For
+   example, if decorate is called, the decorated variables will be
+   available within the plugin's function unless it was wrapped with
+   fastify-plugin.
+
+Route Prefixing option​
+
+   If an option with the key prefix and a string value is passed, Fastify
+   will use it to prefix all the routes inside the register. For more
+   info, check here.
+
+   Be aware that if routes are wrapped with fastify-plugin, this option
+   will not work (see the workaround).
+
+Error handling​
+
+   Error handling is done by avvio.
+
+   As a general rule, handle errors in the next after or ready block,
+   otherwise they will be caught inside the listen callback.
+
+   fastify.register(require('my-plugin'))
+
+   // `after` will be executed once
+   // the previous declared `register` has finished
+   fastify.after(err => console.log(err))
+   // `ready` will be executed once all the registers declared
+   // have finished their execution
+   fastify.ready(err => console.log(err))
+   // `listen` is a special ready,
+   // so it behaves in the same way
+   fastify.listen({ port: 3000 }, (err, address) => {
+   if (err) console.log(err)
+   })
+
+async/await​
+
+   async/await is supported by after, ready, and listen, as well as
+   fastify being a Thenable.
+
+   await fastify.register(require('my-plugin'))
+
+   await fastify.after()
+   await fastify.ready()
+   await fastify.listen({ port: 3000 })
+
+   Using await when registering a plugin loads the plugin and its
+   dependencies, "finalizing" the encapsulation process. Any mutations to
+   the plugin after it and its dependencies have been loaded will not be
+   reflected in the parent instance.
+
+ESM support​
+
+   ESM is supported from Node.js v13.3.0 and above.
+
+   // main.mjs
+
+   import Fastify from 'fastify'
+   const fastify = Fastify()
+   fastify.register(import('./plugin.mjs'))
+   fastify.listen({ port: 3000 }, console.log)
+   // plugin.mjs
+   async function plugin (fastify, opts) {
+   fastify.get('/', async (req, reply) => {
+   return { hello: 'world' }
+   })
+   }
+   export default plugin
+
+Create a plugin​
+
+   Creating a plugin is easy. Create a function that takes three
+   parameters: the fastify instance, an options object, and the done
+   callback. Alternatively, use an async function and omit the done
+   callback.
+
+   Example:
+
+   module.exports = function callbackPlugin (fastify, opts, done) {
+
+   fastify.decorate('utility', function () {})
+   fastify.get('/', handler)
+   done()
+   }
+   // Or using async
+   module.exports = async function asyncPlugin (fastify, opts) {
+   fastify.decorate('utility', function () {})
+   fastify.get('/', handler)
+   }
+
+   register can also be used inside another register:
+
+   module.exports = function (fastify, opts, done) {
+
+   fastify.decorate('utility', function () {})
+   fastify.get('/', handler)
+   fastify.register(require('./other-plugin'))
+   done()
+   }
+
+   Remember, register always creates a new Fastify scope. If this is not
+   needed, read the following section.
+
+  Handle the scope​
+
+   If register is used only to extend server functionality with decorate,
+   tell Fastify not to create a new scope. Otherwise, changes will not be
+   accessible in the upper scope.
+
+   There are two ways to avoid creating a new context:
+     * Use the fastify-plugin module
+     * Use the 'skip-override' hidden property
+
+   Using the fastify-plugin module is recommended, as it solves this
+   problem and allows passing a version range of Fastify that the plugin
+   will support:
+
+   const fp = require('fastify-plugin')
+
+   module.exports = fp(function (fastify, opts, done) {
+   fastify.decorate('utility', function () {})
+   done()
+   }, '0.x')
+
+   Check the fastify-plugin documentation to learn more about how to use
+   this module.
+
+   If not using fastify-plugin, the 'skip-override' hidden property can be
+   used, but it is not recommended. Future Fastify API changes will be
+   your responsibility to update, whilst fastify-plugin ensures backward
+   compatibility.
+
+   function yourPlugin (fastify, opts, done) {
+
+   fastify.decorate('utility', function () {})
+   done()
+   }
+   yourPlugin[Symbol.for('skip-override')] = true
+   module.exports = yourPlugin
+
+   Edit this page
+
+   Previous
+
+   Middleware
+
+   Next
+
+   Technical Principles
+
+     * Plugins
+          + Plugin Options
+          + async/await
+          + Create a plugin
+          + Handle the scope
+
+   Docs
+     * Getting Started
+
+   Community
+     * Stack Overflow
+     * Discord
+     * X
+     * Mastodon
+
+   More
+     * GitHub
+
+   Copyright OpenJS Foundation and Fastify contributors. All rights
+   reserved. The OpenJS Foundation has registered trademarks and uses
+   trademarks. For a list of trademarks of the OpenJS Foundation, please
+   see our Trademark Policy and Trademark List. Trademarks and logos not
+   indicated on the list of OpenJS Foundation trademarks are trademarks™
+   or registered® trademarks of their respective holders. Use of them does
+   not imply any affiliation with or endorsement by them.
+
+   The OpenJS Foundation | Terms of Use | Privacy Policy | Bylaws | Code
+   of Conduct | Trademark Policy | Trademark List | Cookie Policy

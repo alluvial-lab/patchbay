@@ -1,0 +1,183 @@
+# URL: https://fastify.dev/docs/latest/Reference/Middleware/
+   #alternate alternate
+
+   Skip to main content
+
+   (BUTTON)
+   Fastify Cheetah Logo Fastify Cheetah Logo
+   HomeDocsEcosystemBenchmarksAdoptersContributeResourcesSupport
+   latest (v5.9.x)
+     * latest (v5.9.x)
+     * v5.9.x
+     * v5.8.x
+     * v5.7.x
+     * v5.6.x
+     * v5.5.x
+     * v5.4.x
+     * v5.3.x
+     * v5.2.x
+     * v5.1.x
+     * v5.0.x
+     * v4.29.x
+     * v3.29.x
+
+   (BUTTON)
+   ____________________
+
+   Fastify Cheetah Logo Fastify Cheetah Logo
+   Home
+   (BUTTON)
+   (BUTTON)
+     * Docs
+     * Ecosystem
+     * Benchmarks
+     * Adopters
+     * Contribute
+     * Resources
+     * Support
+     * Versions (BUTTON)
+          + latest (v5.9.x)
+          + v5.9.x
+          + v5.8.x
+          + v5.7.x
+          + v5.6.x
+          + v5.5.x
+          + v5.4.x
+          + v5.3.x
+          + v5.2.x
+          + v5.1.x
+          + v5.0.x
+          + v4.29.x
+          + v3.29.x
+     *
+
+   (BUTTON) ← Back to main menu
+
+   (BUTTON)
+
+     * Introduction
+     * Guides (BUTTON)
+     * Reference (BUTTON)
+          + ContentTypeParser
+          + Decorators
+          + Encapsulation
+          + Errors
+          + HTTP2
+          + Hooks
+          + LTS
+          + Lifecycle
+          + Logging
+          + Middleware
+          + Plugins
+          + Technical Principles
+          + Reply
+          + Request
+          + Routes
+          + Server
+          + Type-Providers
+          + TypeScript
+          + Validation-and-Serialization
+          + Warnings
+
+     *
+     * Reference
+     * Middleware
+
+   Version: latest (v5.9.x)
+   (BUTTON) On this page
+
+Middleware
+
+Middleware​
+
+   As of Fastify v3.0.0, middleware is not supported out of the box and
+   requires an external plugin such as @fastify/express or
+   @fastify/middie.
+
+   The following example registers the @fastify/express plugin and uses
+   Express middleware:
+
+   await fastify.register(require('@fastify/express'))
+
+   fastify.use(require('cors')())
+   fastify.use(require('dns-prefetch-control')())
+   fastify.use(require('frameguard')())
+   fastify.use(require('hsts')())
+   fastify.use(require('ienoopen')())
+   fastify.use(require('x-xss-protection')())
+
+   @fastify/middie can also be used, which provides support for simple
+   Express-style middleware with improved performance:
+
+   await fastify.register(require('@fastify/middie'))
+
+   fastify.use(require('cors')())
+
+   Middleware can be encapsulated using register, which controls where it
+   runs, as explained in the Plugins Guide.
+
+   This is because Fastify wraps the incoming Node.js req and res objects
+   into Request and Reply instances after the middleware phase. As a
+   result, Fastify middleware does not expose the send method or other
+   methods specific to the Fastify Reply instance. To create middleware,
+   use the Node.js req and res objects. Alternatively, use the preHandler
+   hook, which has access to the Fastify Request and Reply instances. For
+   more information, see Hooks.
+
+Restrict Middleware Execution to Certain Paths​
+
+   To restrict middleware to specific paths, pass the path as the first
+   argument to use.
+
+     ℹ️ Note: This does not support routes with parameters (e.g.,
+     /user/:id/comments). Wildcards are not supported in multiple paths.
+
+   const path = require('node:path')
+
+   const serveStatic = require('serve-static')
+   // Single path
+   fastify.use('/css', serveStatic(path.join(__dirname, '/assets')))
+   // Wildcard path
+   fastify.use('/css/(.*)', serveStatic(path.join(__dirname, '/assets')))
+   // Multiple paths
+   fastify.use(['/css', '/js'], serveStatic(path.join(__dirname,
+   '/assets')))
+
+Fastify Alternatives​
+
+   Fastify offers native alternatives to commonly used middleware, such as
+   @fastify/helmet for helmet, @fastify/cors for cors, and @fastify/static
+   for serve-static.
+
+   Edit this page
+
+   Previous
+   Logging
+   Next
+   Plugins
+     * Middleware
+          + Restrict Middleware Execution to Certain Paths
+          + Fastify Alternatives
+
+   Docs
+     * Getting Started
+
+   Community
+     * Stack Overflow
+     * Discord
+     * X
+     * Mastodon
+
+   More
+     * GitHub
+
+   Copyright OpenJS Foundation and Fastify contributors. All rights
+   reserved. The OpenJS Foundation has registered trademarks and uses
+   trademarks. For a list of trademarks of the OpenJS Foundation, please
+   see our Trademark Policy and Trademark List. Trademarks and logos not
+   indicated on the list of OpenJS Foundation trademarks are trademarks™
+   or registered® trademarks of their respective holders. Use of them does
+   not imply any affiliation with or endorsement by them.
+
+   The OpenJS Foundation | Terms of Use | Privacy Policy | Bylaws | Code
+   of Conduct | Trademark Policy | Trademark List | Cookie Policy
