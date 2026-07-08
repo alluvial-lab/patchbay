@@ -146,3 +146,12 @@ Verdict: **Approve** (zero blockers, zero important, zero nits). All three prior
 3. Extension-seams registry — 4 observability rows added to PROTOCOL.md (C/R/X/R), consistent with SPEC/UX/SECURITY.
 
 Acceptance criteria met. SSOT/no-new-storage invariant holds. Redaction coverage holds. No new drift introduced by the fixes.
+
+## Pass-3 review (full deep, 2026-07-08) → blocker fixed + important carry-forward
+
+Pass 3 found a 4th blocker (SSOT drift: PROTOCOL's own audit-redaction summary omitted adapter attachment material after SECURITY was extended) and one important (generated-contracts derivability gap):
+
+- **BLOCKER (fixed): PROTOCOL redaction summary was stale.** `docs/PROTOCOL.md` had its own audit-redaction list that SECURITY was extended to cover adapter attachment material, but PROTOCOL's summary was not updated → the two foundation docs disagreed on what must not be logged. Fixed: PROTOCOL summary now includes adapter attachment material and defers to SECURITY as the canonical list (prevents future drift).
+- **IMPORTANT (carry-forward, not blocking this docs feature): query-contract shapes not first-class in `.proto`.** `audit-query` and `inspect-command` can route as `OperationKind = QUERY` with generic `PayloadEnvelope` carriage, but the typed filter/response proto shapes for audit-query filters and inspect-command results do not yet exist in `contracts/proto/`. This is a derivability gap for the CLI implementation feature, not a defect in this docs feature (which defines the diagnostic surface, not the wire contracts). Flagged here so the implementation feature derives the typed query payload/response contracts (registry-owned or generated) rather than hand-copying CLI DTOs. Not filed as a separate item — it belongs to the v0 walking-skeleton implementation scope.
+
+Re-review pending.
