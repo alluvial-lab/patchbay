@@ -52,7 +52,7 @@ V0 is designed against:
 - stale adapter events or late replies mutating newer state;
 - confused-deputy routing where UI labels or payload fields override verified identity;
 - unsupported adapter Operations being presented as available;
-- accidental logging of secret material — the canonical no-log list (session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies, sensitive attachments, adapter attachment material / raw `attachment_method.descriptor`) lives in the Audit events section below; this threat is designed against that list, not a separate one;
+- accidental logging of secret material — the canonical no-log/redaction list lives in the Audit events section below; this threat is designed against that list;
 - deployment mistakes that expose an unauthenticated or HTTP-only non-localhost core;
 - adapter-to-core channels that bypass Patchbay identity, capability, or grant checks.
 
