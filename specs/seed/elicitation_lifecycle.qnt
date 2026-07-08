@@ -20,6 +20,7 @@
 module elicitation_lifecycle {
   // --- ElicitationState registry (docs/PROTOCOL.md canonical table) ---
   pure val TERMINAL = Set("answered", "declined", "expired", "cancelled", "withdrawn", "superseded", "stale")
+  pure val NON_ANSWER_TERMINAL = Set("declined", "expired", "cancelled", "withdrawn", "superseded", "stale")
   pure val NON_TERMINAL = Set("opened", "pending")
 
   // --- finite bounds ---
@@ -94,9 +95,11 @@ module elicitation_lifecycle {
       and actor == responderActor.get(eid)
       and targetLive(eid)
 
+  def responseOpUnused(responseOpId) = responseOpElicitation.get(responseOpId) == "none"
+
   def firstValidAnswerAllowed(eid, responseOpId, claimedEid, kind, domain, session, generation, actor) =
     state.get(eid) == "pending"
-      and responseOpElicitation.get(responseOpId) == "none"
+      and responseOpUnused(responseOpId)
       and responseMatchesTarget(eid, claimedEid, kind, domain, session, generation, actor)
 
   def idempotentResponseRetry(eid, responseOpId, claimedEid, kind, domain, session, generation, actor) =
@@ -110,6 +113,23 @@ module elicitation_lifecycle {
   def duplicateAttempt(responseOpId, claimedEid) =
     if (ELICITATION_IDS.contains(claimedEid))
       state.get(claimedEid) == "answered" and answeredResponseOp.get(claimedEid) != responseOpId
+    else
+      false
+
+  // INDEPENDENT property oracle: checks raw response-Operation facts WITHOUT
+  // calling responseMatchesTarget or firstValidAnswerAllowed. Mutation tests break
+  // the action-side helper; this oracle still checks the recorded id-space,
+  // authority-domain, session/generation, actor, endpoint, and committed-op facts.
+  def recordedResponseIndependentOk(responseOpId) =
+    if (ELICITATION_IDS.contains(responseOpElicitation.get(responseOpId)))
+      responseOpKind.get(responseOpId).in(RESPONSE_KINDS)
+        and responseOpDomain.get(responseOpId) == elicitationDomain.get(responseOpElicitation.get(responseOpId))
+        and responseOpSession.get(responseOpId) == targetSession.get(responseOpElicitation.get(responseOpId))
+        and responseOpGeneration.get(responseOpId) == targetGeneration.get(responseOpElicitation.get(responseOpId))
+        and responseOpGeneration.get(responseOpId) == sessionGeneration.get(responseOpSession.get(responseOpId))
+        and responseOpActor.get(responseOpId) == responderActor.get(responseOpElicitation.get(responseOpId))
+        and ENDPOINTS.contains(responseOpEndpoint.get(responseOpId))
+        and answeredResponseOp.get(responseOpElicitation.get(responseOpId)) == responseOpId
     else
       false
 
@@ -315,37 +335,9 @@ module elicitation_lifecycle {
       sessionGeneration' = sessionGeneration,
     },
     all {
-      committedResponseOp(responseOpId),
-      not(idempotentResponseRetry(eid, responseOpId, claimedEid, kind, domain, session, generation, actor)),
-      state' = state,
-      lsn' = lsn,
-      terminalLsn' = terminalLsn,
-      answeredBy' = answeredBy,
-      responseOpElicitation' = responseOpElicitation,
-      responseOpKind' = responseOpKind,
-      responseOpDomain' = responseOpDomain,
-      responseOpSession' = responseOpSession,
-      responseOpGeneration' = responseOpGeneration,
-      responseOpActor' = responseOpActor,
-      responseOpEndpoint' = responseOpEndpoint,
-      responseValid' = responseValid,
-      responseDuplicate' = responseDuplicate,
-      answeredResponseOp' = answeredResponseOp,
-      firstTerminalState' = firstTerminalState,
-      firstAnsweredBy' = firstAnsweredBy,
-      firstAnsweredResponseOp' = firstAnsweredResponseOp,
-      responderActor' = responderActor,
-      contractKind' = contractKind,
-      elicitationDomain' = elicitationDomain,
-      targetSession' = targetSession,
-      targetGeneration' = targetGeneration,
-      sessionGeneration' = sessionGeneration,
-    },
-    all {
       not(firstValidAnswerAllowed(eid, responseOpId, claimedEid, kind, domain, session, generation, actor)),
       not(idempotentResponseRetry(eid, responseOpId, claimedEid, kind, domain, session, generation, actor)),
-      not(committedResponseOp(responseOpId)),
-      responseOpElicitation.get(responseOpId) == "none",
+      responseOpUnused(responseOpId),
       state' = state,
       lsn' = lsn,
       terminalLsn' = terminalLsn,
@@ -359,6 +351,33 @@ module elicitation_lifecycle {
       responseOpEndpoint' = responseOpEndpoint.set(responseOpId, endpoint),
       responseValid' = responseValid.set(responseOpId, false),
       responseDuplicate' = responseDuplicate.set(responseOpId, duplicateAttempt(responseOpId, claimedEid)),
+      answeredResponseOp' = answeredResponseOp,
+      firstTerminalState' = firstTerminalState,
+      firstAnsweredBy' = firstAnsweredBy,
+      firstAnsweredResponseOp' = firstAnsweredResponseOp,
+      responderActor' = responderActor,
+      contractKind' = contractKind,
+      elicitationDomain' = elicitationDomain,
+      targetSession' = targetSession,
+      targetGeneration' = targetGeneration,
+      sessionGeneration' = sessionGeneration,
+    },
+    all {
+      not(idempotentResponseRetry(eid, responseOpId, claimedEid, kind, domain, session, generation, actor)),
+      not(responseOpUnused(responseOpId)),
+      state' = state,
+      lsn' = lsn,
+      terminalLsn' = terminalLsn,
+      answeredBy' = answeredBy,
+      responseOpElicitation' = responseOpElicitation,
+      responseOpKind' = responseOpKind,
+      responseOpDomain' = responseOpDomain,
+      responseOpSession' = responseOpSession,
+      responseOpGeneration' = responseOpGeneration,
+      responseOpActor' = responseOpActor,
+      responseOpEndpoint' = responseOpEndpoint,
+      responseValid' = responseValid,
+      responseDuplicate' = responseDuplicate,
       answeredResponseOp' = answeredResponseOp,
       firstTerminalState' = firstTerminalState,
       firstAnsweredBy' = firstAnsweredBy,
@@ -406,6 +425,34 @@ module elicitation_lifecycle {
   action cancel(eid) = commitTerminal(eid, "cancelled")
   action withdraw(eid) = commitTerminal(eid, "withdrawn")
   action supersede(eid) = commitTerminal(eid, "superseded")
+
+  action advanceSessionGeneration(eid) = all {
+    state.get(eid) == "pending",
+    targetGeneration.get(eid) < 2,
+    state' = state,
+    lsn' = lsn + 1,
+    terminalLsn' = terminalLsn,
+    sessionGeneration' = sessionGeneration.set(targetSession.get(eid), targetGeneration.get(eid) + 1),
+    responderActor' = responderActor,
+    answeredBy' = answeredBy,
+    contractKind' = contractKind,
+    elicitationDomain' = elicitationDomain,
+    targetSession' = targetSession,
+    targetGeneration' = targetGeneration,
+    responseOpElicitation' = responseOpElicitation,
+    responseOpKind' = responseOpKind,
+    responseOpDomain' = responseOpDomain,
+    responseOpSession' = responseOpSession,
+    responseOpGeneration' = responseOpGeneration,
+    responseOpActor' = responseOpActor,
+    responseOpEndpoint' = responseOpEndpoint,
+    responseValid' = responseValid,
+    responseDuplicate' = responseDuplicate,
+    answeredResponseOp' = answeredResponseOp,
+    firstTerminalState' = firstTerminalState,
+    firstAnsweredBy' = firstAnsweredBy,
+    firstAnsweredResponseOp' = firstAnsweredResponseOp,
+  }
 
   action goStale(eid) = any {
     all {
@@ -464,16 +511,26 @@ module elicitation_lifecycle {
   }
 
   // The driver pins lifecycle changes to e1 for symmetry reduction. Response
-  // attempts are explicit adversarial cases rather than a full cross product: valid
-  // answer, duplicate/late answer, one composite forged/wrong-domain/wrong-session/
-  // wrong-generation/wrong-actor attempt, and unsupported response kind.
+  // attempts range over valid and adversarial fields so each action guard conjunct
+  // can be mutation-tested independently without duplicating action branches.
+  action attemptAnyAnswer = {
+    nondet responseOpId = RESPONSE_OP_IDS.oneOf()
+    nondet claimedEid = CLAIMED_ELICITATION_IDS.oneOf()
+    nondet kind = ATTEMPTED_RESPONSE_KINDS.oneOf()
+    nondet endpoint = ENDPOINTS.oneOf()
+    nondet domain = RESPONSE_DOMAINS.oneOf()
+    nondet session = SESSIONS.oneOf()
+    nondet generation = GENERATIONS.oneOf()
+    nondet actor = SUBMITTING_ACTORS.oneOf()
+    attemptAnswer("e1", responseOpId, claimedEid, kind, endpoint, domain, session, generation, actor)
+  }
+
   action step = any {
     makePending("e1"),
-    attemptAnswer("e1", "ro1", "e1", "approval-response", "ep-a", "domain-main", "s1", 0, "alice"),
-    attemptAnswer("e1", "ro2", "e1", "elicitation-response", "ep-b", "domain-main", "s1", 0, "alice"),
-    attemptAnswer("e1", "ro2", "c1", "elicitation-response", "ep-b", "domain-forged", "s2", 1, "mallory"),
+    advanceSessionGeneration("e1"),
+    attemptAnyAnswer,
     lateAnswer("e1", "ro2"),
-    nondet terminal = TERMINAL.oneOf(); commitTerminal("e1", terminal),
+    nondet terminal = NON_ANSWER_TERMINAL.oneOf(); commitTerminal("e1", terminal),
     goStale("e1"),
   }
 
@@ -535,18 +592,7 @@ module elicitation_lifecycle {
       and ELICITATION_IDS.intersect(REPLY_IDS).size() == 0
       and ELICITATION_IDS.intersect(EVENT_IDS).size() == 0
       and RESPONSE_OP_IDS.forall(ro =>
-        responseValid.get(ro).implies(
-          if (ELICITATION_IDS.contains(responseOpElicitation.get(ro)))
-            responseOpKind.get(ro).in(RESPONSE_KINDS)
-              and responseOpDomain.get(ro) == elicitationDomain.get(responseOpElicitation.get(ro))
-              and responseOpSession.get(ro) == targetSession.get(responseOpElicitation.get(ro))
-              and responseOpGeneration.get(ro) == targetGeneration.get(responseOpElicitation.get(ro))
-              and responseOpGeneration.get(ro) == sessionGeneration.get(responseOpSession.get(ro))
-              and responseOpActor.get(ro) == responderActor.get(responseOpElicitation.get(ro))
-              and ENDPOINTS.contains(responseOpEndpoint.get(ro))
-              and answeredResponseOp.get(responseOpElicitation.get(ro)) == ro
-          else
-            false))
+        responseValid.get(ro).implies(recordedResponseIndependentOk(ro)))
 
   // @promotion {
   //   property:    ElicitationTimeoutNeitherSuccessNorDenial
@@ -562,7 +608,7 @@ module elicitation_lifecycle {
   // }
   val elicitation_timeout_neither_success_nor_denial =
     ELICITATION_IDS.forall(eid =>
-      (state.get(eid) == "expired").implies(
+      (firstTerminalState.get(eid) == "expired").implies(
         answeredBy.get(eid) == "none"
           and answeredResponseOp.get(eid) == "none"
           and state.get(eid) != "answered"
@@ -582,8 +628,9 @@ module elicitation_lifecycle {
   // }
   val elicitation_invalid_response_rejected =
     RESPONSE_OP_IDS.forall(ro =>
-      (not(responseValid.get(ro))).implies(
-        ELICITATION_IDS.forall(eid => answeredResponseOp.get(eid) != ro)))
+      (not(recordedResponseIndependentOk(ro))).implies(
+        not(responseValid.get(ro))
+          and ELICITATION_IDS.forall(eid => answeredResponseOp.get(eid) != ro)))
       and RESPONSE_OP_IDS.forall(ro =>
         responseDuplicate.get(ro).implies(
           not(responseValid.get(ro))
@@ -591,7 +638,12 @@ module elicitation_lifecycle {
       and ELICITATION_IDS.forall(eid =>
         (answeredResponseOp.get(eid) != "none").implies(
           RESPONSE_OP_IDS.contains(answeredResponseOp.get(eid))
-            and responseValid.get(answeredResponseOp.get(eid))))
+            and responseValid.get(answeredResponseOp.get(eid))
+            and recordedResponseIndependentOk(answeredResponseOp.get(eid))))
+      and ELICITATION_IDS.forall(eid =>
+        (firstTerminalState.get(eid) == "answered").implies(
+          answeredBy.get(eid) == firstAnsweredBy.get(eid)
+            and answeredResponseOp.get(eid) == firstAnsweredResponseOp.get(eid)))
 
   // @promotion {
   //   property:    ElicitationStaleTargetInert
@@ -607,8 +659,8 @@ module elicitation_lifecycle {
   // }
   temporal elicitation_stale_target_inert =
     always((targetGeneration.get("e1") < sessionGeneration.get(targetSession.get("e1"))).implies(
-      state.get("e1") == "stale"
-        and firstTerminalState.get("e1") == "stale"
+      state.get("e1") != "answered"
+        and firstTerminalState.get("e1") != "answered"
         and answeredBy.get("e1") == "none"
         and answeredResponseOp.get("e1") == "none"))
 

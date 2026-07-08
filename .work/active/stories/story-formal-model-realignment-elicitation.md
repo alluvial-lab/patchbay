@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-elicitation
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-adjacency]
@@ -52,17 +52,32 @@ Actions (permissive — first-answer-wins checked AGAINST the race, not baked in
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Unit EL
 
 ## Implementation notes
-- Files changed: `specs/seed/elicitation_lifecycle.qnt`, `specs/seed/elicitation_lifecycle.emitted.tla`, `docs/VERIFICATION.md`, `contracts/scripts/check-vectors.mjs`.
-- Tests/verifications run:
+- Files changed: `specs/seed/elicitation_lifecycle.qnt`, `specs/seed/elicitation_lifecycle.emitted.tla`, `.work/active/stories/story-formal-model-realignment-elicitation.md`.
+- Restructure applied: `attemptAnswer` now records every first-seen submitted response Operation tuple (valid or invalid) into `responseOp*` fields; invalid/forged/stale submissions are recorded with `responseValid = false`, duplicate marker where applicable, and no terminal mutation. Response Operation ids remain immutable after first record except for idempotent same-op retries. `elicitation_correlation_typed` and `elicitation_invalid_response_rejected` use `recordedResponseIndependentOk`, a raw-state oracle that does not call `responseMatchesTarget`, `firstValidAnswerAllowed`, or `idempotentResponseRetry`. The driver now ranges over valid and adversarial response fields and includes an `advanceSessionGeneration` race window so stale-target guard mutations are observable. Generic terminal racing now excludes synthetic `answered`; answered commits flow through response Operations.
+- Baseline parse/typecheck/regeneration:
   - `quint parse specs/seed/elicitation_lifecycle.qnt` — pass.
   - `quint compile specs/seed/elicitation_lifecycle.qnt` — pass.
-  - Invariants (`--max-steps 12`) passed: `elicitation_correlation_typed` (NoError, `[ok]`, 38322ms), `elicitation_timeout_neither_success_nor_denial` (NoError, `[ok]`, 16771ms), `elicitation_invalid_response_rejected` (NoError, `[ok]`, 34480ms).
-  - Temporal (`--max-steps 10`, Apalache experimental prompt accepted with `echo y`) passed: `elicitation_pending_finality` (NoError, `[ok]`, 133712ms), `elicitation_first_answer_wins` (NoError, `[ok]`, 142189ms), `elicitation_stale_target_inert` (NoError, `[ok]`, 159162ms), `elicitation_withdrawal_finality` (NoError, `[ok]`, 133888ms).
-  - Mutation tests failed as expected with `[violation]`: first-answer mutation (`elicitation_first_answer_wins`, max-steps 4), pending-finality mutation (`elicitation_pending_finality`, max-steps 4), correlation guard mutation (`elicitation_correlation_typed`, max-steps 4), timeout-as-answer mutation (`elicitation_timeout_neither_success_nor_denial`, max-steps 4), invalid duplicate mutation (`elicitation_invalid_response_rejected`, max-steps 4), stale-target mutation (`elicitation_stale_target_inert`, max-steps 4), withdrawal-finality mutation (`elicitation_withdrawal_finality`, max-steps 4).
   - `quint compile specs/seed/elicitation_lifecycle.qnt --target tlaplus > specs/seed/elicitation_lifecycle.emitted.tla` — generated.
+- Baseline property checks:
+  - `quint verify specs/seed/elicitation_lifecycle.qnt --invariant elicitation_correlation_typed --max-steps 12` — NoError, `[ok]`, 74672ms.
+  - `quint verify specs/seed/elicitation_lifecycle.qnt --invariant elicitation_timeout_neither_success_nor_denial --max-steps 12` — NoError, `[ok]`, 22669ms.
+  - `quint verify specs/seed/elicitation_lifecycle.qnt --invariant elicitation_invalid_response_rejected --max-steps 12` — NoError, `[ok]`, 133405ms.
+  - `echo y | quint verify specs/seed/elicitation_lifecycle.qnt --temporal elicitation_pending_finality --max-steps 10` — NoError, `[ok]`, 176548ms.
+  - `echo y | quint verify specs/seed/elicitation_lifecycle.qnt --temporal elicitation_first_answer_wins --max-steps 10` — NoError, `[ok]`, 184227ms.
+  - `echo y | quint verify specs/seed/elicitation_lifecycle.qnt --temporal elicitation_stale_target_inert --max-steps 10` — NoError, `[ok]`, 276925ms.
+  - `echo y | quint verify specs/seed/elicitation_lifecycle.qnt --temporal elicitation_withdrawal_finality --max-steps 10` — NoError, `[ok]`, 185156ms.
+- Genuine-checking mutation tests (all reverted after each run):
+  - `ElicitationPendingFinality`: mutated `firstValidAnswerAllowed` pending-state guard to `true`, allowing a valid answer after a terminal commit; `echo y | quint verify ... --temporal elicitation_pending_finality --max-steps 4` — `[violation]`, exit 1, 12782ms.
+  - `ElicitationFirstAnswerWins`: same pending-state guard mutation, allowing a second response Operation to rewrite the first answer; `echo y | quint verify ... --temporal elicitation_first_answer_wins --max-steps 4` — `[violation]`, exit 1, 13957ms.
+  - `ElicitationCorrelationTyped`: mutated `responseMatchesTarget` domain check from `domain == elicitationDomain.get(eid)` to `true`; `quint verify ... --invariant elicitation_correlation_typed --max-steps 4` — `[violation]`, exit 1, 10328ms.
+  - `ElicitationTimeoutNeitherSuccessNorDenial`: mutated `firstValidAnswerAllowed` pending-state guard to `true`, allowing a response after `expired`; `quint verify ... --invariant elicitation_timeout_neither_success_nor_denial --max-steps 4` — `[violation]`, exit 1, 12274ms.
+  - `ElicitationInvalidResponseRejected`: mutated `firstValidAnswerAllowed` pending-state guard to `true`, allowing a duplicate response to mutate the terminal answer; `quint verify ... --invariant elicitation_invalid_response_rejected --max-steps 4` — `[violation]`, exit 1, 11072ms. Extra invalid-kind guard mutation (`kind.in(RESPONSE_KINDS)` → `true`) also failed with `[violation]`, 11344ms.
+  - `ElicitationStaleTargetInert`: mutated `responseMatchesTarget` stale/live-target guard from `targetLive(eid)` to `true`; `echo y | quint verify ... --temporal elicitation_stale_target_inert --max-steps 4` — `[violation]`, exit 1, 13559ms.
+  - `ElicitationWithdrawalFinality`: mutated `firstValidAnswerAllowed` pending-state guard to `true`, allowing a response after `withdrawn`; `echo y | quint verify ... --temporal elicitation_withdrawal_finality --max-steps 4` — `[violation]`, exit 1, 14473ms.
+- Contract checks:
   - `node contracts/scripts/check-models.mjs` — pass.
   - `node contracts/scripts/check-vectors.mjs` — pass.
-- Discrepancies/mechanical deviations: to keep Apalache temporal checks tractable at the required `--max-steps 10`, the promoted bound uses one Elicitation id and two response Operation ids rather than the design sketch's two Elicitation ids. The model still carries the full B4-enriched Elicitation-side and response-Operation-side context and exercises the first-answer/duplicate race with two response Operations and two endpoints. The temporal properties use first-terminal history variables as independent oracles instead of `next(...)`-heavy formulas; this preserves Apalache-temporal verification and makes mutation tests fail when terminal answers are rewritten.
+- Discrepancies/mechanical deviations: retained the previous one-Elicitation/two-response-Operation bound for Apalache tractability. `ElicitationStaleTargetInert` now checks the stale-target response-inertness claim directly (`stale target => no answered state/answer op`) rather than requiring immediate `state == "stale"`; the model includes a pending stale-target race window so breaking the stale guard produces a real counterexample.
 - Adjacent issues parked: none.
 
 ## Review findings (deep lane, pass 1 — 2026-07-08)
