@@ -52,7 +52,7 @@ V0 is designed against:
 - stale adapter events or late replies mutating newer state;
 - confused-deputy routing where UI labels or payload fields override verified identity;
 - unsupported adapter Operations being presented as available;
-- accidental logging of session cookies, CSRF tokens, passwords, bootstrap secrets, or prompt bodies;
+- accidental logging of secret material — the canonical no-log list (session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies, sensitive attachments, adapter attachment material / raw `attachment_method.descriptor`) lives in the Audit events section below; this threat is designed against that list, not a separate one;
 - deployment mistakes that expose an unauthenticated or HTTP-only non-localhost core;
 - adapter-to-core channels that bypass Patchbay identity, capability, or grant checks.
 
@@ -234,6 +234,8 @@ Minimum audit records:
 Audit records should include event id, timestamp, actor id, endpoint id when known, operator-session id or hash when applicable, command id when applicable, target id, target generation, outcome, reason/failure vocabulary, and correlation id.
 
 Audit records must not directly store raw session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies by default, or sensitive attachments. Adapter attachment material — the `attachment_method.descriptor` bytes an adapter presents at enrollment (mTLS material, configured local material, OAuth tokens, future trust-root proofs) — is secret-bearing and must not be stored in audit records or surfaced raw by diagnostic commands; it is redacted/excluded at the boundary before any audit or diagnostic projection materializes, the same as other secrets above. If command content logging is later added, it must be an explicit policy with redaction and operator-visible controls.
+
+**This is the canonical no-log/redaction list for Patchbay.** Other docs (PROTOCOL, UX, ARCHITECTURE) summarize or point here; they do not maintain competing lists. Add new redacted fields to this list, not to a doc-local copy.
 
 The v0 CLI diagnostic commands (`docs/UX.md` CLI — `audit-query`, `inspect-command`, `session-health`, `adapter-status`) project these already-redacted audit and event-log records; they introduce no new raw-payload exposure path. `inspect-command` surfaces lifecycle state, timestamps, LSNs, and audit-trail entries for a command — not prompt bodies or sensitive payload content. `adapter-status` surfaces capability manifests but excludes raw `attachment_method.descriptor` (adapter attachment material is redacted per the rule above). Redaction is enforced at the boundary before audit/snapshot materializes, so diagnostic projections inherit it automatically. A future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
