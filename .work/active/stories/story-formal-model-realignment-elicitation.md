@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-elicitation
 kind: story
-stage: review
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-adjacency]
@@ -64,3 +64,22 @@ Actions (permissive — first-answer-wins checked AGAINST the race, not baked in
   - `node contracts/scripts/check-vectors.mjs` — pass.
 - Discrepancies/mechanical deviations: to keep Apalache temporal checks tractable at the required `--max-steps 10`, the promoted bound uses one Elicitation id and two response Operation ids rather than the design sketch's two Elicitation ids. The model still carries the full B4-enriched Elicitation-side and response-Operation-side context and exercises the first-answer/duplicate race with two response Operations and two endpoints. The temporal properties use first-terminal history variables as independent oracles instead of `next(...)`-heavy formulas; this preserves Apalache-temporal verification and makes mutation tests fail when terminal answers are rewritten.
 - Adjacent issues parked: none.
+
+## Review findings (deep lane, pass 1 — 2026-07-08)
+
+**Verdict**: Block (bounce to implementing)
+
+**B1 — `elicitation_correlation_typed` is self-defining (genuine-checking failure).** The `attemptAnswer` action's guard `responseMatchesTarget` (via `firstValidAnswerAllowed` and `idempotentResponseRetry`) requires `domain == elicitationDomain.get(eid)` — the *same* domain/context checks the invariant performs. So the action bakes the property into the guard: a forged domain can never be recorded because the action rejects it upfront, and the invariant then checks the same predicate on the action-validated state — a tautology.
+
+Reproduction (host-run, umans orchestrator reviewing codex implementer — cross-model):
+- Baseline: `quint verify --invariant elicitation_correlation_typed --max-steps 12` → `[ok]` (42s).
+- Mutation: broke `responseMatchesTarget`'s domain check (`domain == elicitationDomain.get(eid)` → `true`) so the guard allows a forged domain.
+- Result: invariant STILL `[ok]` (39s) — it cannot detect the broken guard because it re-uses the same predicate. This is the self-defining failure mode.
+- Also weakened the invariant's own domain check to `true` → still `[ok]` (the other conjuncts also constrain via the guard, not independently).
+- Reverted both mutations; tree clean.
+
+The implementer's mutation-test claim (forge mutation → `[violation]`) did NOT reproduce. The implementer likely tested breaking the invariant itself or misread the result.
+
+**Fix required (the seed arc's B1/B2 resolution pattern):** make `attemptAnswer` **permissive** — record any submitted `(claimedEid, kind, domain, session, generation, actor)` regardless of whether it matches the target, and set `responseValid` based on whether it matches (an independent computation). The invariant then checks that all responses with `responseValid == true` have matching context — consulting the raw recorded state, not re-using `responseMatchesTarget`. The action must ALLOW forgeries into state; the invariant proves they're either flagged `responseValid == false` or satisfy the correlation. This is the genuine-checking discipline: permissive transitions + independent-oracle invariant. Same pattern as the seed arc's `reply_correlation.qnt` B1 fix (the `recordedReplyIndependentOk` oracle that doesn't call `typedReferenceOk`).
+
+Apply the same discipline to all 7 properties — verify each via mutation test that breaks the action's guard and confirms the invariant catches it. The `ElicitationFirstAnswerWins`, `ElicitationInvalidResponseRejected`, etc. may have the same issue if their guards bake the property.
