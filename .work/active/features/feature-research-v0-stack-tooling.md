@@ -1,7 +1,7 @@
 ---
 id: feature-research-v0-stack-tooling
 kind: feature
-stage: drafting
+stage: done
 tags: [research, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-research-contract-tooling]
@@ -107,3 +107,34 @@ Three candidate decompositions drafted against the seed (4 named layers + refere
 - The v0 two-process topology (`docs/ARCHITECTURE.md` "V0 process topology") is settled; this research grounds its implementation choices, not the topology itself.
 - The contract layer (Protobuf+Buf) was grounded by `feature-research-contract-tooling`; this engagement deepens the Connect-ES and prost server-side questions that the two-process topology raises.
 - Findings feed `feature-web-core-protocol-seam` (backlog) and the implementation features that follow.
+
+## Engagement record (2026-07-07, closed)
+
+**Walk:** multi-specialist decomposed (4 facets), `scope_authority: in-engagement-judgment`, `verification_rigor: full` (operator-confirmed). Decomposition: 3 candidates drafted, Candidate B (by-decision, 4 specialists) chosen — isolates the flagged weak layer (Connect-ES seam) as its own facet. Decomposition rationale persisted above per ARD §10.6.
+
+**Fan-out (4 parallel specialists, `openai-codex/gpt-5.5`, discipline bundle inlined per dispatch):**
+- `internal-seam-connect` — Connect-ES Node client fit + tonic + browser-facing transport. 14 attestations.
+- `rust-core-primitives` — SQLite/sled/libsql/cqrs-es + statig/smlang + tokio/proptest/tonic. 13 attestations.
+- `ts-web-and-browser` — Fastify vs Hono/Elysia/Oak + session/CSRF hardening + XState/TanStack/Connect-Web. 16 attestations (3 prior attestations extended).
+- `reference-control-planes` — no forkable precedent; partial analogues. 13 attestations.
+
+**Gate outcomes (`full` rigor stack):**
+- `lint` (hard floor): clean — attestation-tier audit zero findings; 118 resolved/non-broken citations in parent; 1 genuine unreachable (`gnu.org`, minor analog).
+- `adversarial-read`: NEEDS-REVISION → revision pass 1 → NEEDS-REVISION (4 residuals) → revision pass 2 → re-verify pass 3 APPROVED.
+- `evaluate` (isolated context): NEEDS-REVISION (4 findings — no Contradictions section, thin Hono/Elysia/Oak rationale, under-grounded novelty likelihood, TanStack not tied to reconnect) → revision → re-evaluation APPROVED (5/5/5/4/5).
+- `spot-check` (lead): clean — citation-chain, lens-not-substrate, contradictions structural, composed-claim markers present.
+
+**Key finding:** the v0 stack story is coherent and does NOT reopen any committed architectural decision. Connect-ES is usable as a Node client library (disconfirms the seed's TS-as-client worry); the internal seam is gRPC/HTTP2 to tonic. SQLite+WAL+`synchronous=FULL` fits the durable-log requirement (Patchbay owns the LSN invariant; `synchronous=NORMAL` is not durable enough). No forkable precedent exists for a deployment-neutral human control plane (Patchbay is genuinely novel in this niche).
+
+**Side issue found and fixed:** the ARD linter's `url_alive()` used urllib's default `Python-urllib` User-Agent, which many docs hosts 403 → false-positive `unreachable-source` flags. Filed upstream as `fix/lint-url-alive-user-agent` (projects/skills worktree, off the ongoing `feat/pi-sandbox-first-party-bwrap` branch) and applied locally to the `.pi` install clone (UA fallback chain: browser UA first, fall back to python UA). Recovery: `cd /home/agent/.pi/agent/git/github.com/nklisch/skills && git reset --hard origin/main` once the upstream fix lands.
+
+**Output paths:**
+- Parent synthesis: `.research/analysis/campaigns/v0-stack-tooling/parent.md`
+- Specialist briefs: `.research/analysis/campaigns/v0-stack-tooling/specialists/*.md`
+- Acquisition manifest: `.research/analysis/campaigns/v0-stack-tooling/acquisitions.md` (3 enriching, 0 blocking)
+- Verification checklist: `.research/analysis/campaigns/v0-stack-tooling/verification-checklist.md`
+- Attestations: `.research/attestation/*.md` (~45 source-direct)
+
+**Acquisition-offgas (operator-confirmed promotion gate):** 3 enriching candidates surfaced (connect-node/tonic interop spike; Codex generated app-server JSON schema; OpenCode `/doc` OpenAPI doc). NOT auto-promoted to the `.work/` acquisition queue — operator decides via `/agentic-research:research-handoff v0-stack-tooling`.
+
+**Carry-forward (non-blocking):** re-verify the two unreachable sources at implementation time; run the connect-node/tonic interop spike before relying on the internal seam operationally. Both captured in the synthesis's Verification notes and Revisit-if.
