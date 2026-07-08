@@ -1,7 +1,7 @@
 ---
 id: feature-observability-operator-admin
 kind: feature
-stage: implementing
+stage: done
 tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-persistence-snapshot-model]
@@ -137,3 +137,12 @@ Verdict: **Block** (3 findings, all fixed this pass):
 3. **IMPORTANT (fixed): observability seams not in the extension-seams registry.** SPEC/UX classified trace timeline, metrics, dashboard, `event-inspect`, SIEM, perf budgets as reserved, but PROTOCOL's cross-cutting registry had no observability rows. Fixed: added 4 rows to `docs/PROTOCOL.md` extension-seams registry (C: v0 observability surface; R: trace UI/metrics/dashboard/event-inspect/SIEM/perf-budgets; X: dedicated trace storage + metrics-as-primary-substrate; R: no-lifecycle bypass read).
 
 No nit-level findings. Re-review pending.
+
+## Re-review (fresh-context, 2026-07-08) → APPROVED
+
+Verdict: **Approve** (zero blockers, zero important, zero nits). All three prior findings confirmed FIXED:
+1. Persistence boundary — diagnostic commands route as `query` Operations against the core; CLI-local/no-lifecycle bypass read explicitly reserved.
+2. Session states — `session-health` lists the full canonical registries (5 connectivity × 3 activity states).
+3. Extension-seams registry — 4 observability rows added to PROTOCOL.md (C/R/X/R), consistent with SPEC/UX/SECURITY.
+
+Acceptance criteria met. SSOT/no-new-storage invariant holds. Redaction coverage holds. No new drift introduced by the fixes.
