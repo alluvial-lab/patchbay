@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-traceability
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: []
