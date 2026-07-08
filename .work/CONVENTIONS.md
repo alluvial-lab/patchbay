@@ -68,6 +68,17 @@ Items that currently still carry `[prose]` in `tags:` (legacy, from before the r
 
 Patchbay has no release process yet. Keep `release_binding: null` until release conventions are explicitly designed.
 
+## Review lane for verification-tagged stories
+
+Agile-workflow's review skill routes stories to the **fast lane** by default (confirm green verification, advance to `done`, no peer pass). That is the wrong gate for safety-claiming formal models: the seed arc's review history shows every adversarial pass caught self-defining or vacuous properties that the implementation pass missed (6 in the first deep review, regressions in the second and third). For `[verification]`-tagged stories, route to the **deep lane** instead — the two-phase order (completeness → adversarial), each phase a convergence loop to nits (iterate review→refine until findings stabilize, cap ~5 passes). This applies to all `[verification]`-tagged stories, including the formal-model-realignment arc.
+
+- When autopilot delegates a `[verification]`-tagged story at `stage: review`, treat it as an explicit `--deep` target: run the deep lane, not the fast lane.
+- The convergence loop is per-story: implement → deep review → fix → re-review, until findings stabilize at nits. Only then advance to `done`.
+- Reviewer posture: cross-model (`openai-codex/gpt-5.5`) from the umans orchestrator; fresh-context; attack the genuine-checking proof (mutation tests), not just green verification. A promoted property that passes `quint verify` but fails its mutation test is not checked — it is self-defining.
+- The feature-level review (when all 6 stories are `done`) runs a final deep pass over the whole realignment, not just the rollup.
+
+This convention overrides the review skill's default story lane only for `[verification]`-tagged items; non-verification stories keep the fast lane.
+
 ## Query tool
 
 Use `.work/bin/work-view`:
