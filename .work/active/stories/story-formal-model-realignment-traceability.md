@@ -88,3 +88,17 @@ Update `check-vectors.mjs` arrays: move `browser_local_state_not_authority` from
   - Tier field check: `grep -R "tier:" specs/seed/*.qnt specs/seed/*.als` found no remaining `tier:` lines.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+
+### Review B1 blocker fix (2026-07-08)
+
+- Files changed: `contracts/scripts/check-models.mjs`.
+- Tests added: no standalone unit test; added an executable validation check in `validateBlocks` and reproduced the reviewer's mutation as a script-level negative test.
+- Mechanical fix: `validateBlocks` now normalizes each `model:` field to a repo-relative path and asserts it equals the repo-relative path of the file containing the parsed `@promotion` block (`block.filePath`). On mismatch it exits non-zero and names the property, declared model, and actual file. Promoted Quint invocation validation now checks the actual containing file's basename rather than trusting the self-declared `model:` field.
+- Verification output:
+  - Clean tree: `node contracts/scripts/check-models.mjs` exited 0.
+  - B1 mutation: temporarily changed `browser_local_state_not_authority` in `specs/seed/csrf_browser.qnt` to `model: specs/seed/command_lifecycle.qnt` and changed the invocation to mention `command_lifecycle.qnt`; `node contracts/scripts/check-models.mjs` exited 1 and reported `property browser_local_state_not_authority declares model specs/seed/command_lifecycle.qnt, but @promotion block lives in specs/seed/csrf_browser.qnt` (plus the actual-file invocation failure). Mutation was reverted.
+  - Post-revert clean tree: `node contracts/scripts/check-models.mjs` exited 0.
+  - VR4 pass: `quint verify specs/seed/csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12` exited 0 with `[ok] No violation found`.
+  - `node contracts/scripts/check-vectors.mjs` exited 0.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

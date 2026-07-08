@@ -24,6 +24,12 @@ function rel(filePath) {
   return path.relative(repoRoot, filePath).replaceAll(path.sep, '/');
 }
 
+function normalizeRepoRelativePath(value) {
+  const cleaned = String(value ?? '').trim().replace(/^`|`$/g, '');
+  const absolutePath = path.isAbsolute(cleaned) ? cleaned : path.resolve(repoRoot, cleaned);
+  return rel(absolutePath);
+}
+
 function markdownEscape(value) {
   return String(value ?? '—').replaceAll('|', '\\|').replaceAll('\n', '<br>');
 }
@@ -182,6 +188,13 @@ function validateBlocks(blocks, validPropertyIds, promotedByProperty) {
     if (Object.hasOwn(fields, 'status') && !VALID_STATUSES.has(fields.status)) {
       errors.push(`${location}: status must be one of ${[...VALID_STATUSES].join(', ')}, got ${fields.status}`);
     }
+    if (Object.hasOwn(fields, 'model')) {
+      const declaredModel = normalizeRepoRelativePath(fields.model);
+      const actualModel = rel(block.filePath);
+      if (declaredModel !== actualModel) {
+        errors.push(`${location}: property ${fields.property ?? '<unknown>'} declares model ${declaredModel}, but @promotion block lives in ${actualModel}`);
+      }
+    }
     if (fields.status === 'promoted') {
       if (!fields.invocation || fields.invocation.includes('<TBD')) {
         errors.push(`${location}: promoted block must have a concrete invocation`);
@@ -189,9 +202,9 @@ function validateBlocks(blocks, validPropertyIds, promotedByProperty) {
         errors.push(`${location}: promoted invocation must name the tool (quint or java)`);
       }
       if (fields.language === 'quint' || fields.backend?.startsWith('apalache')) {
-        const modelBasename = path.basename(fields.model ?? '');
-        if (!fields.invocation?.includes(modelBasename)) {
-          errors.push(`${location}: promoted Quint invocation must include model filename ${modelBasename}`);
+        const actualModelBasename = path.basename(block.filePath);
+        if (!fields.invocation?.includes(actualModelBasename)) {
+          errors.push(`${location}: promoted Quint invocation must include actual model filename ${actualModelBasename}`);
         }
       }
     }
