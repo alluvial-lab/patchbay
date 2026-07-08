@@ -1,7 +1,7 @@
 ---
 id: feature-observability-operator-admin
 kind: feature
-stage: review
+stage: implementing
 tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-persistence-snapshot-model]
@@ -127,3 +127,13 @@ Single-stride implementation (one session can finish all three doc units). No ch
 - Discrepancies from design: none. The design's Unit 2 noted the commands are "uses of the existing `query` OperationKind" — confirmed against `docs/PROTOCOL.md` OperationKind registry (line 155: `query` = "Read status, snapshot, capabilities, lists, history, metadata, or diagnostics"). The CLI-local reads of the audit log (e.g. `audit-query` filtering audit records directly) are CLI-side projections of the queryable audit log, not new `OperationKind`s.
 - Adjacent issues parked: none.
 - Cross-doc consistency verified: SPEC observability scope, UX CLI command set, and SECURITY redaction rules agree — no command surfaces a field SECURITY says must not be logged; the deferred set (trace timeline UI, metrics, dashboard, `event-inspect`, SIEM) is named consistently across SPEC and UX.
+
+## Review findings (fresh-context deep review, 2026-07-08) → bounced → fixed
+
+Verdict: **Block** (3 findings, all fixed this pass):
+
+1. **BLOCKER (fixed): CLI-local audit reads violated the persistence boundary.** UX.md said commands may be "a CLI-local read of the queryable audit log," contradicting PROTOCOL.md (control surfaces never touch persistence directly) and ARCHITECTURE.md (storage port). Fixed: commands are now `query` Operations against the core; the no-lifecycle bypass read is explicitly a reserved seam, not v0 behavior. UX.md CLI prose + the `audit-query`/`inspect-command` data-source column updated.
+2. **BLOCKER (fixed): `session-health` omitted canonical session states.** UX.md listed connectivity as `live/stale/offline/unknown` and activity as `idle/working`, but PROTOCOL.md's canonical registries include connectivity `failed` and activity `unknown`. Fixed: the `session-health` row now lists the full canonical registries (`SessionConnectivityState` 5 states × `SessionActivityState` 3 states).
+3. **IMPORTANT (fixed): observability seams not in the extension-seams registry.** SPEC/UX classified trace timeline, metrics, dashboard, `event-inspect`, SIEM, perf budgets as reserved, but PROTOCOL's cross-cutting registry had no observability rows. Fixed: added 4 rows to `docs/PROTOCOL.md` extension-seams registry (C: v0 observability surface; R: trace UI/metrics/dashboard/event-inspect/SIEM/perf-budgets; X: dedicated trace storage + metrics-as-primary-substrate; R: no-lifecycle bypass read).
+
+No nit-level findings. Re-review pending.

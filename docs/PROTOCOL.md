@@ -615,6 +615,10 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | delegation | `parent_grant_id` / delegation lineage field | X (v0); R (future) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
 | delegation | per-spawn-variant authority ("may spawn worktrees but not cloud envs") | R | PROTOCOL spawn authority |
 | leases | lease-backed exclusive coordination (deferred from v0; reserved as a future seam. Promotion requires a future feature to design the fencing model, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior.) | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL § Leases |
+| observability / diagnostics | v0 observability = audit log + CLI `audit-query`/`inspect-command`/`session-health`/`adapter-status` (read-only `query` Operation projections) + web shows current `CommandState` | C | SPEC V0 observability scope; UX CLI; SECURITY Audit events |
+| observability / diagnostics | per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives; quantitative performance budgets/SLAs | R | SPEC V0 observability scope; SPEC V0 performance posture; SECURITY reserved seams |
+| observability / diagnostics | dedicated per-command trace storage (violates SSOT/single-writer); metrics pipeline as the primary v0 observability substrate (premature for single-operator v0) | X | SPEC V0 observability scope |
+| observability / diagnostics | no-lifecycle bypass read of the audit log (CLI-local, not routed as a `query` Operation) | R | UX CLI; PROTOCOL Persistence and recovery (control surfaces never touch persistence directly) |
 
 ### How to read this registry
 

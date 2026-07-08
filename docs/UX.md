@@ -103,13 +103,13 @@ The responsive web cockpit prioritizes: a readable session list on phone; clear 
 
 The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics.
 
-V0 CLI diagnostic commands are read-only projections of existing durable state. They introduce no new storage path and no new write path; they filter and present what the durable event log, audit records, and already-modeled session/adapter state already hold. Each is a use of the existing `query` OperationKind (`docs/PROTOCOL.md` OperationKind registry) or a CLI-local read of the queryable audit log (`docs/SECURITY.md` Audit events).
+V0 CLI diagnostic commands are read-only projections of existing durable state. They introduce no new storage path and no new write path; they filter and present what the durable event log, audit records, and already-modeled session/adapter state already hold. Each is issued as a `query` Operation against the core (`docs/PROTOCOL.md` OperationKind registry: `query` reads status, snapshot, capabilities, lists, history, metadata, or diagnostics) — the CLI is a control surface and never touches persistence directly; the core owns storage reads through the storage port (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery). A no-lifecycle bypass read of the audit log (CLI-local, not routed as a `query` Operation) is a reserved seam, not v0 behavior.
 
 | Command | Surfaces | Data source |
 |---|---|---|
-| `audit-query` | Filter audit records by actor / command / target / time / outcome. | audit log (durable, queryable per SECURITY.md) |
-| `inspect-command <id>` | Full lifecycle + audit trail for one command: accepted → routed → delivered → running → terminal, with timestamps + LSNs. Answers "why didn't my command deliver?" without a separate trace store. | event log + audit records, filtered by command id / correlation id |
-| `session-health` | Session connectivity × activity axes (live/stale/offline/unknown × idle/working) for one or all sessions. | session state axes (`docs/PROTOCOL.md` Session state axes) |
+| `audit-query` | Filter audit records by actor / command / target / time / outcome. | audit log, read via a `query` Operation against the core (the audit log is durable and queryable per `docs/SECURITY.md` Audit events) |
+| `inspect-command <id>` | Full lifecycle + audit trail for one command: accepted → routed → delivered → running → terminal, with timestamps + LSNs. Answers "why didn't my command deliver?" without a separate trace store. | event log + audit records, read via a `query` Operation filtered by command id / correlation id |
+| `session-health` | Session connectivity × activity axes — the full canonical registries: `SessionConnectivityState` (`live`/`stale`/`offline`/`unknown`/`failed`) × `SessionActivityState` (`idle`/`working`/`unknown`) — for one or all sessions. | session state axes (`docs/PROTOCOL.md` Session state axes) |
 | `adapter-status` | Attached adapters, capability manifests, attach LSN, adapter generation. | adapter registry (`docs/ARCHITECTURE.md` Adapter plane; adapter lifecycle is audited per PROTOCOL.md) |
 
 The delivery trace surfaced by `inspect-command` is a **projection**, not an authoritative command state; canonical `CommandState` remains as defined in `docs/PROTOCOL.md`. The trace is consistent with the snapshot-correctness rule that UI/presentation state is never authoritative (`docs/ARCHITECTURE.md` State and snapshot plane).
