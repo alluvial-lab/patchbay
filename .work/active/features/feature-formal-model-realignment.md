@@ -86,7 +86,9 @@ The feature depends on `feature-operator-presence-and-action-inventory` (which e
 Two facts discovered during the design grounding reshape the brief's open questions and pre-mortem. They are recorded here because they change the recommended approach, not just confirm it.
 
 1. **The `@promotion`-reading CI script does not exist.** The seed feature's Q5 design committed to "a CI script greps the fenced `@promotion` blocks and generates the traceability table in `docs/VERIFICATION.md` as a checked-in artifact." That script was never written. The only CI script today, `contracts/scripts/check-vectors.mjs`, hardcodes the property→tier registry in three JS arrays (`CHECKED_MODEL_PROPERTIES`, `STATED_NORMATIVE_PROPERTIES`, `CHECKED_NORMATIVE_PROPERTIES = []`) and generates the traceability table from **conformance vectors**, not from model `@promotion` metadata. Consequence: the `tier` field inside every `@promotion` block is currently **write-only** — nothing reads it. The docs and the models can already silently disagree (and do: 16 blocks say `checked-normative`, docs say `checked-model`). This means VR2 is not just a one-time metadata edit; the recurrence pre-mortem is already realized. The real fix is to close the read loop, not just rename a field.
-2. **The V1 transition-adjacency gap is verified and low-regression-risk.** `command_lifecycle.qnt` `commitTerminal(cmd, candidate)` guards only `state.get(cmd).in(NON_TERMINAL)` and `candidate.in(TERMINAL)` — no adjacency constraint, so `accepted → completed` is model-permitted. `docs/PROTOCOL.md` (lines 116–132) forbids that adjacency: `accepted → delivered | rejected` only. Crucially, all 7 currently-checked properties (`CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`) are terminal-finality / durability / dedup properties that are **independent of which terminal a state reaches** — they quantify over `TERMINAL` as a set, not over specific adjacencies. Strengthening the transition relation to forbid `accepted → completed` (and the other non-`delivered`/`rejected` adjacencies) therefore cannot break these properties by construction: they don't mention adjacency. This must still be proven by re-running the 7 checks after strengthening (the pre-mortem's regression mitigation), but the design can proceed on the expectation that the strengthening is safe.
+2. **The V1 transition-adjacency gap is verified.** `command_lifecycle.qnt` `commitTerminal(cmd, candidate)` guards only `state.get(cmd).in(NON_TERMINAL)` and `candidate.in(TERMINAL)` — no adjacency constraint, so `accepted → completed` is model-permitted. `docs/PROTOCOL.md` (lines 116–132) forbids that adjacency. The 7 currently-checked properties are terminal-finality / durability / dedup properties that quantify over `TERMINAL` as a set, not over specific adjacencies — so strengthening the transition relation is safe at the property level (verified by reading each property). It is NOT safe at the implementation level by assumption: the adversarial review caught a misquoted transition table and a non-stutter-safe property formula in the initial design. The regression gate (re-run all 7) is mandatory, not a formality.
+
+> **Note on the brief below:** The original Brief, Scope, Open questions, and Risks/pre-mortem sections (lines ~20–80) were authored before the design pass and before the adversarial review. They carry the old framing (e.g., "rename `tier` to `checked-model`" in the scope; "rename in place vs split field" in the open questions). They are **superseded by the `### Design decisions (interactive, ratified 2026-07-08)` section below**, which records the ratified resolutions. The brief is preserved per substrate discipline (preserve-only) and as the seed context that motivated the design; an implementer reading top-down should treat the Design decisions section as authoritative where they disagree.
 
 ### Design decisions (interactive, ratified 2026-07-08)
 
@@ -101,9 +103,9 @@ The brief listed four open questions; an initial design pass resolved them with 
 
 ### Architectural choice
 
-The realignment is structured as **one closed-loop metadata layer + one strengthening + four new model arcs**, sequenced so the traceability loop is established before any new model is authored. The metadata layer (Unit TR) is the keystone: it makes the `@promotion` blocks machine-readable and CI-enforced, so that VR2's one-time rename and every subsequent promotion are checked for drift rather than trusted. The V1 strengthening (Unit CL) is done in-place on `command_lifecycle.qnt` rather than via a new model, because the checked properties are adjacency-independent and a second model would only add refinement-equivalence debt. The four new arcs (Elicitation, Spawn, Subscription, TypedCorrelation extension) are each independent Quint models (or extensions) authored with the genuine-checking discipline proven in the seed arc: permissive actions + independent-oracle invariants + mutation-test proof at promotion time.
+The realignment is structured as **one derived-tier traceability layer + one in-place strengthening + four new model arcs**, sequenced so the traceability loop is established before any new model is authored. Under Q1's derive-tier decision, the traceability script (Unit TR) is the **tier authority** — it computes product tier from model `status` + vector coverage, so model files describe only the model and the docs derive. This removes the drift mechanism that allowed VR2 rather than just fixing the current drift. The V1 strengthening (Unit CL) is done in-place on `command_lifecycle.qnt` with the exact PROTOCOL transition table and a stutter-safe transition-into property; the regression gate is mandatory. The four new arcs place each property in the model that owns its state: Elicitation lifecycle (new rich model), spawn + subscription authority (into the existing `authority.qnt`), and TypedCorrelation extension (into `reply_correlation.qnt`). All are authored with the genuine-checking discipline proven in the seed arc: permissive actions + independent-oracle invariants + mutation-test proof at promotion time.
 
-This composes with the existing verification architecture: the property-id vocabulary stays the SSOT (established by the seed feature), the `@promotion` block format is unchanged (only the `tier` values are corrected), and the new traceability script extends the `contracts/scripts/` family alongside `check-vectors.mjs` and `check-generated-drift.mjs`.
+This composes with the existing verification architecture: the property-id vocabulary stays the SSOT (established by the seed feature), the `@promotion` block format changes by **dropping the `tier` field** (the `status` field already exists and is the model's own state; the product tier is derived), and the new traceability script extends the `contracts/scripts/` family alongside `check-vectors.mjs` and `check-generated-drift.mjs`.
 
 ### Implementation Units
 
@@ -115,7 +117,7 @@ This composes with the existing verification architecture: the property-id vocab
 Closes the read loop the seed feature's Q5 committed to but never built, and — under Q1's derive-tier decision — becomes the **tier authority**: it computes each property's product tier from model `@promotion` `status` + conformance-vector coverage, rather than reading a stored `tier` field. Parses every `@promotion { ... }` block in `specs/seed/*.qnt` and `specs/seed/*.als`, extracts the structured fields (`property`, `status`, `model`, `backend`, `invocation`, `bounds`, `expected`, `proto_fields`, `semantics` — note: no `tier` field under Q1), and cross-checks against `docs/VERIFICATION.md` and `contracts/scripts/check-vectors.mjs`'s registry arrays.
 
 **Checks it enforces (exit 1 on any failure):**
-1. **Coverage:** every property-id in VERIFICATION.md's tier tables is accounted for. A property-id with a `@promotion` block has a model; a property-id with no block is a reserved-unmodeled stated-normative id (expected — Elicitation, spawn, subscription, response-correlation ids until their arcs land). The check fails only if a block references an unknown property-id, or a block is missing for a property that *should* have a model (checked/promoted per VERIFICATION.md). Resolves reviewer B1: distinguish `modeled_properties` (have a block) from `reserved_unmodeled_properties` (no block, expected stated-normative).
+1. **Coverage:** every property-id in VERIFICATION.md's tier tables is accounted for. A property-id with a `@promotion` block has a model; a property-id with no block is a reserved-unmodeled stated-normative id (expected — Elicitation, spawn, subscription ids until their arcs land). The check fails only if a block references an unknown property-id, or a block is missing for a property that *should* have a model (checked/promoted per VERIFICATION.md). Resolves reviewer B1: distinguish `modeled_properties` (have a block) from `reserved_unmodeled_properties` (no block, expected stated-normative). **Note on `TypedCorrelation`:** `TypedCorrelation` is a single checked-model property id that Unit TC expands in *coverage* (Reply→Command/Message AND response Operation→Elicitation), not a separate id. The coverage check treats it as one modeled property; Unit TC's expansion is tracked by its `semantics` field and the VERIFICATION.md "TypedCorrelation extension" bullet (narrowed when TC lands), not by a distinct id. There is no "response-correlation id" gap — the obligation is the same id, broadened.
 2. **Tier derivation:** for each block, compute the product tier: `status: promoted` + ≥1 promoted vector → `checked-normative`; `status: promoted` + 0 promoted vectors → `checked-model`; `status: draft` → `stated-normative`; no block → `stated-normative` (reserved-unmodeled). The computed tier must agree with VERIFICATION.md's classification. **This is the check that would have caught VR2 automatically** — and it catches it by derivation, not by comparing two stored values.
 3. **Status-vs-vector consistency:** a derived `checked-normative` tier requires ≥1 promoted conformance vector (delegates to the vector registry in `check-vectors.mjs`). A derived `checked-model` tier requires zero promoted vectors (informational, not failing) — consistent with the "no promoted vector yet" state.
 4. **Invocation well-formedness:** every `status: promoted` block's `invocation` field is non-empty, names the tool (`quint` or `java`), and (for Quint) includes the model file path. `status: draft` blocks may have `<TBD>` invocations.
@@ -123,6 +125,7 @@ Closes the read loop the seed feature's Q5 committed to but never built, and —
 
 **Design notes:**
 - The parser is a fenced-block regex extractor for `//` comments (Quint and Alloy both use `//`). It extracts the field set above; fields are `key: value` lines. Multi-line `semantics` and colon-containing `bounds` values are handled by reading until the next `key:` pattern or block end. Resolves reviewer I3 (parser underspecification).
+- **Registry composition (reviewer I3 residual):** `check-vectors.mjs` declares its property-tier arrays as module-local `const`s and runs `main()` on load — importing it directly would mutate `docs/VERIFICATION.md` as a side effect. Unit TR therefore reads the arrays by **source parsing** (regex-extracting `CHECKED_MODEL_PROPERTIES`, `STATED_NORMATIVE_PROPERTIES`, `CHECKED_NORMATIVE_PROPERTIES` from `check-vectors.mjs`'s source text) rather than importing the module, OR the implementer first refactors `check-vectors.mjs` to export a side-effect-free registry module (e.g. `contracts/scripts/property-registry.mjs`) that both scripts import. The implementer picks the cleaner option; source parsing is the zero-refactor fallback, the extracted module is the cleaner long-term shape. Either way, no mutation side effect from the check.
 - The script writes a generated `## Generated model-promotion traceability` section into `docs/VERIFICATION.md` (parallel to the existing generated conformance-vector table), listing each property, its model file, **derived tier**, `status`, and backend. This makes the model↔doc agreement a checked-in artifact; CI fails if the generated block drifts from what the script would produce (same posture as `check-vectors.mjs`'s generated table).
 - Wired into `contracts/ts/package.json` as `check:models` (alongside `check:vectors` and `check:drift`). Resolves reviewer N2 (no root package.json — wire into `contracts/ts/package.json`, not a nonexistent root `check:all`).
 
@@ -257,15 +260,21 @@ module elicitation_lifecycle {
   var responderActor: str -> str         // ElicitationId -> expected responder actor (operator in v0)
   var answeredBy: str -> str             // ElicitationId -> endpoint that answered (audit; "none" if not answered)
   var contractKind: str -> str           // ElicitationId -> response_contract.contract_kind
-  // --- rich context variables (reviewer B4) ---
-  var authorityDomain: str               // current authority domain
+  // --- Elicitation-side context (reviewer B4) ---
+  var elicitationDomain: str -> str       // ElicitationId -> authority domain it was opened in
   var targetSession: str -> str           // ElicitationId -> target session id
   var targetGeneration: str -> int        // ElicitationId -> target session generation (stale-detection)
-  var responseOpId: str -> str           // ElicitationId -> response Operation id attempting to answer ("none")
-  var responseOpKind: str -> str          // response Operation id -> "approval-response" | "elicitation-response"
-  var correlationRef: str -> str          // response Operation id -> the ElicitationId it claims to answer
-  var responseValid: str -> bool          // response Operation id -> whether it satisfied the contract
-  var sessionGeneration: str -> int       // live session generation (for stale-target checks)
+  var sessionGeneration: str -> int       // live session generation per session (for stale-target checks)
+  // --- response-Operation-side context (reviewer B4 residual: the response Op carries its OWN context) ---
+  var responseOpElicitation: str -> str   // responseOpId -> the ElicitationId it claims to answer ("none")
+  var responseOpKind: str -> str          // responseOpId -> "approval-response" | "elicitation-response"
+  var responseOpDomain: str -> str        // responseOpId -> authority domain of the submitting Operation
+  var responseOpSession: str -> str      // responseOpId -> target session it binds to
+  var responseOpGeneration: str -> int     // responseOpId -> session generation it binds to
+  var responseOpActor: str -> str         // responseOpId -> authenticated actor submitting it
+  var responseOpEndpoint: str -> str     // responseOpId -> authenticated endpoint submitting it (audit)
+  var responseValid: str -> bool          // responseOpId -> whether it satisfied the contract
+  var responseDuplicate: str -> bool     // responseOpId -> whether a prior response for the same Elicitation already committed
 }
 ```
 
@@ -279,9 +288,9 @@ module elicitation_lifecycle {
 **Checked properties** (7, each with `@promotion` block, all `status: promoted` after passing; tier derived by Unit TR):
 - `ElicitationPendingFinality` (temporal) — once terminal, later candidates don't mutate.
 - `ElicitationFirstAnswerWins` (temporal) — for single-answer contracts, the first durably committed valid answer wins; later answers are no-ops.
-- `ElicitationCorrelationTyped` (invariant) — response Operations reference a known ElicitationId in the same authority/session/responder context; cannot forge across id spaces or generations. **Rich check (reviewer B4):** verifies `correlationRef` resolves to a known `ElicitationId`, same `authorityDomain`, same `targetSession`/`targetGeneration` (or explicit stale rejection), `responseOpKind` is a valid response kind, and `ElicitationId` is disjoint from `CommandId`/`MessageId`/`ReplyId`/`EventId` spaces.
+- `ElicitationCorrelationTyped` (invariant) — response Operations reference a known ElicitationId in the same authority/session/responder context; cannot forge across id spaces or generations. **Rich check (reviewer B4 residual):** verifies `responseOpElicitation` resolves to a known `ElicitationId`, the response Op's `responseOpDomain` matches the Elicitation's `elicitationDomain`, the response Op's `responseOpSession`/`responseOpGeneration` matches the Elicitation's `targetSession`/`targetGeneration` (or is explicitly stale and rejected), `responseOpKind` is a valid response kind, `responseOpActor` matches `responderActor`, and `ElicitationId` is disjoint from `CommandId`/`MessageId`/`ReplyId`/`EventId` spaces. The response-Operation-side context fields (`responseOpDomain`, `responseOpSession`, `responseOpGeneration`, `responseOpActor`, `responseOpEndpoint`) are the B4 residual fix: the response Operation carries its OWN context, not just the Elicitation's.
 - `ElicitationTimeoutNeitherSuccessNorDenial` (invariant) — `expired` terminal does not imply `answered` or `declined`.
-- `ElicitationInvalidResponseRejected` (invariant) — invalid response (`responseValid == false`) leaves the Elicitation `pending` (default reject-and-leave-pending policy).
+- `ElicitationInvalidResponseRejected` (invariant) — invalid response (`responseValid == false`) leaves the Elicitation `pending` (default reject-and-leave-pending policy). **Duplicate response behavior (reviewer B4 residual):** a second response Operation for an already-answered Elicitation is either idempotent (returns existing response state) or visibly rejected — modeled via `responseDuplicate`; the invariant confirms a duplicate never mutates the terminal answer.
 - `ElicitationStaleTargetInert` (temporal) — responses to stale/superseded targets (`targetGeneration < sessionGeneration`) don't mutate live state.
 - `ElicitationWithdrawalFinality` (temporal) — opener withdrawal terminalizes without later response mutation.
 
@@ -295,7 +304,8 @@ module elicitation_lifecycle {
 - [ ] `quint parse` + `quint compile` exit 0.
 - [ ] All 7 properties pass with documented invocations.
 - [ ] Mutation test for `ElicitationFirstAnswerWins`: allowing a second answer to mutate state fails the property.
-- [ ] Mutation test for `ElicitationCorrelationTyped`: a response Operation using a forged/generation-mismatched ElicitationId fails the property (reviewer B4 sufficiency).
+- [ ] Mutation test for `ElicitationCorrelationTyped`: a response Operation using a forged/generation-mismatched/domain-mismatched/actor-mismatched ElicitationId fails the property (reviewer B4 sufficiency — covers same-domain, same-session/generation, responder-actor match).
+- [ ] Mutation test for `ElicitationInvalidResponseRejected`: a duplicate response that mutates the terminal answer fails the property (reviewer B4 duplicate-response behavior).
 - [ ] `@promotion` blocks present (no `tier` field per Q1); `check-models.mjs` exits 0; VERIFICATION.md updated (7 properties move from stated-normative to checked-model).
 
 ---
@@ -307,7 +317,7 @@ module elicitation_lifecycle {
 
 Promotes spawn-authority properties into the existing draft `authority.qnt`, reusing its real grant tuples (`GrantIssuer`, `GrantSubject`, `GrantScopeById`, `GrantEndpoint`, `GrantCommandKinds`, `GrantStatus`, `TargetGeneration`, `RevocationGeneration`) rather than re-deriving booleans (reviewer B5). The existing 4 draft authority properties (`NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`) stay `status: draft`; only the 4 new spawn properties are promoted in this feature.
 
-**Added state variables** (spawn-specific, alongside `authority.qnt`'s existing grant infrastructure):
+**Added state variables and seed-data changes** (spawn-specific, alongside `authority.qnt`'s existing grant infrastructure):
 
 ```quint
   // spawn-specific extensions to authority.qnt
@@ -315,25 +325,30 @@ Promotes spawn-authority properties into the existing draft `authority.qnt`, reu
   pure val FLEET_SCOPES = Set("scope-fleet", "scope-supervisor")
   pure val SPAWN_TARGET_SESSIONS = Set("s1", "s2", "s3")  // s3 does not exist initially
 
-  var descendantGrantSubject: str -> str        // spawned session -> spawner/operator actor
-  var descendantGrantTarget: str -> str         // spawned session -> the spawned session (target)
-  var descendantGrantLive: str -> bool          // spawned session -> descendant grant live
+  // descendant grants are REAL Grant records (reviewer B5 residual fix), not parallel maps.
+  // They reuse the existing GrantIssuer/GrantSubject/GrantScopeById/GrantEndpoint/
+  // GrantCommandKinds/GrantStatus/TargetGeneration/RevocationGeneration tuples.
   var sessionExists: Set[str]                   // sessions that have been spawned into existence
 ```
 
-The existing `Grant`/`GrantScopeById`/`GrantCommandKinds`/`GrantStatus` infrastructure models the fleet-level spawn grant (a `Grant` with `GrantScopeById = scope-fleet` and `GrantCommandKinds` containing `spawn`). This is a real grant tuple, not a boolean — so `FleetAuthorityForSpawn` checks that the accepting spawn Operation has a matching live fleet-scope grant, genuinely.
+**Seed-data change (reviewer B5 residual):** the current `authority.qnt` init has no `spawn` kind and no fleet scope (`specs/seed/authority.qnt:19-22`, `:174-188`). Unit SA adds a fleet-scope spawn grant to the seed `Grant`/`GrantScopeById`/`GrantCommandKinds`/`GrantStatus` maps (e.g. a `g-spawn` grant with `GrantScopeById = scope-fleet`, `GrantCommandKinds` containing `spawn`, `GrantStatus = active`). Descendant grants created by spawn are inserted as new `Grant` records into the same maps, not into parallel boolean maps — so `FleetAuthorityForSpawn` and `SpawnCreatesDescendantGrant` query real grant tuples with provenance (issuer, subject, scope, kind, status), genuinely.
 
 **Actions** (permissive — the authority properties are checked against these, not baked into guards):
-- `attemptSpawn(targetSession)` — permissive (any target may be attempted); succeeds only if a live fleet-scope spawn grant exists AND the actor/session is the grant subject. On success, creates the session and issues a descendant grant.
-- `revokeSpawnGrant(grantId)` — sets the fleet grant `GrantStatus = revoked`; does NOT touch `descendantGrantLive` (no-cascade).
-- `revokeDescendantGrant(session)` — sets `descendantGrantLive[session] = false` (separate lever).
+- `attemptSpawn(targetSession)` — permissive (any target may be attempted); succeeds only if a live fleet-scope spawn grant exists in the `Grant` tuples AND the actor is the grant subject. On success, creates the session and inserts a descendant `Grant` record.
+- `revokeSpawnGrant(grantId)` — sets the fleet grant's `GrantStatus = revoked`; does NOT touch descendant grant records (no-cascade).
+- `revokeDescendantGrant(grantId)` — sets the descendant grant's `GrantStatus = revoked` (separate lever — operates on a real grant id).
 - `spawnAfterRevoke(targetSession)` — permissive: attempts spawn after fleet grant revoked; must be rejected (the property proves it).
 
 **Checked properties** (4, `status: promoted`; tier derived by Unit TR):
-- `FleetAuthorityForSpawn` (invariant) — spawn accepted only when a live fleet-scope grant exists matching the actor; a per-session grant alone does not authorize spawn of a not-yet-existing session. **Genuine check:** queries the `Grant`/`GrantScopeById`/`GrantCommandKinds`/`GrantStatus` tuples, not a boolean (reviewer B5).
-- `SpawnCreatesDescendantGrant` (invariant) — successful spawn completion records an explicit descendant grant (`descendantGrantSubject`, `descendantGrantTarget`, `descendantGrantLive`) for the spawned session.
-- `SpawnRevocationDoesNotCascade` (temporal) — revoking the spawn grant prevents future spawns but does not revoke already-created descendant grants.
+- `FleetAuthorityForSpawn` (invariant) — spawn accepted only when a live fleet-scope `Grant` record exists matching the actor and `spawn` kind; a per-session grant alone does not authorize spawn of a not-yet-existing session. **Genuine check (reviewer B5 residual fix):** queries the `Grant`/`GrantScopeById`/`GrantCommandKinds`/`GrantStatus` tuples for a fleet-scope, spawn-kind, active, subject-matching grant — not a boolean.
+- `SpawnCreatesDescendantGrant` (invariant) — successful spawn completion inserts an explicit descendant `Grant` record (with issuer=spawner, subject=spawner, target=spawned session, scope=per-session, kind-set excluding spawn) into the grant tuples, not a parallel map.
+- `SpawnRevocationDoesNotCascade` (temporal) — revoking the spawn grant (`GrantStatus = revoked`) prevents future spawns but does not change the `GrantStatus` of already-created descendant grants.
 - `ElicitationResponderAuthority` (invariant) — a response Operation is accepted only from an authenticated endpoint for the expected responder actor. (Modeled here because it's an authority property; projects the responder-actor binding from the Elicitation model into the authority/grant context.)
+
+**Bounds and invocation (promotion-grade, reviewer N2):**
+- Bounds: 3 actors × 3 sessions × 2 grant scopes × 2 grant statuses. `--max-steps 12` for invariants; `--max-steps 10` for the temporal `SpawnRevocationDoesNotCascade`.
+- Invocation (invariants): `quint verify authority.qnt --invariant fleet_authority_for_spawn --max-steps 12` (and the other 3 invariants).
+- Invocation (temporal): `echo y | quint verify authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10`.
 
 **Acceptance Criteria:**
 - [ ] `quint parse` + `quint compile` exit 0 (the extended `authority.qnt` still compiles).
@@ -360,9 +375,11 @@ Promotes subscription-authority properties into `authority.qnt`, reusing its gra
   pure val FILTERS = Set("all", "ops-only")
   pure val CURSORS = 0.to(5)
 
-  var subscriptionGrant: str -> str        // subscription id -> grant id authorizing it ("none" if denied)
-  var subscriptionGrantLive: str -> bool  // (actor, stream, filter) scope -> grant live
-  var subscriptionEstablished: Set[str]    // established subscription ids
+  // subscription grants are REAL Grant records (reviewer B5 residual fix), not a boolean side-channel.
+  // A subscription's authorization is a Grant with GrantScopeById = stream/filter scope,
+  // GrantCommandKinds containing "subscribe", queried via the existing grant tuples.
+  var subscriptionId: Set[str]               // established subscription ids
+  var subscriptionGrantId: str -> str        // subscription id -> authorizing Grant id ("none" if denied)
   var subscriptionCursor: str -> int      // subscription id -> last delivered LSN
   var subscriptionStream: str -> str     // subscription id -> stream
   var subscriptionFilter: str -> str      // subscription id -> filter
@@ -374,17 +391,21 @@ Promotes subscription-authority properties into `authority.qnt`, reusing its gra
   var replayedEvents: str -> Set[int]    // subscription id -> LSNs returned on replay
 ```
 
-The `operationRecordsCreated` counter (reviewer B5) makes `SubscriptionAudited` genuine: a subscription allow/deny creates an audit record but does *not* increment the Operation-record counter.
+The `operationRecordsCreated` counter (reviewer B5) makes `SubscriptionAudited` genuine: a subscription allow/deny creates an audit record but does *not* increment the Operation-record counter. Subscription authorization queries the real `Grant` tuples (a subscription grant is a `Grant` with `GrantCommandKinds` containing `subscribe` and `GrantScopeById` = the stream/filter scope) — not a `subscriptionGrantLive: bool` side-channel.
 
 **Actions:**
-- `attemptEstablish(actor, stream, filter)` — permissive (any actor/stream/filter may attempt); succeeds only if `subscriptionGrantLive` for that scope; always creates an audit record; never creates an Operation record (`operationRecordsCreated` unchanged).
+- `attemptEstablish(actor, stream, filter)` — permissive (any actor/stream/filter may attempt); succeeds only if a live `Grant` record exists for that stream/filter scope with the actor as subject and `subscribe` in its `GrantCommandKinds`; always creates an audit record; never creates an Operation record (`operationRecordsCreated` unchanged).
 - `emitEvent(stream, filter)` — advances `eventLsn`; records the event's stream/filter.
 - `replayByCursor(subscriptionId, cursor)` — returns only events with `LSN > cursor` within the authorized subscription filter; records in `replayedEvents`.
 
 **Checked properties** (3, `status: promoted`; tier derived by Unit TR):
-- `SubscriptionGrantChecked` (invariant) — a subscription is established only when the actor has a live grant for the stream/filter scope. **Genuine check:** queries the `subscriptionGrantLive` scope map, not a boolean.
+- `SubscriptionGrantChecked` (invariant) — a subscription is established only when a live `Grant` record exists for the stream/filter scope with the actor as subject. **Genuine check (reviewer B5 residual fix):** queries the `Grant`/`GrantScopeById`/`GrantCommandKinds`/`GrantStatus` tuples, not a boolean side-channel.
 - `SubscriptionAudited` (invariant) — every establish attempt (allow or deny) creates an audit record; `operationRecordsCreated` stays 0 (no Operation record — reviewer B5 sufficiency).
 - `SubscriptionCursorReplayAuthorized` (invariant) — reconnect replay returns only events with `LSN > cursor` within the authorized subscription filter; `replayedEvents` contains no out-of-cursor or out-of-filter events.
+
+**Bounds and invocation (promotion-grade, reviewer N2):**
+- Bounds: 3 actors × 2 streams × 2 filters × 2 grant statuses × 5 cursors. `--max-steps 12`.
+- Invocation: `quint verify authority.qnt --invariant subscription_grant_checked --max-steps 12` (and the other 2 invariants).
 
 **Acceptance Criteria:**
 - [ ] `quint parse` + `quint compile` exit 0 (the extended `authority.qnt` still compiles after both SA and SUB additions).
@@ -413,6 +434,8 @@ Extends the checked `TypedCorrelation` model to cover response Operation → Eli
 - [ ] Mutation test: a response Operation using a `ReplyId`/`EventId`/`CommandId` as `ElicitationId` is rejected (forgery prevented).
 - [ ] `reply_correlation.emitted.tla` regenerated.
 - [ ] VERIFICATION.md "TypedCorrelation extension" bullet narrowed.
+
+**Bounds and invocation (promotion-grade, reviewer N2):** bounds carry forward from the existing `reply_correlation.qnt` (command_ids: 2, message_ids: 2, reply_ids: 2) plus the added `ELICITATION_ID_SPACE` (2 ids) and response-Operation ids (2). Invocation: `quint verify reply_correlation.qnt --invariant typed_correlation --max-steps 12`.
 
 ---
 
@@ -449,7 +472,7 @@ There is no implementation *code* (Rust/TS) — verification is by running the c
 - **Apalache temporal experimental support (carried forward):** all temporal properties rely on Apalache's experimental temporal support (the `idea-tlc-temporal-workaround` residual from the seed arc). The new temporal properties (`NoAcceptedToCompleted`, `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`, `SpawnRevocationDoesNotCascade`) inherit this residual risk. **Mitigation:** all are `always(...)` safety (not `eventually` liveness), the more conservative end of Apalache's temporal support; emitted TLA+ is inspectable.
 - **Traceability script parser fragility:** the `@promotion` block parser is a regex extractor. If a model author malforms a block, the parser may silently skip it or misparse a field. **Mitigation:** the coverage check catches omission; the well-formedness check (invocation non-empty, `status` is a known value) catches malformation. A malformed block that parses to a wrong `status` is caught by the tier-derivation check (derived tier disagrees with VERIFICATION.md). Resolves reviewer I3.
 - **Genuine-checking risk (Units EL/SA/SUB):** the new properties may turn out self-defining or vacuous under the genuine-checking gate, as the seed arc's first review caught 6 self-defining properties. **Mitigation:** each unit has explicit mutation-test acceptance criteria targeting the specific failure mode (B4/B5: forged correlation, per-session-vs-fleet grant, Operation-record creation). The per-story review loop (Q5) catches what implementation misses.
-- **`authority.qnt` scope expansion (Units SA/SUB):** promoting into the existing draft `authority.qnt` expands this feature's scope into "promote parts of the authority model." **Mitigation:** only the 7 new SA/SUB properties are promoted; the existing 4 draft properties stay draft. Bounded increment, not a full overhaul.
+- **`authority.qnt` scope expansion (Units SA/SUB):** promoting into the existing draft `authority.qnt` expands this feature's scope into "promote parts of the authority model." **Mitigation:** only the 7 new SA/SUB properties are promoted; the existing 4 draft properties stay draft. Bounded increment, not a full overhaul. **State-space bloat (reviewer N3):** adding subscription cursor/replay/event state alongside spawn state and the existing grant infrastructure may push `authority.qnt` past Apalache's tractable state space. **Mitigation:** the implementer sets `--max-steps` bounds per the Unit SA/SUB specs (12 for invariants, 10 for temporal) and reduces atom-set bounds (actors/sessions/scopes) if Apalache doesn't complete. If verification remains intractable, the fallback is to split subscription authority into its own `subscription_authority.qnt` (reverting to a standalone model for SUB only, while keeping SA in `authority.qnt`) — this split trigger is an implementation-time decision, not a design re-open, because the properties and their genuine-checking proofs are unchanged by the placement.
 - **Hardcoded-array drift (Unit M):** moving `browser_local_state_not_authority` between the `check-vectors.mjs` arrays is a manual edit that could itself drift. **Mitigation:** Unit TR's drift-detection check (#5) makes the arrays a checked-in cache of derived model metadata; if they disagree, the script fails.
 
 ## Extension pressure classification
@@ -462,4 +485,16 @@ There is no implementation *code* (Rust/TS) — verification is by running the c
 
 **Initial adversarial review (2026-07-08):** fresh-context `openai-codex/gpt-5.5` (xhigh), cross-model from the umans orchestrator. Verdict: **Block** (6 blockers B1–B6, 5 importants I1–I5, 3 nits N1–N3). The reviewer verified the keystone grounding discovery (no `@promotion` reader exists — confirmed via `contracts/ts/package.json:19-20` and `check-vectors.mjs:15,38,40`) and confirmed the V1 gap. All 6 blockers and 5 importants are resolved by the ratified design decisions (Q1–Q6) and the revised unit specs above. The review's findings are the reason this design is a revision, not the initial pass — the initial pass papered over the ambiguities the review surfaced.
 
-**Design decisions (interactive, 2026-07-08):** the brief's four open questions plus two additional live decisions (VR4 disposition, scope) were walked through one-by-one with the operator, each with options and tradeoffs, before ratification. This corrected the initial pass's process lapse (resolving ambiguities with judgment under a `## Design decisions` block on a direct user invocation, which the new `.agents/rules/design-checkpoints.md` rule now forbids). A re-review of the revised design against the 6 blockers should confirm they are addressed before advancing to `stage: implementing`.
+**Design decisions (interactive, 2026-07-08):** the brief's four open questions plus two additional live decisions (VR4 disposition, scope) were walked through one-by-one with the operator, each with options and tradeoffs, before ratification. This corrected the initial pass's process lapse (resolving ambiguities with judgment under a `## Design decisions` block on a direct user invocation, which the new `.agents/rules/design-checkpoints.md` rule now forbids).
+
+**Re-review (2026-07-08, second pass):** fresh-context `openai-codex/gpt-5.5` (xhigh) re-reviewed the revised design. Verdict: **Block** — the revision was partial. Confirmed resolved: B2 (exact transition table), B3 (stutter-safe property + reachability witness), B6 (VR4 verification stride), I4 (parallelism removed), I5 (fast-path reserved), and prior nits (draft count, package wiring, VR4 line ref). **Residual findings (addressed in this second revision):**
+- **B1 residual** — Unit TR's coverage mentioned a non-existent "response-correlation id"; fixed by clarifying `TypedCorrelation` is one id whose coverage expands (no distinct id).
+- **B4 residual** — Unit EL used only one actor/domain and lacked response-Operation-side context (the response Op's own domain/session/generation/actor/audit) and duplicate-response behavior; fixed by enriching EL's state with response-Operation-side fields and adding duplicate-response mutation test.
+- **B5 residual** — SA used parallel descendant-grant maps instead of real `Grant` records; SUB used a `subscriptionGrantLive: bool` side-channel; fixed by tying both to real `Grant` tuples (descendant grants inserted as `Grant` records; subscription authorization queries `Grant` records with `subscribe` kind).
+- **I1 residual** — "cannot break by construction" overclaim remained in grounding discovery #2; softened to "safe at the property level; regression gate mandatory."
+- **I2/N1 residual** — stale brief/scope/architectural-choice text still said "rename in place" / "tier values corrected"; fixed by marking the brief as superseded and rewriting the Architectural choice section to reflect derive-tier.
+- **I3 residual** — `check-vectors.mjs` runs `main()` on load, so importing it mutates docs; fixed by specifying source-parsing or a side-effect-free registry module extraction.
+- **N2** — SA/SUB/TC lacked promotion-grade bounds/invocations; added per-unit.
+- **N3** — `authority.qnt` bloat risk acknowledged but unmitigated; added bounds and a split-SUB-out fallback trigger.
+
+The design advances to `stage: implementing` after this second revision addresses all residual findings. A third re-review is not warranted — the residual findings were stale-text and under-specification fixes, not new architectural issues; the ratified decisions (Q1–Q6) are unchanged.
