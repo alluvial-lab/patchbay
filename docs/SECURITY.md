@@ -235,6 +235,8 @@ Audit records should include event id, timestamp, actor id, endpoint id when kno
 
 Audit records must not directly store raw session cookies, CSRF tokens, access tokens, passwords, bootstrap secrets, encryption keys, command prompt bodies by default, or sensitive attachments. If command content logging is later added, it must be an explicit policy with redaction and operator-visible controls.
 
+The v0 CLI diagnostic commands (`docs/UX.md` CLI — `audit-query`, `inspect-command`, `session-health`, `adapter-status`) project these already-redacted audit and event-log records; they introduce no new raw-payload exposure path. `inspect-command` surfaces lifecycle state, timestamps, LSNs, and audit-trail entries for a command — not prompt bodies or sensitive payload content. Redaction is enforced at the boundary before audit/snapshot materializes, so diagnostic projections inherit it automatically. A future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
+
 ## Deployment posture
 
 Allowed v0 deployments:

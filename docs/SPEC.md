@@ -69,6 +69,21 @@ Consequences for downstream work:
 
 This posture is v0-only. "v0 has no quantitative performance target" is the v0 scope statement; it is not a timeless "Patchbay has no performance requirements" architecture claim. A future milestone that needs a budget adds it as a scope act.
 
+## V0 observability scope
+
+Observability in v0 is **a view over the durable event log + audit records**, not a separate observability subsystem. The durable event log is already the source of truth for command/session/adapter state ([`docs/PROTOCOL.md`](PROTOCOL.md) Snapshots and streams; Persistence and recovery); the audit log already records every security-relevant decision and lifecycle event with correlation id + LSN ([`docs/SECURITY.md`](SECURITY.md) Audit events). V0 observability is a set of read-only projections of these existing records — no new storage, no second writer, no metrics pipeline.
+
+Committed v0 observability:
+- the audit log itself (durable and queryable, per SECURITY.md);
+- CLI diagnostic commands that project/filter existing state: `audit-query`, `inspect-command`, `session-health`, `adapter-status` (see [`docs/UX.md`](UX.md) CLI);
+- the web cockpit shows current `CommandState` and last transition (per the UX delivery-state floor); it does not carry a trace-timeline UI in v0.
+
+Deferred to post-v0 (reserved seams, not silently absent): a per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); a dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives (also reserved in SECURITY.md). Quantitative performance budgets/SLAs are deferred per the V0 performance posture above.
+
+Explicitly rejected for v0: a dedicated per-command trace storage (would violate the single source of truth and the single-writer invariant); a metrics pipeline as the primary v0 observability substrate (premature for single-operator v0 — the audit log is the substrate until a real load profile exists). Observability answers "what happened to this command?" (query-oriented) in v0, not "what is the current throughput?" (monitoring-oriented).
+
+This scope is v0-only. A future milestone that needs monitoring-oriented observability adds it as a scope act, not by silently promoting the v0 projections.
+
 ## Primary stack choices
 
 ### Core daemon

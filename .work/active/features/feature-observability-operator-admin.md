@@ -1,7 +1,7 @@
 ---
 id: feature-observability-operator-admin
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-v0-walking-skeleton, feature-persistence-snapshot-model]
@@ -119,3 +119,11 @@ Single-stride implementation (one session can finish all three doc units). No ch
 - **Committed v0**: audit log (already v0); 4 CLI diagnostic commands (`audit-query`, `inspect-command`, `session-health`, `adapter-status`); web cockpit shows current `CommandState` / last transition; qualitative responsiveness floor.
 - **Reserved extension seams (post-v0)**: trace timeline UI; metrics/counters/histograms; dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives (already reserved in SECURITY.md); quantitative performance budgets/SLAs (reserved per SPEC "V0 performance posture").
 - **Explicitly rejected for v0**: a dedicated per-command trace storage (violates SSOT); a metrics pipeline as the primary v0 observability substrate (premature; audit log is the substrate).
+
+## Implementation notes
+
+- Files changed: `docs/SPEC.md` (V0 observability scope section; V0 performance posture section added in the prior design stride), `docs/UX.md` (CLI section expanded with the 4-command diagnostic inventory + projection/redaction caveats), `docs/SECURITY.md` (Audit events section extended with a confirmation that the v0 diagnostic commands project already-redacted records).
+- Tests added: none (docs-only feature; no code). Verification was an acceptance-criteria walk + cross-reference resolution + no-new-storage invariant + redaction-coverage check, all passing.
+- Discrepancies from design: none. The design's Unit 2 noted the commands are "uses of the existing `query` OperationKind" — confirmed against `docs/PROTOCOL.md` OperationKind registry (line 155: `query` = "Read status, snapshot, capabilities, lists, history, metadata, or diagnostics"). The CLI-local reads of the audit log (e.g. `audit-query` filtering audit records directly) are CLI-side projections of the queryable audit log, not new `OperationKind`s.
+- Adjacent issues parked: none.
+- Cross-doc consistency verified: SPEC observability scope, UX CLI command set, and SECURITY redaction rules agree — no command surfaces a field SECURITY says must not be logged; the deferred set (trace timeline UI, metrics, dashboard, `event-inspect`, SIEM) is named consistently across SPEC and UX.
