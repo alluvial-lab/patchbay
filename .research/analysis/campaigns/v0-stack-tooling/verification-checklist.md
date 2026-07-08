@@ -130,3 +130,23 @@ Re-confirmed no thin-attestation failure. The previously noted unreachable-sourc
 ### New issues introduced by the revision
 
 No separate new issue surfaced beyond the still-unfixed or partially fixed prior findings above. One internal inconsistency should be corrected as part of the novelty fix: the verification notes now claim there is a residual `{confidence: fetched-corpus-limited}` marker on the novelty claim, but the marker is absent from the actual claim site.
+
+## Re-verification pass 3
+
+**Verdict: APPROVED.** I re-read the actual current `parent.md` content rather than relying on the prior checklist. The four residual findings from the second pass are now fixed, and a whole-file scan found no malformed `{N]` citation closers.
+
+1. **Novelty claim — FIXED.** The `feature-v0-walking-skeleton` sentence now begins `No fetched reference project models...` and carries `{confidence: fetched-corpus-limited}` at the same claim site, immediately after the composed-comparison marker and before the citations.
+
+2. **Connect-Web cross-specialist convergence — FIXED.** The `- **Connect-Web browser streaming limit**` bullet now cites only `[connect-es-web]{2}`. The prior wrong citation `[connect-web-client-streaming]{2}` is no longer present in that sentence, and no `connect-web-client-streaming` citation remains elsewhere in `parent.md`.
+
+3. **tonic table-row wording — FIXED.** The `| Web-server→Rust-core seam |` table row now says `tonic is a documented Rust gRPC-over-HTTP/2 implementation`, which is source-attested wording rather than the prior qualitative `mature Rust gRPC` phrase.
+
+4. **Opening bottom-line marker — FIXED.** The opening bottom-line sentence now reads `The v0 stack story is **coherent and does not reopen any committed architectural decision** {inferred: composed-synthesis-judgment}.`, placing an epistemic marker on the composed synthesis judgment.
+
+### Whole-file citation-token scan
+
+- **FIXED / CLEAN:** No malformed `{N]` citation closers were found in `parent.md`.
+
+### New issues introduced by the second revision
+
+No new issue surfaced in this focused re-verification pass.

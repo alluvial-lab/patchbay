@@ -26,9 +26,19 @@ The recommended v0 stack, per layer, with the decision each grounds:
 | Rust gRPC server | **tonic** | Documented Rust gRPC-over-HTTP/2 implementation with streaming request/response types, built on hyper/tower/tokio [tonic-docs-current]{1} [tonic-docs-current]{5} |
 | Rust property testing | **proptest** | Generate/shrink inputs, minimal failing-case shrinking, per-value strategy composition, state-machine testing in scope [proptest]{1} [proptest]{2} [proptest]{3} [proptest]{8} |
 | Browser state machines | **Generated reducer first; XState only if generated/conformance-tested** | XState must not duplicate protocol registries; persistence caveats matter for long-lived sessions [xstate-docs]{3} [xstate-docs]{6} [xstate-docs]{12} |
-| Browser server-state cache | **TanStack Query** (cache plumbing only) | `stale`/`paused` are library states, NOT authoritative protocol state [tanstack-query-docs]{1} [tanstack-query-docs]{3} |
+| Browser server-state cache | **TanStack Query** (cache plumbing only) | `stale`/`paused` are library states, NOT authoritative protocol state — used for snapshot fetch/refetch plumbing around Patchbay's cursor/reconnect reconciliation, not to decide live/stale/offline/unknown [tanstack-query-docs]{1} [tanstack-query-docs]{3} |
 
 Current fetched versions (refresh before implementation): `@connectrpc/connect`/`connect-node` 2.1.2, `@connectrpc/connect-web` 2.1.2, Fastify 5.10.0, `@fastify/session` 11.1.1, `@fastify/cookie` 11.0.2, `@fastify/csrf-protection` 8.0.0, `@fastify/websocket` 11.2.0, Hono 4.12.28, Elysia 1.4.29, XState 5.32.4, TanStack React Query 5.101.2, rusqlite 0.40.1, sqlx 0.9.0, libsql 0.9.30, sled 0.34.7, statig 0.4.1, smlang 0.8.0, tokio 1.52.3, proptest 1.11.0, tonic 0.14.6 [connect-npm-current]{1} [connect-node-npm-current]{1} [npm-registry-web-stack]{1} [npm-registry-web-stack]{2} [rusqlite]{10} [sqlx-sqlite]{9} [libsql-rust]{9} [sled]{11} [statig]{9} [smlang]{9} [tokio]{10} [proptest-docs]{1} [tonic]{13}.
+
+### Why not Hono / Elysia / Oak (Deno-native)
+
+The TS web-framework recommendation is Fastify, but the comparison is load-bearing, so the rationale against the alternatives is summarized here (full detail in `specialists/ts-web-and-browser.md`):
+
+- **Hono** — strongest on Web-standard portability and first-party SSE (`streamSSE()`), with `__Host-` cookie-prefix validation and an Origin/`Sec-Fetch-Site` CSRF middleware [hono-docs]{4} [hono-docs]{5} [hono-docs]{9}. The blocker is that the fetched Hono docs surface no framework-owned server-side session plugin or synchronizer-token CSRF solution; OWASP's stateful CSRF pattern requires session-tied tokens [hono-docs]{6} [owasp-csrf]{3} [owasp-csrf]{4}. Hono also has no fetched first-party Connect-ES server plugin [connect-es-node]{9}. It is the credible second choice if runtime portability/SSE simplicity outweighs ready-made security + Connect plugins.
+- **Elysia** — strong Bun-native TS ergonomics and a concise WebSocket API, but the fetched docs surfaced no server-side session plugin or CSRF plugin, and its documented JWT-in-cookie plugin points toward bearer-token semantics OWASP counsels against for browser sessions [elysia-docs]{10} [elysia-docs]{11} [owasp-session-management]{2}. Requires custom session/CSRF/Connect wiring.
+- **Oak (Deno-native)** — capable cookie/SSE/WebSocket primitives, but its own README notes Node.js usage via JSR does not currently support `Send`, WebSocket upgrades, or TLS/HTTPS serving, and surfaced no server-side session/CSRF plugin [oak-docs]{3} [oak-docs]{4} [oak-docs]{11}. Adds runtime + security-wiring uncertainty vs Fastify.
+
+The common thread: Fastify is the only candidate in the fetched comparison with first-party session/cookie/CSRF/WebSocket plugins *and* a first-party Connect-ES Fastify server plugin path; the others require custom wiring for v0's security + Connect constraints.
 
 ## Decision-relevance: does this reopen any committed decision?
 
@@ -66,15 +76,26 @@ The **browser-facing** transport (web server → browser) is left open by both r
 
 This is distinct from the internal core↔web-server seam, which the evidence firmly fixes at gRPC/HTTP2.
 
-## Cross-specialist convergence (no contradictions)
+## Cross-specialist convergence
 
-No direct source contradiction surfaced across or within the four briefs. The independent specialists converge on the same principles from different angles, which strengthens the recommendations:
+The independent specialists converge on the same principles from different angles, which strengthens the recommendations:
 
-- **tonic as Rust server half** — independently attested by `internal-seam-connect` (gRPC/HTTP2 fit) and `rust-core-primitives` (maturity + streaming) [tonic-docs-current]{2} [tonic]{1}.
-- **Registry-as-SSOT for state machines** — `rust-core-primitives` (Rust side: hand-roll or generate registry-driven tables; statig/smlang only downstream [statig]{3} [smlang]{3}) and `ts-web-and-browser` (browser side: generated reducer first; XState must not duplicate protocol registries [xstate-docs]{3} [xstate-docs]{12}) reach the identical conclusion.
+- **tonic as Rust server half** — independently attested by `internal-seam-connect` (gRPC/HTTP2 fit) and `rust-core-primitives` (documented gRPC-over-HTTP/2 implementation + streaming) [tonic-docs-current]{2} [tonic]{1}.
+- **Registry-as-SSOT for state machines** — both specialists independently applied Patchbay's project principle (the registry is canonical; library state machines are downstream of it) rather than discovering it in the library docs: `rust-core-primitives` (Rust side: hand-roll or generate registry-driven tables; statig/smlang only downstream [statig]{3} [smlang]{3}) and `ts-web-and-browser` (browser side: generated reducer first; XState must not duplicate protocol registries [xstate-docs]{3} [xstate-docs]{12}). This is convergence of specialist synthesis on a Patchbay design commitment, not external-source attestation of the registry rule.
 - **Connect-Web browser streaming limit** — independently confirmed by `internal-seam-connect` and `ts-web-and-browser` [connect-es-web]{2}.
 
-Within-specialist architectural tensions were surfaced honestly as `qualifies`/`incommensurable` (e.g. Connect-Web typed streaming vs WebSocket bidirectional messaging are incommensurable — adjacent but different problems [connect-es-web]{2} [fastify-websocket]{6}).
+## Contradictions
+
+No direct source contradiction (`contradicts` — incompatible within a shared frame) surfaced across or within the four briefs. The tensions that did surface, logged structurally per the contradiction-handling discipline rather than smoothed into convergence:
+
+| Handles | Relationship | Detail |
+|---|---|---|
+| `connect-es-web` / `fastify-websocket` | `incommensurable` | Connect-Web provides typed server-streaming RPC but no browser client/bidi streaming; WebSocket provides bidirectional messaging but exits the HTTP response lifecycle after upgrade. Adjacent but different problems — neither subsumes the other [connect-es-web]{2} [fastify-websocket]{6}. |
+| `connect-introduction-multiprotocol` (no Rust Connect server listed) / `tonic-docs-current` (Rust gRPC) | `qualifies` | The Connect implementation list does not name a Rust server [connect-introduction-multiprotocol]{6}; tonic attests Rust gRPC-over-HTTP/2, not native Connect-protocol [tonic-docs-current]{2}. This qualifies (not contradicts) the internal-seam recommendation: the seam is gRPC/HTTP2, not Connect-protocol-to-Rust. |
+| `cursor-cloud-agents-current` (attested but not currently re-verifiable) / lint `unreachable-source` | `tension` | The specialist fetched and attested the source (substantive, 27 citations), but the URL returns 403 to both UAs on GET from this host now (Cloudflare bot-wall). Record-of-fetch stands; independent re-verification is deferred. |
+| reference-control-planes DDG search report / this-host 302 spot-check | `tension` | The specialist reported DuckDuckGo's HTML endpoint returned an anti-bot challenge; a spot-check from this host found DDG returns a clean 302 redirect (not a block). The search may not have been as blocked as reported — the novelty finding is scoped to the fetched corpus accordingly (see Verification notes). |
+
+No resolution-by-paraphrase is applied to any of these; each position stands with its handles.
 
 ## Security wiring (consolidated, from `ts-web-and-browser`)
 
@@ -93,7 +114,7 @@ Two attestation handles were flagged `unreachable-source` by the lint and are **
 - `cursor-cloud-agents-current` — `cursor.com/docs/cloud-agent/api/endpoints` returns 403 to both browser and python UAs on GET (Cloudflare bot-wall or auth-gated). The specialist attested it (substantive, 27 citations), so the attestation stands as a record-of-fetch, but the URL cannot be independently re-verified from this host right now. Re-verify at implementation time if Cursor's API becomes load-bearing for the Pi adapter.
 - `gnu-screen-session-persistence` — `www.gnu.org` is network-unreachable from this host (errno 101). Screen is a minor analog (terminal persistence), not load-bearing for the novelty finding. Re-verify opportunistically.
 
-A broad web search for "human control plane" + "agent sessions" was attempted by the reference-control-planes specialist but reported as hitting an anti-bot challenge on DuckDuckGo's HTML endpoint. Spot-check from this host found DDG returns a clean 302 redirect (not a block), so the search may not have been as blocked as reported — the novelty finding is therefore scoped to the fetched corpus (four vendor agent-API sources + supervisor/terminal/IDE analogues), with a residual `{confidence: fetched-corpus-limited}` marker on the "no precedent exists" claim. The four fetched sources do not disconfirm novelty; a wider search might surface a closer analogue but is unlikely to given the niche.
+A broad web search for "human control plane" + "agent sessions" was attempted by the reference-control-planes specialist but reported as hitting an anti-bot challenge on DuckDuckGo's HTML endpoint. Spot-check from this host found DDG returns a clean 302 redirect (not a block), so the search may not have been as blocked as reported — the novelty finding is therefore scoped to the fetched corpus (four vendor agent-API sources + supervisor/terminal/IDE analogues), with a residual `{confidence: fetched-corpus-limited}` marker on the "no precedent exists" claim. The four fetched sources do not disconfirm novelty; a wider search might surface a closer analogue, but the breadth of the fetched corpus (four vendor agent-APIs plus supervisor/terminal/IDE analogues) and the specificity of Patchbay's semantic bundle make a closer analogue uncertain rather than likely. This likelihood judgment is itself under-grounded and should not be relied upon — the `{confidence: fetched-corpus-limited}` marker is the load-bearing qualifier.
 
 ## Acquisition candidates
 
