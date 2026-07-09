@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-spawn
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-elicitation]
@@ -54,10 +54,9 @@ Actions (permissive): `attemptSpawn`, `revokeSpawnGrant` (sets fleet grant `Gran
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Unit SA
 
 ## Implementation notes
-- Files changed: `specs/seed/authority.qnt`, `docs/VERIFICATION.md`, `contracts/scripts/check-vectors.mjs`, `.work/active/stories/story-formal-model-realignment-spawn.md`.
-- Tests added: no separate test files; promoted four `authority.qnt` model properties with `@promotion` blocks.
-- Model structure: rewrote `authority.qnt` to a focused bounded authority model for Unit SA. Grant records remain explicit tuples (`GrantLive` plus issuer/subject/scope/endpoint/kind/status/target scalar tuple fields for the bounded grant ids). `g-spawn` is the fleet-scope spawn grant; `g-session-spawn` is an active per-session negative-control grant used for the B5 mutation; successful spawn creates the explicit descendant grant record `g-desc-os3` with non-spawn command kinds.
-- Mechanical Quint discovery: Apalache temporal checking in this model produced runtime `Operator EQ` errors when boolean/string equality appeared in `and`/`or` chains that compiled but translated ambiguously for temporal checking. Resolved mechanically by using nested `if` helpers and string flags for state booleans; no protocol semantics changed.
+- Files changed: `specs/seed/authority.qnt`, `.work/active/stories/story-formal-model-realignment-spawn.md`.
+- Tests added: no separate test files; re-ran the four promoted `authority.qnt` properties and mutation/genuine-checking probes.
+- Review-fix restructure: split the action-side spawn guard into `actionGrantAuthorizesSpawn(g, actor)` plus `liveFleetSpawnGrant(actor)` over `SPAWN_GRANT_IDS = {g-spawn, g-session-spawn}`. `attemptSpawn` remains permissive in recording raw submitted `(actor, targetSession)` into `LastSpawnActor`/`LastSpawnTarget`/`SpawnAttempted`; only `SpawnAccepted` and descendant insertion are gated by the action helper. The invariant oracle `acceptedSpawnHasRawFleetGrant` still does not call `liveFleetSpawnGrant` or `actionGrantAuthorizesSpawn`; it independently inspects the raw fleet grant tuple for `g-spawn`.
 - Baseline verification (all exit 0):
   - `quint parse specs/seed/authority.qnt`.
   - `quint compile specs/seed/authority.qnt`.
@@ -65,15 +64,15 @@ Actions (permissive): `attemptSpawn`, `revokeSpawnGrant` (sets fleet grant `Gran
   - `quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12` → `[ok]`.
   - `quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12` → `[ok]`.
   - `echo y | quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10` → `[ok]`.
-- Mutation tests (all intentionally exit 1 with `[violation]`):
-  - `FleetAuthorityForSpawn`: mutated `liveFleetSpawnGrant` to authorize from the active per-session `g-session-spawn` grant after the fleet grant is revoked; `fleet_authority_for_spawn` failed with `[violation]`.
-  - `SpawnCreatesDescendantGrant`: mutated the successful-spawn action to leave `gDescOs3Live` unchanged instead of inserting the descendant grant record; `spawn_creates_descendant_grant` failed with `[violation]`.
-  - `SpawnRevocationDoesNotCascade`: mutated `revokeSpawnGrant` to also set the live descendant grant status to `revoked`; `spawn_revocation_does_not_cascade` failed with `[violation]`.
-  - `ElicitationResponderAuthority`: mutated `responseAuthorityOk` to `true`; `elicitation_responder_authority` failed with `[violation]`.
-- Traceability: moved `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority` from `STATED_NORMATIVE_PROPERTIES` to `CHECKED_MODEL_PROPERTIES` in `contracts/scripts/check-vectors.mjs`; updated `docs/VERIFICATION.md`; regenerated model/vector traceability tables.
+- Mutation/genuine-checking tests (each mutation reverted before the next; all intentionally exit 1 with `[violation]`):
+  - `FleetAuthorityForSpawn`: mutated action guard `FLEET_SCOPES.contains(grantScope(g))` → `true`; after fleet-grant revocation the active per-session `g-session-spawn` grant authorized a spawn, and `fleet_authority_for_spawn` failed with `[violation]`.
+  - `SpawnCreatesDescendantGrant`: mutated successful spawn to leave `gDescOs3Live` unchanged instead of inserting the descendant grant record; `spawn_creates_descendant_grant` failed with `[violation]`.
+  - `SpawnRevocationDoesNotCascade`: mutated `revokeSpawnGrant` to set the live descendant grant status to `revoked`; `spawn_revocation_does_not_cascade` failed with `[violation]`.
+  - `ElicitationResponderAuthority`: mutated `responseAuthorityOk` endpoint check `endpointActor(endpoint) == expectedResponder(responseOpId)` → `true`; `elicitation_responder_authority` failed with `[violation]`.
 - Final script checks: `node contracts/scripts/check-models.mjs` exit 0; `node contracts/scripts/check-vectors.mjs` exit 0.
 - Existing authority draft properties remained `status: draft`: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`.
-- Discrepancies from design: `authority.qnt` uses scalar tuple fields for the bounded grant ids instead of map-valued state to keep Apalache temporal checking reliable; the promoted oracles still query raw grant tuple facts and do not use boolean authority side-channels.
+- `@promotion` block shape checked by script: present, with no `tier` field.
+- Discrepancies from design: none for the review fix; this preserves the existing scalar tuple representation noted in the first implementation pass.
 - Adjacent issues parked: none.
 
 ## Review findings (deep lane, pass 1 — 2026-07-08)

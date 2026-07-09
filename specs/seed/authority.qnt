@@ -11,6 +11,7 @@ module authority {
   pure val RESPONSE_OP_IDS = Set("ro1", "ro2")
   pure val CLAIMED_ACTORS = ACTORS.union(Set("eve"))
   pure val FLEET_SCOPES = Set("scope-fleet")
+  pure val SPAWN_GRANT_IDS = Set("g-spawn", "g-session-spawn")
   pure val DESCENDANT_SCOPE = "scope-session"
 
   var gSpawnStatus: str
@@ -65,16 +66,18 @@ module authority {
   def responseAccepted(ro) = if (ro == "ro1") ResponseAcceptedRo1 else ResponseAcceptedRo2
 
   // Action-side helpers.
-  def liveFleetSpawnGrant(actor) =
-    if (grantLive("g-spawn"))
-      if (grantStatus("g-spawn") == "active")
-        if (FLEET_SCOPES.contains(grantScope("g-spawn")))
-          if (grantSubject("g-spawn") == actor)
-            grantAllows("g-spawn", "spawn")
+  def actionGrantAuthorizesSpawn(g, actor) =
+    if (grantLive(g))
+      if (grantStatus(g) == "active")
+        if (FLEET_SCOPES.contains(grantScope(g)))
+          if (grantSubject(g) == actor)
+            grantAllows(g, "spawn")
           else false
         else false
       else false
     else false
+
+  def liveFleetSpawnGrant(actor) = SPAWN_GRANT_IDS.exists(g => actionGrantAuthorizesSpawn(g, actor))
 
   def spawnAllowed(actor, targetSession) =
     if (ACTORS.contains(actor))
