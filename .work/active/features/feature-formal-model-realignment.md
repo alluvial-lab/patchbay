@@ -1,12 +1,12 @@
 ---
 id: feature-formal-model-realignment
 kind: feature
-stage: implementing
+stage: done
 tags: [verification, protocol, foundation]
 parent: epic-foundation-hardening
 depends_on: [feature-operator-presence-and-action-inventory, feature-formal-model-seed]
 created: 2026-07-06
-updated: 2026-07-08
+updated: 2026-07-09
 gate_origin: null
 release_binding: null
 ---
