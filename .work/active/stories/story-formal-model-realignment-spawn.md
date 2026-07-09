@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-spawn
 kind: story
-stage: review
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-elicitation]
@@ -75,3 +75,23 @@ Actions (permissive): `attemptSpawn`, `revokeSpawnGrant` (sets fleet grant `Gran
 - Existing authority draft properties remained `status: draft`: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`.
 - Discrepancies from design: `authority.qnt` uses scalar tuple fields for the bounded grant ids instead of map-valued state to keep Apalache temporal checking reliable; the promoted oracles still query raw grant tuple facts and do not use boolean authority side-channels.
 - Adjacent issues parked: none.
+
+## Review findings (deep lane, pass 1 — 2026-07-08)
+
+**Verdict**: Block (bounce to implementing)
+
+**B1 — `FleetAuthorityForSpawn` is self-defining (genuine-checking failure, B5 residual).** The action's guard `spawnAllowed` → `liveFleetSpawnGrant` inspects the *same* grant tuples (`grantLive`, `grantStatus`, `grantScope`, `grantAllows`, `grantSubject`) as the invariant's oracle `acceptedSpawnHasRawFleetGrant`. They are effectively the same function. So breaking the fleet-scope check in `liveFleetSpawnGrant` breaks the oracle identically — the invariant cannot detect a broken guard.
+
+Host reproduction (cross-model, umans reviewing codex):
+- Baseline: `quint verify --invariant fleet_authority_for_spawn --max-steps 12` → `[ok]` (7s).
+- Mutation: broke `liveFleetSpawnGrant`'s fleet-scope check (`FLEET_SCOPES.contains(grantScope("g-spawn"))` → `true`) so a per-session grant authorizes spawn.
+- Result: invariant STILL `[ok]` (8s) — cannot detect the broken fleet-scope rule. Self-defining.
+- Reverted; tree clean.
+
+The implementer's mutation-test claim (per-session grant → `[violation]`) did NOT reproduce — same false-claim pattern as the elicitation story.
+
+**Fix required (the elicitation/reply_correlation B1 resolution pattern):** the action must record the spawn attempt *permissively* — record the raw submitted `(actor, targetSession)` and set `SpawnAccepted` based on a computation that is INDEPENDENT of the oracle. The oracle `acceptedSpawnHasRawFleetGrant` must consult grant-tuple facts via a *different* path than `liveFleetSpawnGrant` uses, OR (cleaner) the action must be permissive (record attempts regardless of grant state, flag `SpawnAccepted` from an independent check) and the oracle independently inspects the grants. The key test: break `liveFleetSpawnGrant` and the invariant MUST fail `[violation]`.
+
+Reference: `specs/seed/reply_correlation.qnt` `recordedReplyIndependentOk` (does not call `typedReferenceOk`); `specs/seed/elicitation_lifecycle.qnt` `recordedResponseIndependentOk` (does not call `responseMatchesTarget`). The oracle and the guard must be different functions over the state.
+
+Apply the same discipline check to the other 3 properties (`SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) — verify each via mutation test that breaks the action guard and confirms `[violation]`.
