@@ -31,6 +31,7 @@ Current checked-model properties:
 - Reply correlation core from `reply_correlation.qnt`: `TypedCorrelation` for Reply → Command/Message only; the full response Operation → Elicitation extension remains in Unit TC.
 - Elicitation lifecycle from `elicitation_lifecycle.qnt`: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, and `ElicitationWithdrawalFinality`.
 - Spawn authority from `authority.qnt`: `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority`.
+- Subscription authority from `subscription_authority.qnt`: `SubscriptionGrantChecked`, `SubscriptionAudited`, and `SubscriptionCursorReplayAuthorized`.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
 - Relational actor identity from `patchbay-relational.als`: `ActorIdsUnique`.
 
@@ -110,15 +111,15 @@ Reserved future authority properties (not v0 obligations): actor-neutral/non-ope
 
 Classification: spawn-authority properties are **checked-model**; the remaining general authority properties above are **stated-normative until promoted**.
 
-### Subscription authority obligations (stated-normative)
+### Subscription authority obligations (checked-model)
 
-Subscriptions are grant-checked without `OperationState` lifecycle. Reserve these property ids as stated-normative until a subscription/audit model exists:
+Subscriptions are grant-checked without `OperationState` lifecycle. `specs/seed/subscription_authority.qnt` promotes these property ids to **checked-model**:
 
 - `SubscriptionGrantChecked` — a subscription establishment succeeds only when the actor/session has a live grant for the subscribed stream/filter scope.
 - `SubscriptionAudited` — subscription allow/deny decisions create security audit records without creating Operation records.
 - `SubscriptionCursorReplayAuthorized` — reconnect replay returns only events with `LSN > cursor` within the authorized subscription filter.
 
-This composes with the tier definitions: `SubscriptionGrantChecked`, `SubscriptionAudited`, and `SubscriptionCursorReplayAuthorized` are stated-normative until a subscription/audit model exists and conformance vectors are promoted. Promotion is a per-property operation; if implementation reveals a safety-critical property classified stated-normative, it must be promoted before its behavior ships.
+The subscription model is split out of `authority.qnt` to keep Unit SA's spawn temporal check tractable under Apalache while preserving the same grant-tuple semantics: subscription authorization queries real bounded `Grant` records, not a boolean side-channel. These remain checked-model properties until promoted conformance vectors land.
 
 The delegation precondition and lease safety sections below are preconditions for future behavior and are **not** part of the v0 normative baseline.
 
@@ -377,7 +378,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 41 modeled properties (29 promoted, 12 draft), 6 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 44 modeled properties (32 promoted, 12 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -422,9 +423,9 @@ Summary: 41 modeled properties (29 promoted, 12 draft), 6 reserved-unmodeled sta
 | `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
 | `SpawnCreatesDescendantGrant` | promoted | checked-model | specs/seed/authority.qnt | apalache | — | quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12 | successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds |
 | `SpawnRevocationDoesNotCascade` | promoted | checked-model | specs/seed/authority.qnt | apalache-temporal | — | echo y \| quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10 | revoking the fleet spawn grant blocks future spawns but does not revoke already-created descendant grants |
-| `SubscriptionAudited` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `SubscriptionCursorReplayAuthorized` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `SubscriptionGrantChecked` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `SubscriptionAudited` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_audited --max-steps 12 | subscription allow/deny decisions create audit records without creating OperationState records |
+| `SubscriptionCursorReplayAuthorized` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_cursor_replay_authorized --max-steps 12 | cursor replay returns only events with LSN greater than the requested cursor and inside the authorized subscription stream/filter |
+| `SubscriptionGrantChecked` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_grant_checked --max-steps 12 | subscription establishment succeeds only with a live subscribe-kind Grant record for the authenticated actor and stream/filter scope |
 | `TerminalFinality` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal terminal_finality --max-steps 10 | once a command reaches a terminal CommandState, later events do not mutate it |
 | `TimeoutNeitherSuccessNorDenial` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `TypedCorrelation` | promoted | checked-model | specs/seed/reply_correlation.qnt | apalache | — | quint verify reply_correlation.qnt --invariant typed_correlation --max-steps 12 | replies use typed same-context references to known prior commands/messages and cannot masquerade across id spaces |
@@ -483,9 +484,9 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.SessionSnapshot.authority_domain_id<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.snapshot_lsn |
 | `SpawnCreatesDescendantGrant` | checked-model | — | — |
 | `SpawnRevocationDoesNotCascade` | checked-model | — | — |
-| `SubscriptionAudited` | stated-normative | — | — |
-| `SubscriptionCursorReplayAuthorized` | stated-normative | — | — |
-| `SubscriptionGrantChecked` | stated-normative | — | — |
+| `SubscriptionAudited` | checked-model | — | — |
+| `SubscriptionCursorReplayAuthorized` | checked-model | — | — |
+| `SubscriptionGrantChecked` | checked-model | — | — |
 | `TerminalFinality` | checked-model | [terminal-expiration-before-completion](../contracts/vectors/terminal-expiration-before-completion.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.lsn<br>patchbay.Operation.validity_window<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.operation_state |
 | `TimeoutNeitherSuccessNorDenial` | stated-normative | — | — |
 | `TypedCorrelation` | checked-model | [reply-correlation](../contracts/vectors/reply-correlation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.reply_id<br>patchbay.ReplyId.value<br>patchbay.TypedCorrelation.command_id<br>patchbay.TypedCorrelation.message_id |
@@ -524,6 +525,7 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 | `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) — covers Reply → Command/Message only; the response Operation → Elicitation extension remains a Unit TC stated-normative obligation for the shared correlation model | Apalache |
 | `specs/seed/elicitation_lifecycle.qnt` | Quint | `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected` (invariants); `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/authority.qnt` | Quint | `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `ElicitationResponderAuthority` (invariants); `SpawnRevocationDoesNotCascade` (temporal) | Apalache + Apalache-temporal |
+| `specs/seed/subscription_authority.qnt` | Quint | `SubscriptionGrantChecked`, `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized` (invariants) | Apalache |
 | `specs/seed/csrf_browser.qnt` | Quint | `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority` (invariants) | Apalache |
 | `specs/seed/patchbay-relational.als` | Alloy | `ActorIdsUnique` | Alloy CLI |
 
@@ -539,11 +541,10 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
 | `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
 | *(no model yet — response correlation extension)* | Quint (reserved) | `TypedCorrelation` extension for `Operation(kind=approval-response|elicitation-response) → ElicitationId` (extends `reply_correlation.qnt`) |
-| *(no model yet — subscription)* | Quint/TLA+ (reserved) | `SubscriptionGrantChecked`, `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized` |
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific checked-model analog.
 
-The Elicitation lifecycle properties are checked-model only; they are not checked-normative product semantics until corresponding conformance vectors are promoted. Spawn-authority properties are checked-model only; subscription properties remain stated-normative obligations. Product semantics must not be claimed checked-normative for spawn descendant grants or subscription authority until corresponding conformance vectors are promoted.
+The Elicitation lifecycle, spawn-authority, and subscription-authority properties are checked-model only; they are not checked-normative product semantics until corresponding conformance vectors are promoted. Product semantics must not be claimed checked-normative for spawn descendant grants or subscription authority until corresponding conformance vectors are promoted.
 
 ### Toolchain note (implementation discovery)
 

@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-subscription
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-spawn]
@@ -54,3 +54,36 @@ Adding subscription cursor/replay/event state alongside spawn state and existing
 - Edit: `specs/seed/authority.qnt` (same file as Unit SA)
 - Edit: `docs/VERIFICATION.md`, `contracts/scripts/check-vectors.mjs` (arrays)
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Unit SUB
+
+## Implementation notes
+
+- Files changed:
+  - `specs/seed/subscription_authority.qnt` (new standalone SUB model via the N3 split fallback)
+  - `specs/seed/subscription_authority.emitted.tla` (generated inspection artifact)
+  - `docs/VERIFICATION.md`
+  - `contracts/scripts/check-vectors.mjs`
+  - `.work/active/stories/story-formal-model-realignment-subscription.md`
+- Placement discrepancy from design: used the documented N3 fallback split instead of extending `authority.qnt`. I first composed SUB state into `authority.qnt`; `quint parse` + `quint compile` passed and the 3 SUB invariants passed, but Unit SA's existing temporal `spawn_revocation_does_not_cascade` then failed inside Apalache before a verdict (`Operator EQ cannot be applied to arguments of types (Bool, Int/Set(Int))`). Reverting SUB out of `authority.qnt` restored the SA temporal property to `[ok]`. The split preserves the same real-Grant tuple semantics and avoids a boolean subscription side-channel.
+- Model shape: `subscription_authority.qnt` models bounded real Grant records (`g-sub-ops-all`, `g-sub-elicitations-ops`) with `grantStatus`, `grantSubject`, `grantScope`, and `grantAllows("subscribe")`; `attemptEstablish` is permissive and records allow/deny attempts; the promoted invariants use independent raw-state oracles rather than the action helper.
+- Baseline verification:
+  - `quint parse specs/seed/subscription_authority.qnt` — pass.
+  - `quint compile specs/seed/subscription_authority.qnt` — pass.
+  - `quint compile specs/seed/subscription_authority.qnt --target tlaplus > specs/seed/subscription_authority.emitted.tla` — pass.
+  - `quint parse specs/seed/authority.qnt` — pass (Unit SA file unaffected after split).
+  - `quint compile specs/seed/authority.qnt` — pass.
+  - `quint verify specs/seed/subscription_authority.qnt --invariant subscription_grant_checked --max-steps 12` — `[ok]`.
+  - `quint verify specs/seed/subscription_authority.qnt --invariant subscription_audited --max-steps 12` — `[ok]`.
+  - `quint verify specs/seed/subscription_authority.qnt --invariant subscription_cursor_replay_authorized --max-steps 12` — `[ok]`.
+- Mutation verification (all break the action-side behavior, not the invariant):
+  - `SubscriptionGrantChecked`: mutated `subscriptionAllowed(...)` to always return `true`; `quint verify /tmp/subscription-authority-grant.qnt --invariant subscription_grant_checked --max-steps 12` produced `[violation]` (accepted `sub1` with `subscriptionGrantId: "none"`).
+  - `SubscriptionAudited`: mutated `attemptEstablish` to increment `operationRecordsCreated`; `quint verify /tmp/subscription-authority-audited.qnt --invariant subscription_audited --max-steps 12` produced `[violation]` (`operationRecordsCreated: 1`).
+  - `SubscriptionCursorReplayAuthorized`: mutated `replayByCursor` to return `eventLsn` regardless of cursor/filter/authorization; `quint verify /tmp/subscription-authority-replay.qnt --invariant subscription_cursor_replay_authorized --max-steps 12` produced `[violation]` (e.g. `replayedEvents: 1` with `subscriptionCursor: 1` / no accepted subscription).
+- Unit SA regression verification after the split:
+  - `quint verify specs/seed/authority.qnt --invariant fleet_authority_for_spawn --max-steps 12` — `[ok]`.
+  - `quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12` — `[ok]`.
+  - `quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12` — `[ok]`.
+  - `echo y | quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10` — `[ok]`.
+- Traceability/doc verification:
+  - `node contracts/scripts/check-vectors.mjs` — pass.
+  - `node contracts/scripts/check-models.mjs` — pass after regenerating the model-promotion table.
+- Adjacent issues parked: none.
