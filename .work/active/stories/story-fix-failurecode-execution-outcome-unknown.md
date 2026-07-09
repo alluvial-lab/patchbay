@@ -1,7 +1,7 @@
 ---
 id: story-fix-failurecode-execution-outcome-unknown
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, bug, foundation]
 parent: epic-foundation-hardening
 depends_on: []
@@ -46,3 +46,13 @@ Small fix story — routes through `implement` (single file + regen + drift chec
   - `buf generate` regenerates Rust + TS; `check:drift` passes → met (clean regen, drift check clean).
   - PROTOCOL.md failure vocabulary and proto enum agree → met (both carry the term; no drift).
   - Any conformance vector covering `execution_outcome_unknown` updated if one exists → met (no vector references it; nothing to update).
+
+## Review (2026-07-09)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: none
+
+**Notes**: Fast-lane story review. Implementation verification is green and recorded: `buf generate` exit 0, `check-generated-drift.mjs` clean (fresh regen matches staged), `check-vectors.mjs` pass, `check-models.mjs` pass — re-confirmed green at review time. The fix is a single proto enum value + regeneration, exactly as the story specified; all four acceptance criteria met. The generated-contract drift the epic review caught is now closed. Advanced review → done.

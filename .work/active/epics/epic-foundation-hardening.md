@@ -1,7 +1,7 @@
 ---
 id: epic-foundation-hardening
 kind: epic
-stage: implementing
+stage: done
 tags: [foundation]
 depends_on: [story-fix-failurecode-execution-outcome-unknown]
 parent: null
@@ -97,3 +97,13 @@ Epic-level deep review (substrate mode, deep lane). All 27 children are `done` (
 ### Notes
 
 Cross-child drift assessment beyond `execution_outcome_unknown`: none found. OperationKind, OperationState/CommandState, SubmissionOutcome/LocalSubmissionState, session connectivity/activity axes, ElicitationState, and response_contract.contract_kind all match between prose and proto (committed + reserved values). `UNSPECIFIED` proto values are wire-default encoding, not state drift. `docs/ADAPTER-PI.md` stays properly out of the core ontology (adapter-neutrality honored).
+
+## Re-review (2026-07-09)
+
+**Verdict**: Approve
+
+The sole blocker (`execution_outcome_unknown` absent from the generated `FailureCode` proto enum) is now closed: `story-fix-failurecode-execution-outcome-unknown` advanced to `done` after adding `FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN = 14` to `contracts/proto/patchbay/operations.proto`, regenerating Rust + TS via `buf generate`, and verifying `check-generated-drift` / `check-vectors` / `check-models` all pass. The proto enum and the `docs/PROTOCOL.md` failure vocabulary now agree.
+
+All 28 children are `done` (28/28); the epic's `depends_on` edge on the fix story is satisfied. The 7th acceptance criterion ("follow-on implementation can begin without inventing protocol semantics ad hoc") is now met — the canonical failure term has a wire representation. The Important finding (automated checks don't catch proto↔prose drift) remains filed as `idea-proto-prose-registry-consistency-check` (backlog); it is not blocking.
+
+The deep review's cross-child drift assessment found no other registry drift, so no further re-review pass is warranted. Epic advanced to `stage: done`.
