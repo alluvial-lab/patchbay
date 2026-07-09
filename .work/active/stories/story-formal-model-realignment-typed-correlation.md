@@ -1,12 +1,12 @@
 ---
 id: story-formal-model-realignment-typed-correlation
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-elicitation]
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-09
 gate_origin: null
 release_binding: null
 ---
