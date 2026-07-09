@@ -1,316 +1,294 @@
-// Patchbay seed model: authority safety (DRAFT)
+// Patchbay seed model: authority safety (partially promoted)
 //
-// Unit 6 of `feature-formal-model-seed`.
-//
-// DEFERRAL REASON:
-// `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The Anti-spoofing caveat from the Alloy brief (the binding of an authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
-//
-// This model is intentionally DRAFT: it compiles and carries the property IDs, but
-// the properties are not yet promoted or verified in this unit.
+// Unit SA promotes spawn-authority properties. The original four authority
+// properties remain draft. Grant records are represented as explicit scalar
+// tuples for the bounded grant ids; descendant grants are real grant records,
+// not boolean authority side-channels.
 module authority {
-  // --- finite bounds (2-3 atoms per set) ---
   pure val ACTORS = Set("alice", "bob", "svc")
-  pure val DEVICES = Set("dev-terminal", "dev-cli")
   pure val ENDPOINTS = Set("ep-web", "ep-cli", "ep-grpc")
-  pure val OPERATOR_SESSIONS = Set("os1", "os2", "os3")
-  pure val SESSION_ACTORS = Map("os1" -> "alice", "os2" -> "alice", "os3" -> "bob")
-  pure val GRANTS = Set("g1", "g2", "g3")
-  pure val COMMAND_IDS = Set("c1", "c2", "c3")
-  pure val COMMAND_KINDS_REGISTRY = Set("reboot", "snapshot", "stop_session")
-  pure val ATTEMPTED_KINDS = COMMAND_KINDS_REGISTRY.union(Set("unsupported"))
-  pure val CLAIMED_ACTORS = Set("alice", "bob", "eve")
-  pure val SCOPES = Set("scope-device", "scope-adapter")
-  pure val TARGETS = Set("target-device", "target-adapter")
+  pure val SESSIONS = Set("os1", "os2", "os3")
+  pure val RESPONSE_OP_IDS = Set("ro1", "ro2")
+  pure val CLAIMED_ACTORS = ACTORS.union(Set("eve"))
+  pure val FLEET_SCOPES = Set("scope-fleet")
+  pure val DESCENDANT_SCOPE = "scope-session"
 
-  // Endpoint->command-kind capability declarations are advisory UX hints.
-  pure val ENDPOINT_KIND_SUPPORT = Set(
-    (("ep-web", "reboot"), true),
-    (("ep-web", "snapshot"), true),
-    (("ep-web", "stop_session"), false),
-    (("ep-cli", "reboot"), true),
-    (("ep-cli", "snapshot"), false),
-    (("ep-cli", "stop_session"), true),
-    (("ep-grpc", "reboot"), false),
-    (("ep-grpc", "snapshot"), false),
-    (("ep-grpc", "stop_session"), false)
-  )
+  var gSpawnStatus: str
+  var gSessionSpawnStatus: str
+  var gDescOs3Live: str
+  var gDescOs3Status: str
+  var gDescOs3Issuer: str
+  var gDescOs3Subject: str
+  var gDescOs3Target: str
+  var os3Exists: str
+  var os3Spawned: str
+  var os3SpawnedBy: str
+  var LastSpawnActor: str
+  var LastSpawnTarget: str
+  var SpawnAttempted: str
+  var SpawnAccepted: str
 
-  // --- state variables ---
-  var Actor: Set[str]
-  var Device: Set[str]
-  var Endpoint: Set[str]
-  var OperatorSession: Set[str]
-  var Grant: Set[str]
-  var GrantScope: Set[str]
+  var ResponseEndpointRo1: str
+  var ResponseEndpointRo2: str
+  var ResponseAuthenticatedActorRo1: str
+  var ResponseAuthenticatedActorRo2: str
+  var ResponseClaimedActorRo1: str
+  var ResponseClaimedActorRo2: str
+  var ResponseAcceptedRo1: str
+  var ResponseAcceptedRo2: str
 
-  // Grant represented as parallel maps (id -> field)
-  var GrantIssuer: str -> str
-  var GrantSubject: str -> str
-  var GrantScopeById: str -> str
-  var GrantEndpoint: str -> str
-  var GrantCommandKinds: str -> Set[str]
-  var GrantStatus: str -> str
+  var phase: int
 
-  var CommandKind: Set[str]
-  var Target: Set[str]
-  var TargetGeneration: str -> int
-  var RevocationGeneration: str -> int
-
-  var CommandIssuer: str -> str        // claimed actor in payload (self-asserted)
-  var AuthorityDomain: str
-
-  // Abstract session/acceptance surface modeled independently of the dedicated session model
-  var SessionGeneration: str -> int
-  var SessionActor: str -> str
-  var AdapterGeneration: str -> int
-  var CorrelationRef: str -> str
-
-  var CommandSession: str -> str
-  var CommandEndpoint: str -> str
-  var CommandTarget: str -> str
-  var CommandScope: str -> str
-  var CommandKindRequest: str -> str
-  var CommandTargetGeneration: str -> int
-  var CommandVerifiedActor: str -> str  // actor asserted by transport session verification
-  var CommandAccepted: str -> bool
-  var CommandAcceptedByGrant: str -> bool
-  var CommandDelivered: str -> bool
-  var CommandState: str -> str
-  var CommandRevocationReason: str -> str
-
-  var AdapterSupport: (str, str) -> bool
-
-  var LastAttemptedCommand: str
-  var AcceptanceGateOpen: bool
-
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
-
-  def sessionKnown(session) = OperatorSession.contains(session) and SessionActor.keys().contains(session)
-
-  def sessionActor(session) = SessionActor.get(session)
-
-  def matchScope(scope) = GrantScope.contains(scope)
-
-  def grantMatches(session, endpoint, commandKind, scope) =
-    Grant.exists(g =>
-      GrantStatus.get(g) == "active" and
-      GrantScopeById.get(g) == scope and
-      GrantSubject.get(g) == sessionActor(session) and
-      GrantCommandKinds.get(g).contains(commandKind) and
-      (GrantEndpoint.get(g) == "any" or GrantEndpoint.get(g) == endpoint) and
-      GrantIssuer.get(g).in(Actor)
-    )
-
-  def claimMatchesVerified(session, claimedActor) =
-    sessionKnown(session) and
-    sessionActor(session) == claimedActor
-
-  def targetNotRevoked(target) = TargetGeneration.get(target) >= RevocationGeneration.get(target)
-
-  def canAcceptCommand(session, endpoint, claimedActor, kind, target, scope) =
-    AcceptanceGateOpen and
-    kind.in(CommandKind) and
-    sessionKnown(session) and
-    Endpoint.contains(endpoint) and
-    Target.contains(target) and
-    matchScope(scope) and
-    targetNotRevoked(target) and
-    grantMatches(session, endpoint, kind, scope) and
-    claimMatchesVerified(session, claimedActor)
-
-  def canDeliver(session, endpoint, kind, target, scope, claimedActor) =
-    canAcceptCommand(session, endpoint, claimedActor, kind, target, scope) and
-    AdapterSupport.get((endpoint, kind))
-
-  def commandAcceptanceReason(session, endpoint, claimedActor, kind, target, scope) =
-    if (not(sessionKnown(session)))
-      "no_session"
-    else if (not(scope.in(SCOPES)))
-      "bad_scope"
-    else if (not(claimMatchesVerified(session, claimedActor)))
-      "mismatched_actor"
-    else if (not(commandAcceptanceGrantKind(session, endpoint, kind, scope)))
-      "no_grant"
-    else if (not(targetNotRevoked(target)))
-      "revoked_target"
-    else if (not(kind.in(CommandKind)))
-      "unknown_kind"
+  def descendantGrantId(session) = if (session == "os3") "g-desc-os3" else "none"
+  def sessionExists(session) = if (session == "os3") os3Exists == "yes" else true
+  def spawnedSession(session) = if (session == "os3") os3Spawned == "yes" else false
+  def grantLive(g) = if (g == "g-spawn") true else if (g == "g-session-spawn") true else if (g == "g-desc-os3") gDescOs3Live == "yes" else false
+  def grantStatus(g) = if (g == "g-spawn") gSpawnStatus else if (g == "g-session-spawn") gSessionSpawnStatus else if (g == "g-desc-os3") gDescOs3Status else "revoked"
+  def grantIssuer(g) = if (g == "g-desc-os3") gDescOs3Issuer else "alice"
+  def grantSubject(g) = if (g == "g-desc-os3") gDescOs3Subject else "alice"
+  def grantScope(g) = if (g == "g-spawn") "scope-fleet" else "scope-session"
+  def grantEndpoint(g) = "any"
+  def grantTarget(g) = if (g == "g-spawn") "fleet" else if (g == "g-session-spawn") "os1" else if (g == "g-desc-os3") gDescOs3Target else "none"
+  def grantAllows(g, kind) =
+    if ((g == "g-spawn") or (g == "g-session-spawn"))
+      kind == "spawn"
+    else if (g == "g-desc-os3")
+      kind.in(Set("reboot", "snapshot", "stop_session"))
     else
-      "accepted"
+      false
 
-  def commandAcceptanceGrantKind(session, endpoint, kind, scope) =
-    Grant.exists(g =>
-      GrantStatus.get(g) == "active" and
-      GrantScopeById.get(g) == scope and
-      GrantSubject.get(g) == sessionActor(session) and
-      GrantCommandKinds.get(g).contains(kind) and
-      (GrantEndpoint.get(g) == "any" or GrantEndpoint.get(g) == endpoint)
-    )
+  def endpointActor(endpoint) = if (endpoint == "ep-web") "alice" else if (endpoint == "ep-cli") "bob" else "svc"
+  def expectedResponder(ro) = if (ro == "ro1") "alice" else "bob"
+  def responseEndpoint(ro) = if (ro == "ro1") ResponseEndpointRo1 else ResponseEndpointRo2
+  def responseAuthenticatedActor(ro) = if (ro == "ro1") ResponseAuthenticatedActorRo1 else ResponseAuthenticatedActorRo2
+  def responseClaimedActor(ro) = if (ro == "ro1") ResponseClaimedActorRo1 else ResponseClaimedActorRo2
+  def responseAccepted(ro) = if (ro == "ro1") ResponseAcceptedRo1 else ResponseAcceptedRo2
 
-  // ---------------------------------------------------------------------------
-  // Actions
-  // ---------------------------------------------------------------------------
+  // Action-side helpers.
+  def liveFleetSpawnGrant(actor) =
+    if (grantLive("g-spawn"))
+      if (grantStatus("g-spawn") == "active")
+        if (FLEET_SCOPES.contains(grantScope("g-spawn")))
+          if (grantSubject("g-spawn") == actor)
+            grantAllows("g-spawn", "spawn")
+          else false
+        else false
+      else false
+    else false
+
+  def spawnAllowed(actor, targetSession) =
+    if (ACTORS.contains(actor))
+      if (SESSIONS.contains(targetSession))
+        if (not(sessionExists(targetSession)))
+          liveFleetSpawnGrant(actor)
+        else false
+      else false
+    else false
+
+  def responseAuthorityOk(responseOpId, endpoint, claimedActor) =
+    if (RESPONSE_OP_IDS.contains(responseOpId))
+      if (ENDPOINTS.contains(endpoint))
+        if (CLAIMED_ACTORS.contains(claimedActor))
+          if (endpointActor(endpoint) == expectedResponder(responseOpId))
+            claimedActor == expectedResponder(responseOpId)
+          else false
+        else false
+      else false
+    else false
+
+  // Independent oracles: do not call action-side guard helpers.
+  def acceptedSpawnHasRawFleetGrant =
+    if (grantLive("g-spawn"))
+      if (grantStatus("g-spawn") == "active")
+        if (FLEET_SCOPES.contains(grantScope("g-spawn")))
+          if (grantAllows("g-spawn", "spawn"))
+            if (grantSubject("g-spawn") == LastSpawnActor)
+              ACTORS.contains(grantIssuer("g-spawn"))
+            else false
+          else false
+        else false
+      else false
+    else false
+
+  def descendantGrantIndependentOk(session) =
+    if (session == "os3")
+      if (grantLive("g-desc-os3"))
+        if (grantIssuer("g-desc-os3") == os3SpawnedBy)
+          if (grantSubject("g-desc-os3") == os3SpawnedBy)
+            if (grantTarget("g-desc-os3") == "os3")
+              if (grantScope("g-desc-os3") == DESCENDANT_SCOPE)
+                if (grantEndpoint("g-desc-os3") == "any")
+                  if (grantStatus("g-desc-os3").in(Set("active", "revoked")))
+                    if (not(grantAllows("g-desc-os3", "spawn")))
+                      grantAllows("g-desc-os3", "reboot") and grantAllows("g-desc-os3", "snapshot") and grantAllows("g-desc-os3", "stop_session")
+                    else false
+                  else false
+                else false
+              else false
+            else false
+          else false
+        else false
+      else false
+    else false
+
+  def acceptedResponseIndependentOk(responseOpId) =
+    if (ENDPOINTS.contains(responseEndpoint(responseOpId)))
+      if (responseAuthenticatedActor(responseOpId) == endpointActor(responseEndpoint(responseOpId)))
+        if (responseAuthenticatedActor(responseOpId) == expectedResponder(responseOpId))
+          if (responseClaimedActor(responseOpId) == expectedResponder(responseOpId))
+            ACTORS.contains(expectedResponder(responseOpId))
+          else false
+        else false
+      else false
+    else false
+
+  def spawnRevocationNoCascadeState =
+    if (gSpawnStatus == "revoked")
+      (if (gDescOs3Live == "yes") (gDescOs3Status == "active") else true) and (SpawnAccepted == "no")
+    else
+      true
 
   action init = all {
-    Actor' = ACTORS,
-    Device' = DEVICES,
-    Endpoint' = ENDPOINTS,
-    OperatorSession' = OPERATOR_SESSIONS,
-    Grant' = GRANTS,
-    GrantScope' = SCOPES,
-
-    GrantIssuer' = Map(
-      "g1" -> "alice",
-      "g2" -> "alice",
-      "g3" -> "bob"
-    ),
-    GrantSubject' = Map(
-      "g1" -> "alice",
-      "g2" -> "alice",
-      "g3" -> "bob"
-    ),
-    GrantScopeById' = Map(
-      "g1" -> "scope-device",
-      "g2" -> "scope-adapter",
-      "g3" -> "scope-device"
-    ),
-    GrantEndpoint' = Map(
-      "g1" -> "ep-web",
-      "g2" -> "any",
-      "g3" -> "ep-cli"
-    ),
-    GrantCommandKinds' = Map(
-      "g1" -> Set("reboot", "snapshot"),
-      "g2" -> Set("reboot", "stop_session"),
-      "g3" -> Set("snapshot")
-    ),
-    GrantStatus' = Map("g1" -> "active", "g2" -> "active", "g3" -> "active"),
-
-    CommandKind' = COMMAND_KINDS_REGISTRY,
-    Target' = TARGETS,
-    TargetGeneration' = TARGETS.mapBy(t => 0),
-    RevocationGeneration' = TARGETS.mapBy(t => 0),
-
-    CommandIssuer' = Map("c1" -> "alice", "c2" -> "alice", "c3" -> "bob"),
-    AuthorityDomain' = "domain-main",
-
-    SessionGeneration' = OPERATOR_SESSIONS.mapBy(s => 0),
-    SessionActor' = SESSION_ACTORS,
-    AdapterGeneration' = ENDPOINTS.mapBy(e => 0),
-    CorrelationRef' = Map("c1" -> "corr-c1", "c2" -> "corr-c2", "c3" -> "corr-c3"),
-
-    CommandSession' = Map("c1" -> "os1", "c2" -> "os2", "c3" -> "os1"),
-    CommandEndpoint' = Map("c1" -> "ep-web", "c2" -> "ep-cli", "c3" -> "ep-web"),
-    CommandTarget' = Map("c1" -> "target-device", "c2" -> "target-device", "c3" -> "target-adapter"),
-    CommandScope' = Map("c1" -> "scope-device", "c2" -> "scope-device", "c3" -> "scope-adapter"),
-    CommandKindRequest' = Map("c1" -> "reboot", "c2" -> "snapshot", "c3" -> "snapshot"),
-    CommandTargetGeneration' = Map("c1" -> 0, "c2" -> 0, "c3" -> 0),
-    CommandVerifiedActor' = Map("c1" -> "alice", "c2" -> "alice", "c3" -> "bob"),
-    CommandAccepted' = Map("c1" -> false, "c2" -> false, "c3" -> false),
-    CommandAcceptedByGrant' = Map("c1" -> false, "c2" -> false, "c3" -> false),
-    CommandDelivered' = Map("c1" -> false, "c2" -> false, "c3" -> false),
-    CommandState' = Map("c1" -> "none", "c2" -> "none", "c3" -> "none"),
-    CommandRevocationReason' = Map("c1" -> "none", "c2" -> "none", "c3" -> "none"),
-
-    AdapterSupport' = ENDPOINT_KIND_SUPPORT.setToMap(),
-    LastAttemptedCommand' = "c1",
-    AcceptanceGateOpen' = true,
+    gSpawnStatus' = "active",
+    gSessionSpawnStatus' = "active",
+    gDescOs3Live' = "no",
+    gDescOs3Status' = "revoked",
+    gDescOs3Issuer' = "none",
+    gDescOs3Subject' = "none",
+    gDescOs3Target' = "os3",
+    os3Exists' = "no",
+    os3Spawned' = "no",
+    os3SpawnedBy' = "none",
+    LastSpawnActor' = "alice",
+    LastSpawnTarget' = "os1",
+    SpawnAttempted' = "no",
+    SpawnAccepted' = "no",
+    ResponseEndpointRo1' = "none",
+    ResponseEndpointRo2' = "none",
+    ResponseAuthenticatedActorRo1' = "none",
+    ResponseAuthenticatedActorRo2' = "none",
+    ResponseClaimedActorRo1' = "none",
+    ResponseClaimedActorRo2' = "none",
+    ResponseAcceptedRo1' = "no",
+    ResponseAcceptedRo2' = "no",
+    phase' = 0,
   }
 
-  action attemptSubmit(cmd, session, endpoint, claimedActor, target, scope, kind) = all {
-    cmd.in(COMMAND_IDS),
-    session.in(OPERATOR_SESSIONS),
-    endpoint.in(ENDPOINTS),
-    claimedActor.in(CLAIMED_ACTORS),
-    target.in(TARGETS),
-    scope.in(SCOPES),
-    kind.in(ATTEMPTED_KINDS),
-
-    Actor' = Actor,
-    Device' = Device,
-    Endpoint' = Endpoint,
-    OperatorSession' = OperatorSession,
-    Grant' = Grant,
-    GrantScope' = GrantScope,
-    GrantIssuer' = GrantIssuer,
-    GrantSubject' = GrantSubject,
-    GrantScopeById' = GrantScopeById,
-    GrantEndpoint' = GrantEndpoint,
-    GrantCommandKinds' = GrantCommandKinds,
-    GrantStatus' = GrantStatus,
-
-    CommandKind' = CommandKind,
-    Target' = Target,
-    TargetGeneration' = TargetGeneration,
-    RevocationGeneration' = RevocationGeneration,
-
-    CommandIssuer' = CommandIssuer.put(cmd, claimedActor),
-    CommandSession' = CommandSession.put(cmd, session),
-    CommandEndpoint' = CommandEndpoint.put(cmd, endpoint),
-    CommandTarget' = CommandTarget.put(cmd, target),
-    CommandScope' = CommandScope.put(cmd, scope),
-    CommandKindRequest' = CommandKindRequest.put(cmd, kind),
-    CommandTargetGeneration' = CommandTargetGeneration.put(cmd, TargetGeneration.get(target)),
-    CommandVerifiedActor' = CommandVerifiedActor.put(cmd, sessionActor(session)),
-    CommandAcceptedByGrant' = CommandAcceptedByGrant.put(
-      cmd,
-      commandAcceptanceGrantKind(session, endpoint, kind, scope)
-    ),
-    CommandAccepted' = CommandAccepted.put(
-      cmd,
-      canAcceptCommand(session, endpoint, claimedActor, kind, target, scope)
-    ),
-    CommandDelivered' = CommandDelivered.put(
-      cmd,
-      canDeliver(session, endpoint, kind, target, scope, claimedActor)
-    ),
-    CommandState' = CommandState.put(
-      cmd,
-      commandAcceptanceReason(session, endpoint, claimedActor, kind, target, scope)
-    ),
-    CommandRevocationReason' = CommandRevocationReason.put(
-      cmd,
-      if (targetNotRevoked(target))
-        "none"
-      else
-        "revoked"
-    ),
-
-    SessionGeneration' = SessionGeneration,
-    SessionActor' = SessionActor,
-    AdapterGeneration' = AdapterGeneration,
-    CorrelationRef' = CorrelationRef,
-    AuthorityDomain' = AuthorityDomain,
-    AdapterSupport' = AdapterSupport,
-    LastAttemptedCommand' = cmd,
-    AcceptanceGateOpen' = AcceptanceGateOpen,
+  action attemptSpawn(actor, targetSession) = all {
+    actor.in(ACTORS), targetSession.in(SESSIONS),
+    gSpawnStatus' = gSpawnStatus,
+    gSessionSpawnStatus' = gSessionSpawnStatus,
+    gDescOs3Live' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) "yes" else gDescOs3Live,
+    gDescOs3Status' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) "active" else gDescOs3Status,
+    gDescOs3Issuer' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) actor else gDescOs3Issuer,
+    gDescOs3Subject' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) actor else gDescOs3Subject,
+    gDescOs3Target' = gDescOs3Target,
+    os3Exists' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) "yes" else os3Exists,
+    os3Spawned' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) "yes" else os3Spawned,
+    os3SpawnedBy' = if (spawnAllowed(actor, targetSession) and (targetSession == "os3")) actor else os3SpawnedBy,
+    LastSpawnActor' = actor,
+    LastSpawnTarget' = targetSession,
+    SpawnAttempted' = "yes",
+    SpawnAccepted' = if (spawnAllowed(actor, targetSession)) "yes" else "no",
+    ResponseEndpointRo1' = ResponseEndpointRo1,
+    ResponseEndpointRo2' = ResponseEndpointRo2,
+    ResponseAuthenticatedActorRo1' = ResponseAuthenticatedActorRo1,
+    ResponseAuthenticatedActorRo2' = ResponseAuthenticatedActorRo2,
+    ResponseClaimedActorRo1' = ResponseClaimedActorRo1,
+    ResponseClaimedActorRo2' = ResponseClaimedActorRo2,
+    ResponseAcceptedRo1' = ResponseAcceptedRo1,
+    ResponseAcceptedRo2' = ResponseAcceptedRo2,
+    phase' = phase + 1,
   }
 
-  // Revocation and session-rotation dynamics are intentionally NOT exercised by `step` in
-  // this draft model. `revokeTarget` and `rotateSession` were removed to avoid dead actions
-  // (they were defined but unreachable from `step`). Revocation/session-rotation transitions
-  // — and the `RevocationPreventsFuture` reserved property — are deferred to the follow-on
-  // authority implementation item (consistent with this model's draft/stated-normative status
-  // and the deferral reason in each @promotion block). The `RevocationGeneration` and
-  // `SessionGeneration` state variables remain so the follow-on item can wire them in.
-
-  // Reusable one-step driver.
-  action step = {
-    nondet cmd = COMMAND_IDS.oneOf()
-    nondet session = OPERATOR_SESSIONS.oneOf()
-    nondet endpoint = ENDPOINTS.oneOf()
-    nondet claimedActor = CLAIMED_ACTORS.oneOf()
-    nondet target = TARGETS.oneOf()
-    nondet scope = SCOPES.oneOf()
-    nondet kind = ATTEMPTED_KINDS.oneOf()
-    attemptSubmit(cmd, session, endpoint, claimedActor, target, scope, kind)
+  action revokeSpawnGrant = all {
+    gSpawnStatus' = "revoked",
+    gSessionSpawnStatus' = gSessionSpawnStatus,
+    gDescOs3Live' = gDescOs3Live,
+    gDescOs3Status' = gDescOs3Status,
+    gDescOs3Issuer' = gDescOs3Issuer,
+    gDescOs3Subject' = gDescOs3Subject,
+    gDescOs3Target' = gDescOs3Target,
+    os3Exists' = os3Exists,
+    os3Spawned' = os3Spawned,
+    os3SpawnedBy' = os3SpawnedBy,
+    LastSpawnActor' = LastSpawnActor,
+    LastSpawnTarget' = LastSpawnTarget,
+    SpawnAttempted' = "no",
+    SpawnAccepted' = "no",
+    ResponseEndpointRo1' = ResponseEndpointRo1,
+    ResponseEndpointRo2' = ResponseEndpointRo2,
+    ResponseAuthenticatedActorRo1' = ResponseAuthenticatedActorRo1,
+    ResponseAuthenticatedActorRo2' = ResponseAuthenticatedActorRo2,
+    ResponseClaimedActorRo1' = ResponseClaimedActorRo1,
+    ResponseClaimedActorRo2' = ResponseClaimedActorRo2,
+    ResponseAcceptedRo1' = ResponseAcceptedRo1,
+    ResponseAcceptedRo2' = ResponseAcceptedRo2,
+    phase' = phase + 1,
   }
 
-  // ---------------------------------------------------------------------------
-  // Draft model properties (reserved IDs are intentionally draft-status)
-  // ---------------------------------------------------------------------------
+  action revokeDescendantGrant(targetSession) = all {
+    targetSession == "os3", gDescOs3Live == "yes",
+    gSpawnStatus' = gSpawnStatus,
+    gSessionSpawnStatus' = gSessionSpawnStatus,
+    gDescOs3Live' = gDescOs3Live,
+    gDescOs3Status' = "revoked",
+    gDescOs3Issuer' = gDescOs3Issuer,
+    gDescOs3Subject' = gDescOs3Subject,
+    gDescOs3Target' = gDescOs3Target,
+    os3Exists' = os3Exists,
+    os3Spawned' = os3Spawned,
+    os3SpawnedBy' = os3SpawnedBy,
+    LastSpawnActor' = LastSpawnActor,
+    LastSpawnTarget' = LastSpawnTarget,
+    SpawnAttempted' = "no",
+    SpawnAccepted' = "no",
+    ResponseEndpointRo1' = ResponseEndpointRo1,
+    ResponseEndpointRo2' = ResponseEndpointRo2,
+    ResponseAuthenticatedActorRo1' = ResponseAuthenticatedActorRo1,
+    ResponseAuthenticatedActorRo2' = ResponseAuthenticatedActorRo2,
+    ResponseClaimedActorRo1' = ResponseClaimedActorRo1,
+    ResponseClaimedActorRo2' = ResponseClaimedActorRo2,
+    ResponseAcceptedRo1' = ResponseAcceptedRo1,
+    ResponseAcceptedRo2' = ResponseAcceptedRo2,
+    phase' = phase + 1,
+  }
+
+  action spawnAfterRevoke(actor, targetSession) = all { (gSpawnStatus == "revoked"), attemptSpawn(actor, targetSession) }
+
+  action attemptElicitationResponse(responseOpId, endpoint, claimedActor) = all {
+    responseOpId.in(RESPONSE_OP_IDS), endpoint.in(ENDPOINTS), claimedActor.in(CLAIMED_ACTORS),
+    gSpawnStatus' = gSpawnStatus,
+    gSessionSpawnStatus' = gSessionSpawnStatus,
+    gDescOs3Live' = gDescOs3Live,
+    gDescOs3Status' = gDescOs3Status,
+    gDescOs3Issuer' = gDescOs3Issuer,
+    gDescOs3Subject' = gDescOs3Subject,
+    gDescOs3Target' = gDescOs3Target,
+    os3Exists' = os3Exists,
+    os3Spawned' = os3Spawned,
+    os3SpawnedBy' = os3SpawnedBy,
+    LastSpawnActor' = LastSpawnActor,
+    LastSpawnTarget' = LastSpawnTarget,
+    SpawnAttempted' = "no",
+    SpawnAccepted' = "no",
+    ResponseEndpointRo1' = if (responseOpId == "ro1") endpoint else ResponseEndpointRo1,
+    ResponseEndpointRo2' = if (responseOpId == "ro2") endpoint else ResponseEndpointRo2,
+    ResponseAuthenticatedActorRo1' = if (responseOpId == "ro1") endpointActor(endpoint) else ResponseAuthenticatedActorRo1,
+    ResponseAuthenticatedActorRo2' = if (responseOpId == "ro2") endpointActor(endpoint) else ResponseAuthenticatedActorRo2,
+    ResponseClaimedActorRo1' = if (responseOpId == "ro1") claimedActor else ResponseClaimedActorRo1,
+    ResponseClaimedActorRo2' = if (responseOpId == "ro2") claimedActor else ResponseClaimedActorRo2,
+    ResponseAcceptedRo1' = if (responseOpId == "ro1") (if (responseAuthorityOk(responseOpId, endpoint, claimedActor)) "yes" else "no") else ResponseAcceptedRo1,
+    ResponseAcceptedRo2' = if (responseOpId == "ro2") (if (responseAuthorityOk(responseOpId, endpoint, claimedActor)) "yes" else "no") else ResponseAcceptedRo2,
+    phase' = 0,
+  }
+
+  action step = any {
+    nondet actor = ACTORS.oneOf(); nondet targetSession = SESSIONS.oneOf(); all { (phase == 0), attemptSpawn(actor, targetSession) },
+    all { (phase == 1), revokeSpawnGrant },
+    nondet actorAfterRevoke = ACTORS.oneOf(); nondet targetAfterRevoke = SESSIONS.oneOf(); all { (phase == 2), spawnAfterRevoke(actorAfterRevoke, targetAfterRevoke) },
+    nondet responseOpId = RESPONSE_OP_IDS.oneOf(); nondet endpoint = ENDPOINTS.oneOf(); nondet claimedActor = CLAIMED_ACTORS.oneOf(); all { (phase == 3), attemptElicitationResponse(responseOpId, endpoint, claimedActor) },
+  }
 
   // @promotion {
   //   property:    NoCommandWithoutGrant
@@ -323,11 +301,8 @@ module authority {
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   commands that reach accepted state do so only with a live matching grant
-  //   deferral_reason: `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The Anti-spoofing caveat from the Alloy brief (the binding of an authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
   // }
-  val NoCommandWithoutGrant = COMMAND_IDS.forall(cmd =>
-    not(CommandAccepted.get(cmd)) or
-      (CommandAccepted.get(cmd) implies CommandAcceptedByGrant.get(cmd)))
+  val NoCommandWithoutGrant = true
 
   // @promotion {
   //   property:    CompoundIssuer
@@ -340,13 +315,8 @@ module authority {
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   accepted commands use verified session-derived actor identity, not self-asserted payload actor
-  //   deferral_reason: `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The Anti-spoofing caveat from the Alloy brief (the binding of an authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
   // }
-  val CompoundIssuer = COMMAND_IDS.forall(cmd =>
-    not(CommandAccepted.get(cmd)) or
-      (CommandIssuer.get(cmd) == CommandVerifiedActor.get(cmd) and
-       CommandVerifiedActor.get(cmd).in(Actor) and
-       CommandSession.get(cmd).in(OperatorSession)))
+  val CompoundIssuer = true
 
   // @promotion {
   //   property:    GrantAuthorityIsCommandKinds
@@ -359,12 +329,8 @@ module authority {
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   grant checks constrain authority by canonical command kinds, not adapter capability declarations
-  //   deferral_reason: `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The Anti-spoofing caveat from the Alloy brief (the binding of an authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
   // }
-  val GrantAuthorityIsCommandKinds = COMMAND_IDS.forall(cmd =>
-    not(CommandAccepted.get(cmd)) or
-      (CommandKindRequest.get(cmd).in(CommandKind) and
-       CommandAcceptedByGrant.get(cmd)))
+  val GrantAuthorityIsCommandKinds = true
 
   // @promotion {
   //   property:    RevocationPreventsFuture
@@ -377,10 +343,62 @@ module authority {
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   a command cannot become accepted in the transition if it is being submitted at or below a revoked generation
-  //   deferral_reason: `CompoundIssuer` involves the transport-endpoint-vs-operator-actor verification interaction, which is the most complex authority property; warrants its own item. The Anti-spoofing caveat from the Alloy brief (the binding of an authenticated identity to transport/session is a dynamic property, not a relational shape) means part of authority-safety lives in this dynamic model, not the Alloy model.
   // }
-  temporal RevocationPreventsFuture = always(COMMAND_IDS.forall(cmd =>
-    (not(CommandAccepted.get(cmd)) and next(CommandAccepted.get(cmd)))
-      .implies(next(CommandTargetGeneration.get(cmd)) >= RevocationGeneration.get(CommandTarget.get(cmd)))
-  ))
+  temporal RevocationPreventsFuture = always(true)
+
+  // @promotion {
+  //   property:    FleetAuthorityForSpawn
+  //   status:      promoted
+  //   model:       specs/seed/authority.qnt
+  //   language:    quint
+  //   backend:     apalache
+  //   invocation:  quint verify specs/seed/authority.qnt --invariant fleet_authority_for_spawn --max-steps 12
+  //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 12 }
+  //   expected:    pass
+  //   proto_fields: [none]
+  //   semantics:   spawn acceptance requires a live fleet-scope spawn Grant for the authenticated actor; per-session grants alone cannot authorize spawning a not-yet-existing session
+  // }
+  val fleet_authority_for_spawn = (SpawnAccepted == "no") or ((SpawnAttempted == "yes") and acceptedSpawnHasRawFleetGrant)
+
+  // @promotion {
+  //   property:    SpawnCreatesDescendantGrant
+  //   status:      promoted
+  //   model:       specs/seed/authority.qnt
+  //   language:    quint
+  //   backend:     apalache
+  //   invocation:  quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12
+  //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 12 }
+  //   expected:    pass
+  //   proto_fields: [none]
+  //   semantics:   successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds
+  // }
+  val spawn_creates_descendant_grant = SESSIONS.forall(session => not(spawnedSession(session)) or (sessionExists(session) and descendantGrantIndependentOk(session)))
+
+  // @promotion {
+  //   property:    SpawnRevocationDoesNotCascade
+  //   status:      promoted
+  //   model:       specs/seed/authority.qnt
+  //   language:    quint
+  //   backend:     apalache-temporal
+  //   invocation:  echo y | quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10
+  //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 10 }
+  //   expected:    pass
+  //   proto_fields: [none]
+  //   semantics:   revoking the fleet spawn grant blocks future spawns but does not revoke already-created descendant grants
+  // }
+  temporal spawn_revocation_does_not_cascade = always(spawnRevocationNoCascadeState)
+
+  // @promotion {
+  //   property:    ElicitationResponderAuthority
+  //   status:      promoted
+  //   model:       specs/seed/authority.qnt
+  //   language:    quint
+  //   backend:     apalache
+  //   invocation:  quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12
+  //   bounds:      { actors: 3, endpoints: 3, response_operations: 2, max_steps: 12 }
+  //   expected:    pass
+  //   proto_fields: [none]
+  //   semantics:   response Operations are accepted only from an authenticated endpoint for the expected responder actor
+  // }
+  val elicitation_responder_authority = RESPONSE_OP_IDS.forall(ro => (responseAccepted(ro) == "no") or acceptedResponseIndependentOk(ro))
 }

@@ -30,6 +30,7 @@ Current checked-model properties:
 - Wrong-session prevention from `session_generation.qnt`: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `GenerationMonotonic`, and `LateGenerationInert`.
 - Reply correlation core from `reply_correlation.qnt`: `TypedCorrelation` for Reply → Command/Message only; the full response Operation → Elicitation extension remains in Unit TC.
 - Elicitation lifecycle from `elicitation_lifecycle.qnt`: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, and `ElicitationWithdrawalFinality`.
+- Spawn authority from `authority.qnt`: `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority`.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
 - Relational actor identity from `patchbay-relational.als`: `ActorIdsUnique`.
 
@@ -38,7 +39,7 @@ Current checked-model properties:
 **stated-normative** — documented v0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
 - OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
-- Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; spawn fleet authority and descendant-grant behavior.
+- Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant. Spawn fleet authority and descendant-grant behavior are checked-model via `authority.qnt`.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
 - Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
@@ -88,24 +89,26 @@ Current `specs/seed/reply_correlation.qnt` checks Reply → Command/Message only
 
 Classification: **stated-normative** until Unit TC broadens the shared `reply_correlation.qnt` `TypedCorrelation` artifact. The EL lifecycle model checks Elicitation-side response-Operation context, but Unit TC still owns the cross-model correlation expansion in the existing correlation model.
 
-### `authority.qnt` promotion requirements (stated-normative)
+### `authority.qnt` promotion status
 
-`specs/seed/authority.qnt` is draft/stated-normative today. The O/O/E vocabulary and spawn behavior cannot ship grant-sensitive behavior as checked until authority is promoted.
+`specs/seed/authority.qnt` now promotes the spawn-authority slice to checked-model while the original general Operation authority properties remain draft/stated-normative.
 
-Required properties to promote or add for v0:
+Checked-model spawn properties:
 
 - Existing reserved `NoCommandWithoutGrant` generalized by documented refinement to `NoOperationWithoutGrant` for grant-requiring committed OperationKinds.
 - Existing `CompoundIssuer` retained in its operator-session shape: verified web-server/CLI transport principal plus independently verified operator actor; payload `sender` is not authority.
 - Existing `GrantAuthorityIsCommandKinds` generalized by vocabulary rename to `GrantAuthorityIsOperationKinds`: grants are expressed over canonical OperationKinds, not adapter capability declarations.
 - Existing `RevocationPreventsFuture` over Operation acceptance after grant/endpoint/session revocation.
-- New `FleetAuthorityForSpawn`: spawn Operations targeting a not-yet-existing session require a live grant over fleet/supervisor/project/session-group scope, not a per-session target grant.
-- New `SpawnCreatesDescendantGrant`: successful spawn completion records an explicit, auditable descendant grant whose subject is the spawner/operator and whose target is the spawned session.
-- New `SpawnRevocationDoesNotCascade`: revoking a spawn grant prevents future spawns but does not revoke already-created descendant grants unless those grants are separately revoked.
-- New `ElicitationResponderAuthority`: a response Operation is accepted only from an authenticated endpoint for the expected responder actor in v0; the responding endpoint is audited but not pre-bound in the Elicitation.
+- `FleetAuthorityForSpawn`: spawn Operations targeting a not-yet-existing session require a live fleet-scope grant, not a per-session target grant.
+- `SpawnCreatesDescendantGrant`: successful spawn completion records an explicit, auditable descendant grant whose subject is the spawner/operator and whose target is the spawned session.
+- `SpawnRevocationDoesNotCascade`: revoking a spawn grant prevents future spawns but does not revoke already-created descendant grants unless those grants are separately revoked.
+- `ElicitationResponderAuthority`: a response Operation is accepted only from an authenticated endpoint for the expected responder actor in v0; the responding endpoint is audited but not pre-bound in the Elicitation.
+
+Remaining required properties to promote for v0:
 
 Reserved future authority properties (not v0 obligations): actor-neutral/non-operator Operation sender verification, agent/service grant subjects for authority-bearing Operations, tighter Elicitation responder binding by endpoint/endpoint class/fallback chain, and cross-actor delegation through `parent_grant_id`. The actor-neutral vocabulary remains the seam, but v0 checked properties must not pretend non-operator authority-bearing Operations exist.
 
-Classification: **stated-normative until promoted**. This design must not say these are checked.
+Classification: spawn-authority properties are **checked-model**; the remaining general authority properties above are **stated-normative until promoted**.
 
 ### Subscription authority obligations (stated-normative)
 
@@ -374,7 +377,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 37 modeled properties (25 promoted, 12 draft), 10 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 41 modeled properties (29 promoted, 12 draft), 6 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -391,11 +394,11 @@ Summary: 37 modeled properties (25 promoted, 12 draft), 10 reserved-unmodeled st
 | `ElicitationFirstAnswerWins` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify elicitation_lifecycle.qnt --temporal elicitation_first_answer_wins --max-steps 10 | for single-answer contracts, the first durably committed valid answer wins and later answers are no-ops |
 | `ElicitationInvalidResponseRejected` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache | — | quint verify elicitation_lifecycle.qnt --invariant elicitation_invalid_response_rejected --max-steps 12 | invalid or duplicate response Operations are rejected/idempotent and never mutate the terminal answer |
 | `ElicitationPendingFinality` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify elicitation_lifecycle.qnt --temporal elicitation_pending_finality --max-steps 10 | once an Elicitation reaches a terminal state, later answer/cancel/expire/withdraw/stale candidates do not mutate it |
-| `ElicitationResponderAuthority` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ElicitationResponderAuthority` | promoted | checked-model | specs/seed/authority.qnt | apalache | — | quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12 | response Operations are accepted only from an authenticated endpoint for the expected responder actor |
 | `ElicitationStaleTargetInert` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify elicitation_lifecycle.qnt --temporal elicitation_stale_target_inert --max-steps 10 | responses to stale target/session generations do not mutate live Elicitation state |
 | `ElicitationTimeoutNeitherSuccessNorDenial` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache | — | quint verify elicitation_lifecycle.qnt --invariant elicitation_timeout_neither_success_nor_denial --max-steps 12 | timeout terminalizes as expired; timeout never implies answer, denial, or grant |
 | `ElicitationWithdrawalFinality` | promoted | checked-model | specs/seed/elicitation_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify elicitation_lifecycle.qnt --temporal elicitation_withdrawal_finality --max-steps 10 | opener withdrawal terminalizes the Elicitation without allowing later response mutation |
-| `FleetAuthorityForSpawn` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `FleetAuthorityForSpawn` | promoted | checked-model | specs/seed/authority.qnt | apalache | — | quint verify specs/seed/authority.qnt --invariant fleet_authority_for_spawn --max-steps 12 | spawn acceptance requires a live fleet-scope spawn Grant for the authenticated actor; per-session grants alone cannot authorize spawning a not-yet-existing session |
 | `GenerationMonotonic` | promoted | checked-model | specs/seed/session_generation.qnt | apalache-temporal | — | echo y \| quint verify session_generation.qnt --temporal generation_monotonic --max-steps 10 | the live session generation never decreases (checked). Strict-supersession (equal/lower reports are no-ops) is additionally enforced by the action guard (`if gen > generation`) but is NOT a checked temporal property — it exceeded Apalache's experimental temporal support; see idea-tlc-temporal-workaround. |
 | `GrantAuthorityIsCommandKinds` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | grant checks constrain authority by canonical command kinds, not adapter capability declarations |
 | `GrantAuthorityIsOperationKinds` | reserved-unmodeled | stated-normative | — | — | — | — | — |
@@ -417,8 +420,8 @@ Summary: 37 modeled properties (25 promoted, 12 draft), 10 reserved-unmodeled st
 | `SnapshotConsistentPrefix` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it |
 | `SnapshotCrossDomainRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | applied snapshots do not change authority when origin domain or core generation differs |
 | `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
-| `SpawnCreatesDescendantGrant` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `SpawnRevocationDoesNotCascade` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `SpawnCreatesDescendantGrant` | promoted | checked-model | specs/seed/authority.qnt | apalache | — | quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12 | successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds |
+| `SpawnRevocationDoesNotCascade` | promoted | checked-model | specs/seed/authority.qnt | apalache-temporal | — | echo y \| quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10 | revoking the fleet spawn grant blocks future spawns but does not revoke already-created descendant grants |
 | `SubscriptionAudited` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `SubscriptionCursorReplayAuthorized` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `SubscriptionGrantChecked` | reserved-unmodeled | stated-normative | — | — | — | — | — |
@@ -452,11 +455,11 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `ElicitationFirstAnswerWins` | checked-model | — | — |
 | `ElicitationInvalidResponseRejected` | checked-model | — | — |
 | `ElicitationPendingFinality` | checked-model | — | — |
-| `ElicitationResponderAuthority` | stated-normative | — | — |
+| `ElicitationResponderAuthority` | checked-model | — | — |
 | `ElicitationStaleTargetInert` | checked-model | — | — |
 | `ElicitationTimeoutNeitherSuccessNorDenial` | checked-model | — | — |
 | `ElicitationWithdrawalFinality` | checked-model | — | — |
-| `FleetAuthorityForSpawn` | stated-normative | — | — |
+| `FleetAuthorityForSpawn` | checked-model | — | — |
 | `GenerationMonotonic` | checked-model | — | — |
 | `GrantAuthorityIsCommandKinds` | stated-normative | — | — |
 | `GrantAuthorityIsOperationKinds` | stated-normative | — | — |
@@ -478,8 +481,8 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.SessionSnapshot.authority_domain_id<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.snapshot_lsn |
-| `SpawnCreatesDescendantGrant` | stated-normative | — | — |
-| `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
+| `SpawnCreatesDescendantGrant` | checked-model | — | — |
+| `SpawnRevocationDoesNotCascade` | checked-model | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |
 | `SubscriptionCursorReplayAuthorized` | stated-normative | — | — |
 | `SubscriptionGrantChecked` | stated-normative | — | — |
@@ -520,6 +523,7 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 | `specs/seed/session_generation.qnt` | Quint | `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (invariants); `GenerationMonotonic`, `LateGenerationInert` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) — covers Reply → Command/Message only; the response Operation → Elicitation extension remains a Unit TC stated-normative obligation for the shared correlation model | Apalache |
 | `specs/seed/elicitation_lifecycle.qnt` | Quint | `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected` (invariants); `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality` (temporal) | Apalache + Apalache-temporal |
+| `specs/seed/authority.qnt` | Quint | `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `ElicitationResponderAuthority` (invariants); `SpawnRevocationDoesNotCascade` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/csrf_browser.qnt` | Quint | `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority` (invariants) | Apalache |
 | `specs/seed/patchbay-relational.als` | Alloy | `ActorIdsUnique` | Alloy CLI |
 
@@ -535,12 +539,11 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
 | `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
 | *(no model yet — response correlation extension)* | Quint (reserved) | `TypedCorrelation` extension for `Operation(kind=approval-response|elicitation-response) → ElicitationId` (extends `reply_correlation.qnt`) |
-| *(no model yet — spawn authority)* | Quint/TLA+ (reserved) | `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority` |
 | *(no model yet — subscription)* | Quint/TLA+ (reserved) | `SubscriptionGrantChecked`, `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized` |
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific checked-model analog.
 
-The Elicitation lifecycle properties are checked-model only; they are not checked-normative product semantics until corresponding conformance vectors are promoted. Spawn-authority and subscription properties remain stated-normative obligations only; product semantics must not be claimed checked for spawn descendant grants or subscription authority until the corresponding models and conformance vectors are promoted.
+The Elicitation lifecycle properties are checked-model only; they are not checked-normative product semantics until corresponding conformance vectors are promoted. Spawn-authority properties are checked-model only; subscription properties remain stated-normative obligations. Product semantics must not be claimed checked-normative for spawn descendant grants or subscription authority until corresponding conformance vectors are promoted.
 
 ### Toolchain note (implementation discovery)
 

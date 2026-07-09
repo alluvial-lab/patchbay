@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-spawn
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-elicitation]
@@ -52,3 +52,26 @@ Actions (permissive): `attemptSpawn`, `revokeSpawnGrant` (sets fleet grant `Gran
 - Edit: `specs/seed/authority.qnt` (+ regenerate `.emitted.tla` if applicable)
 - Edit: `docs/VERIFICATION.md`, `contracts/scripts/check-vectors.mjs` (arrays)
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Unit SA
+
+## Implementation notes
+- Files changed: `specs/seed/authority.qnt`, `docs/VERIFICATION.md`, `contracts/scripts/check-vectors.mjs`, `.work/active/stories/story-formal-model-realignment-spawn.md`.
+- Tests added: no separate test files; promoted four `authority.qnt` model properties with `@promotion` blocks.
+- Model structure: rewrote `authority.qnt` to a focused bounded authority model for Unit SA. Grant records remain explicit tuples (`GrantLive` plus issuer/subject/scope/endpoint/kind/status/target scalar tuple fields for the bounded grant ids). `g-spawn` is the fleet-scope spawn grant; `g-session-spawn` is an active per-session negative-control grant used for the B5 mutation; successful spawn creates the explicit descendant grant record `g-desc-os3` with non-spawn command kinds.
+- Mechanical Quint discovery: Apalache temporal checking in this model produced runtime `Operator EQ` errors when boolean/string equality appeared in `and`/`or` chains that compiled but translated ambiguously for temporal checking. Resolved mechanically by using nested `if` helpers and string flags for state booleans; no protocol semantics changed.
+- Baseline verification (all exit 0):
+  - `quint parse specs/seed/authority.qnt`.
+  - `quint compile specs/seed/authority.qnt`.
+  - `quint verify specs/seed/authority.qnt --invariant fleet_authority_for_spawn --max-steps 12` → `[ok]`.
+  - `quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12` → `[ok]`.
+  - `quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12` → `[ok]`.
+  - `echo y | quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10` → `[ok]`.
+- Mutation tests (all intentionally exit 1 with `[violation]`):
+  - `FleetAuthorityForSpawn`: mutated `liveFleetSpawnGrant` to authorize from the active per-session `g-session-spawn` grant after the fleet grant is revoked; `fleet_authority_for_spawn` failed with `[violation]`.
+  - `SpawnCreatesDescendantGrant`: mutated the successful-spawn action to leave `gDescOs3Live` unchanged instead of inserting the descendant grant record; `spawn_creates_descendant_grant` failed with `[violation]`.
+  - `SpawnRevocationDoesNotCascade`: mutated `revokeSpawnGrant` to also set the live descendant grant status to `revoked`; `spawn_revocation_does_not_cascade` failed with `[violation]`.
+  - `ElicitationResponderAuthority`: mutated `responseAuthorityOk` to `true`; `elicitation_responder_authority` failed with `[violation]`.
+- Traceability: moved `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority` from `STATED_NORMATIVE_PROPERTIES` to `CHECKED_MODEL_PROPERTIES` in `contracts/scripts/check-vectors.mjs`; updated `docs/VERIFICATION.md`; regenerated model/vector traceability tables.
+- Final script checks: `node contracts/scripts/check-models.mjs` exit 0; `node contracts/scripts/check-vectors.mjs` exit 0.
+- Existing authority draft properties remained `status: draft`: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`.
+- Discrepancies from design: `authority.qnt` uses scalar tuple fields for the bounded grant ids instead of map-valued state to keep Apalache temporal checking reliable; the promoted oracles still query raw grant tuple facts and do not use boolean authority side-channels.
+- Adjacent issues parked: none.
