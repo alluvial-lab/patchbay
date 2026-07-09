@@ -471,6 +471,7 @@ pub enum FailureCode {
     Cancelled = 11,
     Superseded = 12,
     StaleEvent = 13,
+    ExecutionOutcomeUnknown = 14,
 }
 impl FailureCode {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -493,6 +494,7 @@ impl FailureCode {
             Self::Cancelled => "FAILURE_CODE_CANCELLED",
             Self::Superseded => "FAILURE_CODE_SUPERSEDED",
             Self::StaleEvent => "FAILURE_CODE_STALE_EVENT",
+            Self::ExecutionOutcomeUnknown => "FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -512,6 +514,7 @@ impl FailureCode {
             "FAILURE_CODE_CANCELLED" => Some(Self::Cancelled),
             "FAILURE_CODE_SUPERSEDED" => Some(Self::Superseded),
             "FAILURE_CODE_STALE_EVENT" => Some(Self::StaleEvent),
+            "FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN" => Some(Self::ExecutionOutcomeUnknown),
             _ => None,
         }
     }

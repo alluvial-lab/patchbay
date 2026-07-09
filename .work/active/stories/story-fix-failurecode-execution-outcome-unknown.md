@@ -1,7 +1,7 @@
 ---
 id: story-fix-failurecode-execution-outcome-unknown
 kind: story
-stage: drafting
+stage: review
 tags: [protocol, verification, bug, foundation]
 parent: epic-foundation-hardening
 depends_on: []
@@ -33,3 +33,16 @@ Add `FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN = 14;` to the `FailureCode` enum in 
 ## Routing
 
 Small fix story — routes through `implement` (single file + regen + drift check). No design gate.
+
+## Implementation notes
+
+- Files changed: `contracts/proto/patchbay/operations.proto` (added `FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN = 14;` after `FAILURE_CODE_STALE_EVENT = 13;`), `contracts/rust/src/gen/patchbay/patchbay.rs` (regenerated), `contracts/ts/src/gen/patchbay/operations_pb.ts` (regenerated).
+- Tests added: none — generated-contract change; verification is the drift check, not a new test.
+- Verification performed: `buf generate` (exit 0); `check-generated-drift.mjs` clean (fresh regen matches staged, no drift); `check-vectors.mjs` pass; `check-models.mjs` pass. Confirmed the new value landed in both generated outputs (Rust `ExecutionOutcomeUnknown = 14` + its string round-trip; TS `EXECUTION_OUTCOME_UNKNOWN = 14`).
+- Discrepancies from design: none. The fix is exactly as specified in the story body.
+- Adjacent issues parked: none. The related Important finding from the epic review (automated checks don't catch proto↔prose drift) is already filed as `idea-proto-prose-registry-consistency-check`.
+- Acceptance criteria walk:
+  - `FailureCode` enum includes `FAILURE_CODE_EXECUTION_OUTCOME_UNKNOWN` → met (`operations.proto:86`).
+  - `buf generate` regenerates Rust + TS; `check:drift` passes → met (clean regen, drift check clean).
+  - PROTOCOL.md failure vocabulary and proto enum agree → met (both carry the term; no drift).
+  - Any conformance vector covering `execution_outcome_unknown` updated if one exists → met (no vector references it; nothing to update).
