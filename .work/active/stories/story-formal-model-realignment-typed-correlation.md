@@ -1,7 +1,7 @@
 ---
 id: story-formal-model-realignment-typed-correlation
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: feature-formal-model-realignment
 depends_on: [story-formal-model-realignment-elicitation]
@@ -27,15 +27,22 @@ Bounds carry forward from `reply_correlation.qnt` (command_ids: 2, message_ids: 
 
 ## Acceptance Criteria
 
-- [ ] `quint parse` + `quint compile` exit 0.
-- [ ] Extended `TypedCorrelation` passes (now covering response→Elicitation).
-- [ ] Mutation test: a response Operation using a `ReplyId`/`EventId`/`CommandId` as `ElicitationId` is rejected (forgery prevented).
-- [ ] `reply_correlation.emitted.tla` regenerated.
-- [ ] VERIFICATION.md "TypedCorrelation extension" bullet narrowed (response→Elicitation now covered).
-- [ ] `@promotion` block updated (no `tier` field); `check-models.mjs` exits 0.
+- [x] `quint parse` + `quint compile` exit 0.
+- [x] Extended `TypedCorrelation` passes (now covering response→Elicitation).
+- [x] Mutation test: a response Operation using a `ReplyId`/`EventId`/`CommandId` as `ElicitationId` is rejected (forgery prevented).
+- [x] `reply_correlation.emitted.tla` regenerated.
+- [x] VERIFICATION.md "TypedCorrelation extension" bullet narrowed (response→Elicitation now covered).
+- [x] `@promotion` block updated (no `tier` field); `check-models.mjs` exits 0.
 
 ## Key files
 
 - Edit: `specs/seed/reply_correlation.qnt` (+ regenerate `.emitted.tla`)
 - Edit: `docs/VERIFICATION.md`
 - Design reference: `.work/active/features/feature-formal-model-realignment.md` Unit TC
+
+## Implementation notes
+- Files changed: `specs/seed/reply_correlation.qnt`, `specs/seed/reply_correlation.emitted.tla`, `docs/VERIFICATION.md`.
+- Tests/verification run: `quint parse specs/seed/reply_correlation.qnt`; `quint compile specs/seed/reply_correlation.qnt`; `quint verify specs/seed/reply_correlation.qnt --invariant typed_correlation --max-steps 12` (`[ok] No violation found`); mutation test on `/tmp/reply_correlation_mut.qnt` weakening `typedResponseReferenceOk` to accept any `elicitation` corrId (`[violation]`, counterexample recorded `responseCorrelatesTo.ro1 = "c1"`); regenerated TLA via `quint compile reply_correlation.qnt --target tlaplus`; `node contracts/scripts/check-models.mjs`; `node contracts/scripts/check-vectors.mjs`.
+- Genuine-checking confirmation: response Operation recording uses an action-side helper (`typedResponseReferenceOk` / `responseOperationRecordable`), while `recordedResponseOpIndependentOk` checks raw state/id-space/context facts and does not call the helper. The mutation broke the helper, not the oracle, and the invariant failed.
+- Discrepancies from design: represented authority-domain + target-session/generation as the bounded context atom already used by `reply_correlation.qnt`; responder actor is a separate map. This preserves the model's compact projection while covering same authority/session/responder correlation.
+- Adjacent issues parked: none.

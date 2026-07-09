@@ -28,7 +28,7 @@ Current checked-model properties:
 
 - Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`, and `NoAcceptedToCompleted`.
 - Wrong-session prevention from `session_generation.qnt`: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `GenerationMonotonic`, and `LateGenerationInert`.
-- Reply correlation core from `reply_correlation.qnt`: `TypedCorrelation` for Reply → Command/Message only; the full response Operation → Elicitation extension remains in Unit TC.
+- Reply and response-Operation correlation from `reply_correlation.qnt`: `TypedCorrelation` covers Reply → Command/Message and response Operation (`approval-response`/`elicitation-response`) → Elicitation typed references in the same authority/session/responder context.
 - Elicitation lifecycle from `elicitation_lifecycle.qnt`: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, and `ElicitationWithdrawalFinality`.
 - Spawn authority from `authority.qnt`: `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority`.
 - Subscription authority from `subscription_authority.qnt`: `SubscriptionGrantChecked`, `SubscriptionAudited`, and `SubscriptionCursorReplayAuthorized`.
@@ -45,7 +45,7 @@ Current checked-model properties:
 - Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
-- Reply correlation refinements and extensions: duplicate-reply idempotency/rejection and reference-resolution edge cases beyond the checked `TypedCorrelation` core; Unit TC still broadens the existing `TypedCorrelation` model artifact to cover response Operation → Elicitation in the shared correlation model.
+- Reply correlation refinements: duplicate-reply idempotency/rejection and reference-resolution edge cases beyond the checked `TypedCorrelation` core.
 
 ### `OperationState` ⇿ `CommandState` refinement (checked-model properties by equivalence)
 
@@ -77,18 +77,17 @@ Classification: **checked-model by refinement only** for the listed properties. 
 
 These are checked-model properties only: product semantics become checked-normative after promoted conformance vectors trace to each property and `.proto` fields are linked when contracts exist.
 
-### `TypedCorrelation` extension (stated-normative)
+### `TypedCorrelation` response-Operation coverage (checked-model)
 
-Current `specs/seed/reply_correlation.qnt` checks Reply → Command/Message only. Extending typed correlation is a new stated-normative obligation. The extension must cover:
+`specs/seed/reply_correlation.qnt` now checks the shared `TypedCorrelation` property across both correlation shapes:
 
+- Reply → Command/Message typed correlation;
 - `Operation(kind=approval-response|elicitation-response) → ElicitationId` typed correlation;
-- same authority domain;
-- same target/session/generation context or explicit stale rejection;
-- expected responder actor policy in v0, with responding endpoint captured in the response Operation audit;
-- no cross-id-space masquerade: CommandId, MessageId, ReplyId, EventId, and ElicitationId remain disjoint;
-- duplicate response Operation behavior: idempotent return of existing response state or visible rejection, per policy.
+- same authority domain and target/session/generation context, represented in the bounded model as a shared authority/session context atom;
+- expected responder actor policy in v0;
+- no cross-id-space masquerade: CommandId, MessageId, ReplyId, EventId, and ElicitationId remain disjoint.
 
-Classification: **stated-normative** until Unit TC broadens the shared `reply_correlation.qnt` `TypedCorrelation` artifact. The EL lifecycle model checks Elicitation-side response-Operation context, but Unit TC still owns the cross-model correlation expansion in the existing correlation model.
+Classification: **checked-model** for the shared typed-correlation artifact. Duplicate response Operation behavior is checked in the Elicitation lifecycle model (`ElicitationInvalidResponseRejected`); product semantics become checked-normative only after promoted conformance vectors trace to the property.
 
 ### `authority.qnt` promotion status
 
@@ -178,12 +177,13 @@ Properties:
 - **GenerationMonotonic**: session supersession requires a strictly-greater generation; lower reports are rejected as audit and the live generation is unchanged; equal reports are a no-op.
 - Human-readable labels cannot override verified target identity.
 
-### Reply correlation
+### Reply and response-Operation correlation
 
 Properties:
 
 - A reply references a known prior message or command by typed correlation.
-- **TypedCorrelation**: a reply correlates by typed reference to a known command or message id in the same authority/session context; it cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts.
+- A response Operation (`approval-response` or `elicitation-response`) references a known prior Elicitation by typed correlation.
+- **TypedCorrelation**: replies correlate by typed reference to known command/message ids in the same authority/session context, and response Operations correlate by typed reference to known ElicitationIds in the same authority/session/responder context; neither shape can forge correlation across id spaces (CommandId, MessageId, ReplyId, EventId, and ElicitationId) or across authority/session contexts.
 - Duplicate replies are either idempotent or visibly rejected.
 
 ### Idempotent retry
@@ -428,7 +428,7 @@ Summary: 44 modeled properties (32 promoted, 12 draft), 3 reserved-unmodeled sta
 | `SubscriptionGrantChecked` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_grant_checked --max-steps 12 | subscription establishment succeeds only with a live subscribe-kind Grant record for the authenticated actor and stream/filter scope |
 | `TerminalFinality` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal terminal_finality --max-steps 10 | once a command reaches a terminal CommandState, later events do not mutate it |
 | `TimeoutNeitherSuccessNorDenial` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TypedCorrelation` | promoted | checked-model | specs/seed/reply_correlation.qnt | apalache | — | quint verify reply_correlation.qnt --invariant typed_correlation --max-steps 12 | replies use typed same-context references to known prior commands/messages and cannot masquerade across id spaces |
+| `TypedCorrelation` | promoted | checked-model | specs/seed/reply_correlation.qnt | apalache | — | quint verify reply_correlation.qnt --invariant typed_correlation --max-steps 12 | replies use typed same-context references to known prior commands/messages, response Operations use typed same authority/session/responder-context references to known prior Elicitations, and neither can masquerade across CommandId/MessageId/ReplyId/EventId/ElicitationId spaces |
 
 <!-- END GENERATED MODEL-PROMOTION TRACEABILITY -->
 
@@ -522,7 +522,7 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 |---|---|---|---|
 | `specs/seed/command_lifecycle.qnt` | Quint | `CommandDurability`, `BoundaryDedup` (invariants); `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` (temporal) — all apply to `OperationState` by refinement equivalence | Apalache + Apalache-temporal |
 | `specs/seed/session_generation.qnt` | Quint | `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (invariants); `GenerationMonotonic`, `LateGenerationInert` (temporal) | Apalache + Apalache-temporal |
-| `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) — covers Reply → Command/Message only; the response Operation → Elicitation extension remains a Unit TC stated-normative obligation for the shared correlation model | Apalache |
+| `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) — covers Reply → Command/Message and response Operation (`approval-response`/`elicitation-response`) → Elicitation typed references across disjoint CommandId/MessageId/ReplyId/EventId/ElicitationId spaces | Apalache |
 | `specs/seed/elicitation_lifecycle.qnt` | Quint | `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected` (invariants); `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/authority.qnt` | Quint | `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `ElicitationResponderAuthority` (invariants); `SpawnRevocationDoesNotCascade` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/subscription_authority.qnt` | Quint | `SubscriptionGrantChecked`, `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized` (invariants) | Apalache |
@@ -540,7 +540,6 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 | `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
 | `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
-| *(no model yet — response correlation extension)* | Quint (reserved) | `TypedCorrelation` extension for `Operation(kind=approval-response|elicitation-response) → ElicitationId` (extends `reply_correlation.qnt`) |
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific checked-model analog.
 
