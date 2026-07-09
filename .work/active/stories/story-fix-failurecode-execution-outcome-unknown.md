@@ -3,10 +3,10 @@ id: story-fix-failurecode-execution-outcome-unknown
 kind: story
 stage: drafting
 tags: [protocol, verification, bug, foundation]
-parent: null
+parent: epic-foundation-hardening
 depends_on: []
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-09
 gate_origin: null
 release_binding: null
 ---
