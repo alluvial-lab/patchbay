@@ -1,7 +1,7 @@
 ---
 id: epic-public-product-contract-verification-claim-correction
 kind: feature
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: epic-public-product-contract
 depends_on: []
@@ -310,3 +310,25 @@ All six child stories implemented and advanced to `stage: review` via `implement
 **Verification status:** `quint parse` exits 0 for all affected model files; `check-vectors.mjs` exits 0; `check-models.mjs` exits 0 (tables current). Generated VERIFICATION.md tables reflect the demotions. No promoted property lost its genuine-checking mutation proof.
 
 **Deferred to v1 formal gate (`epic-public-product-contract-executable-release-assurance`):** real formulas for the 11 demoted properties (crash/restart durability, competing pre-append candidates, retry-input identity, returned-record identity, per-session identity tuple, label-override routing, stale-event audit, elicitation-timeout grant boundary, descendant-grant allowed-kind set with action-created state, snapshot/recovery failure boundaries, general authority).
+
+## Review (2026-07-10)
+
+**Verdict**: Approve with comments
+
+**Lane**: deep (feature), substrate mode. Two-phase fresh-context review on `openai-codex` (different model class from the umans orchestrator):
+- Phase 1 (completeness/complementary): `openai-codex/gpt-5.6-terra` (high)
+- Phase 2 (adversarial): `openai-codex/gpt-5.6-sol` (xhigh)
+
+**Blockers**: 4 — all hand-authored VERIFICATION.md prose that still used pre-narrowing wording for properties whose `@promotion` `semantics:` was narrowed in Unit 6 (generated table rows auto-regenerated, but the non-generated descriptions did not). All four fixed inline in this review stride:
+- `ElicitationStaleTargetInert` (VERIFICATION.md:99) — said "do not mutate live state"; narrowed to "do not cause the Elicitation to become answered or record answer data".
+- `SpawnRevocationDoesNotCascade` (VERIFICATION.md:123) — said "does not revoke already-created descendant grants unless those grants are separately revoked" (a qualifier the formula does not establish); narrowed to "revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it".
+- `ElicitationResponderAuthority` (VERIFICATION.md:124) — claimed "the responding endpoint is audited" (not proven by the formula); narrowed to endpoint-mapping + claimed-actor matching, with auditing noted as stated-normative.
+- `browser_local_state_not_authority` (VERIFICATION.md:303) — claimed "core grant checks" / "session/CSRF/grant evidence" but the model has no grant state; narrowed to "server-side session/CSRF checks" with explicit "model has no grant state" note.
+
+**Important**: 2 — filed as backlog items:
+- `idea-spawn-revocation-model-coverage.md` — `SpawnRevocationDoesNotCascade` formula is accurate over reachable traces (the `revokeSpawnGrant` action preserves the descendant), but the model does not explore the separate-revocation path (`revokeDescendantGrant` is not in the `step` relation) and the descendant clause is `true` when no descendant exists. Not a demotion candidate (genuine oracle for reachable traces); the v1 formal gate owns the strengthened formula.
+- `idea-check-models-draft-discipline-enforcement.md` — `check-models.mjs` does not require `demotion_reason` for drafts, does not validate draft invocations are `<TBD>`, and does not verify executable definitions are absent for stated-normative properties. The misleading-formula defect this feature corrected can recur while CI stays green.
+
+**Nits**: none recorded.
+
+**Notes**: Both phases independently converged on the same 4 prose drift points (high confidence these are real, not reviewer noise). The `SpawnRevocationDoesNotCascade` concern was Phase 2's deepest finding; on analysis it is a model-coverage observation, not a semantics-vs-formula mismatch — the narrowed `semantics:` text is accurate to what the formula proves over reachable traces, and the design explicitly defers real failure-boundary modeling to the v1 gate. Demoted to important and filed as a backlog note for the v1 gate rather than a blocker. All 11 demotion reasons verified accurate against their actual formulas (Phase 2 read each formula at HEAD). Array consistency clean (47 unique ids, no duplicates, sorted). Checker green after prose fixes (`check-models` exit 0). Not archived: parent epic `epic-public-product-contract` is still at `stage: implementing`.

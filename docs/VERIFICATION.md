@@ -96,7 +96,7 @@ Classification: **checked-model by refinement only** for `TerminalFinality`, `Bo
 - `ElicitationFirstAnswerWins` — for single-answer contracts, once the first valid answer is durably committed as the terminal, later answer attempts do not replace it. This property does not select or characterize a `declined` terminal.
 - `ElicitationCorrelationTyped` — response Operations reference a known ElicitationId in the same authority/session/responder context and cannot forge across id spaces or generations.
 - `ElicitationInvalidResponseRejected` — invalid response Operations are rejected and do not satisfy the Elicitation unless explicit terminal-on-invalid policy is modeled.
-- `ElicitationStaleTargetInert` — responses to stale/superseded target/session generations do not mutate live state.
+- `ElicitationStaleTargetInert` — responses to stale/superseded target/session generations do not cause the Elicitation to become answered or record answer data.
 - `ElicitationWithdrawalFinality` — opener withdrawal terminalizes without allowing later response mutation.
 
 These are checked-model properties only: product semantics become checked-normative after promoted conformance vectors trace to each property and `.proto` fields are linked when contracts exist. `ElicitationTimeoutNeitherSuccessNorDenial` remains a stated-normative obligation because its current formula has no grant state and therefore does not model the full claimed failure boundary.
@@ -120,8 +120,8 @@ Classification: **checked-model** for the shared typed-correlation artifact. Dup
 Checked-model spawn properties:
 
 - `FleetAuthorityForSpawn`: spawn Operations targeting a not-yet-existing session require a live fleet-scope grant, not a per-session target grant.
-- `SpawnRevocationDoesNotCascade`: revoking a spawn grant prevents future spawns but does not revoke already-created descendant grants unless those grants are separately revoked.
-- `ElicitationResponderAuthority`: response Operations are accepted only when the modeled submitting endpoint maps to the expected responder actor and the claimed actor matches that responder; the responding endpoint is audited but not pre-bound in the Elicitation.
+- `SpawnRevocationDoesNotCascade`: revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it.
+- `ElicitationResponderAuthority`: response Operations are accepted only when the modeled submitting endpoint maps to the expected responder actor and the claimed actor matches that responder. Endpoint auditing and pre-binding are stated-normative v0.1.0 obligations, not established by this checked-model property.
 
 Stated-normative properties with no executable formula:
 
@@ -300,7 +300,7 @@ Properties:
 - A state-changing browser request without an authenticated operator session is rejected before command acceptance.
 - A state-changing browser request without a valid session-bound CSRF proof is rejected before command acceptance.
 - Revoked or expired operator sessions cannot issue new commands.
-- **browser_local_state_not_authority**: browser-local state cannot grant authority or override core grant checks. `csrf_browser.qnt` promotes this as a checked-model invariant by independently checking the raw server-side session/CSRF/grant evidence rather than trusting browser-local UI claims.
+- **browser_local_state_not_authority**: browser-local UI claims cannot grant authority or override server-side session/CSRF checks. `csrf_browser.qnt` promotes this as a checked-model invariant by independently checking the raw server-side operator-session status and session-bound CSRF proof rather than trusting browser-local UI claims; the model has no grant state.
 
 Formal models do not prove browser cookie mechanics or cryptographic token strength; they model the server-side effects of valid, missing, expired, and revoked session/CSRF evidence.
 
