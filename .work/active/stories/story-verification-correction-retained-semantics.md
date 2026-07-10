@@ -42,6 +42,8 @@ For each of the five properties, update only the `semantics:` field in the `@pro
 - `SubscriptionGrantChecked` (`subscription_authority.qnt`): same issue — claims "authenticated actor" but no authentication evidence. Narrow to: "subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope".
 - `ElicitationResponderAuthority` (`authority.qnt`): current semantics claims endpoint authentication, but the model only checks that the modeled submitting endpoint maps to the expected responder actor and that the claimed actor matches. Narrow to: "response Operations are accepted only when the modeled submitting endpoint maps to the expected responder actor and the claimed actor matches that responder". Apply the same narrowing to `docs/VERIFICATION.md:127`.
 - `browser_local_state_not_authority` (`csrf_browser.qnt`): current semantics claims protection of "grant checks" but the model has no grant state — it checks operator-session status and CSRF evidence. Narrow to: "browser-local UI claims cannot grant authority or override server-side session/CSRF checks".
+- `ElicitationStaleTargetInert` (`elicitation_lifecycle.qnt`): semantics says "do not mutate live Elicitation state" but the formula only excludes `answered` and answer data; it has no response-attempt discriminator or next-state equality, so a stale response mutation to another state could pass. Narrow to: "responses to stale target/session generations do not cause the Elicitation to become answered or record answer data".
+- `SpawnRevocationDoesNotCascade` (`authority.qnt`): when `gDescOs3Live != "yes"`, the descendant condition becomes `true`, so a cascade that deletes the descendant grant passes. Narrow to: "revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it".
 
 ### Fix stale model header comments
 
@@ -51,10 +53,10 @@ For each of the five properties, update only the `semantics:` field in the `@pro
 
 ## Acceptance criteria
 
-- [ ] Five `@promotion` semantics fields narrowed to match their formulas.
+- [ ] Seven `@promotion` semantics fields narrowed to match their formulas.
 - [ ] `docs/VERIFICATION.md:127` uses the same narrowed description for `ElicitationResponderAuthority`.
 - [ ] `command_lifecycle.qnt` header comment updated to reflect 3 retained promoted properties and actual scope.
-- [ ] `patchbay-relational.als` header comment updated to reflect no promoted properties.
+- [ ] `patchbay-relational.als` header comment and the adjacent NOTE at lines 50-52 updated: remove the claim that the check "verifies non-vacuity" and the claim that non-vacuity is "observed via the check finding a satisfying instance" — an UNSAT assertion check does not establish that.
 - [ ] `snapshot_recovery.qnt` header comment updated to reflect reserved stated-normative obligations with no executable formula.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0 (semantics text changes don't affect tier derivation).
 - [ ] `quint parse` exits 0 for all affected model files.

@@ -55,10 +55,14 @@ Fix stale PROTOCOL.md, VERIFICATION.md, and ADAPTER-PI.md assertions that contra
 7. **First-answer scope** (`docs/VERIFICATION.md:93`) — narrow `ElicitationFirstAnswerWins` to the first valid answer terminal; the formula does not cover decline-terminal selection.
 
 8. **Pi replacement-window wording** (`docs/ADAPTER-PI.md:147`) — stop presenting demoted `LateGenerationInert` as verified; retain it as a stated-normative migration requirement.
+9. **Subscription grant description** (`docs/VERIFICATION.md:139`) — says `SubscriptionGrantChecked` checks an "actor/session" grant, but the model has no session principal. Narrow to match the model: "actor and stream/filter scope".
+10. **Verification floor** (`docs/SPEC.md:70`) — says "checked-model seed coverage for command acceptance, idempotent retry, and session identity". After demotion, no retained property establishes accepted-command durability or the identity tuple. Update to reflect the actual retained checked-model coverage (terminal finality, boundary dedup, no-accepted-to-completed, generation monotonicity, typed correlation, Elicitation lifecycle, spawn fleet authority, subscription authority, CSRF).
+11. **ElicitationState glossary** (`docs/GLOSSARY.md:63`) — says "Stated-normative until promoted — not checked" despite partial checked-model coverage. Update to reflect partial checked-model coverage.
+12. **Correlation context glossary** (`docs/GLOSSARY.md:71`) — says response-Operation → Elicitation correlation is "a new stated-normative obligation" despite `TypedCorrelation` now covering it. Update to reflect checked-model coverage.
 
 ### Emitted TLA+ audit
 
-9. VERIFICATION.md already states that `*.emitted.tla` files are generated inspection artifacts, not an independent verification lane. Audit all prose (docs, README, work items) for any claim that presents emitted TLA+ as independent evidence. If found, correct to "generated inspection artifact, not independently checked." Expected outcome: no corrections needed (the discipline is already honest), but verify.
+13. VERIFICATION.md already states that `*.emitted.tla` files are generated inspection artifacts, not an independent verification lane. Audit all prose (docs, README, work items) for any claim that presents emitted TLA+ as independent evidence. If found, correct to "generated inspection artifact, not independently checked." Expected outcome: no corrections needed (the discipline is already honest), but verify.
 
 ## Acceptance criteria
 
@@ -70,5 +74,9 @@ Fix stale PROTOCOL.md, VERIFICATION.md, and ADAPTER-PI.md assertions that contra
 - [ ] VERIFICATION.md:43 no longer calls descendant-grant creation checked-model.
 - [ ] VERIFICATION.md:93 narrows `ElicitationFirstAnswerWins` to answer-terminal behavior.
 - [ ] ADAPTER-PI.md:147 no longer describes `LateGenerationInert` as verified.
+- [ ] VERIFICATION.md:139 corrected: `SubscriptionGrantChecked` no longer claims "actor/session" grant; narrowed to "actor and stream/filter scope".
+- [ ] SPEC.md:70 corrected: verification floor updated to reflect actual retained checked-model coverage after demotions.
+- [ ] GLOSSARY.md:63 corrected: ElicitationState no longer wholly "stated-normative until promoted"; partial checked-model coverage.
+- [ ] GLOSSARY.md:71 corrected: response-Operation → Elicitation correlation no longer "a new stated-normative obligation"; checked-model coverage exists.
 - [ ] `*.emitted.tla` files audited: no prose presents them as independent evidence.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0.
