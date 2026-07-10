@@ -101,4 +101,4 @@ TLC checks `<>[]`-style temporal properties. The v1.7.4 release notes flag a fix
 
 ## Reference
 
-Hello-world artifact: `specs/seed/Counter.tla` + `specs/seed/Counter.cfg`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-tla.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/tla*-*.md` + `.research/attestation/tlc-*-v174.md` + `.research/attestation/quint-tlc-source.md`.
+Hello-world artifact: `.agents/skills/tla-plus/examples/Counter.tla` + `.agents/skills/tla-plus/examples/Counter.cfg`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-tla.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/tla*-*.md` + `.research/attestation/tlc-*-v174.md` + `.research/attestation/quint-tlc-source.md`.

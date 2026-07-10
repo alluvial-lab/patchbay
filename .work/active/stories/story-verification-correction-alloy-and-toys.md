@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-alloy-and-toys
 kind: story
-stage: implementing
+stage: review
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-session-elicitation]
@@ -79,3 +79,14 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
 - [ ] VERIFICATION.md prose updated: checked-model property list, seed-model summary.
 - [ ] The two already-draft Alloy properties (`AuthorityGraphAcyclic`, `SenderMatchesClaim`) remain draft.
 - [ ] The Alloy file's sigs, facts, and the `check` command are preserved.
+
+## Implementation notes
+
+- Files changed: `specs/seed/patchbay-relational.als`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, and the Alloy/Quint/TLA+ skill references; relocated the four toy artifacts with `git mv` into `.agents/skills/{alloy,quint,tla-plus}/examples/`.
+- Verification: `node contracts/scripts/check-vectors.mjs` exited 0; the first `node contracts/scripts/check-models.mjs` exited 1 after regenerating the model table as expected; the second run exited 0. The generated tables now classify `ActorIdsUnique` as draft/stated-normative, retain all 44 modeled-property rows, and report 22 promoted / 22 draft properties.
+- Relocation checks: all four example files exist at their new skill paths and no longer exist under `specs/seed/`; skill references resolve to the new locations.
+- Deferred references: left `.research/analysis/briefs/*.md` unchanged because they are historical command attestations, and left `.work/active/features/feature-formal-model-seed.md` unchanged because it is a done feature whose review surface is outside this story.
+- Discrepancies from design: none. The dependency is at `stage: review` in commit `9faa6c0`, which the caller explicitly confirmed satisfies readiness for this correction sequence.
+- Dispatch: direct-read inline implementation; the integration surface and exact edits were fully specified, so no exploratory fan-out was needed.
+- Tests added: none; this story uses the existing vector/model metadata checkers as its verification surface.
+- Adjacent issues parked: none.

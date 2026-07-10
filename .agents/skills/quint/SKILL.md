@@ -149,4 +149,4 @@ module MonotonicGeneration {
 
 ## Reference
 
-Hello-world artifact: `specs/seed/Counter.qnt`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-quint.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/quint-*.md`.
+Hello-world artifact: `.agents/skills/quint/examples/Counter.qnt`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-quint.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/quint-*.md`.

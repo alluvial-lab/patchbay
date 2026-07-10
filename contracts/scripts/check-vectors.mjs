@@ -13,7 +13,6 @@ const verificationPath = path.join(repoRoot, 'docs', 'VERIFICATION.md');
 // demotes property ids. The generated traceability table below is the checked-in
 // sync surface that makes drift visible during review.
 const CHECKED_MODEL_PROPERTIES = [
-  'ActorIdsUnique',
   'BoundaryDedup',
   'browser_local_state_not_authority',
   'CsrfRejectsMissingProof',
@@ -45,6 +44,7 @@ const CHECKED_MODEL_PROPERTIES = [
 const CHECKED_NORMATIVE_PROPERTIES = [];
 
 const STATED_NORMATIVE_PROPERTIES = [
+  'ActorIdsUnique',
   'AuthorityGraphAcyclic',
   'CommandDurability',
   'CompoundIssuer',

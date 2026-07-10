@@ -103,4 +103,4 @@ fact SenderMatchesClaim { all m: Message | m.sender = m.claimedSender }
 
 ## Reference
 
-Hello-world artifact: `specs/seed/patchbay-invariants.als`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-alloy.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/alloy*.md`.
+Hello-world artifact: `.agents/skills/alloy/examples/patchbay-invariants.als`. Source briefs: `.research/analysis/briefs/formal-methods-tooling-alloy.md` + `.research/analysis/briefs/formal-methods-tooling.md`. Attestations: `.research/attestation/alloy*.md`.

@@ -33,7 +33,6 @@ Current checked-model properties:
 - Spawn authority from `authority.qnt`: `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority`.
 - Subscription authority from `subscription_authority.qnt`: `SubscriptionGrantChecked`, `SubscriptionAudited`, and `SubscriptionCursorReplayAuthorized`.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
-- Relational actor identity from `patchbay-relational.als`: `ActorIdsUnique`.
 
 **checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
 
@@ -44,6 +43,7 @@ Current checked-model properties:
 - Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
 - Session identity and stale-generation refinements: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, and `LateGenerationInert` remain stated-normative until models represent per-session identity, target selection, and stale-event audit state.
 - Elicitation timeout semantics: `ElicitationTimeoutNeitherSuccessNorDenial` remains stated-normative until the model represents the grant boundary named by the obligation.
+- Relational actor identity: `ActorIdsUnique` remains a stated-normative injectivity obligation; its retained Alloy fact-consequence check is only a structural regression test, not promoted assurance.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
 - Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
@@ -402,11 +402,11 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 44 modeled properties (23 promoted, 21 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 44 modeled properties (22 promoted, 22 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
-| `ActorIdsUnique` | promoted | checked-model | specs/seed/patchbay-relational.als | alloy-cli | — | java -jar org.alloytools.alloy.dist.jar exec --command ActorIdsUniqueAssert --type text --output - specs/seed/patchbay-relational.als | actor identities are injective in a static relational snapshot (enforced by the ActorIdsUnique fact; the assert verifies non-vacuity and that the fact's constraint holds across all instances) |
+| `ActorIdsUnique` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — demoted; assertion checks a constraint already imposed by the ActorIdsUnique fact; actor uniqueness belongs in generated/database constraints plus executable negative tests> | actor-id injectivity remains a product obligation; this retained fact-consequence check is only a structural regression test against accidental weakening of the ActorIdsUnique fact and is not independent assurance or proof of non-vacuity |
 | `AuthorityGraphAcyclic` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — not yet checked; promote when delegation is modeled> | RESERVED: acyclicity of the grant issuer-subject graph is only meaningful once a delegation/parent-grant edge exists. v0 has no delegation (docs/PROTOCOL.md:305), so the graph has no cycle-bearing edge to check — asserting acyclicity now is either vacuous (empty graph) or false (unconstrained self-grants). Promote when delegation is added. |
 | `BoundaryDedup` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache | — | quint verify command_lifecycle.qnt --invariant boundary_dedup --max-steps 12 | retrying the same idempotency key cannot double-apply a command at the Patchbay boundary |
 | `browser_local_state_not_authority` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12 | browser-local UI claims cannot grant authority or override server-side session/CSRF grant checks |
@@ -467,7 +467,7 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
-| `ActorIdsUnique` | checked-model | — | — |
+| `ActorIdsUnique` | stated-normative | — | — |
 | `AuthorityGraphAcyclic` | stated-normative | — | — |
 | `BoundaryDedup` | checked-model | [replay-committed-prefix-idempotent](../contracts/vectors/replay-committed-prefix-idempotent.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.deduplicated |
 | `browser_local_state_not_authority` | checked-model | — | — |
@@ -551,7 +551,6 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 | `specs/seed/authority.qnt` | Quint | `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `ElicitationResponderAuthority` (invariants); `SpawnRevocationDoesNotCascade` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/subscription_authority.qnt` | Quint | `SubscriptionGrantChecked`, `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized` (invariants) | Apalache |
 | `specs/seed/csrf_browser.qnt` | Quint | `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority` (invariants) | Apalache |
-| `specs/seed/patchbay-relational.als` | Alloy | `ActorIdsUnique` | Alloy CLI |
 
 Each checked Quint model also commits a generated `*.emitted.tla` inspection artifact (via `quint compile --target tlaplus`); these are generated, never hand-edited, and are NOT an independent re-check lane (they `EXTENDS ... Apalache, Variants` and need the Apalache jar on the classpath — same toolchain reached via Quint).
 
@@ -566,7 +565,7 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 | `specs/seed/elicitation_lifecycle.qnt` | Quint | `ElicitationTimeoutNeitherSuccessNorDenial` |
 | `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
-| `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0.1.0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
+| `specs/seed/patchbay-relational.als` | Alloy | `ActorIdsUnique` (injectivity obligation; retained check is structural regression only), `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0.1.0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific stated-normative obligation; its current draft formula checks answer/decline fields but does not model grant state.
 

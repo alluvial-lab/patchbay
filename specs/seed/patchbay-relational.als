@@ -34,15 +34,16 @@ sig Message {
 
 // @promotion {
 //   property:    ActorIdsUnique
-//   status:      promoted
+//   status:      draft
 //   model:       specs/seed/patchbay-relational.als
 //   language:    alloy
 //   backend:     alloy-cli
-//   invocation:  java -jar org.alloytools.alloy.dist.jar exec --command ActorIdsUniqueAssert --type text --output - specs/seed/patchbay-relational.als
+//   invocation:  <TBD — demoted; assertion checks a constraint already imposed by the ActorIdsUnique fact; actor uniqueness belongs in generated/database constraints plus executable negative tests>
 //   bounds:      { scope: 5 }
 //   expected:    pass
 //   proto_fields: [none]
-//   semantics:   actor identities are injective in a static relational snapshot (enforced by the ActorIdsUnique fact; the assert verifies non-vacuity and that the fact's constraint holds across all instances)
+//   demotion_reason: fact-consequence check; the assert verifies the ActorIdsUnique fact holds across all instances but does not establish non-vacuity independently
+//   semantics:   actor-id injectivity remains a product obligation; this retained fact-consequence check is only a structural regression test against accidental weakening of the ActorIdsUnique fact and is not independent assurance or proof of non-vacuity
 // }
 // NOTE on genuine-checking: ActorIdsUniqueAssert checks `all disj a,b: Actor | a.id != b.id`,
 // which is the SAME constraint the ActorIdsUnique fact enforces. This is a fact-consequence
@@ -107,4 +108,5 @@ assert ActorIdsUniqueAssert {
 // }
 
 // Only the genuinely-checkable assert is run as a `check` command.
+// structural regression test — NOT promoted assurance; guards against accidental fact weakening
 check ActorIdsUniqueAssert for 5
