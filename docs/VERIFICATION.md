@@ -115,24 +115,27 @@ Classification: **checked-model** for the shared typed-correlation artifact. Dup
 
 ### `authority.qnt` promotion status
 
-`specs/seed/authority.qnt` now promotes the spawn-authority slice to checked-model while the original general Operation authority properties remain draft/stated-normative.
+`specs/seed/authority.qnt` has partial checked-model coverage for the spawn-authority slice. Its general Operation-authority and descendant-grant obligations remain draft/stated-normative.
 
 Checked-model spawn properties:
 
-- Existing reserved `NoCommandWithoutGrant` generalized by documented refinement to `NoOperationWithoutGrant` for grant-requiring committed OperationKinds.
-- Existing `CompoundIssuer` retained in its operator-session shape: verified web-server/CLI transport principal plus independently verified operator actor; payload `sender` is not authority.
-- Existing `GrantAuthorityIsCommandKinds` generalized by vocabulary rename to `GrantAuthorityIsOperationKinds`: grants are expressed over canonical OperationKinds, not adapter capability declarations.
-- Existing `RevocationPreventsFuture` over Operation acceptance after grant/endpoint/session revocation.
 - `FleetAuthorityForSpawn`: spawn Operations targeting a not-yet-existing session require a live fleet-scope grant, not a per-session target grant.
-- `SpawnCreatesDescendantGrant`: successful spawn completion records an explicit, auditable descendant grant whose subject is the spawner/operator and whose target is the spawned session.
 - `SpawnRevocationDoesNotCascade`: revoking a spawn grant prevents future spawns but does not revoke already-created descendant grants unless those grants are separately revoked.
 - `ElicitationResponderAuthority`: a response Operation is accepted only from an authenticated endpoint for the expected responder actor in v0.1.0; the responding endpoint is audited but not pre-bound in the Elicitation.
 
-Remaining required properties to promote for v0.1.0:
+Stated-normative properties with no executable formula:
+
+- `NoCommandWithoutGrant`
+- `CompoundIssuer`
+- `GrantAuthorityIsCommandKinds`
+- `RevocationPreventsFuture`
+- `SpawnCreatesDescendantGrant`
+
+The first three general properties retain their documented refinements to `NoOperationWithoutGrant`, the operator-session issuer shape, and `GrantAuthorityIsOperationKinds`; those refinements do not promote the draft formulas. `SpawnCreatesDescendantGrant` remains an obligation for a future model using the canonical descendant-grant OperationKind set and action-created grant state.
 
 Reserved future authority properties (not v0.1.0 obligations): actor-neutral/non-operator Operation sender verification, agent/service grant subjects for authority-bearing Operations, tighter Elicitation responder binding by endpoint/endpoint class/fallback chain, and cross-actor delegation through `parent_grant_id`. The actor-neutral vocabulary remains the seam, but v0.1.0 checked properties must not pretend non-operator authority-bearing Operations exist.
 
-Classification: spawn-authority properties are **checked-model**; the remaining general authority properties above are **stated-normative until promoted**.
+Classification: the three properties in the checked-model list above are **checked-model**; the five properties in the stated-normative list have no executable formula and remain **stated-normative until promoted**.
 
 ### Subscription authority obligations (checked-model)
 
@@ -402,7 +405,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 44 modeled properties (22 promoted, 22 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 44 modeled properties (21 promoted, 23 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -445,7 +448,7 @@ Summary: 44 modeled properties (22 promoted, 22 draft), 3 reserved-unmodeled sta
 | `SnapshotConsistentPrefix` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it |
 | `SnapshotCrossDomainRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | applied snapshots do not change authority when origin domain or core generation differs |
 | `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
-| `SpawnCreatesDescendantGrant` | promoted | checked-model | specs/seed/authority.qnt | apalache | — | quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12 | successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds |
+| `SpawnCreatesDescendantGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — demoted; model uses invented kind names (reboot/snapshot/stop_session) contradicting PROTOCOL.md:181; allowed-kind set is a hard-coded pure function, not action-created state; v1 formal gate owns the real property> | successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds |
 | `SpawnRevocationDoesNotCascade` | promoted | checked-model | specs/seed/authority.qnt | apalache-temporal | — | echo y \| quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10 | revoking the fleet spawn grant blocks future spawns but does not revoke already-created descendant grants |
 | `SubscriptionAudited` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_audited --max-steps 12 | subscription allow/deny decisions create audit records without creating OperationState records |
 | `SubscriptionCursorReplayAuthorized` | promoted | checked-model | specs/seed/subscription_authority.qnt | apalache | — | quint verify specs/seed/subscription_authority.qnt --invariant subscription_cursor_replay_authorized --max-steps 12 | cursor replay returns only events with LSN greater than the requested cursor and inside the authorized subscription stream/filter |
@@ -506,7 +509,7 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.SessionSnapshot.authority_domain_id<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.snapshot_lsn |
-| `SpawnCreatesDescendantGrant` | checked-model | — | — |
+| `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | checked-model | — | — |
 | `SubscriptionAudited` | checked-model | — | — |
 | `SubscriptionCursorReplayAuthorized` | checked-model | — | — |

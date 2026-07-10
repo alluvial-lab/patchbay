@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-draft-formulas
 kind: story
-stage: implementing
+stage: review
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-alloy-and-toys]
@@ -77,3 +77,14 @@ Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance
 - [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] `quint parse specs/seed/snapshot_recovery.qnt` and `quint parse specs/seed/authority.qnt` exit 0.
 - [ ] VERIFICATION.md authority-tier contradiction fixed: only the 3 genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) listed as checked-model; the 5 general/descendant properties explicitly stated-normative with no executable formula.
+
+## Implementation notes
+
+- Files changed: `specs/seed/snapshot_recovery.qnt`, `specs/seed/authority.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`.
+- Removed all eleven misleading executable definitions while preserving their `@promotion` obligations; demoted `SpawnCreatesDescendantGrant` and moved its property id to the stated-normative registry.
+- Corrected the authority promotion prose and regenerated both generated traceability tables. The generated model row now classifies `SpawnCreatesDescendantGrant` as `draft` / `stated-normative`.
+- Verification: both required `quint parse` commands exited 0; `check-vectors.mjs` exited 0; `check-models.mjs` exited 1 on regeneration and 0 on the confirming second run; `git diff --check` passed.
+- Tests added: none; this story's verification surfaces are Quint parsing and the existing traceability checkers.
+- Discrepancies from design: none. Dependency readiness followed the caller-confirmed policy that the prerequisite at `stage: review` is satisfied for this chain.
+- Dispatch: direct-read only; the bounded, explicitly enumerated edits did not warrant exploratory fan-out.
+- Adjacent issues parked: none; remaining stale summary prose is assigned to the already-sequenced follow-on stories in the parent design.

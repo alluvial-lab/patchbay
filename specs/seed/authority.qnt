@@ -305,8 +305,6 @@ module authority {
   //   proto_fields: [none]
   //   semantics:   commands that reach accepted state do so only with a live matching grant
   // }
-  val NoCommandWithoutGrant = true
-
   // @promotion {
   //   property:    CompoundIssuer
   //   status:      draft
@@ -319,8 +317,6 @@ module authority {
   //   proto_fields: [none]
   //   semantics:   accepted commands use verified session-derived actor identity, not self-asserted payload actor
   // }
-  val CompoundIssuer = true
-
   // @promotion {
   //   property:    GrantAuthorityIsCommandKinds
   //   status:      draft
@@ -333,8 +329,6 @@ module authority {
   //   proto_fields: [none]
   //   semantics:   grant checks constrain authority by canonical command kinds, not adapter capability declarations
   // }
-  val GrantAuthorityIsCommandKinds = true
-
   // @promotion {
   //   property:    RevocationPreventsFuture
   //   status:      draft
@@ -347,8 +341,6 @@ module authority {
   //   proto_fields: [none]
   //   semantics:   a command cannot become accepted in the transition if it is being submitted at or below a revoked generation
   // }
-  temporal RevocationPreventsFuture = always(true)
-
   // @promotion {
   //   property:    FleetAuthorityForSpawn
   //   status:      promoted
@@ -365,17 +357,17 @@ module authority {
 
   // @promotion {
   //   property:    SpawnCreatesDescendantGrant
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/authority.qnt --invariant spawn_creates_descendant_grant --max-steps 12
+  //   invocation:  <TBD — demoted; model uses invented kind names (reboot/snapshot/stop_session) contradicting PROTOCOL.md:181; allowed-kind set is a hard-coded pure function, not action-created state; v1 formal gate owns the real property>
   //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
+  //   demotion_reason: uses invented kind names contradicting canonical descendant-grant allowed-kind set; allowed-kind set is hard-coded, not mutation-survivable
   //   semantics:   successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds
   // }
-  val spawn_creates_descendant_grant = SESSIONS.forall(session => not(spawnedSession(session)) or (sessionExists(session) and descendantGrantIndependentOk(session)))
 
   // @promotion {
   //   property:    SpawnRevocationDoesNotCascade

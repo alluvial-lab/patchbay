@@ -28,7 +28,6 @@ const CHECKED_MODEL_PROPERTIES = [
   'GenerationMonotonic',
   'NoAcceptedToCompleted',
   'RevokedSessionCannotCommand',
-  'SpawnCreatesDescendantGrant',
   'SpawnRevocationDoesNotCascade',
   'SubscriptionAudited',
   'SubscriptionCursorReplayAuthorized',
@@ -68,6 +67,7 @@ const STATED_NORMATIVE_PROPERTIES = [
   'SnapshotConsistentPrefix',
   'SnapshotCrossDomainRejected',
   'SnapshotStaleRejected',
+  'SpawnCreatesDescendantGrant',
   'TimeoutNeitherSuccessNorDenial',
 ];
 

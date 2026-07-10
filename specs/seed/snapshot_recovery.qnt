@@ -351,10 +351,6 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view
   // }
-  val SnapshotStaleRejected =
-    // Non-decreasing snapshot revision ensures stale candidate values are never applied.
-    SnapshotRevision >= Cursor and SnapshotRevision >= SnapshotMaterializedLSN
-
   // @promotion {
   //   property:    SnapshotCrossDomainRejected
   //   status:      draft
@@ -368,9 +364,6 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   applied snapshots do not change authority when origin domain or core generation differs
   // }
-  val SnapshotCrossDomainRejected =
-    SnapshotAuthorityDomain == AuthorityDomain and SnapshotCoreGeneration == CoreGeneration
-
   // @promotion {
   //   property:    SnapshotConsistentPrefix
   //   status:      draft
@@ -384,15 +377,6 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it
   // }
-  val SnapshotConsistentPrefix =
-    and {
-      SnapshotMaterializedLSN >= 0,
-      SnapshotMaterializedLSN <= MAX_PREFIX_LSN,
-      SnapshotMaterializedEvents == SNAPSHOT_PREFIX_EVENTS.get(SnapshotMaterializedLSN),
-      LSN >= 0 and LSN <= MAX_PREFIX_LSN,
-      DurableEventLSNs == SNAPSHOT_PREFIX_EVENTS.get(LSN),
-    }
-
   // @promotion {
   //   property:    LateEventNoRewrite
   //   status:      draft
@@ -406,11 +390,6 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view
   // }
-  val LateEventNoRewrite =
-    COMMAND_IDS.forall(cmd =>
-      RecoveredCommandState.keys().contains(cmd)
-    )
-
   // @promotion {
   //   property:    CrashNoAcceptedLost
   //   status:      draft
@@ -424,11 +403,6 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   after ungraceful restart and replay, accepted pre-crash command entries remain reconstructable in-memory
   // }
-  val CrashNoAcceptedLost =
-    COMMAND_IDS.forall(cmd =>
-      (PreCrashRecoveredState.get(cmd) == "accepted").implies(RecoveredCommandState.get(cmd) == "accepted")
-    )
-
   // @promotion {
   //   property:    IdempotentLogReplay
   //   status:      draft
@@ -442,6 +416,4 @@ module snapshot_recovery {
   //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
   //   semantics:   replaying the same committed prefix does not produce additional state divergence
   // }
-  val IdempotentLogReplay =
-    (CommittedPrefixLSN >= 0 and Cursor <= CommittedPrefixLSN) and (SnapshotMaterializedLSN <= CommittedPrefixLSN)
 }
