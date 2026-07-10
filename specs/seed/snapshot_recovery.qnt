@@ -12,16 +12,16 @@
 // Model variables trace to VERIFICATION normative-variable set:
 //   - LSN, Cursor, SnapshotRevision, AuthorityDomain, CoreGeneration
 //   - CommittedPrefixLSN, CheckpointSnapshotLSN, RecoveredCommandState, RecoveryPhase
-// plus auxiliary replay variables used to make draft properties typecheck cleanly.
+// plus auxiliary replay state retained for future snapshot/recovery modeling.
 //
-// ELIDED normative variables (deferred to the follow-on snapshot/recovery implementation item):
+// ELIDED normative variables (deferred to the v1 formal gate):
 //   SessionGeneration, AdapterGeneration, MessageId, ReplyId, CorrelationRef, SessionId,
 //   ActorId, RecoveredInbox, RecoveredSessionView. These cross-cutting view/identity variables
-//   are named in VERIFICATION's normative-variable list but are not modeled in this draft —
-//   the snapshot/recovery core safety properties (stale-reject, cross-domain-reject,
-//   consistent-prefix, late-event-no-rewrite, crash-no-accepted-lost, idempotent-log-replay)
-//   are exercised against the LSN/cursor/revision/domain/generation core, with the
-//   view-variable reconciliation deferred to the follow-on item that promotes these from draft.
+//   are named in VERIFICATION's normative-variable list but are not modeled in this draft.
+//   The stale-reject, cross-domain-reject, consistent-prefix, late-event-no-rewrite,
+//   crash-no-accepted-lost, and idempotent-log-replay property ids remain reserved
+//   stated-normative obligations with no executable formula; the v1 formal gate owns their
+//   complete snapshot/recovery models and view-variable reconciliation.
 module snapshot_recovery {
   // --- finite bounds ----------------------------------------------------------
   pure val COMMAND_IDS = Set("cmdA", "cmdB")

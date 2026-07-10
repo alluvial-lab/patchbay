@@ -351,7 +351,7 @@ module authority {
   //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   spawn acceptance requires a live fleet-scope spawn Grant for the authenticated actor; per-session grants alone cannot authorize spawning a not-yet-existing session
+  //   semantics:   spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session
   // }
   val fleet_authority_for_spawn = (SpawnAccepted == "no") or ((SpawnAttempted == "yes") and acceptedSpawnHasRawFleetGrant)
 
@@ -379,7 +379,7 @@ module authority {
   //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   revoking the fleet spawn grant blocks future spawns but does not revoke already-created descendant grants
+  //   semantics:   revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it
   // }
   temporal spawn_revocation_does_not_cascade = always(spawnRevocationNoCascadeState)
 
@@ -393,7 +393,7 @@ module authority {
   //   bounds:      { actors: 3, endpoints: 3, response_operations: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   response Operations are accepted only from an authenticated endpoint for the expected responder actor
+  //   semantics:   response Operations are accepted only when the modeled submitting endpoint maps to the expected responder actor and the claimed actor matches that responder
   // }
   val elicitation_responder_authority = RESPONSE_OP_IDS.forall(ro => (responseAccepted(ro) == "no") or acceptedResponseIndependentOk(ro))
 }

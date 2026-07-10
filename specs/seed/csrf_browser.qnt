@@ -206,7 +206,7 @@ module csrf_browser {
   //   bounds:      { sessions: 4, proofs: 5, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   browser-local UI claims cannot grant authority or override server-side session/CSRF grant checks
+  //   semantics:   browser-local UI claims cannot grant authority or override server-side session/CSRF checks
   // }
   // Promoted local-UI authority invariant from docs/VERIFICATION.md. INDEPENDENT oracle:
   // asserts raw operatorSessions + csrfProofs + sessionStatus facts against the ATTEMPTED

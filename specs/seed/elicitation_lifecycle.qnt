@@ -656,7 +656,7 @@ module elicitation_lifecycle {
   //   bounds:      { elicitation_ids: 1, response_ops: 2, sessions: 2, generations: 3, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   responses to stale target/session generations do not mutate live Elicitation state
+  //   semantics:   responses to stale target/session generations do not cause the Elicitation to become answered or record answer data
   // }
   temporal elicitation_stale_target_inert =
     always((targetGeneration.get("e1") < sessionGeneration.get(targetSession.get("e1"))).implies(

@@ -28,8 +28,9 @@ sig Message {
 }
 
 // ---------------------------------------------------------------------------
-// Promoted model: the one relational invariant that is genuinely checkable
-// in a v0 static snapshot without becoming tautological.
+// Draft/reserved properties only: no Alloy property is promoted. Alloy remains
+// the reserved relational tool for future delegation, authority-graph, and lease
+// problems that have independently checkable relational constraints.
 // ---------------------------------------------------------------------------
 
 // @promotion {
@@ -46,11 +47,11 @@ sig Message {
 //   semantics:   actor-id injectivity remains a product obligation; this retained fact-consequence check is only a structural regression test against accidental weakening of the ActorIdsUnique fact and is not independent assurance or proof of non-vacuity
 // }
 // NOTE on genuine-checking: ActorIdsUniqueAssert checks `all disj a,b: Actor | a.id != b.id`,
-// which is the SAME constraint the ActorIdsUnique fact enforces. This is a fact-consequence
-// check: it verifies the fact holds across all instances and guards against a future change to
-// the fact. It does NOT by itself establish non-vacuity (a separate `run` finding multi-actor
-// instances would); the non-vacuity here is observed via the check finding a satisfying instance,
-// not a proof. Verified UNSAT (no counterexample) via `--type text` (no skolem witness).
+// which is the SAME constraint the ActorIdsUnique fact enforces. This fact-consequence check
+// guards against a future weakening of the fact, but it does not establish non-vacuity; that
+// requires a separate `run` exhibiting a multi-actor instance. The bounded assertion check
+// reports UNSAT (no counterexample) via `--type text` (no skolem witness), which likewise does
+// not establish that a non-vacuous instance exists.
 assert ActorIdsUniqueAssert {
   all disj a, b: Actor | a.id != b.id
 }

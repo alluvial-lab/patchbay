@@ -1,9 +1,10 @@
-// Patchbay seed model: command lifecycle (terminal race + idempotency-boundary dedup)
+// Patchbay seed model: command lifecycle (terminal finality + idempotency-boundary dedup)
 //
-// This is the fused state machine for operator-intent delivery. It models accepted-command
-// durability, the first-durable-terminal-commit-wins race, and idempotency-boundary dedup in
-// one model. It carries the 7 promoted model properties of feature-formal-model-seed plus
-// the NoAcceptedToCompleted transition-adjacency property.
+// This state machine carries three promoted properties: TerminalFinality, BoundaryDedup,
+// and NoAcceptedToCompleted. It models terminal-state finality, idempotency-boundary dedup,
+// and the no-accepted-to-completed adjacency. Accepted-command durability and the
+// first-durable-terminal-commit-wins race remain stated-normative obligations for the v1
+// formal gate; this model does not represent those failure boundaries.
 //
 // Model variables trace to docs/PROTOCOL.md:
 //   state       <-> CommandState (the canonical registry: accepted/delivered/running/terminal)
@@ -307,7 +308,7 @@ module command_lifecycle {
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   a command cannot transition directly from 'accepted' to 'completed';
-  //                it must pass through 'delivered'
+  //                it must pass through 'delivered' or 'running'
   // }
   // INDEPENDENT oracle: checks the transition INTO completed, not the allowedTransition guard.
   // A command already completed that stutters does not violate this property. Mutation test:

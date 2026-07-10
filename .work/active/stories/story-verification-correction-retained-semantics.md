@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-retained-semantics
 kind: story
-stage: implementing
+stage: review
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-prose]
@@ -15,7 +15,7 @@ updated: 2026-07-10
 
 ## Scope
 
-Five retained promoted properties have formulas that are genuine (mutation-survivable, independent oracle) but whose `@promotion` semantics text overclaims what the formula establishes. Narrow the semantics text to match the formula. Also fix stale model header comments that no longer reflect the model's promoted property set.
+Seven retained promoted properties have formulas that are genuine (mutation-survivable, independent oracle) but whose `@promotion` semantics text overclaims what the formula establishes. Narrow the semantics text to match the formula. Also fix stale model header comments that no longer reflect the model's promoted property set.
 
 ## Unit
 
@@ -24,9 +24,10 @@ Five retained promoted properties have formulas that are genuine (mutation-survi
 ## Files
 
 - `specs/seed/command_lifecycle.qnt` — `NoAcceptedToCompleted` semantics + header comment
-- `specs/seed/authority.qnt` — `FleetAuthorityForSpawn` semantics
+- `specs/seed/authority.qnt` — `FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, and `ElicitationResponderAuthority` semantics
 - `specs/seed/subscription_authority.qnt` — `SubscriptionGrantChecked` semantics
 - `specs/seed/csrf_browser.qnt` — `browser_local_state_not_authority` semantics
+- `specs/seed/elicitation_lifecycle.qnt` — `ElicitationStaleTargetInert` semantics
 - `docs/VERIFICATION.md` — `ElicitationResponderAuthority` checked-model description
 - `specs/seed/patchbay-relational.als` — header comment
 - `specs/seed/snapshot_recovery.qnt` — header comment
@@ -35,7 +36,7 @@ Five retained promoted properties have formulas that are genuine (mutation-survi
 
 ### Narrow retained promoted property semantics
 
-For each of the five properties, update only the `semantics:` field in the `@promotion` block. Do not change `status` (stays promoted), `invocation`, or the `val`/`temporal` formula.
+For each of the seven properties, update only the `semantics:` field in the `@promotion` block. Do not change `status` (stays promoted), `invocation`, or the `val`/`temporal` formula.
 
 - `NoAcceptedToCompleted` (`command_lifecycle.qnt`): current semantics says "must pass through `delivered`" but the formula permits either `delivered` OR `running` immediately before completion. Narrow to: "a command cannot transition directly from `accepted` to `completed`; it must pass through `delivered` or `running`".
 - `FleetAuthorityForSpawn` (`authority.qnt`): current semantics claims "authenticated actor" but the model has no authentication evidence — it proves grant-subject matching for the modeled actor. Narrow to: "spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session".
@@ -60,3 +61,21 @@ For each of the five properties, update only the `semantics:` field in the `@pro
 - [ ] `snapshot_recovery.qnt` header comment updated to reflect reserved stated-normative obligations with no executable formula.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0 (semantics text changes don't affect tier derivation).
 - [ ] `quint parse` exits 0 for all affected model files.
+
+## Implementation notes
+
+- `NoAcceptedToCompleted`: clarified that completion may follow either `delivered` or `running`, while still excluding a direct `accepted` → `completed` transition.
+- `FleetAuthorityForSpawn`: replaced the unsupported authentication claim with the modeled Grant-subject/submitting-actor match.
+- `SubscriptionGrantChecked`: replaced the unsupported authentication claim with the modeled Grant-subject/submitting-actor and stream/filter-scope match.
+- `ElicitationResponderAuthority`: narrowed the claim to the modeled endpoint-to-responder mapping plus claimed-actor match.
+- `browser_local_state_not_authority`: removed the unsupported grant-check claim; the semantics now name only server-side session/CSRF checks.
+- `ElicitationStaleTargetInert`: narrowed the claim from general state immutability to exclusion of the `answered` state and answer data.
+- `SpawnRevocationDoesNotCascade`: limited descendant non-revocation to traces where a descendant grant exists.
+- `docs/VERIFICATION.md`: updated the hand-authored `ElicitationResponderAuthority` checked-model description; `check-models.mjs` regenerated all seven corresponding model-table semantics cells from their `@promotion` blocks.
+- `command_lifecycle.qnt` header: now names the three retained promoted properties and explicitly leaves durability and the terminal-race failure boundary to the v1 formal gate.
+- `patchbay-relational.als` header and adjacent note: now classify all Alloy properties as draft/reserved and state that the bounded UNSAT assertion result does not establish non-vacuity.
+- `snapshot_recovery.qnt` header: now identifies the reserved stated-normative property ids as having no executable formulas and defers their complete models to the v1 formal gate.
+- Verification: `quint parse` exited 0 for `command_lifecycle.qnt`, `authority.qnt`, `subscription_authority.qnt`, `csrf_browser.qnt`, `elicitation_lifecycle.qnt`, and `snapshot_recovery.qnt`; the first `check-models.mjs` run regenerated `docs/VERIFICATION.md` and exited 1 as expected, and the confirming second run exited 0. `git diff --check` also passed.
+- Discrepancies from design: the Scope and Implementation preamble said “five” properties and the Files list omitted `elicitation_lifecycle.qnt`; corrected both to match the seven-property acceptance criteria. No formula, status, invocation, or bounds changed.
+- Dispatch: direct-read only; the targets and required wording were fully specified, so exploratory fan-out would not improve the evidence.
+- Adjacent issues parked: none.

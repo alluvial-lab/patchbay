@@ -214,7 +214,7 @@ module subscription_authority {
   //   bounds:      { actors: 3, streams: 2, filters: 2, grant_statuses: 2, cursors: 5, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
-  //   semantics:   subscription establishment succeeds only with a live subscribe-kind Grant record for the authenticated actor and stream/filter scope
+  //   semantics:   subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope
   // }
   val subscription_grant_checked =
     (SubscriptionAccepted == "no" and subscriptionId == "none")
