@@ -162,16 +162,17 @@ module command_lifecycle {
   val completed_reachable = CMD_IDS.exists(cmd => state.get(cmd) == "completed")
 
   // ---------------------------------------------------------------------------
-  // Promoted model properties (each with an inline @promotion block)
+  // Model properties (each with an inline @promotion block; mixed promoted/draft status)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    CommandDurability
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify command_lifecycle.qnt --invariant command_durability --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: formula is `CMD_IDS.forall(c => state.keys().contains(c))` — commands are pre-installed at init and no action removes keys. Proves map-domain persistence inside the abstraction, not durable acceptance across a failure boundary. No crash, restart, torn commit, or reconstruction is modeled.
   //   bounds:      { cmd_ids: 3, idempotency_keys: 3, terminal_candidates: 6, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -203,11 +204,12 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    PreAppendTerminalChoice
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify command_lifecycle.qnt --temporal pre_append_terminal_choice --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: only proves that a transition into terminal assigns a positive `terminalLsn`. Does not model two pre-append candidates competing before durable append, or relate the selected state to the chosen candidate. Does not even constrain post-assignment stability despite its comment.
   //   bounds:      { cmd_ids: 3, idempotency_keys: 3, terminal_candidates: 6, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -223,11 +225,12 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    LsnDeterminesTerminalWinner
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify command_lifecycle.qnt --temporal lsn_determines_terminal_winner --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: effectively `terminal state implies terminalLsn > 0`. Does not retain competing candidates, compare their LSNs, or establish minimum-LSN selection. The `lateTerminalCandidate` action is a no-op, so the second candidate cannot even commit.
   //   bounds:      { cmd_ids: 3, idempotency_keys: 3, terminal_candidates: 6, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -257,11 +260,12 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    RetryReusesIdAndKey
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify command_lifecycle.qnt --temporal retry_reuses_id_and_key --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: only proves the command→key map never changes after init. Never observes an attempted retry's actual command id or key — the driver only calls `retry("c1", "k1")`, and the action rejects mismatches structurally. Does not check the named retry-input obligation.
   //   bounds:      { cmd_ids: 3, idempotency_keys: 3, terminal_candidates: 6, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -276,11 +280,12 @@ module command_lifecycle {
 
   // @promotion {
   //   property:    RetryAfterTerminalReturnsExisting
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/command_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify command_lifecycle.qnt --temporal retry_after_terminal_returns_existing --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: formula is identical to `TerminalFinality` (terminal stasis). No returned-record identity, record count, retry-attempt discriminator, or candidate-creation state. Does not check the named return-existing-record behavior.
   //   bounds:      { cmd_ids: 3, idempotency_keys: 3, terminal_candidates: 6, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]

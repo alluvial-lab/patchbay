@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-command-lifecycle
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: []
@@ -73,3 +73,14 @@ For each of the five properties:
 - [ ] PROTOCOL.md ~line 380 updated: `RetryAfterTerminalReturnsExisting` no longer called checked.
 - [ ] The 3 genuine promoted properties in `command_lifecycle.qnt` remain `status: promoted`: `TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`.
 - [ ] `quint parse specs/seed/command_lifecycle.qnt` exits 0.
+
+## Implementation notes
+
+- Files changed: `specs/seed/command_lifecycle.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, `docs/PROTOCOL.md`.
+- Formal-model metadata: demoted the five overclaiming lifecycle properties with the design-specified reasons and placeholder invocations; retained `TerminalFinality`, `BoundaryDedup`, and `NoAcceptedToCompleted` as promoted.
+- Traceability and prose: moved the five ids to stated-normative, regenerated both verification tables, and aligned lifecycle/refinement/idempotency prose and seed-model summaries with the supported tiers. The generated model summary is 27 promoted / 17 draft modeled properties plus 3 reserved-unmodeled properties; `NoAcceptedToCompleted` now appears in the checked seed-model row.
+- Verification: `quint parse specs/seed/command_lifecycle.qnt` exited 0; `check-vectors.mjs` exited 0; the first `check-models.mjs` run exited 1 after regenerating the stale table as expected; the second run exited 0 and confirmed the table current.
+- Tests added: none; this story's verification surface is Quint parsing plus the model/vector metadata checkers.
+- Discrepancies from design: the generated current-state counts are 27 checked-model and 20 stated-normative total (17 modeled draft plus 3 reserved-unmodeled), rather than the parent design's future multi-unit counts; generated tables remain authoritative.
+- Dispatch: direct-read inline implementation; the four named files and formulas made the integration surface explicit, so no exploratory agent was needed.
+- Adjacent issues parked: none.

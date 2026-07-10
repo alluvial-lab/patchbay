@@ -26,7 +26,7 @@ Each required model area below is obligated at v0.1.0. Properties within each ar
 
 Current checked-model properties:
 
-- Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`, and `NoAcceptedToCompleted`.
+- Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `TerminalFinality`, `BoundaryDedup`, and `NoAcceptedToCompleted`.
 - Wrong-session prevention from `session_generation.qnt`: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `GenerationMonotonic`, and `LateGenerationInert`.
 - Reply and response-Operation correlation from `reply_correlation.qnt`: `TypedCorrelation` covers Reply → Command/Message and response Operation (`approval-response`/`elicitation-response`) → Elicitation typed references in the same authority/session/responder context.
 - Elicitation lifecycle from `elicitation_lifecycle.qnt`: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, and `ElicitationWithdrawalFinality`.
@@ -41,6 +41,7 @@ Current checked-model properties:
 
 - OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant. Spawn fleet authority and descendant-grant behavior are checked-model via `authority.qnt`.
+- Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
 - Snapshot convergence: stale/cross-domain snapshot rejection, consistent-prefix materialization, late-event no-rewrite, compaction and cursor validity nuances, and "event streams not required for correctness when snapshots exist" as an operational property.
 - Audit integrity: completeness of audit records and correlation coverage.
@@ -69,21 +70,21 @@ A formally gated property is release-verified only when the model represents the
 
 This policy preserves the checked-model/stated-normative distinction as honest requirements bookkeeping but does not let a checked abstract model stand in for product evidence. Existing promoted properties whose formulas materially under-model their names must be rewritten, renamed/demoted, or removed before they can contribute to a release claim.
 
-### `OperationState` ⇿ `CommandState` refinement (checked-model properties by equivalence)
+### `OperationState` ⇿ `CommandState` refinement (mixed property tiers by equivalence)
 
-`OperationState` is not a new checked model. It reuses `CommandState` by documented refinement for the properties actually checked in `specs/seed/command_lifecycle.qnt`; it does not make the full `docs/PROTOCOL.md` transition graph checked. The checked-model properties below apply to OperationState by equivalence, not by a new model:
+`OperationState` is not a new checked model. It reuses `CommandState` by documented refinement; this does not make the full `docs/PROTOCOL.md` transition graph checked. Only promoted properties from `specs/seed/command_lifecycle.qnt` apply as checked-model properties by equivalence. Demoted properties remain stated-normative obligations:
 
-| Operation vocabulary | Existing checked artifact |
+| Operation vocabulary | Existing artifact and tier |
 |---|---|
-| `Operation` accepted lifecycle record | `Command` record in `command_lifecycle.qnt` |
+| `Operation` accepted lifecycle record | `Command` record in `command_lifecycle.qnt`; `CommandDurability` is stated-normative |
 | `OperationKind` | `CommandKind` / `CommandKindRequest` registry concept |
 | `OperationState` state-name vocabulary | `CommandState` names: `accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded` |
-| terminal finality | existing `TerminalFinality` |
-| first durable terminal commit | existing `PreAppendTerminalChoice` + `LsnDeterminesTerminalWinner` |
-| idempotent retry | existing `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` |
-| no direct accepted-to-completed transition | existing `NoAcceptedToCompleted` |
+| terminal finality | `TerminalFinality` — checked-model |
+| first durable terminal commit | `PreAppendTerminalChoice` + `LsnDeterminesTerminalWinner` — stated-normative |
+| idempotent retry | `BoundaryDedup` — checked-model; `RetryReusesIdAndKey` + `RetryAfterTerminalReturnsExisting` — stated-normative |
+| no direct accepted-to-completed transition | `NoAcceptedToCompleted` — checked-model |
 
-Classification: **checked-model by refinement only** for the listed properties. The specific no-`accepted → completed` adjacency is checked by `NoAcceptedToCompleted`; the full transition graph remains **stated-normative**, not fully checked. Read/query Operations use the same lifecycle in v0.1.0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
+Classification: **checked-model by refinement only** for `TerminalFinality`, `BoundaryDedup`, and `NoAcceptedToCompleted`; the five demoted lifecycle properties are **stated-normative**. The specific no-`accepted → completed` adjacency is checked by `NoAcceptedToCompleted`; the full transition graph remains stated-normative, not fully checked. Read/query Operations use the same lifecycle in v0.1.0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
 
 ### Elicitation model obligations (checked-model)
 
@@ -186,8 +187,8 @@ Properties:
 - An accepted command cannot vanish silently.
 - Every accepted command remains observable in exactly one canonical `CommandState` from `docs/PROTOCOL.md` until and after it reaches a terminal state.
 - **TerminalFinality**: once a command reaches a terminal `CommandState`, later events for that command do not mutate the command state.
-- **LsnDeterminesTerminalWinner**: for competing valid terminal candidates, the terminal winner is the candidate with the lowest committed log sequence number in the authority domain.
-- **PreAppendTerminalChoice**: if terminal candidates are truly concurrent before durable append, the model may choose the appended winner nondeterministically; after an `LSN` is assigned, that order determines all later snapshots, replay, conformance traces, and UI reconciliation.
+- **LsnDeterminesTerminalWinner** (stated-normative, not currently checked): for competing valid terminal candidates, the terminal winner is the candidate with the lowest committed log sequence number in the authority domain.
+- **PreAppendTerminalChoice** (stated-normative, not currently checked): if terminal candidates are truly concurrent before durable append, the model may choose the appended winner nondeterministically; after an `LSN` is assigned, that order determines all later snapshots, replay, conformance traces, and UI reconciliation.
 - Timeout does not imply success or denial.
 
 ### Wrong-session prevention
@@ -210,7 +211,7 @@ Properties:
 
 ### Idempotent retry
 
-The checked idempotency properties (`BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting`) are guarantees about deduplication at the Patchbay acceptance boundary, not end-to-end execution guarantees. They hold per-target: a key dedups against commands to the same target. `RetryAfterTerminalReturnsExisting` holds because the terminal command record is durable and the key remains bound to it; the protocol pins key retention to at least-until-terminal for this guarantee, and any post-terminal retention policy (whether a later same-key submission is treated as a duplicate of the terminal record or as a new command) is implementation-defined and does not affect the checked guarantee. The checked properties do not claim that an adapter executes a given Operation exactly once on retry; adapter-side execution idempotency is governed by the adapter's declared `idempotency_strength` capability and is not a formal property until a future adapter contract model is scoped (see the spawn-idempotency note below).
+`BoundaryDedup` is the checked-model idempotency property: it checks deduplication at the Patchbay acceptance boundary, not end-to-end execution. It applies per-target by protocol refinement: a key dedups against commands to the same target. `RetryReusesIdAndKey` and `RetryAfterTerminalReturnsExisting` remain stated-normative obligations; their current draft formulas do not observe retry inputs or returned-record identity and therefore do not check those named behaviors. The protocol still requires key retention at least until terminal, while any post-terminal retention policy (whether a later same-key submission is treated as a duplicate of the terminal record or as a new command) is implementation-defined. No current property claims that an adapter executes a given Operation exactly once on retry; adapter-side execution idempotency is governed by the adapter's declared `idempotency_strength` capability and is not a formal property until a future adapter contract model is scoped (see the spawn-idempotency note below).
 
 The `execution_outcome_unknown` failure term is a presentation/audit signal, not a checked property: it surfaces ambiguity to control surfaces so retry safety can be evaluated, but the protocol does not formally model adapter-side execution determinism.
 
@@ -400,7 +401,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 44 modeled properties (32 promoted, 12 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 44 modeled properties (27 promoted, 17 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -408,7 +409,7 @@ Summary: 44 modeled properties (32 promoted, 12 draft), 3 reserved-unmodeled sta
 | `AuthorityGraphAcyclic` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — not yet checked; promote when delegation is modeled> | RESERVED: acyclicity of the grant issuer-subject graph is only meaningful once a delegation/parent-grant edge exists. v0 has no delegation (docs/PROTOCOL.md:305), so the graph has no cycle-bearing edge to check — asserting acyclicity now is either vacuous (empty graph) or false (unconstrained self-grants). Promote when delegation is added. |
 | `BoundaryDedup` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache | — | quint verify command_lifecycle.qnt --invariant boundary_dedup --max-steps 12 | retrying the same idempotency key cannot double-apply a command at the Patchbay boundary |
 | `browser_local_state_not_authority` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12 | browser-local UI claims cannot grant authority or override server-side session/CSRF grant checks |
-| `CommandDurability` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache | — | quint verify command_lifecycle.qnt --invariant command_durability --max-steps 12 | an accepted command is durably recorded before delivery and cannot vanish silently |
+| `CommandDurability` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | an accepted command is durably recorded before delivery and cannot vanish silently |
 | `CompoundIssuer` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | accepted commands use verified session-derived actor identity, not self-asserted payload actor |
 | `CrashNoAcceptedLost` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | after ungraceful restart and replay, accepted pre-crash command entries remain reconstructable in-memory |
 | `CsrfRejectsMissingProof` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant csrf_rejects_missing_proof --max-steps 12 | SECURITY.md §CSRF requires a CSRF token tied to the authenticated operator session before command acceptance |
@@ -429,13 +430,13 @@ Summary: 44 modeled properties (32 promoted, 12 draft), 3 reserved-unmodeled sta
 | `LabelsCannotOverrideIdentity` | promoted | checked-model | specs/seed/session_generation.qnt | apalache | — | quint verify session_generation.qnt --invariant labels_cannot_override_identity --max-steps 12 | project/cwd/name labels update independently and cannot override the verified session identity tuple |
 | `LateEventNoRewrite` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view |
 | `LateGenerationInert` | promoted | checked-model | specs/seed/session_generation.qnt | apalache-temporal | — | echo y \| quint verify session_generation.qnt --temporal late_generation_inert --max-steps 10 | late replies/events for tombstoned generations are stale_event audit records and do not mutate the live generation |
-| `LsnDeterminesTerminalWinner` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal lsn_determines_terminal_winner --max-steps 10 | for competing valid terminal candidates, the terminal winner is the one with the lowest committed LSN in the authority domain; once terminal, exactly one LSN records it |
+| `LsnDeterminesTerminalWinner` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | for competing valid terminal candidates, the terminal winner is the one with the lowest committed LSN in the authority domain; once terminal, exactly one LSN records it |
 | `NoAcceptedToCompleted` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal no_accepted_to_completed --max-steps 10 | a command cannot transition directly from 'accepted' to 'completed'; it must pass through 'delivered' |
 | `NoCommandWithoutGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | commands that reach accepted state do so only with a live matching grant |
 | `NoOperationWithoutGrant` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `PreAppendTerminalChoice` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal pre_append_terminal_choice --max-steps 10 | before an LSN is assigned, the terminal winner may be chosen nondeterministically; after assignment, the LSN order is stable and determines all later snapshots/replay |
-| `RetryAfterTerminalReturnsExisting` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal retry_after_terminal_returns_existing --max-steps 10 | retrying after a command is terminal returns the existing terminal record rather than creating a later terminal candidate |
-| `RetryReusesIdAndKey` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal retry_reuses_id_and_key --max-steps 10 | a retry reuses both the command id and the idempotency key; the command-id-to-key binding is stable after acceptance (an intentional duplicate action uses a new command id and a new idempotency key, which is outside this model's `retry` action) |
+| `PreAppendTerminalChoice` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | before an LSN is assigned, the terminal winner may be chosen nondeterministically; after assignment, the LSN order is stable and determines all later snapshots/replay |
+| `RetryAfterTerminalReturnsExisting` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | retrying after a command is terminal returns the existing terminal record rather than creating a later terminal candidate |
+| `RetryReusesIdAndKey` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | a retry reuses both the command id and the idempotency key; the command-id-to-key binding is stable after acceptance (an intentional duplicate action uses a new command id and a new idempotency key, which is outside this model's `retry` action) |
 | `RevocationPreventsFuture` | draft | stated-normative | specs/seed/authority.qnt | apalache-temporal | — | <TBD — not yet checked; promote in a follow-on item> | a command cannot become accepted in the transition if it is being submitted at or below a revoked generation |
 | `RevokedSessionCannotCommand` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant revoked_session_cannot_command --max-steps 12 | SECURITY.md and VERIFICATION.md require revoked or expired operator sessions to be rejected before issuing new commands |
 | `SenderMatchesClaim` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — not yet checked; promote when the dynamic CompoundIssuer binding is modeled> | RESERVED: sender == claimedSender is a DYNAMIC consistency property, not a relational one. In a static snapshot, sender and claimedSender are independent fields — nothing forces them equal except a fact, which makes the assert a tautology. The actual binding (an authenticated identity matches the self-asserted sender) is a CompoundIssuer-style verification action that belongs in authority.qnt (per the Alloy brief's caveat). Promote when that dynamic model exists. |
@@ -469,7 +470,7 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `AuthorityGraphAcyclic` | stated-normative | — | — |
 | `BoundaryDedup` | checked-model | [replay-committed-prefix-idempotent](../contracts/vectors/replay-committed-prefix-idempotent.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.deduplicated |
 | `browser_local_state_not_authority` | checked-model | — | — |
-| `CommandDurability` | checked-model | [command-acceptance](../contracts/vectors/command-acceptance.json) (draft) | patchbay.Operation.authority_domain_id<br>patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.Operation.kind<br>patchbay.Operation.recipient<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.operation_state<br>patchbay.SubmissionResult.outcome |
+| `CommandDurability` | stated-normative | [command-acceptance](../contracts/vectors/command-acceptance.json) (draft) | patchbay.Operation.authority_domain_id<br>patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.Operation.kind<br>patchbay.Operation.recipient<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.operation_state<br>patchbay.SubmissionResult.outcome |
 | `CompoundIssuer` | stated-normative | — | — |
 | `CrashNoAcceptedLost` | stated-normative | — | — |
 | `CsrfRejectsMissingProof` | checked-model | — | — |
@@ -490,13 +491,13 @@ Summary: 12 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `LabelsCannotOverrideIdentity` | checked-model | — | — |
 | `LateEventNoRewrite` | stated-normative | — | — |
 | `LateGenerationInert` | checked-model | — | — |
-| `LsnDeterminesTerminalWinner` | checked-model | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |
+| `LsnDeterminesTerminalWinner` | stated-normative | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |
 | `NoAcceptedToCompleted` | checked-model | — | — |
 | `NoCommandWithoutGrant` | stated-normative | [failure-missing-grant](../contracts/vectors/failure-missing-grant.json) (draft) | patchbay.Grant.allowed_operation_kinds<br>patchbay.Operation.kind<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome |
 | `NoOperationWithoutGrant` | stated-normative | — | — |
-| `PreAppendTerminalChoice` | checked-model | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |
-| `RetryAfterTerminalReturnsExisting` | checked-model | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
-| `RetryReusesIdAndKey` | checked-model | — | — |
+| `PreAppendTerminalChoice` | stated-normative | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |
+| `RetryAfterTerminalReturnsExisting` | stated-normative | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
+| `RetryReusesIdAndKey` | stated-normative | — | — |
 | `RevocationPreventsFuture` | stated-normative | — | — |
 | `RevokedSessionCannotCommand` | checked-model | — | — |
 | `SenderMatchesClaim` | stated-normative | — | — |
@@ -542,7 +543,7 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 
 | Model | Language | Properties checked | Backend |
 |---|---|---|---|
-| `specs/seed/command_lifecycle.qnt` | Quint | `CommandDurability`, `BoundaryDedup` (invariants); `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` (temporal) — all apply to `OperationState` by refinement equivalence | Apalache + Apalache-temporal |
+| `specs/seed/command_lifecycle.qnt` | Quint | `BoundaryDedup` (invariant); `TerminalFinality`, `NoAcceptedToCompleted` (temporal) — apply to `OperationState` by refinement equivalence | Apalache + Apalache-temporal |
 | `specs/seed/session_generation.qnt` | Quint | `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (invariants); `GenerationMonotonic`, `LateGenerationInert` (temporal) | Apalache + Apalache-temporal |
 | `specs/seed/reply_correlation.qnt` | Quint | `TypedCorrelation` (invariant) — covers Reply → Command/Message and response Operation (`approval-response`/`elicitation-response`) → Elicitation typed references across disjoint CommandId/MessageId/ReplyId/EventId/ElicitationId spaces | Apalache |
 | `specs/seed/elicitation_lifecycle.qnt` | Quint | `ElicitationCorrelationTyped`, `ElicitationTimeoutNeitherSuccessNorDenial`, `ElicitationInvalidResponseRejected` (invariants); `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality` (temporal) | Apalache + Apalache-temporal |
@@ -553,12 +554,13 @@ These checked-model properties are **unaffected** by the O/O/E vocabulary roll-f
 
 Each checked Quint model also commits a generated `*.emitted.tla` inspection artifact (via `quint compile --target tlaplus`); these are generated, never hand-edited, and are NOT an independent re-check lane (they `EXTENDS ... Apalache, Variants` and need the Apalache jar on the classpath — same toolchain reached via Quint).
 
-The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState` ⇿ `CommandState` refinement above) means the checked-model `command_lifecycle.qnt` properties also apply to OperationState by equivalence — no new model is introduced and no full transition-graph check is implied.
+The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState` ⇿ `CommandState` refinement above) means only the promoted `command_lifecycle.qnt` properties apply to OperationState as checked-model by equivalence; demoted properties remain stated-normative. No new model is introduced and no full transition-graph check is implied.
 
 ### Stated-normative (draft models; property-ids reserved)
 
 | Model | Language | Reserved property-ids |
 |---|---|---|
+| `specs/seed/command_lifecycle.qnt` | Quint | `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` |
 | `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
 | `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0.1.0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
