@@ -66,7 +66,7 @@ The `### authority.qnt promotion status` section (lines ~116-133) contradicts it
 
 ### Verification
 
-Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates), then both again to confirm exit 0.
+Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then `node contracts/scripts/check-models.mjs` again (exits 0, confirms current).
 
 ## Acceptance criteria
 
@@ -74,6 +74,6 @@ Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates), then `nod
 - [ ] `SpawnCreatesDescendantGrant` moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
 - [ ] All eleven draft property `val` definitions removed from `snapshot_recovery.qnt` and `authority.qnt`.
 - [ ] `@promotion` blocks for the other ten unchanged (status stays draft, invocation stays `<TBD>`).
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run.
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] `quint parse specs/seed/snapshot_recovery.qnt` and `quint parse specs/seed/authority.qnt` exit 0.
 - [ ] VERIFICATION.md authority-tier contradiction fixed: only the 3 genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) listed as checked-model; the 5 general/descendant properties explicitly stated-normative with no executable formula.

@@ -61,10 +61,12 @@ The feature is the home for rewriting, renaming, demoting, relocating, or removi
   - Fix the `authority.qnt` `= true` stubs the same way (remove the `val` definitions).
   - Fix the VERIFICATION.md authority-tier contradiction (lines 116-133).
   - Fix PROTOCOL.md:140 (refinement table lists demoted properties as checked).
-  - Fix additional foundation prose drift: VERIFICATION.md:213 (retry checked claim), PROTOCOL.md:380 (RetryAfterTerminalReturnsExisting checked claim), ADAPTER-PI.md:75-79 (demoted property refs), PROTOCOL.md:603 (stale model classification).
+  - Fix additional foundation prose drift: VERIFICATION.md:213 (retry checked claim), VERIFICATION.md:43 (descendant-grant checked claim), VERIFICATION.md:93 (ElicitationFirstAnswerWins overclaim), PROTOCOL.md:75 (stale response-Operation correlation claim), PROTOCOL.md:270 (Elicitation lifecycle stated-normative), PROTOCOL.md:380 (RetryAfterTerminalReturnsExisting checked claim), PROTOCOL.md:568 (stale Elicitation classification), PROTOCOL.md:603 (stale model classification), ADAPTER-PI.md:75-79 and :147 (demoted property refs).
+  - Narrow the `@promotion` semantics text of four retained promoted properties whose formulas are genuine but whose descriptions overclaim: `NoAcceptedToCompleted` (metadata says "must pass through `delivered`" but formula permits `delivered` OR `running`), `FleetAuthorityForSpawn` and `SubscriptionGrantChecked` (claim "authenticated actor" but no authentication evidence modeled), `browser_local_state_not_authority` (claims grant-check protection but no grant state).
+  - Fix stale model header comments: `command_lifecycle.qnt:3-6` (claims durability, terminal-race coverage, 7 promoted properties), `patchbay-relational.als:31-32` (calls ActorIdsUnique promoted and genuine), `snapshot_recovery.qnt:15,21-23` (says removed properties typecheck and are exercised).
   - Relocate `patchbay-invariants.als` alongside `Counter.*`.
   - Encode story sequencing in `depends_on`.
-  - Fix checker command order in stories: each script must run twice (first run regenerates tables and exits 1; second run confirms exit 0).
+  - Fix checker command order in stories: `check-vectors` exits 0 on regeneration (only exits 1 for validation failures); `check-models` exits 1 on table regeneration. Correct sequence: `check-vectors` (exits 0), then `check-models` (exits 1, regenerates), then `check-models` again (exits 0).
   - Update skill references before relocating toy files.
   - Fix the seed-model summary table to include `NoAcceptedToCompleted`.
   - Fix Unit 2 property-to-file allocation: `LateGenerationInert` is in `session_generation.qnt`, not `elicitation_lifecycle.qnt`. The real split is 3 from `session_generation.qnt` and 1 from `elicitation_lifecycle.qnt`.
@@ -201,16 +203,49 @@ Also fix the VERIFICATION.md authority-tier contradiction (lines ~116-133): the 
 ### Unit 5: Fix stale PROTOCOL.md prose and audit emitted TLA+
 **Story**: `story-verification-correction-prose`
 **Depends on**: `story-verification-correction-command-lifecycle` (Unit 1 fixes the PROTOCOL.md refinement section; this story fixes the remaining stale prose)
-**Files**: `docs/PROTOCOL.md`, `specs/seed/*.emitted.tla`
+**Files**: `docs/PROTOCOL.md`, `docs/VERIFICATION.md`, `docs/ADAPTER-PI.md`, `specs/seed/*.emitted.tla`
 
-Fix stale PROTOCOL.md assertions that contradict current HEAD, and audit emitted TLA+ files for any prose presenting them as independent evidence. Also fix the stale model classification in the PROTOCOL.md extension seams registry.
+Fix stale PROTOCOL.md assertions that contradict current HEAD, and audit emitted TLA+ files for any prose presenting them as independent evidence. Also fix the stale model classification in the PROTOCOL.md extension seams registry and additional foundation prose drift points.
 
 **Acceptance Criteria**:
-- [ ] PROTOCOL.md `reply_correlation.qnt` coverage claim (~line 94) corrected: `TypedCorrelation` now covers response Operation → Elicitation.
+- [ ] PROTOCOL.md `reply_correlation.qnt` coverage claim (~lines 75 and 94) corrected: `TypedCorrelation` now covers response Operation → Elicitation.
 - [ ] PROTOCOL.md transition-adjacency claim (~line 142) corrected: `NoAcceptedToCompleted` is checked-model; `allowedTransition` enforces the exact table; full adjacency graph remains stated-normative.
 - [ ] PROTOCOL.md extension seams registry (~line 603) corrected: Elicitation, spawn-authority, subscription, and response-correlation models no longer classified as purely "stated-normative, reserved model ids" — they have partial checked-model coverage.
+- [ ] PROTOCOL.md `ElicitationState` lifecycle classification (~line 270) corrected: no longer purely "stated-normative until promoted" — partial checked-model coverage.
+- [ ] PROTOCOL.md extension pressure classification (~line 568) corrected: stale Elicitation classification updated.
+- [ ] VERIFICATION.md:43 corrected: descendant-grant behavior no longer called checked-model after `SpawnCreatesDescendantGrant` demotion.
+- [ ] VERIFICATION.md:93 corrected: `ElicitationFirstAnswerWins` semantics narrowed to answer-terminal only (not decline-terminal).
+- [ ] ADAPTER-PI.md:147 corrected: `LateGenerationInert` no longer described as "verified".
 - [ ] `*.emitted.tla` files audited: no prose presents them as independent evidence.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0.
+
+---
+
+### Unit 6: Narrow retained promoted property semantics and fix stale model header comments
+**Story**: `story-verification-correction-retained-semantics`
+**Depends on**: `story-verification-correction-draft-formulas` (model files must be in final state before header comments are updated)
+**Files**: `specs/seed/command_lifecycle.qnt`, `specs/seed/authority.qnt`, `specs/seed/subscription_authority.qnt`, `specs/seed/csrf_browser.qnt`, `specs/seed/patchbay-relational.als`, `specs/seed/snapshot_recovery.qnt`
+
+Four retained promoted properties have formulas that are genuine (mutation-survivable, independent oracle) but whose `@promotion` semantics text overclaims what the formula establishes. Narrow the semantics text to match the formula, not demote the property.
+
+**Properties to narrow**:
+- `NoAcceptedToCompleted` (`command_lifecycle.qnt`): metadata says the command "must pass through `delivered`" but the formula permits either `delivered` OR `running` immediately before completion. Narrow the semantics to: "a command cannot transition directly from `accepted` to `completed`; it must pass through `delivered` or `running`".
+- `FleetAuthorityForSpawn` (`authority.qnt`): semantics claims "authenticated actor" but the model has no authentication evidence — it proves grant-subject matching for the modeled actor. Narrow to: "spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session".
+- `SubscriptionGrantChecked` (`subscription_authority.qnt`): same issue — claims "authenticated actor" but no authentication evidence. Narrow to: "subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope".
+- `browser_local_state_not_authority` (`csrf_browser.qnt`): semantics claims protection of "grant checks" but the model has no grant state — it checks operator-session status and CSRF evidence. Narrow to: "browser-local UI claims cannot grant authority or override server-side session/CSRF checks".
+
+**Stale model header comments to fix**:
+- `command_lifecycle.qnt:3-6`: says "models accepted-command durability, the first-durable-terminal-commit-wins race, and idempotency-boundary dedup" and "carries the 7 promoted model properties". After demotion, the model carries 3 promoted properties and does not model durability or the terminal-race boundary. Update to reflect the 3 retained promoted properties and the actual scope (terminal finality, boundary dedup, no-accepted-to-completed adjacency).
+- `patchbay-relational.als:31-32`: says "Promoted model: the one relational invariant that is genuinely checkable". After demotion, no Alloy property is promoted. Update to reflect that the model contains draft/reserved properties only.
+- `snapshot_recovery.qnt:15,21-23`: says draft properties "typecheck cleanly" and "are exercised against the LSN/cursor/revision/domain/generation core". After removing the `val` definitions, the properties don't typecheck (they don't exist). Update to reflect that the property ids are reserved stated-normative obligations with no executable formula.
+
+**Acceptance Criteria**:
+- [ ] Four `@promotion` semantics fields narrowed to match their formulas.
+- [ ] `command_lifecycle.qnt` header comment updated to reflect 3 retained promoted properties and actual scope.
+- [ ] `patchbay-relational.als` header comment updated to reflect no promoted properties.
+- [ ] `snapshot_recovery.qnt` header comment updated to reflect reserved stated-normative obligations with no executable formula.
+- [ ] `node contracts/scripts/check-models.mjs` exits 0 (semantics text changes don't affect tier derivation).
+- [ ] `quint parse` exits 0 for all affected model files.
 
 ---
 
@@ -221,14 +256,15 @@ Fix stale PROTOCOL.md assertions that contradict current HEAD, and audit emitted
 3. `story-verification-correction-alloy-and-toys` (Unit 3) — demotion + toy relocation. `depends_on: [story-verification-correction-session-elicitation]`.
 4. `story-verification-correction-draft-formulas` (Unit 4) — remove misleading `val` definitions. `depends_on: [story-verification-correction-alloy-and-toys]`.
 5. `story-verification-correction-prose` (Unit 5) — prose fixes. `depends_on: [story-verification-correction-command-lifecycle]`.
+6. `story-verification-correction-retained-semantics` (Unit 6) — narrow retained promoted property semantics and fix stale model header comments. `depends_on: [story-verification-correction-draft-formulas]`.
 
-Units 1–4 are sequenced via `depends_on` because they all touch `check-vectors.mjs` and the generated VERIFICATION.md tables; landing them sequentially keeps the traceability machinery green after each commit. Unit 5 depends on Unit 1 (which fixes the PROTOCOL.md refinement section) but is otherwise independent.
+Units 1–4 are sequenced via `depends_on` because they all touch `check-vectors.mjs` and the generated VERIFICATION.md tables; landing them sequentially keeps the traceability machinery green after each commit. Unit 5 depends on Unit 1 (which fixes the PROTOCOL.md refinement section) but is otherwise independent. Unit 6 depends on Unit 4 (which removes the `val` definitions) so the model files are in their final state before the header comments are updated.
 
-**Checker command order (critical):** every story that touches `check-vectors.mjs` must run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then run both again to confirm exit 0. Both scripts regenerate their generated tables and exit 1 when the table changes on the first run; the second run confirms the tables are current.
+**Checker command order (critical):** `check-vectors.mjs` exits 0 on regeneration (it only exits 1 for validation failures). `check-models.mjs` exits 1 when its generated table changes on the first run, then exits 0 on the second run. Correct sequence for stories that touch `check-vectors.mjs`: run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then `node contracts/scripts/check-models.mjs` again (exits 0, confirms current).
 
 ## Testing
 
-- `node contracts/scripts/check-vectors.mjs` exits 0 on second run after each story, then `node contracts/scripts/check-models.mjs` exits 0 on second run.
+- `node contracts/scripts/check-vectors.mjs` exits 0 (regenerates conformance table); then `node contracts/scripts/check-models.mjs` exits 0 on second run (first run exits 1, regenerates model table).
 - `quint parse specs/seed/command_lifecycle.qnt`, `quint parse specs/seed/session_generation.qnt`, `quint parse specs/seed/elicitation_lifecycle.qnt`, `quint parse specs/seed/snapshot_recovery.qnt`, `quint parse specs/seed/authority.qnt` all exit 0.
 - The generated VERIFICATION.md tables reflect the demotions: 21 promoted / 23 draft (down from 32 promoted / 12 draft). Demoted: 5 from `command_lifecycle.qnt` + 4 from `session_generation.qnt`/`elicitation_lifecycle.qnt` + 1 Alloy + 1 `SpawnCreatesDescendantGrant` = 11 demoted from promoted to draft.
 - No promoted property loses its genuine-checking mutation proof (the genuine `command_lifecycle.qnt` properties, `GenerationMonotonic`, `TypedCorrelation`, all genuine Elicitation properties, the 3 genuine spawn-authority properties, all subscription properties, and all CSRF properties remain promoted).

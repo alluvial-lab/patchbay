@@ -63,7 +63,7 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
 
 ### Verification
 
-7. Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then run both again to confirm exit 0.
+7. Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then `node contracts/scripts/check-models.mjs` again (exits 0, confirms current).
 
 8. Update VERIFICATION.md prose: the checked-model property list (remove `ActorIdsUnique`), the seed-model summary table, and the summary line.
 
@@ -74,7 +74,7 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
 - [ ] `ActorIdsUnique` moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
 - [ ] `patchbay-invariants.als`, `Counter.qnt`, `Counter.tla`, `Counter.cfg` relocated out of `specs/seed/` to skill example directories.
 - [ ] `.agents/skills/alloy/SKILL.md`, `.agents/skills/quint/SKILL.md`, `.agents/skills/tla-plus/SKILL.md` references updated to new file locations.
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run.
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] VERIFICATION.md prose updated: checked-model property list, seed-model summary.
 - [ ] The two already-draft Alloy properties (`AuthorityGraphAcyclic`, `SenderMatchesClaim`) remain draft.
 - [ ] The Alloy file's sigs, facts, and the `check` command are preserved.

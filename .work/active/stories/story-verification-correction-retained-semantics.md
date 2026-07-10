@@ -1,0 +1,57 @@
+---
+id: story-verification-correction-retained-semantics
+kind: story
+stage: implementing
+tags: [verification]
+parent: epic-public-product-contract-verification-claim-correction
+depends_on: [story-verification-correction-draft-formulas]
+release_binding: null
+gate_origin: null
+created: 2026-07-10
+updated: 2026-07-10
+---
+
+# Narrow retained promoted property semantics and fix stale model header comments
+
+## Scope
+
+Four retained promoted properties have formulas that are genuine (mutation-survivable, independent oracle) but whose `@promotion` semantics text overclaims what the formula establishes. Narrow the semantics text to match the formula. Also fix stale model header comments that no longer reflect the model's promoted property set.
+
+## Unit
+
+`Unit 6` from `epic-public-product-contract-verification-claim-correction` design.
+
+## Files
+
+- `specs/seed/command_lifecycle.qnt` — `NoAcceptedToCompleted` semantics + header comment
+- `specs/seed/authority.qnt` — `FleetAuthorityForSpawn` semantics
+- `specs/seed/subscription_authority.qnt` — `SubscriptionGrantChecked` semantics
+- `specs/seed/csrf_browser.qnt` — `browser_local_state_not_authority` semantics
+- `specs/seed/patchbay-relational.als` — header comment
+- `specs/seed/snapshot_recovery.qnt` — header comment
+
+## Implementation
+
+### Narrow retained promoted property semantics
+
+For each of the four properties, update only the `semantics:` field in the `@promotion` block. Do not change `status` (stays promoted), `invocation`, or the `val`/`temporal` formula.
+
+- `NoAcceptedToCompleted` (`command_lifecycle.qnt`): current semantics says "must pass through `delivered`" but the formula permits either `delivered` OR `running` immediately before completion. Narrow to: "a command cannot transition directly from `accepted` to `completed`; it must pass through `delivered` or `running`".
+- `FleetAuthorityForSpawn` (`authority.qnt`): current semantics claims "authenticated actor" but the model has no authentication evidence — it proves grant-subject matching for the modeled actor. Narrow to: "spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session".
+- `SubscriptionGrantChecked` (`subscription_authority.qnt`): same issue — claims "authenticated actor" but no authentication evidence. Narrow to: "subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope".
+- `browser_local_state_not_authority` (`csrf_browser.qnt`): current semantics claims protection of "grant checks" but the model has no grant state — it checks operator-session status and CSRF evidence. Narrow to: "browser-local UI claims cannot grant authority or override server-side session/CSRF checks".
+
+### Fix stale model header comments
+
+- `command_lifecycle.qnt:3-6`: currently says "models accepted-command durability, the first-durable-terminal-commit-wins race, and idempotency-boundary dedup" and "carries the 7 promoted model properties of feature-formal-model-seed plus the NoAcceptedToCompleted transition-adjacency property". After demotion, the model carries 3 promoted properties (`TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`) and does not model durability or the terminal-race boundary. Update to reflect the 3 retained promoted properties and the actual scope.
+- `patchbay-relational.als:31-32`: currently says "Promoted model: the one relational invariant that is genuinely checkable in a v0 static snapshot without becoming tautological." After demotion, no Alloy property is promoted. Update to reflect that the model contains draft/reserved properties only; Alloy remains the reserved relational tool for future delegation/authority-graph/lease problems.
+- `snapshot_recovery.qnt:15,21-23`: currently says draft properties "typecheck cleanly" and "are exercised against the LSN/cursor/revision/domain/generation core". After removing the `val` definitions (Unit 4), the properties don't typecheck (they don't exist). Update to reflect that the property ids are reserved stated-normative obligations with no executable formula.
+
+## Acceptance criteria
+
+- [ ] Four `@promotion` semantics fields narrowed to match their formulas.
+- [ ] `command_lifecycle.qnt` header comment updated to reflect 3 retained promoted properties and actual scope.
+- [ ] `patchbay-relational.als` header comment updated to reflect no promoted properties.
+- [ ] `snapshot_recovery.qnt` header comment updated to reflect reserved stated-normative obligations with no executable formula.
+- [ ] `node contracts/scripts/check-models.mjs` exits 0 (semantics text changes don't affect tier derivation).
+- [ ] `quint parse` exits 0 for all affected model files.

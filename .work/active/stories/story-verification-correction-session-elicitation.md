@@ -42,7 +42,7 @@ For each of the four properties:
    - Remove `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `LateGenerationInert`, `ElicitationTimeoutNeitherSuccessNorDenial` from `CHECKED_MODEL_PROPERTIES`
    - Add them to `STATED_NORMATIVE_PROPERTIES`
 
-3. Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then run both again to confirm exit 0.
+3. Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then `node contracts/scripts/check-models.mjs` again (exits 0, confirms current).
 
 4. Update VERIFICATION.md prose that is NOT generated:
    - The checked-model property lists for `session_generation.qnt` and `elicitation_lifecycle.qnt`
@@ -62,7 +62,7 @@ For each of the four properties:
 
 - [ ] Four `@promotion` blocks changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
 - [ ] Four ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run.
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] VERIFICATION.md prose updated: checked-model property lists, seed-model summary tables.
 - [ ] `docs/ADAPTER-PI.md:75-79` updated: `LabelsCannotOverrideIdentity` and `LateGenerationInert` marked stated-normative.
 - [ ] The genuine promoted properties in those models remain promoted: `GenerationMonotonic`, `TypedCorrelation`, `ElicitationCorrelationTyped`, `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`.

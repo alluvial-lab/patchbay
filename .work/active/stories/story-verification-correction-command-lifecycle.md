@@ -41,7 +41,7 @@ For each of the five properties:
    - Remove `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` from `CHECKED_MODEL_PROPERTIES`
    - Add them to `STATED_NORMATIVE_PROPERTIES`
 
-3. Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then run both again to confirm exit 0. This two-pass sequence is required because both scripts regenerate their generated tables and exit 1 when the table changes on the first run.
+3. Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then `node contracts/scripts/check-models.mjs` again (exits 0, confirms current). This two-pass sequence for `check-models` is required because it regenerates its table and exits 1 when the table changes on the first run.
 
 4. Update VERIFICATION.md prose that is NOT generated:
    - The checked-model property list (the line listing `command_lifecycle.qnt` properties) — remove the five demoted names, keep `TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`
@@ -64,7 +64,7 @@ For each of the five properties:
 
 - [ ] Five `@promotion` blocks in `command_lifecycle.qnt` changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
 - [ ] Five ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run; generated tables reflect the demotion.
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run; generated tables reflect the demotion.
 - [ ] VERIFICATION.md prose updated: checked-model property list, refinement table, property definitions, idempotent-retry section (~line 213), seed-model summary (including adding `NoAcceptedToCompleted`).
 - [ ] PROTOCOL.md `OperationState` ⇿ `CommandState` refinement section (~line 140) updated: the five demoted properties marked stated-normative.
 - [ ] PROTOCOL.md ~line 380 updated: `RetryAfterTerminalReturnsExisting` no longer called checked.
