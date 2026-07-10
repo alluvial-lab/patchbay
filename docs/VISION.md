@@ -6,7 +6,7 @@ Patchbay gives an operator a reliable cockpit for discovering sessions, spawning
 
 ## Audience and release horizon
 
-Patchbay is intended to become a publishable, reliable self-hosted product that independent operators can deploy for themselves. The first executable milestone, `v0.1.0`, gets the initial operator operational; it is not the product ceiling.
+Patchbay is intended to become a publishable, reliable self-hosted product that independent operators can deploy for themselves. The first executable milestone, `v0.1.0`, gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone, does not require completed publication legal review, and is not the product ceiling.
 
 The `v0.x` line hardens deployment, migrations, public contracts, adapter boundaries, and implementation-backed assurance while retaining pre-1.0 freedom to make explicit breaking changes. `v1.0.0` is the public-product threshold: one human operator per deployment, one supported reference deployment path, Pi plus a credible second or materially distinct reference adapter, and stable designated public contracts. Multi-human shared deployments, federation, HA, and broader provider/adopter integrations remain explicit post-v1 seams rather than hidden assumptions or `v0.1.0` obligations.
 

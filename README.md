@@ -12,7 +12,7 @@ Patchbay is in the **foundation/design phase** with the `v0.1.0` walking skeleto
 
 This repository currently contains project definition documents only. There is no daemon, web app, adapter, package, or installable release yet. The first implementation milestone is a narrow single-operator slice: responsive web cockpit + CLI admin/debug surface + one authoritative coordination core + local durable event/snapshot store + Pi adapter. The first implementation work should follow that slice rather than inventing product semantics ad hoc.
 
-`v0.1.0` gets the initial operator operational; it is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
+`v0.1.0` gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone and does not require completed publication legal review. It is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
 
 ## Why Patchbay exists
 

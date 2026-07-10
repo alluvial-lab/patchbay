@@ -17,14 +17,14 @@ updated: 2026-07-10
 
 Make the project publishable under a distinctive, cleared identity and an unambiguous licensing/contribution policy. The identity arc performs source-grounded collision screening, qualified trademark review, final-name selection, trademark policy, and the coordinated repository/package/domain/registry rename. The licensing arc obtains qualified open-source legal review of the intended `AGPL-3.0-or-later` application boundary and `Apache-2.0` interoperability boundary, then establishes license files, SPDX/notices, generated-output treatment, dependency compatibility, documentation licensing, proprietary-adapter permission, and contribution terms.
 
-Naming begins immediately but runs in parallel with engineering: the provisional `Patchbay` name may remain internally while contracts are built, yet no public package/registry reservation or public release may proceed without the cleared identity. The project does not accept outside contributions until contributor terms are settled. Because only one or two invited pre-v1 collaborators are likely, counsel may choose a narrow agreement before their first contribution; the project does not prematurely assume either a CLA/assignment for commercial dual licensing or a DCO-only community posture. A DCO alone must not be represented as granting unilateral relicensing rights.
+Naming exploration begins immediately but runs in parallel with engineering: the provisional `Patchbay` name may remain internally while contracts are built. Qualified trademark and open-source legal review is explicitly **not** a `v0.1.0` gate because that release is for the initial operator's personal/internal use, not public distribution. No later public package/registry reservation or public release may proceed without the cleared identity and reviewed licensing boundary; if public distribution is pulled forward, the legal gate moves forward with it. The project does not accept outside contributions until contributor terms are settled. Because only one or two invited pre-v1 collaborators are likely, counsel may choose a narrow agreement before their first contribution; the project does not prematurely assume either a CLA/assignment for commercial dual licensing or a DCO-only community posture. A DCO alone must not be represented as granting unilateral relicensing rights.
 
 The two legal tracks are grouped as one publication-readiness capability to keep the epic within a coherent six-feature decomposition; feature design should keep their research, review, and acceptance evidence distinct. Legal conclusions must come from qualified counsel, not from this work item's prose.
 
 ## Epic context
 
 - Parent epic: `epic-public-product-contract`
-- Position in epic: independent, externally reviewed publication gate; it does not block internal engineering but must complete before public release, package registration, or outside contributions.
+- Position in epic: independent, externally reviewed publication gate; it does not block `v0.1.0` or other internal engineering but must complete before public release, package registration, or outside contributions.
 - Licensing-boundary inventory must coordinate with `epic-public-product-contract-public-compatibility` even though final-name work starts in parallel.
 
 ## Foundation references

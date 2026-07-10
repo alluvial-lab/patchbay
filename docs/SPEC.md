@@ -21,7 +21,7 @@ Patchbay does not start with a native mobile app, swarm orchestration, project-m
 
 Patchbay uses SemVer to distinguish the initial operator's walking skeleton from the intended public product:
 
-- **`v0.1.0` — initial-operator walking skeleton.** One operator controls Pi-backed sessions through the responsive web cockpit and diagnostic CLI. This milestone proves the durable control loop and gets the initial operator operational; it is not the product ceiling.
+- **`v0.1.0` — initial-operator walking skeleton.** One operator controls Pi-backed sessions through the responsive web cockpit and diagnostic CLI. This milestone proves the durable control loop and gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone, does not require completed publication legal review, and is not the product ceiling.
 - **`v0.x` — public-preview hardening.** Deployment, migrations, public compatibility surfaces, adapter boundaries, executable conformance, and second-adapter evidence mature. Breaking changes remain permitted when explicit migrations and release notes accompany them.
 - **`v1.0.0` — reliable self-hosted public product.** Additional operators can independently deploy and operate Patchbay through a supported reference path. One human operator controls each deployment. Multi-human shared deployments remain a post-v1 seam.
 - **Post-v1 reserved capabilities.** Multi-human authority workflows, federation, HA/multi-core coordination, replication, zero-downtime upgrades, and broader surface and adapter ecosystems are promoted only by demonstrated product pressure.
