@@ -105,16 +105,17 @@ module session_generation {
   }
 
   // ---------------------------------------------------------------------------
-  // Promoted model properties (each with inline promotion metadata)
+  // Model properties (each with inline promotion metadata; mixed promoted/draft status)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    SessionIdentityTuple
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify session_generation.qnt --invariant session_identity_tuple --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: adapter id, deployment scope, and runtime id are constants, not per-session identity state. The formula checks generation mirroring and that three singleton sets have size one, not the named four-field identity tuple.
   //   bounds:      { session_ids: 2, max_generations: 3, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -161,11 +162,12 @@ module session_generation {
 
   // @promotion {
   //   property:    LateGenerationInert
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify session_generation.qnt --temporal late_generation_inert --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: the formula proves only that `generation` and `identityGeneration` do not change. Its semantics additionally claim a `stale_event` audit record, but no audit state is modeled.
   //   bounds:      { session_ids: 2, max_generations: 3, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
@@ -185,11 +187,12 @@ module session_generation {
 
   // @promotion {
   //   property:    LabelsCannotOverrideIdentity
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/session_generation.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify session_generation.qnt --invariant labels_cannot_override_identity --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: the formula proves labels use strings disjoint from three constant singleton sets and that generation mirrors remain equal. It models no routing or target-selection path in which a label could override identity.
   //   bounds:      { session_ids: 2, max_generations: 3, labels: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]

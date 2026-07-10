@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-session-elicitation
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-command-lifecycle]
@@ -71,3 +71,13 @@ For each of the four properties:
 - [ ] `docs/ADAPTER-PI.md:75-79` updated: `LabelsCannotOverrideIdentity` and `LateGenerationInert` marked stated-normative.
 - [ ] The genuine promoted properties in those models remain promoted: `GenerationMonotonic`, `TypedCorrelation`, `ElicitationCorrelationTyped`, `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`.
 - [ ] `quint parse specs/seed/session_generation.qnt` and `quint parse specs/seed/elicitation_lifecycle.qnt` exit 0.
+
+## Implementation notes
+
+- Files changed: `specs/seed/session_generation.qnt`, `specs/seed/elicitation_lifecycle.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, and `docs/ADAPTER-PI.md`.
+- Demoted `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `LateGenerationInert`, and `ElicitationTimeoutNeitherSuccessNorDenial` with formula-specific reasons, draft invocations, and matching registry tiers; retained all genuine promoted properties named by the design.
+- Regenerated both traceability tables. The resulting model inventory is 44 modeled properties: 23 promoted and 21 draft; all four demoted ids are stated-normative in both generated tables.
+- Verification: both required `quint parse` commands exited 0; `check-vectors.mjs` exited 0; the first `check-models.mjs` run regenerated the model table and exited 1 as expected; the confirming second run exited 0.
+- Tests added: none; the production verification surface is the existing Quint parser and traceability checker suite.
+- Discrepancies from design: none. Direct reads confirmed every demotion reason against the formula at HEAD.
+- Adjacent issues parked: none.

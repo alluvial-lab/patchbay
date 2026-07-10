@@ -72,11 +72,11 @@ Patchbay session identity is the tuple `(adapter_id, deployment_scope, runtime_s
 | `session_compact` | *(no change)* | Compaction is in-place; it does not bump the generation. |
 | `--continue` restart (supervisor restart *with* `--continue`) | *(no session_generation change)* | This is an adapter reconnect that reuses the one session; at most an `adapter_generation` bump, not a session replacement. |
 
-This mapping must satisfy the checked properties documented in `docs/VERIFICATION.md` against `specs/seed/session_generation.qnt`:
+This mapping must satisfy the checked-model and stated-normative properties documented in `docs/VERIFICATION.md` against `specs/seed/session_generation.qnt`:
 
-- `LabelsCannotOverrideIdentity` — `project`/`cwd`/`name` cannot override the identity tuple.
-- `GenerationMonotonic` — session supersession (`session_new` / fresh-session restart) requires a strictly-greater generation; a lower report is rejected; an equal report is a no-op.
-- `LateGenerationInert` — events/replies binding to a tombstoned generation are `stale_event` audit records and do not mutate the live generation.
+- `LabelsCannotOverrideIdentity` (**stated-normative**) — `project`/`cwd`/`name` cannot override the identity tuple.
+- `GenerationMonotonic` (**checked-model**) — session supersession (`session_new` / fresh-session restart) requires a strictly-greater generation; a lower report is rejected; an equal report is a no-op.
+- `LateGenerationInert` (**stated-normative**) — events/replies binding to a tombstoned generation are `stale_event` audit records and do not mutate the live generation.
 
 > **`session_new` is a session replacement, not a `/clear`.** remote_pi's own code groups `session_new` with `fork`/`switch`/`reload` as "session replacement" and marks the pre-replacement SDK context permanently stale. A `/clear` on other harnesses preserves the session handle and wipes the transcript in place; Pi does the opposite — the transcript event log is rotated and the old context becomes permanently unusable. This is why the mapping bumps `session_generation` rather than treating it as a same-generation clear.
 

@@ -535,7 +535,7 @@ module elicitation_lifecycle {
   }
 
   // ---------------------------------------------------------------------------
-  // Promoted model properties (each with an inline @promotion block)
+  // Model properties (each with an inline @promotion block; mixed promoted/draft status)
   // ---------------------------------------------------------------------------
 
   // @promotion {
@@ -596,11 +596,12 @@ module elicitation_lifecycle {
 
   // @promotion {
   //   property:    ElicitationTimeoutNeitherSuccessNorDenial
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify elicitation_lifecycle.qnt --invariant elicitation_timeout_neither_success_nor_denial --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>
+  //   demotion_reason: metadata claims timeout never implies grant, but the model has no grant state. The formula checks only answer and decline fields.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, terminal_candidates: 7, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
