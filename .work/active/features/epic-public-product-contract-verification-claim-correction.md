@@ -1,7 +1,7 @@
 ---
 id: epic-public-product-contract-verification-claim-correction
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: epic-public-product-contract
 depends_on: []
@@ -284,3 +284,29 @@ Units 1–4 are sequenced via `depends_on` because they all touch `check-vectors
 - **Removed `val` definitions.** Removing the `val` definitions means `quint verify --invariant <name>` will fail because the invariant doesn't exist. This is the intended behavior — the properties are stated-normative obligations, not executable checks. The `@promotion` blocks preserve the property ids for the v1 gate.
 - **Prose drift recurrence.** The PROTOCOL.md fixes are point corrections. The parked `idea-proto-prose-registry-consistency-check.md` is the long-term drift-detection mechanism; this feature does not build it (it's owned by `epic-public-product-contract-public-compatibility`).
 - **Skill reference updates.** Relocating toy files requires updating skill references in the same story. Deletion without updating skills breaks current documentation.
+
+## Implementation summary
+
+All six child stories implemented and advanced to `stage: review` via `implement-orchestrator` (sequential wave, width 1 — the `depends_on` chain is strictly linear because every unit touches `check-vectors.mjs` and the generated VERIFICATION.md tables):
+
+| Unit | Story | Commit | Status |
+|---|---|---|---|
+| 1 | `story-verification-correction-command-lifecycle` | `eae524e` | review |
+| 2 | `story-verification-correction-session-elicitation` | `9faa6c0` | review |
+| 3 | `story-verification-correction-alloy-and-toys` | `6dd69ca` | review |
+| 4 | `story-verification-correction-draft-formulas` | `c4e8279` | review |
+| 5 | `story-verification-correction-prose` | `48fe336` | review |
+| 6 | `story-verification-correction-retained-semantics` | `15276ce` | review |
+
+**Net verification-claim result:** 11 properties demoted from promoted (checked-model) to draft (stated-normative): 5 from `command_lifecycle.qnt`, 4 from `session_generation.qnt`/`elicitation_lifecycle.qnt`, 1 Alloy (`ActorIdsUnique`), 1 from `authority.qnt` (`SpawnCreatesDescendantGrant`). 11 misleading draft `val`/`temporal` formulas removed entirely (not stubbed to `true`) so `quint verify --invariant <name>` fails honestly rather than passing vacuously. 7 retained promoted properties' `semantics:` text narrowed to match their formulas. 4 superseded toy artifacts relocated out of `specs/seed/` to skill example directories. 3 stale model header comments fixed. Stale prose reconciled across PROTOCOL.md, VERIFICATION.md, ADAPTER-PI.md, SPEC.md, GLOSSARY.md.
+
+**Final property tier counts:** 21 promoted / 26 stated-normative (23 modeled-draft + 3 reserved-unmodeled) = 47 total. Down from 32 promoted / 15 stated-normative pre-correction.
+
+**Cross-cutting deviations:**
+- Unit 3 (alloy-and-toys): the toy files are referenced in `.research/analysis/briefs/*.md` (historical attestations) and `feature-formal-model-seed.md` (a done feature body) beyond the 3 in-scope skill SKILL.md files. The worker left both untouched — research attestations are historical records that remain true, and editing a done feature re-opens its review surface. Recorded as deferred references.
+- Unit 5 (prose): the story's Files list omitted `docs/SPEC.md` and `docs/GLOSSARY.md` (acceptance items 10-12); the worker handled both. Also corrected a residual `SpawnCreatesDescendantGrant` checked-model reference left by Unit 4.
+- Unit 6 (retained-semantics): the story body said "five" properties but the design narrowed seven (the review phase added `ElicitationStaleTargetInert` and `SpawnRevocationDoesNotCascade`). The worker corrected the count.
+
+**Verification status:** `quint parse` exits 0 for all affected model files; `check-vectors.mjs` exits 0; `check-models.mjs` exits 0 (tables current). Generated VERIFICATION.md tables reflect the demotions. No promoted property lost its genuine-checking mutation proof.
+
+**Deferred to v1 formal gate (`epic-public-product-contract-executable-release-assurance`):** real formulas for the 11 demoted properties (crash/restart durability, competing pre-append candidates, retry-input identity, returned-record identity, per-session identity tuple, label-override routing, stale-event audit, elicitation-timeout grant boundary, descendant-grant allowed-kind set with action-created state, snapshot/recovery failure boundaries, general authority).
