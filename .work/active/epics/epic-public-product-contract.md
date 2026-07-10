@@ -1,7 +1,7 @@
 ---
 id: epic-public-product-contract
 kind: epic
-stage: drafting
+stage: implementing
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -32,6 +32,13 @@ The scope changes the project's stated audience and release horizon, defines pub
 - **What assurance blocks 1.0?** Patchbay uses a property-graded hybrid. Every public safety claim requires executable implementation evidence. Formal coverage additionally blocks release for command terminal races, session-generation isolation, crash/replay/snapshot convergence, and multi-surface Elicitation races. Multi-human delegation, lease, federation, HA, and split-brain properties gate those future capabilities rather than `v1.0.0`.
 - **What licensing model supports publication and adapter adoption?** Subject to legal review, the intended policy is `AGPL-3.0-or-later` for the application—including the coordination core, server, and web surface—and `Apache-2.0` for interoperability surfaces such as protocol schemas, generated clients, adapter SDKs, examples/templates, and official adapters. The boundary must continue to permit providers and adopters to build proprietary adapters without relicensing the application itself. Documentation licensing, generated-code notices, dependency compatibility, and contribution terms must be made explicit before publication. If future proprietary commercial licensing is desired, contributor relicensing rights must be established before accepting outside contributions; a DCO alone is not assumed to provide them.
 - **Is Patchbay the public product name?** `Patchbay` is a provisional working name, not a committed public mark. Its descriptive fit is outweighed by substantial existing software and commercial use, weak search distinctiveness, and likely trademark crowding. Before public release, package/registry reservation, or contributor growth makes a rename expensive, the project must select and legally clear a more distinctive product identity. “Patchbay” may remain descriptive language beneath the new mark (for example, “a patchbay for agent sessions”) if counsel considers that use safe. The public identity gets a separate trademark policy rather than relying on the software licenses to govern branding.
+
+## Design decisions
+
+- **Does this epic define readiness or deliver it?** It owns the full v1-readiness program. Child features may remain blocked on missing implementation or qualified legal review, but they do not stop at prose or scaffolding while claiming the capability is delivered. Release binding remains late-bound.
+- **Does naming block internal engineering?** No. Identity selection and clearance begin immediately in parallel, while the provisional working name may remain on unpublished internal artifacts. A cleared identity is a hard gate for public package/registry reservation and public release, not for unrelated internal engineering.
+- **How are contributor relicensing rights handled before v1?** The project accepts no outside contribution until contributor terms are settled. With at most one or two invited collaborators expected, qualified counsel will choose appropriate terms before their first contribution. The project does not prematurely commit either to commercial dual-licensing rights through a CLA/assignment or to a DCO-only posture that may foreclose unilateral relicensing.
+- **Does this epic need UI mockups?** No. It introduces no net-new screen, flow, component, or visual-system decision; it changes product, compatibility, operational, adapter, assurance, naming, and licensing obligations. The repository-wide mockup-first convention is installed for later UI-bearing work.
 
 ## Version horizon
 
@@ -95,6 +102,28 @@ For a formally gated v1 property, release verification requires: a model that re
 - A distinctive public product name is selected only after preliminary collision screening and qualified trademark review; repository, package, domain, and registry identities are updated before the first public release.
 - Legal review confirms the intended AGPL-application/Apache-interoperability boundary, dependency compatibility, generated-output treatment, and proprietary-adapter permission before license files and public claims are finalized.
 - The repository carries unambiguous per-surface license files and SPDX/noticing guidance, contribution terms appropriate to the chosen future-relicensing posture, and a separate trademark policy before accepting public contributions.
+
+## Decomposition
+
+The epic is split by capability rather than implementation layer. The already-authored version vocabulary is folded into the public compatibility contract. Compatibility and self-hosting operations are separate so the stable-boundary work does not become an oversized deployment feature; verification correction remains independent from positive executable assurance so honest cleanup is not blocked on product code. Naming and licensing are grouped as one publication-governance capability, with distinct legal tracks inside it, to leave room for both public-product capability arcs within the six-feature epic limit.
+
+### Child features
+
+- `epic-public-product-contract-public-compatibility` — designate and enforce the stable v1 public/private compatibility boundary and SemVer ceremonies — depends on: `[]`
+- `epic-public-product-contract-self-hosted-operations` — deliver one tested install, secure operation, migration, upgrade/rollback, backup/restore, diagnostics, and recovery path — depends on: `[epic-public-product-contract-public-compatibility]`
+- `epic-public-product-contract-adapter-portability-proof` — prove the public adapter boundary with Pi plus a materially distinct open-source or conformance reference adapter — depends on: `[epic-public-product-contract-public-compatibility]`
+- `epic-public-product-contract-verification-claim-correction` — re-inventory and correct, demote, relocate, or remove verification artifacts whose claims exceed their evidence — depends on: `[]`
+- `epic-public-product-contract-executable-release-assurance` — run real checkers and implementation-backed evidence for public claims and the four formally gated kernels — depends on: `[epic-public-product-contract-public-compatibility, epic-public-product-contract-self-hosted-operations, epic-public-product-contract-adapter-portability-proof, epic-public-product-contract-verification-claim-correction]`
+- `epic-public-product-contract-publication-governance` — clear the public identity and legally formalize licensing, trademark, generated-output, dependency, and contribution policy — depends on: `[]`
+
+### Decomposition risks
+
+- **Missing implementation prerequisite.** Self-hosted operations and executable release assurance cannot complete until the core, persistence, control surfaces, packaging, and adapters exist. Their design may proceed, but metadata, prose, or fixtures cannot stand in for running evidence.
+- **External legal gates.** Final identity clearance and licensing/contribution conclusions require qualified counsel. Publication governance can prepare inventories and options but must remain incomplete rather than fabricate legal certainty.
+- **Broad operational surface.** Compatibility and self-hosted operations were split because combining API/config/migration stability with installation/backup/recovery would exceed a comfortable feature. Each feature-design pass must still split further into implementation units without creating layer-only work.
+- **Stale cleanup inventory.** Foundation hardening already fixed some adversarial findings. Verification correction must inspect current HEAD and classify each artifact afresh instead of replaying the epic's initial candidate list.
+- **Adapter candidate drift.** Existing research favors OpenCode as a candidate, but selection requires refreshed license/version/API evidence and reconciliation of spawn/attach semantics. The reference-adapter fallback prevents candidate churn from blocking the product indefinitely.
+- **Critical path.** Executable assurance intentionally waits for the public contract, operational recovery behavior, adapter proof, and corrected verification claims. The long path is evidence of the actual product dependency, not a reason to weaken the gate.
 
 ## Extension pressure classification
 
