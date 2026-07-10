@@ -144,7 +144,7 @@ The operator can switch from Remote Pi to Patchbay when **all** of the following
 - [ ] **(b) Identity mapping verified.** The session identity mapping in §3 is verified, including the `session_new` generation-bump rule (and the fresh-session-restart bump, and the no-bump rules for `session_compact` and `--continue` restarts).
 - [ ] **(c) Reconnect/snapshot parity.** Reconnect and snapshot parity in §5 holds against the `partial` tier; unreconciled state is shown as `stale`/`unknown`, never as live.
 - [ ] **(d) Deferred features accepted.** The deferred features in §7 are consciously accepted as gaps — including an explicit accept-or-replace decision for the Remote Pi queued-message behavior (`queued_message_set`/`queued_message_clear`), since that is current operator-visible behavior being left outside adapter Operation scope.
-- [ ] **(e) Replacement-window safety verified.** All subscribed surfaces reconcile the `session_new` generation bump consistently (not just the sender); late old-generation frames become `stale_event` audit-only and do not mutate the live generation (`LateGenerationInert`).
+- [ ] **(e) Replacement-window safety requirement (stated-normative).** All subscribed surfaces must reconcile the `session_new` generation bump consistently (not just the sender); late old-generation frames must become `stale_event` audit-only and must not mutate the live generation. `LateGenerationInert` records this migration requirement as stated-normative; its current draft formula is not checked-model evidence.
 - [ ] **(f) UX acceptance met.** The UX acceptance criteria in `feature-ux-v0-acceptance` are met.
 
 ## 9. Extension pressure classification

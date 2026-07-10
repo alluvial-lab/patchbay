@@ -60,7 +60,7 @@ A new id space, adapter-assigned when a pending response slot is opened. The cor
 
 ## ElicitationState
 
-The lifecycle registry for an Elicitation. Initial state is `opened`; transitions include `opened` → `pending` or direct `opened` → terminal, and `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. Stated-normative until promoted — not checked.
+The lifecycle registry for an Elicitation. Initial state is `opened`; transitions include `opened` → `pending` or direct `opened` → terminal, and `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. The lifecycle has partial checked-model coverage for pending finality, the first valid answer terminal, typed correlation, invalid-response rejection, stale-target inertness, and withdrawal finality; the timeout/grant obligation remains stated-normative. None of this coverage is checked-normative until promoted conformance vectors land.
 
 ## Adapter capability
 
@@ -68,7 +68,7 @@ A declaration an adapter makes about the Operations and guarantees it supports: 
 
 ## Correlation context
 
-The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. Response Operations to Elicitations use a typed correlation reference to a known `ElicitationId` in the same authority/session/responder context; this case is a new stated-normative obligation. See `docs/PROTOCOL.md` Operations, Observations, Elicitations, payloads, and correlation.
+The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. Response Operations to Elicitations use a typed correlation reference to a known `ElicitationId` in the same authority/session/responder context. `TypedCorrelation` covers both correlation shapes across disjoint id spaces as checked-model; promoted conformance vectors are still required for checked-normative status. See `docs/PROTOCOL.md` Operations, Observations, Elicitations, payloads, and correlation.
 
 ## Event
 

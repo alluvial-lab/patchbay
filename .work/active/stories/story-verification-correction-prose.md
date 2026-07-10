@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-prose
 kind: story
-stage: implementing
+stage: review
 tags: [verification, foundation]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-draft-formulas]
@@ -80,3 +80,25 @@ Fix stale PROTOCOL.md, VERIFICATION.md, and ADAPTER-PI.md assertions that contra
 - [ ] GLOSSARY.md:71 corrected: response-Operation → Elicitation correlation no longer "a new stated-normative obligation"; checked-model coverage exists.
 - [ ] `*.emitted.tla` files audited: no prose presents them as independent evidence.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0.
+
+## Implementation notes
+
+- Delivery mode: direct-read prose reconciliation; the target surfaces and current model metadata were explicit, so no exploratory agent was needed.
+- Files changed: `docs/PROTOCOL.md`, `docs/VERIFICATION.md`, `docs/ADAPTER-PI.md`, `docs/SPEC.md`, `docs/GLOSSARY.md`, and this story.
+- Tests added: none (prose-only correction).
+- Fix 1 — applied both `PROTOCOL.md` correlation corrections: `TypedCorrelation` now covers Reply → Command/Message and response Operation → Elicitation as checked-model, with checked-normative status still gated on promoted vectors.
+- Fix 2 — applied the transition-adjacency correction: `allowedTransition` constrains actions to the canonical table and `NoAcceptedToCompleted` independently checks that one adjacency; the remaining graph and read/query fast-path rule stay stated-normative.
+- Fix 3 — applied the `ElicitationState` lifecycle correction with the six promoted properties named and `ElicitationTimeoutNeitherSuccessNorDenial` retained as stated-normative.
+- Fix 4 — applied the same precise partial-coverage classification in the protocol extension-pressure section.
+- Fix 5 — corrected the extension-seams row to distinguish committed checked-model properties from remaining stated-normative obligations across the Elicitation, spawn-authority, subscription, and response-correlation families.
+- Fix 6 — removed `SpawnCreatesDescendantGrant` from both non-generated checked-model inventories in `VERIFICATION.md`; fleet-spawn authorization remains checked-model, while descendant-grant creation is stated-normative. The stale seed-model summary row was an additional Unit 4 carryover not called out by the approximate line reference.
+- Fix 7 — narrowed `ElicitationFirstAnswerWins` to persistence of the first valid answer terminal and explicitly excluded decline-terminal selection.
+- Fix 8 — changed the Pi replacement-window checklist entry from a verification claim to a stated-normative migration requirement and stated that the current `LateGenerationInert` draft formula is not checked-model evidence.
+- Fix 9 — narrowed `SubscriptionGrantChecked` from an actor/session grant to an actor grant over stream/filter scope.
+- Fix 10 — replaced the stale `SPEC.md` verification-floor shorthand with the retained 21-property coverage areas and explicitly separated the demoted stated-normative obligations.
+- Fix 11 — updated the `ElicitationState` glossary entry to name its partial checked-model coverage and remaining timeout/grant obligation.
+- Fix 12 — updated the correlation-context glossary entry to describe `TypedCorrelation` checked-model coverage and the remaining vector gate.
+- Fix 13 — audited all six `specs/seed/*.emitted.tla` artifacts and searched `docs/`, root `README.md`, and `.work/` prose for emitted-TLA evidence claims. No prose presents an emitted file as independent evidence; existing references consistently call the files generated inspection artifacts or explicitly reject an independent verification lane, so no emitted file or audit-only prose needed correction.
+- Verification: `node contracts/scripts/check-models.mjs` ran twice; both runs exited 0 with 21 checked-model, 0 checked-normative, and 26 stated-normative properties, and reported the generated table already current.
+- Discrepancies from design: the story's `Files` summary omitted `docs/SPEC.md` and `docs/GLOSSARY.md` even though implementation items 10–12 required them; both were corrected. Unit 4 had also left `SpawnCreatesDescendantGrant` in the non-generated checked-model seed summary, so this reconciliation removed it. No semantic conflict was found.
+- Adjacent issues parked: none.
