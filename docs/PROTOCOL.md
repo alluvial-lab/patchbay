@@ -14,7 +14,7 @@ An **endpoint** is a concrete connection or addressable runtime instance for an 
 
 Actors, devices, and endpoints have stable identifiers assigned by Patchbay or verified through an adapter-specific trust root. Human-readable labels are metadata, not routing authority.
 
-An **operator session** is an authenticated browser or CLI session for the human operator. Operator sessions are endpoint-bound server-side records, not bearer authority stored in UI state. V0 has one human operator, but commands still name and validate the issuing actor, device, endpoint, and operator session so future multi-operator authority domains can extend the model without changing command semantics.
+An **operator session** is an authenticated browser or CLI session for the human operator. Operator sessions are endpoint-bound server-side records, not bearer authority stored in UI state. v0.1.0 has one human operator, but commands still name and validate the issuing actor, device, endpoint, and operator session so future multi-operator authority domains can extend the model without changing command semantics.
 
 ## Sessions
 
@@ -38,13 +38,13 @@ Generation rules:
 
 ## Operations, Observations, Elicitations, payloads, and correlation
 
-Patchbay uses an actor-neutral vocabulary of three primitives — Operation, Observation, and Elicitation — with Payload as content carried inside any of them, not a standalone authority primitive. Every primitive carries `{sender, recipient}` actor fields. V0 Operations are operator-originated; the actor-neutral sender vocabulary is a reserved seam for non-operator senders (agent→agent, adapter→operator service Operations). V0 does not mediate non-operator-originated authority-bearing Operations.
+Patchbay uses an actor-neutral vocabulary of three primitives — Operation, Observation, and Elicitation — with Payload as content carried inside any of them, not a standalone authority primitive. Every primitive carries `{sender, recipient}` actor fields. v0.1.0 Operations are operator-originated; the actor-neutral sender vocabulary is a reserved seam for non-operator senders (agent→agent, adapter→operator service Operations). v0.1.0 does not mediate non-operator-originated authority-bearing Operations.
 
 ### Operation
 
 An **Operation** is an authorized control-plane request by an actor to an actor, core, adapter, fleet, session, service, or resource target. An Operation may be side-effecting, read-only, lifecycle-acting, response-submitting, or fleet-creating. Operations require verified sender identity, target identity/scope, authority evaluation, a registry-owned `OperationKind`, boundary validation, idempotency semantics where applicable, and durable lifecycle state after acceptance.
 
-V0 Operations are operator-originated. The actor-neutral sender vocabulary is a reserved seam for non-operator senders (agent→agent, adapter→operator service Operations). V0 does not mediate non-operator-originated authority-bearing Operations. Initial implementation reuses `CommandState` and command ids by refinement equivalence (see `OperationState` ⇿ `CommandState` refinement below); command/message ids stay client-generated in the operator domain per the existing protocol. `Operation` is the actor-neutral vocabulary; `CommandState` is the checked lifecycle registry until the coordinated rename/model update occurs.
+v0.1.0 Operations are operator-originated. The actor-neutral sender vocabulary is a reserved seam for non-operator senders (agent→agent, adapter→operator service Operations). v0.1.0 does not mediate non-operator-originated authority-bearing Operations. Initial implementation reuses `CommandState` and command ids by refinement equivalence (see `OperationState` ⇿ `CommandState` refinement below); command/message ids stay client-generated in the operator domain per the existing protocol. `Operation` is the actor-neutral vocabulary; `CommandState` is the checked lifecycle registry until the coordinated rename/model update occurs.
 
 ### Observation
 
@@ -54,11 +54,11 @@ Live streams are delivery optimizations. Durable core records and snapshots rema
 
 ### Elicitation
 
-An **Elicitation** is a durable pending response solicitation from one actor/system component to another. It opens a response slot rather than answering a prior request. It carries an adapter-assigned `ElicitationId`, opener, `expected_responder_actor` (the operator actor for committed v0 human-facing Elicitations), target/session/generation context, `response_contract`, timeout/cancellation/withdrawal policy, correlation to the work that caused it, and terminal lifecycle state. It does **not** carry an `expected_responder_endpoint` or bind to a specific operator-session endpoint in v0. The core assigns the durable LSN when it records the Elicitation, as for other durable events.
+An **Elicitation** is a durable pending response solicitation from one actor/system component to another. It opens a response slot rather than answering a prior request. It carries an adapter-assigned `ElicitationId`, opener, `expected_responder_actor` (the operator actor for committed v0.1.0 human-facing Elicitations), target/session/generation context, `response_contract`, timeout/cancellation/withdrawal policy, correlation to the work that caused it, and terminal lifecycle state. It does **not** carry an `expected_responder_endpoint` or bind to a specific operator-session endpoint in v0.1.0. The core assigns the durable LSN when it records the Elicitation, as for other durable events.
 
 Elicitation delivery rides the subscription layer: the Elicitation is fan-out delivered to every surface with an active, grant-checked subscription to the operator actor's Elicitation stream. Any authenticated endpoint for that operator actor may answer. First-answer-wins terminalizes the Elicitation (`answered` or the applicable terminal) for all subscribed surfaces; later response attempts from other surfaces are rejected as already-terminal/stale candidates and recorded with the same `stale_event` audit treatment used for late terminal candidates. The endpoint that actually answers is captured in the response Operation's audit record at response time; it is not pre-bound in the Elicitation record.
 
-Elicitation is actor-neutral as a future-proof vocabulary: agent→operator questions, harness→client service requests, service→operator secret prompts, and future agent→agent/op→op solicitations use the same primitive when promoted. In v0, the opener is always an adapter/agent/harness, never the core; agents/adapters open Elicitations such as `AskUserQuestion`, tool-input requests, and approval gates. A response is submitted as an operator-originated `OperationKind = elicitation-response` or `approval-response` Operation correlated to the Elicitation. Two seams are explicit: the responder-binding seam is preserved by v0's operator-actor binding while endpoint/class/fallback-chain binding remains reserved; the responder-identity audit seam is built by recording the responding endpoint in the response Operation audit, with future multi-operator work adding responder-actor distinction when multiple operators can share a session.
+Elicitation is actor-neutral as a future-proof vocabulary: agent→operator questions, harness→client service requests, service→operator secret prompts, and future agent→agent/op→op solicitations use the same primitive when promoted. In v0.1.0, the opener is always an adapter/agent/harness, never the core; agents/adapters open Elicitations such as `AskUserQuestion`, tool-input requests, and approval gates. A response is submitted as an operator-originated `OperationKind = elicitation-response` or `approval-response` Operation correlated to the Elicitation. Two seams are explicit: the responder-binding seam is preserved by v0.1.0's operator-actor binding while endpoint/class/fallback-chain binding remains reserved; the responder-identity audit seam is built by recording the responding endpoint in the response Operation audit, with future multi-operator work adding responder-actor distinction when multiple operators can share a session.
 
 Core prompts are **not** Elicitations. Lockdown, expired/revoked sessions, CSRF rejection, and similar cases are core-imposed states enforced by Operation rejection or pre-protocol operator-session establishment. The protocol assumes a valid operator session exists; login, re-authentication, and lockdown exit are control-surface/web-server concerns outside the normative Operation/Elicitation flow.
 
@@ -68,7 +68,7 @@ A **Payload** is the adapter-specific content or schema-bound body carried insid
 
 ### Generic Message
 
-Generic operator-originated no-grant `Message` is not a v0 action. Operator-originated content that drives work is payload of an authorized `instruct` Operation. Agent/harness/service-originated requests for a response are durable Elicitations. The `message id` space remains reserved for future informational surfaces and for current correlation-model compatibility.
+Generic operator-originated no-grant `Message` is not a v0.1.0 action. Operator-originated content that drives work is payload of an authorized `instruct` Operation. Agent/harness/service-originated requests for a response are durable Elicitations. The `message id` space remains reserved for future informational surfaces and for current correlation-model compatibility.
 
 ### Reply and response correlation
 
@@ -79,10 +79,10 @@ A reply references a prior message or command by typed correlation. A reply is v
 Patchbay uses five separate id spaces, each with a defined assigner, to prevent forgery and enable idempotent retry:
 
 1. **Command id** — client/operator-domain generated today; identity for accepted lifecycle-bearing records. During the vocabulary transition, accepted Operations reuse this id space by refinement equivalence. A future `OperationId` rename is a coordinated artifact rename, not a sixth id space.
-2. **Message id** — reserved in v0 even though generic operator-originated no-grant `Message` drops. It remains in the registry because current `TypedCorrelation` and future non-command informational surfaces may need it.
+2. **Message id** — reserved in v0.1.0 even though generic operator-originated no-grant `Message` drops. It remains in the registry because current `TypedCorrelation` and future non-command informational surfaces may need it.
 3. **Reply id** — adapter-or-core assigned for correlated reply/observation records that answer prior command/message/operation context.
 4. **Event id** — core-assigned LSN, keyed as `(authority_domain_id, LSN)`.
-5. **Elicitation id** — new id space, adapter-assigned when a pending response slot is opened. The core assigns an LSN when it durably records the Elicitation; it does not assign the `ElicitationId` in v0.
+5. **Elicitation id** — new id space, adapter-assigned when a pending response slot is opened. The core assigns an LSN when it durably records the Elicitation; it does not assign the `ElicitationId` in v0.1.0.
 
 A command id and an idempotency key are **separate fields**: the command id is identity, and the idempotency key is the dedup handle. A retry reuses both; an intentional duplicate action uses a new command id and a new idempotency key.
 
@@ -95,7 +95,7 @@ Forgery-prevention justification:
 
 ## Canonical state registries
 
-These registries are committed v0 protocol behavior unless marked as an extension seam. Implementations may add display labels, colors, or adapter-specific metadata, but they must not add protocol states outside the registry without updating this document, contracts, models, and conformance vectors together.
+These registries are committed v0.1.0 protocol behavior unless marked as an extension seam. Implementations may add display labels, colors, or adapter-specific metadata, but they must not add protocol states outside the registry without updating this document, contracts, models, and conformance vectors together.
 
 ### Command lifecycle state
 
@@ -139,43 +139,43 @@ Boundary rules:
 
 `OperationState` is not a new checked model. It reuses `CommandState` by documented refinement: accepted Operations use the existing `CommandState` state names (`accepted`, `delivered`, `running`, `completed`, `rejected`, `failed`, `expired`, `cancelled`, `superseded`) and inherit only the properties actually checked in `command_lifecycle.qnt`: `CommandDurability`, `TerminalFinality`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `BoundaryDedup`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting`. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together; until then `CommandState` remains the checked lifecycle registry name and `Operation` is the actor-neutral protocol vocabulary that maps to it.
 
-The full transition graph above is **stated-normative**, not checked by `command_lifecycle.qnt`: the current checked model permits any non-terminal state to commit any terminal candidate, so adjacency rules such as no `accepted → completed` require a strengthened lifecycle model or an OperationState-specific model before they can be claimed checked. Read/query Operations use the same stated-normative lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative, not checked. A no-lifecycle reads optimization is a reserved seam, promotable if polling volume warrants it later.
+The full transition graph above is **stated-normative**, not checked by `command_lifecycle.qnt`: the current checked model permits any non-terminal state to commit any terminal candidate, so adjacency rules such as no `accepted → completed` require a strengthened lifecycle model or an OperationState-specific model before they can be claimed checked. Read/query Operations use the same stated-normative lifecycle in v0.1.0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative, not checked. A no-lifecycle reads optimization is a reserved seam, promotable if polling volume warrants it later.
 
 ### `OperationKind` registry
 
 One registry owns kinds, lifecycle policy, authority matching, adapter capability mapping, display labels, and generated contract variants. Adding or promoting a kind requires updating this document, `.proto`, model/vectors as applicable, and implementation together.
 
-| `OperationKind` | Meaning | Lifecycle notes | V0 disposition |
+| `OperationKind` | Meaning | Lifecycle notes | v0.1.0 disposition |
 |---|---|---|---|
-| `spawn` | Create a new runtime/session/thread/agent/process/cloud resource; target is fleet-level by default before a session exists. This is one OperationKind; spawn variants are described by payload `target_spec.shape`, not by per-variant OperationKinds. | Full `CommandState` lifecycle by refinement: initial `accepted`; then `delivered`, optional `running`, or terminal. `running` is allowed for long provisioning. | Committed v0. Requires fleet-authority modeling. The `target_spec.shape` registry is reserved/open in v0 and adapter-enforced at delivery. |
-| `attach` | Connect/reconnect a control surface endpoint to an existing session/server and reconcile. | Full lifecycle by refinement; may skip `running`, but not durable lifecycle. | Committed v0. |
-| `instruct` | Send prompt/user input/steering content into a session/turn. | Full lifecycle allowed: `accepted → delivered → running → terminal`; in-flight steering may skip `running` if adapter reports immediate acceptance. | Committed v0 for operator-originated instruct. |
-| `cancel` | Request cancellation of a target Operation/turn/session action. | Full lifecycle by refinement; the target Operation's terminal race is governed by first durable terminal commit, and cancellation completion does not rewrite an already-terminal target. | Committed v0. |
-| `interrupt` | Request immediate stop/interrupt of active execution. | Same as `cancel`; reserved distinction for adapters that expose softer cancel vs harder interrupt. | Committed v0. |
-| `query` | Read status, snapshot, capabilities, lists, history, metadata, or diagnostics. | Full lifecycle by refinement. Reads may skip `running`, but no v0 read uses a no-delivery direct-to-completed shortcut. A no-lifecycle read variant is reserved if polling volume warrants it later. | Committed v0. |
-| `approval-response` | Respond to a permission/tool approval Elicitation. | Full lifecycle by refinement. Completion updates the Elicitation terminal (`answered` or `declined`) only if response validation succeeds and first-terminal rules allow. | Committed v0. |
-| `elicitation-response` | Respond to non-approval Elicitations. | Full lifecycle by refinement. Invalid response Operation is rejected unless explicit Elicitation policy terminalizes the slot. | Committed v0 for `question` contracts; reserved for `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, and `service_request` contracts. |
-| `reconfigure` | Change model, reasoning/thinking level, permission mode, tools/MCP, agent mode, workspace, or adapter config. | Full lifecycle by refinement; `running` only for adapters with long reconfiguration. | Committed v0. |
-| `session-management` | Resume, fork, compact, clear, archive/delete, revert, share/unshare, remove messages, checkpoint restore, disconnect/retire existing sessions/resources. | Full lifecycle by refinement because compaction/archive/delete can be long-running; quick local actions may skip `running`. | Committed v0. |
-| `agent-send` | Reserved design seam for agent→agent mesh, op→op routing, adapter→operator service Operations, and other non-operator Operation directions. Informed by remote-pi mesh `agent_send`/`agent_request` prior art (not one of the 7 surveyed harnesses) and by Antigravity trigger / Codex service-request pressure. | Not validatable in v0. If submitted in v0, rejected before acceptance. | Reserved seam; v0 submissions reject with `validation_failed`. |
-| `adapter-utility-exec` | Reserved seam for standalone adapter utility execution that does not create a thread/turn or persistent runtime session. Codex `command/exec` and `process/spawn` are the surveyed pressure `[codex-appserver-protocol]{5}` `[codex-appserver-types]{9}` `[codex-appserver-types]{10}`. | Not validatable in v0. If submitted in v0, rejected before acceptance; full lifecycle/idempotency modeling deferred. | Reserved seam; named in registry, not validatable in v0; submissions reject with `validation_failed`. Full lifecycle/idempotency modeling deferred. |
+| `spawn` | Create a new runtime/session/thread/agent/process/cloud resource; target is fleet-level by default before a session exists. This is one OperationKind; spawn variants are described by payload `target_spec.shape`, not by per-variant OperationKinds. | Full `CommandState` lifecycle by refinement: initial `accepted`; then `delivered`, optional `running`, or terminal. `running` is allowed for long provisioning. | Committed v0.1.0. Requires fleet-authority modeling. The `target_spec.shape` registry is reserved/open in v0.1.0 and adapter-enforced at delivery. |
+| `attach` | Connect/reconnect a control surface endpoint to an existing session/server and reconcile. | Full lifecycle by refinement; may skip `running`, but not durable lifecycle. | Committed v0.1.0. |
+| `instruct` | Send prompt/user input/steering content into a session/turn. | Full lifecycle allowed: `accepted → delivered → running → terminal`; in-flight steering may skip `running` if adapter reports immediate acceptance. | Committed v0.1.0 for operator-originated instruct. |
+| `cancel` | Request cancellation of a target Operation/turn/session action. | Full lifecycle by refinement; the target Operation's terminal race is governed by first durable terminal commit, and cancellation completion does not rewrite an already-terminal target. | Committed v0.1.0. |
+| `interrupt` | Request immediate stop/interrupt of active execution. | Same as `cancel`; reserved distinction for adapters that expose softer cancel vs harder interrupt. | Committed v0.1.0. |
+| `query` | Read status, snapshot, capabilities, lists, history, metadata, or diagnostics. | Full lifecycle by refinement. Reads may skip `running`, but no v0.1.0 read uses a no-delivery direct-to-completed shortcut. A no-lifecycle read variant is reserved if polling volume warrants it later. | Committed v0.1.0. |
+| `approval-response` | Respond to a permission/tool approval Elicitation. | Full lifecycle by refinement. Completion updates the Elicitation terminal (`answered` or `declined`) only if response validation succeeds and first-terminal rules allow. | Committed v0.1.0. |
+| `elicitation-response` | Respond to non-approval Elicitations. | Full lifecycle by refinement. Invalid response Operation is rejected unless explicit Elicitation policy terminalizes the slot. | Committed v0.1.0 for `question` contracts; reserved for `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, and `service_request` contracts. |
+| `reconfigure` | Change model, reasoning/thinking level, permission mode, tools/MCP, agent mode, workspace, or adapter config. | Full lifecycle by refinement; `running` only for adapters with long reconfiguration. | Committed v0.1.0. |
+| `session-management` | Resume, fork, compact, clear, archive/delete, revert, share/unshare, remove messages, checkpoint restore, disconnect/retire existing sessions/resources. | Full lifecycle by refinement because compaction/archive/delete can be long-running; quick local actions may skip `running`. | Committed v0.1.0. |
+| `agent-send` | Reserved design seam for agent→agent mesh, op→op routing, adapter→operator service Operations, and other non-operator Operation directions. Informed by remote-pi mesh `agent_send`/`agent_request` prior art (not one of the 7 surveyed harnesses) and by Antigravity trigger / Codex service-request pressure. | Not validatable in v0.1.0. If submitted in v0.1.0, rejected before acceptance. | Reserved seam; v0.1.0 submissions reject with `validation_failed`. |
+| `adapter-utility-exec` | Reserved seam for standalone adapter utility execution that does not create a thread/turn or persistent runtime session. Codex `command/exec` and `process/spawn` are the surveyed pressure `[codex-appserver-protocol]{5}` `[codex-appserver-types]{9}` `[codex-appserver-types]{10}`. | Not validatable in v0.1.0. If submitted in v0.1.0, rejected before acceptance; full lifecycle/idempotency modeling deferred. | Reserved seam; named in registry, not validatable in v0.1.0; submissions reject with `validation_failed`. Full lifecycle/idempotency modeling deferred. |
 
 Boundary rules:
 
 - Unknown `OperationKind` is `SubmissionOutcome = rejected` with `validation_failed` before grant evaluation.
-- Reserved-but-not-validatable kinds such as `agent-send` and `adapter-utility-exec` also reject with `validation_failed` in v0. Promotion is a registry update, not a schema change.
+- Reserved-but-not-validatable kinds such as `agent-send` and `adapter-utility-exec` also reject with `validation_failed` in v0.1.0. Promotion is a registry update, not a schema change.
 - Unsupported-by-adapter known committed kind is a delivery-layer `unsupported_command` rejection after acceptance, matching the existing capability posture (the core does not gate delivery on cached adapter capability).
 
 #### Spawn payload and authority commitments
 
-- **One `spawn` OperationKind.** Worktree, same-dir, session, process, thread, local sidecar, and cloud-environment spawns are not separate OperationKinds in v0. Per-variant OperationKinds are reserved only if a future registry update promotes them.
-- **`target_spec.shape` = reserved open shape registry.** The spawn Operation payload includes `target_spec.shape`. V0 names shapes for vocabulary, audit, and display (for example, "spawned a worktree") but does not validate shape variants at the protocol layer. The adapter capability manifest declares which shapes the adapter supports; the adapter accepts or rejects the accepted Operation at delivery time with `unsupported_command`, consistent with the capability-not-authority discipline.
-- **Target scope = fleet-level.** A v0 spawn grant authorizes all spawn variants across any adapter/supervisor the operator can reach. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed.
-- **Per-variant authority is reserved.** V0 does not implement "may spawn worktrees but not cloud environments" authority. If needed later, per-variant authority can be expressed through grant `target scope` or by promoting spawn variants to distinct OperationKinds; both are reserved seams, not v0 behavior.
+- **One `spawn` OperationKind.** Worktree, same-dir, session, process, thread, local sidecar, and cloud-environment spawns are not separate OperationKinds in v0.1.0. Per-variant OperationKinds are reserved only if a future registry update promotes them.
+- **`target_spec.shape` = reserved open shape registry.** The spawn Operation payload includes `target_spec.shape`. v0.1.0 names shapes for vocabulary, audit, and display (for example, "spawned a worktree") but does not validate shape variants at the protocol layer. The adapter capability manifest declares which shapes the adapter supports; the adapter accepts or rejects the accepted Operation at delivery time with `unsupported_command`, consistent with the capability-not-authority discipline.
+- **Target scope = fleet-level.** A v0.1.0 spawn grant authorizes all spawn variants across any adapter/supervisor the operator can reach. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed.
+- **Per-variant authority is reserved.** v0.1.0 does not implement "may spawn worktrees but not cloud environments" authority. If needed later, per-variant authority can be expressed through grant `target scope` or by promoting spawn variants to distinct OperationKinds; both are reserved seams, not v0.1.0 behavior.
 - **Descendant authority = spawned-session manifest.** Spawn completion includes an auto-issued grant record for the spawned session. This is an explicit, operator-visible, auditable grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant record is a normal grant instance with:
   - `grant id` — standard grant id (core-assigned).
   - `authority domain id` — same domain as the spawning grant.
-  - `subject actor id` — the spawner (operator actor in v0).
+  - `subject actor id` — the spawner (operator actor in v0.1.0).
   - `optional subject endpoint id or endpoint class` — the spawning endpoint, if applicable.
   - `target scope` — the spawned session/generation (an existing-session scope, now that the session exists).
   - `allowed OperationKinds` — the full set of committed kinds applicable to an existing session, enumerated explicitly (not a wildcard `all`): `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`. `spawn` is excluded because recursive spawning requires a separate fleet-level spawn grant; `attach` is excluded because the spawned session is already attached to its spawner's control plane.
@@ -184,8 +184,8 @@ Boundary rules:
   - `revocation generation or revoked time` — standard; revocable independently of the spawn grant (two-lever rule, no cascade).
   - `revocation policy for already accepted commands` — standard.
   - `audit id` — links to the spawn-completion audit event.
-- **Delegation remains out of v0.** The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
-- **Revocation uses two independent levers.** Revoking the spawn grant prevents future spawns. Already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0 behavior; future cascade is a query over grant provenance and needs no schema change.
+- **Delegation remains out of v0.1.0.** The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0.1.0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
+- **Revocation uses two independent levers.** Revoking the spawn grant prevents future spawns. Already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0.1.0 behavior; future cascade is a query over grant provenance and needs no schema change.
 - **Idempotency is capability-manifest declared.** Spawn uses the adapter capability manifest's `idempotency strength` field (`none` / `at-Patchbay-boundary` / `end-to-end`). Most adapters likely declare `at-Patchbay-boundary`: Patchbay deduplicates the Operation record, while adapter retry may still create a duplicate external process. Adapters that track spawn idempotency internally may declare `end-to-end`. Duplicate external process reporting maps through the failure vocabulary; Patchbay does not solve adapter-side process duplication beyond its boundary dedup.
 
 ### Submission outcome and local submission state
@@ -267,7 +267,7 @@ Derived UI labels such as “Live idle”, “Working”, “Stale working”, o
 
 ### `ElicitationState` lifecycle
 
-`ElicitationState` is a new registry, not a projection of `CommandState`. It is **stated-normative** until promoted (see `docs/VERIFICATION.md`); Elicitation ids are adapter-assigned in v0 and the core does not open Elicitations in v0.
+`ElicitationState` is a new registry, not a projection of `CommandState`. It is **stated-normative** until promoted (see `docs/VERIFICATION.md`); Elicitation ids are adapter-assigned in v0.1.0 and the core does not open Elicitations in v0.1.0.
 
 | State | Terminal? | Meaning |
 |---|---:|---|
@@ -304,7 +304,7 @@ Rules:
 
 Terminal `ElicitationState` transitions are delivered on the same authorized Elicitation subscription stream as `opened`/`pending` (consistent with the Presence/Subscription model in [`§ Presence and Subscription`](#presence-and-subscription)). A surface that misses the terminal transition (e.g., it was offline when another surface answered) reconciles through cursor replay and/or snapshot repair on reconnect — the terminal state is part of the durable Elicitation record. A late second answer from a lagging surface arrives after the Elicitation is already terminal; it is rejected as a stale late terminal candidate (audited, does not rewrite state), and that rejection plus the terminal transition on the stream is what forces the lagging surface to resync to the `answered` (or other terminal) state.
 
-- A response Operation must reference the `ElicitationId` with a typed correlation, must satisfy the active `response_contract`, and must be issued by an authenticated endpoint for the `expected_responder_actor` in v0. The responding endpoint is captured in the response Operation audit for debugging.
+- A response Operation must reference the `ElicitationId` with a typed correlation, must satisfy the active `response_contract`, and must be issued by an authenticated endpoint for the `expected_responder_actor` in v0.1.0. The responding endpoint is captured in the response Operation audit for debugging.
 - Invalid response behavior: default is **reject the response Operation** (`SubmissionOutcome = rejected` before acceptance, or `OperationState = rejected` after acceptance by policy) and leave the Elicitation `pending`. A contract may explicitly specify terminal-on-invalid policy, but that policy must name the terminal outcome (`declined`, `superseded`, or `cancelled`) and be tested.
 - No-answer is not an Operation. It is either continued `pending` or a terminal policy event such as `expired`, `cancelled`, `withdrawn`, or `stale`.
 - `answered` does not imply the underlying tool/action succeeded; it only means the response slot was satisfied. Subsequent work emits Operations/Observations as usual.
@@ -313,7 +313,7 @@ Reserved future Elicitation shapes: multi-responder quorum Elicitations; multi-a
 
 ### `response_contract` registry
 
-A `response_contract` describes what kind of response is semantically required; optional UI hints describe how a surface may render it. The `elicitation-response` OperationKind is committed v0. The `response_contract.contract_kind` values have a committed/reserved split: committed v0 contract kinds are `approval` and `question`; reserved contract kinds are named in the registry but not validatable in v0. `freeform` is reserved because the solid surveyed grounding is currently Claude's optional `AskUserQuestion` freeform answer, while other surveyed response surfaces are structured question/answer, approval, secret, function-result, or service-request shapes rather than standalone unstructured Elicitation responses. A response submitted for an unknown or reserved/unsupported `contract_kind` is rejected at submission with `validation_failed` unless a later registry update promotes that contract kind.
+A `response_contract` describes what kind of response is semantically required; optional UI hints describe how a surface may render it. The `elicitation-response` OperationKind is committed v0.1.0. The `response_contract.contract_kind` values have a committed/reserved split: committed v0.1.0 contract kinds are `approval` and `question`; reserved contract kinds are named in the registry but not validatable in v0.1.0. `freeform` is reserved because the solid surveyed grounding is currently Claude's optional `AskUserQuestion` freeform answer, while other surveyed response surfaces are structured question/answer, approval, secret, function-result, or service-request shapes rather than standalone unstructured Elicitation responses. A response submitted for an unknown or reserved/unsupported `contract_kind` is rejected at submission with `validation_failed` unless a later registry update promotes that contract kind.
 
 Required fields:
 
@@ -322,19 +322,19 @@ Required fields:
 - `ui_hints` — optional list such as `select-one`, `select-many`, `free-text`, `secret-input`, `upload`, `draw`, `confirm`, `diff-review`;
 - `timeout_policy`;
 - `invalid_response_policy`;
-- `responder_policy` — v0 `expected_responder_actor` (operator actor for committed human-facing Elicitations); endpoint class, service role, fallback chain, and tighter binding are reserved. The responding endpoint is recorded in the response Operation audit, not pre-bound in the Elicitation;
+- `responder_policy` — v0.1.0 `expected_responder_actor` (operator actor for committed human-facing Elicitations); endpoint class, service role, fallback chain, and tighter binding are reserved. The responding endpoint is recorded in the response Operation audit, not pre-bound in the Elicitation;
 - `sensitivity` — whether raw response may be logged, redacted, encrypted, or never persisted in plaintext.
 
-| `contract_kind` | Semantics | V0 disposition |
+| `contract_kind` | Semantics | v0.1.0 disposition |
 |---|---|---|
-| `approval` | Allow/deny/allow-once/always/policy-amend/modified-input permission response. | Committed v0. |
-| `question` | Answer one or more questions, possibly with options and freeform text. | Committed v0. |
-| `freeform` | Unstructured text response. | Reserved seam. Named in registry, not validatable in v0; demoted until more than Claude's optional freeform answer is grounded as a genuine Elicitation response surface. |
-| `secret` | Provide sensitive secret/token/input with redaction/no-log policy. | Reserved seam. Named in registry, not validatable in v0. |
-| `function_result` | Return custom tool/function result to a waiting service/harness. | Reserved seam. Named in registry, not validatable in v0. |
-| `file_attachment` | Provide file/blob/image/attachment reference or upload. | Reserved seam. Named in registry, not validatable in v0. |
-| `structured_schema` | Response must validate against declared JSON/protobuf/schema. | Reserved seam. Named in registry, not validatable in v0. |
-| `service_request` | Non-human service response such as current time, attestation generation, auth refresh, or adapter-provided evidence. | Reserved seam. Named in registry, not validatable in v0. |
+| `approval` | Allow/deny/allow-once/always/policy-amend/modified-input permission response. | Committed v0.1.0. |
+| `question` | Answer one or more questions, possibly with options and freeform text. | Committed v0.1.0. |
+| `freeform` | Unstructured text response. | Reserved seam. Named in registry, not validatable in v0.1.0; demoted until more than Claude's optional freeform answer is grounded as a genuine Elicitation response surface. |
+| `secret` | Provide sensitive secret/token/input with redaction/no-log policy. | Reserved seam. Named in registry, not validatable in v0.1.0. |
+| `function_result` | Return custom tool/function result to a waiting service/harness. | Reserved seam. Named in registry, not validatable in v0.1.0. |
+| `file_attachment` | Provide file/blob/image/attachment reference or upload. | Reserved seam. Named in registry, not validatable in v0.1.0. |
+| `structured_schema` | Response must validate against declared JSON/protobuf/schema. | Reserved seam. Named in registry, not validatable in v0.1.0. |
+| `service_request` | Non-human service response such as current time, attestation generation, auth refresh, or adapter-provided evidence. | Reserved seam. Named in registry, not validatable in v0.1.0. |
 
 UI hints are optional sub-fields of `question` and `approval` contracts, not contract kinds. Examples include `select-one`, `select-many`, `free-text`, `upload`, and `draw`; the set is intentionally open and reserved for UI/adapters. UI hints are non-authoritative: changing a prompt from select-one to free-text does not change the protocol contract kind.
 
@@ -392,7 +392,7 @@ Cancellation, expiration, supersession, adapter completion, adapter failure, and
 - Cancellation is a command or policy request that races with execution. If `completed`, `failed`, `expired`, `cancelled`, `superseded`, or another terminal state is committed first, later cancellation cannot mutate that command. Depending on the API shape, the too-late cancellation attempt may be refused before acceptance, recorded as an ineffective cancellation failure, or preserved as an audit event; it never rewrites the original command's terminal state.
 - Expiration is evaluated against the command validity window. If expiration wins before a later terminal outcome is committed, the command becomes `expired`; if a terminal outcome wins first, expiration does not rewrite history.
 - Supersession requires an explicit replacement relationship to a newer accepted command or policy decision. Supersession is not a synonym for cancellation or failure, and a late supersession candidate does not rewrite an already-terminal command.
-- Global priority ordering such as `cancelled > completed` is not part of v0's generic command lifecycle. Future safety-critical OperationKinds may define explicit abort or fencing policy, but that policy must be designed as OperationKind behavior rather than a hidden override of terminal-state finality.
+- Global priority ordering such as `cancelled > completed` is not part of v0.1.0's generic command lifecycle. Future safety-critical OperationKinds may define explicit abort or fencing policy, but that policy must be designed as OperationKind behavior rather than a hidden override of terminal-state finality.
 
 ## Snapshots and streams
 
@@ -406,11 +406,11 @@ Snapshots expose the canonical state axes above. Stale cached state must not ren
 
 The coordination core owns a single totally-ordered durable event log per authority domain. Every accepted state-transition event is assigned a monotonic, gap-free **log sequence number** (`LSN`) at durable-commit time. The `LSN` is the canonical ordering for first-terminal-commit-wins and for snapshot reconciliation.
 
-Event, cursor, and revision identity is the **`(authority_domain_id, LSN)` tuple**, not a bare LSN. V0 has one authority domain, so in practice every key carries the same domain id — but the *shape* of the durable key includes the domain demarcator. This is forward-compatibility hygiene: when federation arrives, cross-domain coordination becomes a layer on top of the per-domain keys, not a data migration that retroactively attaches domains to historical events. Hybrid logical clocks (HLC) / logical-clock abstraction was considered for cross-domain federation and deferred as premature; the per-domain key shape is the federation seam, not a blocker to it.
+Event, cursor, and revision identity is the **`(authority_domain_id, LSN)` tuple**, not a bare LSN. v0.1.0 has one authority domain, so in practice every key carries the same domain id — but the *shape* of the durable key includes the domain demarcator. This is forward-compatibility hygiene: when federation arrives, cross-domain coordination becomes a layer on top of the per-domain keys, not a data migration that retroactively attaches domains to historical events. Hybrid logical clocks (HLC) / logical-clock abstraction was considered for cross-domain federation and deferred as premature; the per-domain key shape is the federation seam, not a blocker to it.
 
 A **revision** is the `LSN` at which a specific view (command, session, actor, grant, audit record) was last durably updated. A **cursor** is an `LSN` a control surface or adapter holds to express "I have authoritative knowledge up to here."
 
-V0 revision/cursor rules:
+v0.1.0 revision/cursor rules:
 
 - Every snapshot carries the `LSN` it was materialized at and the per-view revisions it reflects.
 - A control surface reconciles by submitting its cursor; the core returns events with `LSN > cursor` and/or a snapshot materialized at a later `LSN`.
@@ -421,7 +421,7 @@ V0 revision/cursor rules:
 
 ### Atomicity between events and snapshots
 
-V0 requires the following atomicity guarantees at the persistence boundary:
+v0.1.0 requires the following atomicity guarantees at the persistence boundary:
 
 - A command is durably recorded (`accepted`) before delivery is attempted. Delivery never relies on in-memory state.
 - A terminal transition is committed to the log before it is reflected in snapshots or returned to control surfaces.
@@ -438,13 +438,13 @@ Subscription is the deliberate exception to lifecycle-bearing Operations. A subs
 
 The section distinguishes these axes:
 
-| Axis | Meaning | V0 registry/fields |
+| Axis | Meaning | v0.1.0 registry/fields |
 |---|---|---|
 | Endpoint availability | Is a concrete endpoint connection/address reachable? | Reuse/align with `SessionConnectivityState`: `live`, `stale`, `offline`, `unknown`, `failed`; fields: endpoint id, device id, adapter generation, last authoritative LSN. |
 | Actor presence | Is an actor currently represented by at least one usable endpoint, and with what attention posture? | `available`, `away`, `unavailable`, `unknown`; derived from endpoint observations and session connectivity state, never authority by itself. |
 | Observation subscription | Which actor/endpoint/control surface is subscribed to which event/snapshot stream? | `subscribed`, `resuming`, `unsubscribed`, `failed`; fields: subscription id, authorized filter, cursor, last delivered LSN, audit id for establish/deny. |
 | Attention-required state | Does a target require human/service attention? | `none`, `attention_requested`, `response_required`, `blocking`, `escalated`; source is Elicitation or adapter Observation. |
-| Expected responder | Which actor should answer an Elicitation, and which endpoint actually did? | Field on Elicitation: `expected_responder_actor` (operator actor in v0). No `expected_responder_endpoint` is present in v0. Optional endpoint class/control-surface role, fallback/escalation policy, and responder generation are reserved seams. Response Operation audit records the actual responding endpoint. |
+| Expected responder | Which actor should answer an Elicitation, and which endpoint actually did? | Field on Elicitation: `expected_responder_actor` (operator actor in v0.1.0). No `expected_responder_endpoint` is present in v0.1.0. Optional endpoint class/control-surface role, fallback/escalation policy, and responder generation are reserved seams. Response Operation audit records the actual responding endpoint. |
 | Stale-presence reconciliation | What happens after disconnect/reconnect or missed presence events? | Presence Observations carry LSN/revision; reconnecting clients submit cursor; stale presence cannot be rendered as live; Elicitations may terminalize `stale` if opener/target generation is superseded. |
 
 Implementation notes:
@@ -453,27 +453,27 @@ Implementation notes:
 - Elicitation streams are subscription streams: all authorized subscribed surfaces for the expected operator actor receive the Elicitation, and the first valid answer clears it everywhere.
 - Observation streams are optimizations; snapshots repair missed events.
 - Presence is a derived fact, not a query target. One-shot "is session X present?" reads route through snapshot/status `query` Operations under the uniform read lifecycle; there is no distinct `query-presence` OperationKind.
-- Single-operator v0 has no separate presence-leak threat inside the operator's authority domain. Filter-scoped subscriptions for multi-operator presence-leak prevention are a reserved seam; v0 must not bake in a hard-to-retract rule that all presence is globally public.
+- Single-operator v0.1.0 has no separate presence-leak threat inside the operator's authority domain. Filter-scoped subscriptions for multi-operator presence-leak prevention are a reserved seam; v0.1.0 must not bake in a hard-to-retract rule that all presence is globally public.
 - Push notifications are an attention-routing surface, not authority.
 
 ## Persistence and recovery
 
-The coordination core owns durable command state, the event log, snapshots, and audit records through a storage port. V0 persistence assumptions:
+The coordination core owns durable command state, the event log, snapshots, and audit records through a storage port. v0.1.0 persistence assumptions:
 
-- **Single-writer**: one authoritative core process writes to the log. There is no multi-writer, HA, or split-brain recovery in v0.
+- **Single-writer**: one authoritative core process writes to the log. There is no multi-writer, HA, or split-brain recovery in v0.1.0.
 - **Local-first**: the default backend is embedded and local to the core process. Domain semantics must not depend on a specific storage engine.
 - **Port-isolated**: the core reads/writes through a storage port; adapters and control surfaces never touch persistence directly.
 - **Crash recovery**: on restart, the core replays the durable log to reconstruct in-memory state up to the last committed `LSN`. Accepted-but-not-yet-terminal commands are restored as `accepted` (or a later committed state) and continue through their lifecycle. No accepted command disappears silently after a crash.
 - **Idempotent reprocessing**: replaying the log produces identical state. Re-delivery to adapters after recovery is governed by adapter capability and command policy, not by log replay.
 - **Snapshot checkpointing**: snapshots are periodic materializations used to bound replay cost on recovery; they are derived artifacts, never an alternate source of truth. A recovery may load the latest snapshot then replay events with `LSN > snapshot_LSN`.
 
-V0 does not require WAL replication, remote replication, point-in-time cloning, or storage-engine hot swap. Those are reserved seams.
+v0.1.0 does not require WAL replication, remote replication, point-in-time cloning, or storage-engine hot swap. Those are reserved seams.
 
 ## Authority grants
 
 A grant authorizes a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform a set of OperationKinds against a target scope. Grants are explicit, revocable, and evaluated inside one authority domain.
 
-A v0 grant records:
+A v0.1.0 grant records:
 
 - grant id;
 - authority domain id;
@@ -486,15 +486,15 @@ A v0 grant records:
 - revocation generation or revoked time;
 - revocation policy for already accepted commands.
 
-Delegation is a reserved future direction, not a v0 field. A `parent grant id / delegated-by` field is intentionally absent from v0; it must be designed together with delegation semantics and multi-operator / federated-authority work, both of which are outside v0 scope. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field; grant matching uses the issuer actor and optional endpoint. Adapter capability sets are not grant authority (see Adapter capabilities).
+Delegation is a reserved future direction, not a v0.1.0 field. A `parent grant id / delegated-by` field is intentionally absent from v0.1.0; it must be designed together with delegation semantics and multi-operator / federated-authority work, both of which are outside v0.1.0 scope. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field; grant matching uses the issuer actor and optional endpoint. Adapter capability sets are not grant authority (see Adapter capabilities).
 
 ### Spawn authority
 
-Spawn is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority (e.g. "may spawn worktrees but not cloud environments") is reserved.
+Spawn is fleet-level by default in v0.1.0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority (e.g. "may spawn worktrees but not cloud environments") is reserved.
 
-Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant is the normal grant instance defined in `#### Spawn payload and authority commitments`: same authority domain as the spawning grant, spawner/operator subject, spawned session/generation target scope, explicitly enumerated existing-session `allowed OperationKinds`, spawn-operation/spawning-grant provenance, standard expiration and revocation metadata, and a spawn-completion audit id. It preserves the seam for future delegation without adding a delegation lineage field to v0; the reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority.
+Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant is the normal grant instance defined in `#### Spawn payload and authority commitments`: same authority domain as the spawning grant, spawner/operator subject, spawned session/generation target scope, explicitly enumerated existing-session `allowed OperationKinds`, spawn-operation/spawning-grant provenance, standard expiration and revocation metadata, and a spawn-completion audit id. It preserves the seam for future delegation without adding a delegation lineage field to v0.1.0; the reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority.
 
-Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0 behavior; future cascade is a query over grant provenance and needs no schema change.
+Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0.1.0 behavior; future cascade is a query over grant provenance and needs no schema change.
 
 Grant checks happen before command acceptance. A submission without a live matching grant is rejected before delivery with `SubmissionOutcome = rejected` and `authorization_denied` or a narrower applicable failure term.
 
@@ -502,7 +502,7 @@ Authorization is deny-by-default. Control surfaces may hide unavailable actions,
 
 Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and OperationKind: continue, cancel where supported, or require reauthorization. Revocation does not delete command history; late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy.
 
-V0 revocation actions include current-session revocation, all-session revocation, endpoint/device revocation, adapter/session grant revocation, and security lockdown. A lockdown rejects new commands, marks affected runtime sessions stale, requires fresh login, and records the reason.
+v0.1.0 revocation actions include current-session revocation, all-session revocation, endpoint/device revocation, adapter/session grant revocation, and security lockdown. A lockdown rejects new commands, marks affected runtime sessions stale, requires fresh login, and records the reason.
 
 ## Leases
 
@@ -515,13 +515,13 @@ A lease is a time-bounded exclusive claim over a resource or coordination role. 
 - renewal rules;
 - release rules.
 
-Within one modeled Patchbay authority domain, the following exclusivity properties hold **once a fencing model (lease epochs or fencing tokens) exists and lease-backed behavior is promoted into v0 by a future feature**. They are a modeled precondition required before any such promotion, not a v0 guarantee, and are not checked in v0:
+Within one modeled Patchbay authority domain, the following exclusivity properties hold **once a fencing model (lease epochs or fencing tokens) exists and lease-backed behavior is promoted into v0.1.0 by a future feature**. They are a modeled precondition required before any such promotion, not a v0.1.0 guarantee, and are not checked in v0.1.0:
 
 - Two actors cannot simultaneously hold the same exclusive live lease within one authority domain.
 - Expired leases do not authorize new exclusive action.
 - Lease renewal respects holder identity and scope.
 
-V0 reserves leases as an extension seam. A future feature promoting leases into v0 must define the fencing mechanism, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior. That feature must not overload `CommandState` or session state.
+v0.1.0 reserves leases as an extension seam. A future feature promoting leases into v0.1.0 must define the fencing mechanism, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior. That feature must not overload `CommandState` or session state.
 
 ## Adapter capabilities
 
@@ -550,7 +550,7 @@ Attach, detach, failure, and capability redeclaration are audit events. Capabili
 
 ### Adapter snapshot capability tiers
 
-Adapter snapshot support is not boolean. V0 recognizes three tiers:
+Adapter snapshot support is not boolean. v0.1.0 recognizes three tiers:
 
 - **Authoritative snapshot** — the adapter can return a complete, authoritative view of the session at a session generation the core can reconcile. The core treats this as a valid snapshot source and may use it to repair missed events.
 - **Partial snapshot** — the adapter can return some state (e.g. command history or last-known status) but cannot fully reconstruct the session view. The core marks the unreconciled axes `unknown` or `stale` per `SessionConnectivityState`/`SessionActivityState` rather than synthesizing live state.
@@ -565,19 +565,19 @@ Degraded behavior rules:
 
 ## Extension pressure classification
 
-- **Committed v0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative until promoted), the `response_contract` registry (committed contract kinds: `approval`, `question`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
-- **Reserved extension seams:** adapter-specific diagnostics, future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation lineage, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
-- **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
+- **Committed v0.1.0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative until promoted), the `response_contract` registry (committed contract kinds: `approval`, `question`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, and stale/unknown presentation honesty.
+- **Reserved extension seams:** adapter-specific diagnostics, future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0.1.0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation lineage, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
+- **Rejected direction:** Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0.1.0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
 
 ## Extension seams registry
 
-This is the cross-cutting consolidation of reserved and rejected seams across the v0 foundation, indexed by extension area. Canonical entries remain in their per-registry homes (OperationKind enum, adapter capability manifest, state registries, failure vocabulary); this section is the cross-cutting index that tags each with its classification and where it was settled. It is the single view to answer "what did v0 leave open?" The standing discipline and pressure-test checklist live in `docs/SPEC.md` ("Non-foreclosure discipline") and `AGENTS.md` ("Extension pressure-test checklist").
+This is the cross-cutting consolidation of reserved and rejected seams across the v0.1.0 foundation, indexed by extension area. Canonical entries remain in their per-registry homes (OperationKind enum, adapter capability manifest, state registries, failure vocabulary); this section is the cross-cutting index that tags each with its classification and where it was settled. It is the single view to answer "what did v0.1.0 leave open?" The standing discipline and pressure-test checklist live in `docs/SPEC.md` ("Non-foreclosure discipline") and `AGENTS.md` ("Extension pressure-test checklist").
 
-Classification key: **C** = committed v0; **R** = reserved seam (v0 does not implement; named in registry, wire-present where forward-compat matters, submission rejects); **X** = explicitly rejected in v0 (promotion is a reversal, not a gap).
+Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does not implement; named in registry, wire-present where forward-compat matters, submission rejects); **X** = explicitly rejected in v0.1.0 (promotion is a reversal, not a gap).
 
 | Extension area | Decision | Class | Settled in |
 |---|---|---|---|
-| principals / authority domains | single operator + single authority domain | C | `feature-v0-walking-skeleton`; SECURITY §"V0 authority domain" |
+| principals / authority domains | single operator + single authority domain | C | `feature-v0-walking-skeleton`; SECURITY §"v0.1.0 authority domain" |
 | principals / authority domains | multi-operator / federated authority domains, shared authority administration, handoffs | R | SECURITY; GLOSSARY "authority domain"; `idea-multi-human-coordination` |
 | adapters | Pi as the first workflow-migration adapter | C | SPEC "Adapter posture" |
 | adapters | other harnesses, shell jobs, CI jobs, project tools, notification systems, human approval surfaces | R | SPEC "Adapter posture" |
@@ -589,7 +589,7 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | human control surfaces | native desktop app | R | `idea-desktop-app-surface`; SPEC "Starting scope" |
 | human control surfaces | notification surface as a control surface | R | SPEC; GLOSSARY "control surface" |
 | human control surfaces | operator-customizable skins/layouts above the conformance floor | R | `feature-ux-v0-acceptance`; `idea-operator-customizable-ux-skins` |
-| human control surfaces | shared presentation-component layer implementation (seam named, not built in v0) | R | `feature-ux-v0-acceptance`; ARCHITECTURE "presentation model" |
+| human control surfaces | shared presentation-component layer implementation (seam named, not built in v0.1.0) | R | `feature-ux-v0-acceptance`; ARCHITECTURE "presentation model" |
 | transports / deployment topology | single authoritative core; adapters/surfaces may be separate processes | C | SPEC topology |
 | transports / deployment topology | HA, clustering, split-brain recovery, multiple authoritative cores | R | SPEC non-goals; ARCHITECTURE |
 | storage / persistence backends | local durable event/snapshot store behind ports | C | `feature-persistence-snapshot-model` |
@@ -604,29 +604,29 @@ Classification key: **C** = committed v0; **R** = reserved seam (v0 does not imp
 | notification providers | notification provider as a future control surface / delivery channel | R | SPEC; GLOSSARY |
 | third-party tool integrations | `agent-send` OperationKind (agent→agent mesh, op→op routing, adapter→operator service) | R | PROTOCOL OperationKind registry; `idea-agent-to-agent-mesh-seam` |
 | third-party tool integrations | `adapter-utility-exec` OperationKind (standalone adapter utility exec) | R | PROTOCOL OperationKind registry |
-| offline / queued operator intent | `queued_message_set` / `queued_message_clear` are transport/pairing, out of adapter Operation scope; migration switch-decision requires an explicit accept-or-replace. (Whether Patchbay later adds an offline-queued-intent OperationKind is an open design question, not a settled classification — it is not a wire-present reserved value in v0.) | X | `feature-pi-parity-checklist` §7-8 |
-| encryption / key-management | passphrase primary authenticator for v0 | C | SECURITY |
+| offline / queued operator intent | `queued_message_set` / `queued_message_clear` are transport/pairing, out of adapter Operation scope; migration switch-decision requires an explicit accept-or-replace. (Whether Patchbay later adds an offline-queued-intent OperationKind is an open design question, not a settled classification — it is not a wire-present reserved value in v0.1.0.) | X | `feature-pi-parity-checklist` §7-8 |
+| encryption / key-management | passphrase primary authenticator for v0.1.0 | C | SECURITY |
 | encryption / key-management | passkeys / MFA | R | SECURITY |
 | encryption / key-management | adapter-proves-identity; mechanism deferred (not mTLS-mandated; requirement committed, mechanism is adapter's choice) | C | `feature-session-identity-adapter-contract` |
-| federation / relay / multi-core | federated authority, relay, and multi-core coordination | X (v0); R (future) | SPEC non-goals; PROTOCOL delegation |
-| federation / relay / multi-core | cross-domain coordination as a layer on per-domain keys (the v0 key shape includes the demarcator; forward-compatibility seam) | R | PROTOCOL `(authority_domain_id, LSN)` |
-| multi-human coordination / approval | multi-human grants, audit, handoffs, approval workflows | X (v0); R (future) | SECURITY; `idea-multi-human-coordination` |
+| federation / relay / multi-core | federated authority, relay, and multi-core coordination | X (v0.1.0); R (future) | SPEC non-goals; PROTOCOL delegation |
+| federation / relay / multi-core | cross-domain coordination as a layer on per-domain keys (the v0.1.0 key shape includes the demarcator; forward-compatibility seam) | R | PROTOCOL `(authority_domain_id, LSN)` |
+| multi-human coordination / approval | multi-human grants, audit, handoffs, approval workflows | X (v0.1.0); R (future) | SECURITY; `idea-multi-human-coordination` |
 | multi-human coordination / approval | quorum / multi-answer Elicitations; tighter responder binding (endpoint/class/fallback) | R | PROTOCOL Elicitation; SECURITY |
-| delegation | `parent_grant_id` / delegation lineage field | X (v0); R (future) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
+| delegation | `parent_grant_id` / delegation lineage field | X (v0.1.0); R (future) | PROTOCOL; SECURITY; `feature-design-grant-shape` |
 | delegation | per-spawn-variant authority ("may spawn worktrees but not cloud envs") | R | PROTOCOL spawn authority |
-| leases | lease-backed exclusive coordination (deferred from v0; reserved as a future seam. Promotion requires a future feature to design the fencing model, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior.) | X (v0); R (future) | `feature-lease-scope-decision`; PROTOCOL § Leases |
-| observability / diagnostics | v0 observability = audit log + CLI `audit-query`/`inspect-command`/`session-health`/`adapter-status` (read-only `query` Operation projections) + web shows current `CommandState` | C | SPEC V0 observability scope; UX CLI; SECURITY Audit events |
-| observability / diagnostics | per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives; quantitative performance budgets/SLAs | R | SPEC V0 observability scope; SPEC V0 performance posture; SECURITY reserved seams |
-| observability / diagnostics | dedicated per-command trace storage (violates SSOT/single-writer); metrics pipeline as the primary v0 observability substrate (premature for single-operator v0) | X | SPEC V0 observability scope |
+| leases | lease-backed exclusive coordination (deferred from v0.1.0; reserved as a future seam. Promotion requires a future feature to design the fencing model, lessor authority, lease lifecycle registry, partition behavior, and adapter obligations before shipping lease-backed behavior.) | X (v0.1.0); R (future) | `feature-lease-scope-decision`; PROTOCOL § Leases |
+| observability / diagnostics | v0.1.0 observability = audit log + CLI `audit-query`/`inspect-command`/`session-health`/`adapter-status` (read-only `query` Operation projections) + web shows current `CommandState` | C | SPEC v0.1.0 observability scope; UX CLI; SECURITY Audit events |
+| observability / diagnostics | per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives; quantitative performance budgets/SLAs | R | SPEC v0.1.0 observability scope; SPEC v0.1.0 performance posture; SECURITY reserved seams |
+| observability / diagnostics | dedicated per-command trace storage (violates SSOT/single-writer); metrics pipeline as the primary v0.1.0 observability substrate (premature for single-operator v0.1.0) | X | SPEC v0.1.0 observability scope |
 | observability / diagnostics | no-lifecycle bypass read of the audit log (CLI-local, not routed as a `query` Operation) | R | UX CLI; PROTOCOL Persistence and recovery (control surfaces never touch persistence directly) |
 
 ### How to read this registry
 
 - A row tagged **C** is v0-committed behavior with its canonical home in the named registry; this table does not override that home.
-- A row tagged **R** is a named seam v0 declines to implement. Where forward-compatibility matters it is wire-present and rejected at submission; otherwise it is named as reserved in docs. Promotion to committed is a registry/classification update.
-- A row tagged **X** is a direction v0 explicitly rejects with rationale. Promotion is a reversal requiring a protocol-change ceremony, not a gap-fill.
-- A row tagged **C (shape) / R (value)** means the v0 shape is committed (e.g. reserved enum values are wire-present) while the individual value is reserved (rejected at submission). The shape preserves the seam; the value is the future capability.
-- A row tagged **X (v0); R (future)** is a direction rejected for v0 but explicitly preserved as a future seam (the distinction from pure X is that the design keeps the door open and names the seam).
+- A row tagged **R** is a named seam v0.1.0 declines to implement. Where forward-compatibility matters it is wire-present and rejected at submission; otherwise it is named as reserved in docs. Promotion to committed is a registry/classification update.
+- A row tagged **X** is a direction v0.1.0 explicitly rejects with rationale. Promotion is a reversal requiring a protocol-change ceremony, not a gap-fill.
+- A row tagged **C (shape) / R (value)** means the v0.1.0 shape is committed (e.g. reserved enum values are wire-present) while the individual value is reserved (rejected at submission). The shape preserves the seam; the value is the future capability.
+- A row tagged **X (v0.1.0); R (future)** is a direction rejected for v0.1.0 but explicitly preserved as a future seam (the distinction from pure X is that the design keeps the door open and names the seam).
 
 This registry consolidates; it does not decide. If a future design surfaces a classification this table gets wrong, the fix is to update the canonical registry entry and this row together, not to edit this table in isolation.
 

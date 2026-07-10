@@ -17,31 +17,69 @@ Patchbay starts with:
 
 Patchbay does not start with a native mobile app, swarm orchestration, project-management assumptions, or hard dependency on a specific harness.
 
-## V0 walking skeleton
+## Versioned product horizon
+
+Patchbay uses SemVer to distinguish the initial operator's walking skeleton from the intended public product:
+
+- **`v0.1.0` — initial-operator walking skeleton.** One operator controls Pi-backed sessions through the responsive web cockpit and diagnostic CLI. This milestone proves the durable control loop and gets the initial operator operational; it is not the product ceiling.
+- **`v0.x` — public-preview hardening.** Deployment, migrations, public compatibility surfaces, adapter boundaries, executable conformance, and second-adapter evidence mature. Breaking changes remain permitted when explicit migrations and release notes accompany them.
+- **`v1.0.0` — reliable self-hosted public product.** Additional operators can independently deploy and operate Patchbay through a supported reference path. One human operator controls each deployment. Multi-human shared deployments remain a post-v1 seam.
+- **Post-v1 reserved capabilities.** Multi-human authority workflows, federation, HA/multi-core coordination, replication, zero-downtime upgrades, and broader surface and adapter ecosystems are promoted only by demonstrated product pressure.
+
+### v1 adapter proof
+
+`v1.0.0` targets Pi plus one credible second adapter, preferably for an open-source system with materially different semantics. Patchbay does not accept an obligation to build uncompensated first-party-provider integrations, but its public adapter contract must allow adopters and providers to implement them. If no suitable second adapter exists, a materially distinct conformance reference adapter may satisfy the abstraction proof rather than blocking release indefinitely.
+
+### v1 supported deployment floor
+
+`v1.0.0` is a reliable self-hosted product, not merely source code plus a Dockerfile. It provides one supported reference deployment path with documented installation, TLS/reverse-proxy guidance, operator and adapter enrollment/revocation, versioned configuration and storage migrations, upgrade and rollback expectations, backup/restore, diagnostics and health checks, and tested crash recovery. Deployment-neutrality means domain semantics do not depend on that packaging or one storage backend; it does not require v1 to support every topology.
+
+HA, federation, zero-downtime upgrades, multiple storage backends, and orchestration-specific packaging remain preserved post-v1 seams.
+
+### v1 public compatibility contract
+
+At `v1.0.0`, SemVer compatibility covers:
+
+- the adapter protocol and capability contract;
+- explicitly documented public operator APIs;
+- supported persisted-data migration paths, without treating raw database tables as a public API;
+- documented configuration keys and environment variables;
+- script-facing CLI commands, exit codes, and machine-readable output;
+- canonical protocol semantics for identity, generations, acceptance, idempotency, correlation, authority, and reconnect.
+
+Internal module APIs, raw database schema, UI structure, human-readable CLI formatting, undesignated internal web/core calls, and formal checker/file layout remain private implementation details.
+
+### v1 assurance policy
+
+Patchbay uses a property-graded hybrid. Every public safety claim requires executable implementation evidence. Formal coverage additionally blocks `v1.0.0` for command terminal races, session-generation isolation, crash/replay/snapshot convergence, and multi-surface Elicitation races. Formal models for multi-human delegation, lease exclusivity, federation, HA, and split-brain behavior gate those future capabilities rather than the v1 release.
+
+A model does not become product evidence merely because a checker accepts it. A formally gated release property must represent the claimed failure boundary, use a property name that matches its formula, survive adversarial mutation/non-vacuity checks, trace to an executable implementation vector, and run both the real checker and implementation test in CI.
+
+## v0.1.0 walking skeleton
 
 The first executable Patchbay milestone is deliberately narrow: one operator controls Pi-backed runtime sessions through a responsive web cockpit, with a CLI available for setup, administration, debugging, and scripted inspection.
 
-V0 includes:
+v0.1.0 includes:
 
-- **Operator scope:** one human operator. The model keeps actor, endpoint, grant, and audit concepts explicit so future multi-human coordination is possible, but v0 does not provision multiple humans or shared authority domains.
-- **Deployment topology:** one authoritative coordination core process. Adapters and control surfaces may run in separate processes, but v0 does not provide high availability, clustering, split-brain resolution, or multiple authoritative cores.
+- **Operator scope:** one human operator. The model keeps actor, endpoint, grant, and audit concepts explicit so future multi-human coordination is possible, but v0.1.0 does not provision multiple humans or shared authority domains.
+- **Deployment topology:** one authoritative coordination core process. Adapters and control surfaces may run in separate processes, but v0.1.0 does not provide high availability, clustering, split-brain resolution, or multiple authoritative cores.
 - **Persistence:** a local durable event and snapshot store behind ports. The first backend may be embedded and file- or database-backed, but domain semantics must not depend on a specific storage engine.
 - **First adapter:** Pi. Patchbay exposes Pi sessions through adapter-declared capabilities rather than making Pi concepts part of the core ontology.
-- **Initial OperationKinds:** initial `OperationKind` registry: committed `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, and `session-management`, plus reserved `agent-send` and `adapter-utility-exec` (rejected with `validation_failed` in v0); prompt text, slash-commands, images, and structured user input are payloads carried by `instruct` or response Operations. Observations carry output/events/status; they are not OperationKinds. Broader OperationKind families wait until the protocol registry and conformance vectors exist.
+- **Initial OperationKinds:** initial `OperationKind` registry: committed `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, and `session-management`, plus reserved `agent-send` and `adapter-utility-exec` (rejected with `validation_failed` in v0.1.0); prompt text, slash-commands, images, and structured user input are payloads carried by `instruct` or response Operations. Observations carry output/events/status; they are not OperationKinds. Broader OperationKind families wait until the protocol registry and conformance vectors exist.
 - **Control surfaces:** responsive web cockpit first, with CLI support for administration, debugging, and scripted access. Native mobile, desktop, notifications, and third-party surfaces are future work.
-- **Verification floor:** protocol contracts, checked-model seed coverage for command acceptance, idempotent retry, and session identity, and stated-normative draft model obligations for snapshots and authority before those semantics are treated as product behavior. Checked-normative status additionally requires promoted conformance vectors. v0 does not implement leases; lease-safety properties are a stated-normative precondition for future lease-backed behavior (see `docs/PROTOCOL.md` § Leases), required before any such promotion, but leases are outside the v0 executable skeleton unless explicitly promoted.
+- **Verification floor:** protocol contracts, checked-model seed coverage for command acceptance, idempotent retry, and session identity, and stated-normative draft model obligations for snapshots and authority before those semantics are treated as product behavior. Checked-normative status additionally requires promoted conformance vectors. v0.1.0 does not implement leases; lease-safety properties are a stated-normative precondition for future lease-backed behavior (see `docs/PROTOCOL.md` § Leases), required before any such promotion, but leases are outside the v0.1.0 executable skeleton unless explicitly promoted.
 
-V0 explicitly excludes:
+v0.1.0 explicitly excludes:
 
 - native mobile or Expo app delivery;
 - multi-operator provisioning, handoff workflows, shared authority administration, or third-party human coordination;
-- high availability, replicated cores, or split-brain recovery (fleet-level spawn authority IS in v0 scope — it is single-operator, single-core, not HA/multi-core);
-- non-operator Operation senders (agent→agent, adapter→operator service Operations) — a reserved seam, rejected with `validation_failed` in v0;
+- high availability, replicated cores, or split-brain recovery (fleet-level spawn authority IS in v0.1.0 scope — it is single-operator, single-core, not HA/multi-core);
+- non-operator Operation senders (agent→agent, adapter→operator service Operations) — a reserved seam, rejected with `validation_failed` in v0.1.0;
 - arbitrary adapter ecosystem support beyond the Pi adapter seam;
 - general project-management or workflow-substrate features;
 - lease-backed exclusive coordination unless a later foundation feature explicitly promotes leases into the first executable slice.
 
-Follow-on work is inside v0 only when it is required to make this slice usable, verifiable, and recoverable. Work that broadens operators, adapters, deployment topology, surfaces, or coordination modes is outside v0 unless it preserves an explicit seam without implementing the broader capability.
+Follow-on work is inside v0.1.0 only when it is required to make this slice usable, verifiable, and recoverable. Work that broadens operators, adapters, deployment topology, surfaces, or coordination modes is outside v0.1.0 unless it preserves an explicit seam without implementing the broader capability.
 
 ## Deployment assumptions
 
@@ -56,33 +94,33 @@ Patchbay components may run wherever the operator chooses:
 
 The core model does not assume shared filesystem access, shared process trees, colocated sessions, or a single machine. Adapters declare the capabilities and state they expose.
 
-## V0 performance posture
+## v0.1.0 performance posture
 
-V0 commits to **no quantitative performance target** — no p99/p95 latency budget, no throughput floor, no concurrent-session cap, no event-stream lag bound, no WAL-append latency target. v0 is single-operator, single-core, and local-first; there is no load profile to target and no second operator to contend with. Setting fabricated numbers now would constrain the implementation before a real usage pattern exists to measure against.
+v0.1.0 commits to **no quantitative performance target** — no p99/p95 latency budget, no throughput floor, no concurrent-session cap, no event-stream lag bound, no WAL-append latency target. v0.1.0 is single-operator, single-core, and local-first; there is no load profile to target and no second operator to contend with. Setting fabricated numbers now would constrain the implementation before a real usage pattern exists to measure against.
 
-What v0 does carry is a **qualitative responsiveness floor**, stated v0-only: the operator should not *perceive* Patchbay as laggy or lossy during normal single-operator Remote-Pi-style workflows — sending a prompt, switching sessions, reconnecting after a drop, viewing delivery state. This is the product-feel floor already implied by [`docs/UX.md`](UX.md) ("confidence and continuity of a mature first-party remote agent app," "low-friction reconnect," "fast switching"); this section makes it an explicit posture rather than an accidental one. It is testable as "feels responsive under normal single-operator use," not against a number.
+What v0.1.0 does carry is a **qualitative responsiveness floor**, stated v0.1.0-only: the operator should not *perceive* Patchbay as laggy or lossy during normal single-operator Remote-Pi-style workflows — sending a prompt, switching sessions, reconnecting after a drop, viewing delivery state. This is the product-feel floor already implied by [`docs/UX.md`](UX.md) ("confidence and continuity of a mature first-party remote agent app," "low-friction reconnect," "fast switching"); this section makes it an explicit posture rather than an accidental one. It is testable as "feels responsive under normal single-operator use," not against a number.
 
 Consequences for downstream work:
-- Performance budgets, SLAs, and quantitative targets are **deferred** until a real load profile exists (multi-operator contention, HA, replicated cores, or a measured bottleneck demanding a budget). Adding them is a future scoping act, not a v0 obligation.
-- Revisit-triggers that reference "v0 latency targets" (e.g., the `v0-stack-tooling` research finding on SQLite + `synchronous=FULL`) test against this qualitative floor in actual single-operator use, not against a committed number. A revisit fires if the implementation *feels* unresponsive or drops accepted work under normal use, not if it misses a fabricated budget.
+- Performance budgets, SLAs, and quantitative targets are **deferred** until a real load profile exists (multi-operator contention, HA, replicated cores, or a measured bottleneck demanding a budget). Adding them is a future scoping act, not a v0.1.0 obligation.
+- Revisit-triggers that reference "v0.1.0 latency targets" (e.g., the `v0-stack-tooling` research finding on SQLite + `synchronous=FULL`) test against this qualitative floor in actual single-operator use, not against a committed number. A revisit fires if the implementation *feels* unresponsive or drops accepted work under normal use, not if it misses a fabricated budget.
 - Observability surfaces (`feature-observability-operator-admin`) answer "is this fast enough?" operationally against this floor, not by reporting against a spec'd SLA.
 
-This posture is v0-only. "v0 has no quantitative performance target" is the v0 scope statement; it is not a timeless "Patchbay has no performance requirements" architecture claim. A future milestone that needs a budget adds it as a scope act.
+This posture is v0.1.0-only. "v0.1.0 has no quantitative performance target" is the v0.1.0 scope statement; it is not a timeless "Patchbay has no performance requirements" architecture claim. A future milestone that needs a budget adds it as a scope act.
 
-## V0 observability scope
+## v0.1.0 observability scope
 
-Observability in v0 is **a view over the durable event log + audit records**, not a separate observability subsystem. The durable event log is already the source of truth for command/session/adapter state ([`docs/PROTOCOL.md`](PROTOCOL.md) Snapshots and streams; Persistence and recovery); the audit log already records every security-relevant decision and lifecycle event with correlation id + LSN ([`docs/SECURITY.md`](SECURITY.md) Audit events). V0 observability is a set of read-only projections of these existing records — no new storage, no second writer, no metrics pipeline.
+Observability in v0.1.0 is **a view over the durable event log + audit records**, not a separate observability subsystem. The durable event log is already the source of truth for command/session/adapter state ([`docs/PROTOCOL.md`](PROTOCOL.md) Snapshots and streams; Persistence and recovery); the audit log already records every security-relevant decision and lifecycle event with correlation id + LSN ([`docs/SECURITY.md`](SECURITY.md) Audit events). v0.1.0 observability is a set of read-only projections of these existing records — no new storage, no second writer, no metrics pipeline.
 
-Committed v0 observability:
+Committed v0.1.0 observability:
 - the audit log itself (durable and queryable, per SECURITY.md);
 - CLI diagnostic commands that project/filter existing state: `audit-query`, `inspect-command`, `session-health`, `adapter-status` (see [`docs/UX.md`](UX.md) CLI);
-- the web cockpit shows current `CommandState` and last transition (per the UX delivery-state floor); it does not carry a trace-timeline UI in v0.
+- the web cockpit shows current `CommandState` and last transition (per the UX delivery-state floor); it does not carry a trace-timeline UI in v0.1.0.
 
-Deferred to post-v0 (reserved seams, not silently absent): a per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); a dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives (also reserved in SECURITY.md). Quantitative performance budgets/SLAs are deferred per the V0 performance posture above.
+Deferred to post-v0.1.0 (reserved seams, not silently absent): a per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); a dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives (also reserved in SECURITY.md). Quantitative performance budgets/SLAs are deferred per the v0.1.0 performance posture above.
 
-Explicitly rejected for v0: a dedicated per-command trace storage (would violate the single source of truth and the single-writer invariant); a metrics pipeline as the primary v0 observability substrate (premature for single-operator v0 — the audit log is the substrate until a real load profile exists). Observability answers "what happened to this command?" (query-oriented) in v0, not "what is the current throughput?" (monitoring-oriented).
+Explicitly rejected for v0.1.0: a dedicated per-command trace storage (would violate the single source of truth and the single-writer invariant); a metrics pipeline as the primary v0.1.0 observability substrate (premature for single-operator v0.1.0 — the audit log is the substrate until a real load profile exists). Observability answers "what happened to this command?" (query-oriented) in v0.1.0, not "what is the current throughput?" (monitoring-oriented).
 
-This scope is v0-only. A future milestone that needs monitoring-oriented observability adds it as a scope act, not by silently promoting the v0 projections.
+This scope is v0.1.0-only. A future milestone that needs monitoring-oriented observability adds it as a scope act, not by silently promoting the v0.1.0 projections.
 
 ## Primary stack choices
 
@@ -103,7 +141,7 @@ The web cockpit is responsive and mobile-first so phone, laptop, and desktop use
 
 ### Protocol contracts
 
-Patchbay uses Protobuf schemas managed by Buf as the v0 boundary-contract source for durable protocol messages, command/event payloads, and the wire encoding of shared enum vocabularies across the Rust coordination core and TypeScript operator domain.
+Patchbay uses Protobuf schemas managed by Buf as the v0.1.0 boundary-contract source for durable protocol messages, command/event payloads, and the wire encoding of shared enum vocabularies across the Rust coordination core and TypeScript operator domain.
 
 - `.proto` files are the source for wire contracts and boundary DTOs (including the wire encoding of enum vocabularies), not the full internal domain model and not the canonical registry of protocol variant names.
 - Rust types are generated via prost/prost-build; TypeScript types via Protobuf-ES. Generated outputs are artifacts, never hand-edited.
@@ -142,9 +180,9 @@ Adapters do not define Patchbay's core ontology.
 - **Control surface** — web, CLI, mobile, desktop, notification, or other human-facing UI.
 - **Runtime session** — an external session, process, harness, job, or agent context controlled through an adapter.
 - **Adapter** — integration boundary between Patchbay and an external runtime, harness, tool, or surface.
-- **Operation** — an authorized control-plane request by an actor to a target. V0 Operations are operator-originated; non-operator senders are a reserved seam.
+- **Operation** — an authorized control-plane request by an actor to a target. v0.1.0 Operations are operator-originated; non-operator senders are a reserved seam.
 - **Observation** — a source-authenticated fact/event/output/status emission that does not grant authority. Live streams are delivery optimizations.
-- **Elicitation** — a durable pending response solicitation opened by an adapter/agent/harness; v0 binds to the operator actor and delivers by subscription fan-out.
+- **Elicitation** — a durable pending response solicitation opened by an adapter/agent/harness; v0.1.0 binds to the operator actor and delivers by subscription fan-out.
 - **Payload** — content carried inside an Operation, Observation, or Elicitation; not a standalone authority primitive.
 - **Command** — a Patchbay lifecycle record for an accepted authorized request; retained as the checked `CommandState` legacy/refinement term. `Operation` is the actor-neutral vocabulary that maps to it by refinement equivalence.
 - **Snapshot** — authoritative state view for a session, actor, or resource.
@@ -154,36 +192,36 @@ Adapters do not define Patchbay's core ontology.
 
 ## Non-goals
 
-Patchbay does not verify LLM output quality, replace cryptographic primitives, guarantee OS background execution, impose a project/workflow substrate, ship native mobile in v0, support multiple human operators in v0, or provide HA/multi-core coordination in v0. Those concerns belong to adapters, deployment configuration, separate tools, or later milestones.
+Patchbay does not verify LLM output quality, replace cryptographic primitives, guarantee OS background execution, impose a project/workflow substrate, ship native mobile in v0.1.0, support multiple human operators in v0.1.0, or provide HA/multi-core coordination in v0.1.0. Those concerns belong to adapters, deployment configuration, separate tools, or later milestones.
 
 ## Non-foreclosure discipline
 
-Patchbay is deliberately a narrow v0 that must not accidentally close off future directions the operator has not yet thought through. This section states the discipline; the standing checklist future design work runs before committing a decision lives in `AGENTS.md` ("Extension pressure-test checklist"), and the cross-cutting per-seam registry lives in `docs/PROTOCOL.md` ("Extension seams registry").
+Patchbay is deliberately a narrow v0.1.0 that must not accidentally close off future directions the operator has not yet thought through. This section states the discipline; the standing checklist future design work runs before committing a decision lives in `AGENTS.md` ("Extension pressure-test checklist"), and the cross-cutting per-seam registry lives in `docs/PROTOCOL.md` ("Extension seams registry").
 
 ### Three-way classification
 
 Every design decision is one of:
 
-- **Committed v0** — shipped behavior. It lives in the single source-of-truth registry for its kind (OperationKind enum, Session/Operation/Elicitation state registry, adapter capability manifest, failure vocabulary, response_contract registry). Where it carries a normative safety/security claim, it has checked-model + conformance-vector coverage before v0 treats it as product behavior (see `docs/VERIFICATION.md` property-graded baseline). Promotion to committed is the act of adding it to the registry with its coverage.
-- **Reserved seam** — v0 does not implement it, but the design keeps the door open and names the seam. Where wire/forward-compatibility matters (future OperationKinds, future response_contract kinds, future non-operator senders), the reserved value is wire-present in the registry and submission rejects with `validation_failed`/`unsupported_command` in v0 rather than the value being absent. Promotion from reserved to committed is a registry/classification update, not a reversal.
-- **Explicitly rejected** — v0 declines the direction, with rationale recorded. Promotion of a rejected direction is a reversal (a real change of mind with a protocol-change ceremony), not a gap that was merely waiting to be filled.
+- **Committed v0.1.0** — shipped behavior. It lives in the single source-of-truth registry for its kind (OperationKind enum, Session/Operation/Elicitation state registry, adapter capability manifest, failure vocabulary, response_contract registry). Where it carries a normative safety/security claim, it has checked-model + conformance-vector coverage before v0.1.0 treats it as product behavior (see `docs/VERIFICATION.md` property-graded baseline). Promotion to committed is the act of adding it to the registry with its coverage.
+- **Reserved seam** — v0.1.0 does not implement it, but the design keeps the door open and names the seam. Where wire/forward-compatibility matters (future OperationKinds, future response_contract kinds, future non-operator senders), the reserved value is wire-present in the registry and submission rejects with `validation_failed`/`unsupported_command` in v0.1.0 rather than the value being absent. Promotion from reserved to committed is a registry/classification update, not a reversal.
+- **Explicitly rejected** — v0.1.0 declines the direction, with rationale recorded. Promotion of a rejected direction is a reversal (a real change of mind with a protocol-change ceremony), not a gap that was merely waiting to be filled.
 
 ### Non-foreclosure rule
 
-- **Label v0 assumptions as v0-only.** Write "v0 has one operator," "v0 ships a web cockpit and CLI," "v0 has one authority domain." Do not write the timeless "Patchbay has one operator" / "Patchbay ships a web cockpit" form, which silently promotes a v0 scope choice to permanent architecture.
+- **Label v0.1.0 assumptions as v0.1.0-only.** Write "v0.1.0 has one operator," "v0.1.0 ships a web cockpit and CLI," "v0.1.0 has one authority domain." Do not write the timeless "Patchbay has one operator" / "Patchbay ships a web cockpit" form, which silently promotes a v0.1.0 scope choice to permanent architecture.
 - **Name reserved seams; do not omit them.** A reserved seam is present in the relevant registry (wire-present where forward-compatibility matters) and documented as reserved. Omitting a future direction from the registry forecloses it more than naming it reserved, because adding it later looks like new scope rather than the planned promotion of a seam.
 - **Record rejected directions with rationale.** A rejected direction is written down with why, so a future promotion is visibly a reversal requiring a ceremony, not a quiet drift back in.
-- **Treat parked ideas as pressure-test inputs, not v0 requirements.** `idea-multi-human-coordination`, `idea-desktop-app-surface`, `idea-agent-to-agent-mesh-seam`, and `idea-operator-customizable-ux-skins` inform the seam inventory; none is a v0 obligation. Each reserved-seam row that corresponds to a parked idea links back to it.
+- **Treat parked ideas as pressure-test inputs, not v0.1.0 requirements.** `idea-multi-human-coordination`, `idea-desktop-app-surface`, `idea-agent-to-agent-mesh-seam`, and `idea-operator-customizable-ux-skins` inform the seam inventory; none is a v0.1.0 obligation. Each reserved-seam row that corresponds to a parked idea links back to it.
 
 ### Forward-compatibility hygiene
 
-Where a wire/identity shape matters for a future variant, the v0 shape carries the future-relevant demarcator even though v0 has a single value, so the future capability arrives as a layer on top rather than a retroactive data migration:
+Where a wire/identity shape matters for a future variant, the v0.1.0 shape carries the future-relevant demarcator even though v0.1.0 has a single value, so the future capability arrives as a layer on top rather than a retroactive data migration:
 
-- Event, cursor, and revision identity is the `(authority_domain_id, LSN)` tuple, not a bare LSN. V0 has one authority domain, but the key shape includes the domain demarcator so federation is additive.
-- Reserved enum values (`agent-send`, `adapter-utility-exec`, `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`) are wire-present in v0 proto and rejected at submission, so promoting them is a validation-rule change, not a wire-format change.
+- Event, cursor, and revision identity is the `(authority_domain_id, LSN)` tuple, not a bare LSN. v0.1.0 has one authority domain, but the key shape includes the domain demarcator so federation is additive.
+- Reserved enum values (`agent-send`, `adapter-utility-exec`, `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`) are wire-present in v0.1.0 proto and rejected at submission, so promoting them is a validation-rule change, not a wire-format change.
 - Adapter capability manifests declare capability fields (`supported_operation_kinds`, snapshot tier, `session_replacement`, etc.) rather than the core assuming a single adapter's shape.
 - Model intent stays portable across checker backends (Quint primary, TLA+ semantic baseline, Alloy relational) so a tool switch is not a model rewrite.
 
 ### What this discipline is not
 
-This is a labeling and registry discipline, not a promise to implement any reserved seam. A reserved seam may never ship. The discipline's guarantee is narrower and load-bearing: a future direction that the operator chooses to pursue can be added as a registry/classification update rather than discovered to be impossible because v0 baked in a single-value assumption.
+This is a labeling and registry discipline, not a promise to implement any reserved seam. A reserved seam may never ship. The discipline's guarantee is narrower and load-bearing: a future direction that the operator chooses to pursue can be added as a registry/classification update rather than discovered to be impossible because v0.1.0 baked in a single-value assumption.

@@ -18,11 +18,11 @@ Disagreements route to the artifact that owns the question type. "The higher art
 
 This layered order takes effect once generated schemas or IDL exist. `docs/PROTOCOL.md` remains the canonical source of truth for product intent and vocabulary naming both before and after `.proto` exists; it is the *provisional* wire reference only until `.proto` takes over wire-shape authority.
 
-## v0 normative baseline (property-graded)
+## v0.1.0 normative baseline (property-graded)
 
-Each required model area below is obligated at v0. Properties within each area are tiered by risk, not all-or-nothing per area. This reconciles `docs/SPEC.md`'s verification-floor seed ("at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority") with this document's required-areas list: the checked set is the seed done right, not a different program.
+Each required model area below is obligated at v0.1.0. Properties within each area are tiered by risk, not all-or-nothing per area. This reconciles `docs/SPEC.md`'s verification-floor seed ("at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority") with this document's required-areas list: the checked set is the seed done right, not a different program.
 
-**checked-model** (also called **model-promoted**) — the formal model exists, passes with documented tool invocation, and carries promoted model metadata, but no promoted conformance vector has landed yet. This is the current status of the seed models listed under "Seed models (v0)" below. It is a real formal check, but it is not yet checked-normative product behavior.
+**checked-model** (also called **model-promoted**) — the formal model exists, passes with documented tool invocation, and carries promoted model metadata, but no promoted conformance vector has landed yet. This is the current status of the seed models listed under "Seed models (v0.1.0)" below. It is a real formal check, but it is not yet checked-normative product behavior.
 
 Current checked-model properties:
 
@@ -35,9 +35,9 @@ Current checked-model properties:
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
 - Relational actor identity from `patchbay-relational.als`: `ActorIdsUnique`.
 
-**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
+**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
 
-**stated-normative** — documented v0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
+**stated-normative** — documented v0.1.0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
 - OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant. Spawn fleet authority and descendant-grant behavior are checked-model via `authority.qnt`.
@@ -46,6 +46,28 @@ Current checked-model properties:
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
 - Reply correlation refinements: duplicate-reply idempotency/rejection and reference-resolution edge cases beyond the checked `TypedCorrelation` core.
+
+## v1 release assurance policy
+
+Patchbay uses a **property-graded hybrid** for `v1.0.0`. Every public safety claim requires executable evidence against the implementation. Formal coverage additionally blocks release only where exhaustive state-machine/interleaving analysis is load-bearing:
+
+1. command terminal races and first-durable-terminal-commit finality;
+2. session-generation identity, monotonic replacement, and stale-generation inertness;
+3. crash recovery, idempotent replay, consistent snapshots, and replay/snapshot convergence;
+4. multi-surface Elicitation first-answer and stale-target races.
+
+Multi-human delegation, lease exclusivity, federation, HA, and split-brain models are promotion gates for those future capabilities, not `v1.0.0` release gates.
+
+Release-assurance vocabulary:
+
+- **Specified** — required by canonical prose or generated contracts.
+- **Model-checked** — established only for the bounded abstract model.
+- **Implementation-checked** — exercised against running product code.
+- **Release-verified** — carries every evidence form required by its property risk grade.
+
+A formally gated property is release-verified only when the model represents the claimed failure boundary; the property name states exactly what the formula proves; adversarial mutation/non-vacuity checks demonstrate that the property is genuine; at least one executable vector runs against the implementation; the model and vector share a traceable property id; and CI runs the real checker and executable test rather than validating metadata alone.
+
+This policy preserves the checked-model/stated-normative distinction as honest requirements bookkeeping but does not let a checked abstract model stand in for product evidence. Existing promoted properties whose formulas materially under-model their names must be rewritten, renamed/demoted, or removed before they can contribute to a release claim.
 
 ### `OperationState` ⇿ `CommandState` refinement (checked-model properties by equivalence)
 
@@ -61,11 +83,11 @@ Current checked-model properties:
 | idempotent retry | existing `BoundaryDedup`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` |
 | no direct accepted-to-completed transition | existing `NoAcceptedToCompleted` |
 
-Classification: **checked-model by refinement only** for the listed properties. The specific no-`accepted → completed` adjacency is checked by `NoAcceptedToCompleted`; the full transition graph remains **stated-normative**, not fully checked. Read/query Operations use the same lifecycle in v0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
+Classification: **checked-model by refinement only** for the listed properties. The specific no-`accepted → completed` adjacency is checked by `NoAcceptedToCompleted`; the full transition graph remains **stated-normative**, not fully checked. Read/query Operations use the same lifecycle in v0.1.0; they may skip `running`, but the no-direct-to-completed fast-path rule is also stated-normative. A future no-lifecycle read optimization is a reserved seam and would require its own registry/model decision. A future rename from `CommandState` to `OperationState` must update model names, property metadata, `.proto`, conformance vectors, and docs together.
 
 ### Elicitation model obligations (checked-model)
 
-`specs/seed/elicitation_lifecycle.qnt` promotes the Elicitation lifecycle properties below to **checked-model**. Elicitation ids are adapter-assigned in v0; the core assigns only the durable LSN at record time. The core does not open Elicitations in v0, so no core-opened-Elicitation property is reserved. Checked property ids:
+`specs/seed/elicitation_lifecycle.qnt` promotes the Elicitation lifecycle properties below to **checked-model**. Elicitation ids are adapter-assigned in v0.1.0; the core assigns only the durable LSN at record time. The core does not open Elicitations in v0.1.0, so no core-opened-Elicitation property is reserved. Checked property ids:
 
 - `ElicitationPendingFinality` — once an Elicitation reaches a terminal state, later answer/cancel/expire/withdraw/stale candidates do not mutate it.
 - `ElicitationFirstAnswerWins` — for single-answer contracts, the first durably committed valid answer/decline terminal wins.
@@ -84,7 +106,7 @@ These are checked-model properties only: product semantics become checked-normat
 - Reply → Command/Message typed correlation;
 - `Operation(kind=approval-response|elicitation-response) → ElicitationId` typed correlation;
 - same authority domain and target/session/generation context, represented in the bounded model as a shared authority/session context atom;
-- expected responder actor policy in v0;
+- expected responder actor policy in v0.1.0;
 - no cross-id-space masquerade: CommandId, MessageId, ReplyId, EventId, and ElicitationId remain disjoint.
 
 Classification: **checked-model** for the shared typed-correlation artifact. Duplicate response Operation behavior is checked in the Elicitation lifecycle model (`ElicitationInvalidResponseRejected`); product semantics become checked-normative only after promoted conformance vectors trace to the property.
@@ -102,11 +124,11 @@ Checked-model spawn properties:
 - `FleetAuthorityForSpawn`: spawn Operations targeting a not-yet-existing session require a live fleet-scope grant, not a per-session target grant.
 - `SpawnCreatesDescendantGrant`: successful spawn completion records an explicit, auditable descendant grant whose subject is the spawner/operator and whose target is the spawned session.
 - `SpawnRevocationDoesNotCascade`: revoking a spawn grant prevents future spawns but does not revoke already-created descendant grants unless those grants are separately revoked.
-- `ElicitationResponderAuthority`: a response Operation is accepted only from an authenticated endpoint for the expected responder actor in v0; the responding endpoint is audited but not pre-bound in the Elicitation.
+- `ElicitationResponderAuthority`: a response Operation is accepted only from an authenticated endpoint for the expected responder actor in v0.1.0; the responding endpoint is audited but not pre-bound in the Elicitation.
 
-Remaining required properties to promote for v0:
+Remaining required properties to promote for v0.1.0:
 
-Reserved future authority properties (not v0 obligations): actor-neutral/non-operator Operation sender verification, agent/service grant subjects for authority-bearing Operations, tighter Elicitation responder binding by endpoint/endpoint class/fallback chain, and cross-actor delegation through `parent_grant_id`. The actor-neutral vocabulary remains the seam, but v0 checked properties must not pretend non-operator authority-bearing Operations exist.
+Reserved future authority properties (not v0.1.0 obligations): actor-neutral/non-operator Operation sender verification, agent/service grant subjects for authority-bearing Operations, tighter Elicitation responder binding by endpoint/endpoint class/fallback chain, and cross-actor delegation through `parent_grant_id`. The actor-neutral vocabulary remains the seam, but v0.1.0 checked properties must not pretend non-operator authority-bearing Operations exist.
 
 Classification: spawn-authority properties are **checked-model**; the remaining general authority properties above are **stated-normative until promoted**.
 
@@ -120,7 +142,7 @@ Subscriptions are grant-checked without `OperationState` lifecycle. `specs/seed/
 
 The subscription model is split out of `authority.qnt` to keep Unit SA's spawn temporal check tractable under Apalache while preserving the same grant-tuple semantics: subscription authorization queries real bounded `Grant` records, not a boolean side-channel. These remain checked-model properties until promoted conformance vectors land.
 
-The delegation precondition and lease safety sections below are preconditions for future behavior and are **not** part of the v0 normative baseline.
+The delegation precondition and lease safety sections below are preconditions for future behavior and are **not** part of the v0.1.0 normative baseline.
 
 ## TLA+ and Quint position
 
@@ -226,7 +248,7 @@ Properties:
 
 Normative model variables should include at least `CommittedPrefixLSN` (the last durably committed log prefix), `CheckpointSnapshotLSN` (the latest snapshot loaded before tail replay), `RecoveredCommandState` (the command-id to `CommandState` map reconstructed from the log), `RecoveredInbox` (delivery/inbox queue state reconstructed from the log), `RecoveredSessionView` (session connectivity/activity axes reconstructed from the log), and `RecoveryPhase` (initial load vs tail-replay vs live). `Crash` and `Restart` are the transition triggers.
 
-V0 models do not need to prove remote replication, HA failover, or split-brain resolution. Those are out of formal scope.
+v0.1.0 models do not need to prove remote replication, HA failover, or split-brain resolution. Those are out of formal scope.
 
 ### Authority safety
 
@@ -244,13 +266,13 @@ Normative model variables should include at least `Actor`, `Device`, `Endpoint`,
 
 ### Delegation precondition
 
-Delegation is not part of v0. The following property is a precondition that must be satisfied before any delegation-backed behavior ships; it is not a required v0 authority-safety obligation:
+Delegation is not part of v0.1.0. The following property is a precondition that must be satisfied before any delegation-backed behavior ships; it is not a required v0.1.0 authority-safety obligation:
 
 - Delegation cannot create authority beyond its parent grant.
 
 ### Lease safety
 
-Lease safety remains a required model area before any lease-backed product behavior ships. It is not part of the v0 executable walking skeleton unless later foundation work explicitly promotes a specific lease-backed workflow. The exclusivity properties are a modeled precondition gated on a future fencing model, not a v0 guarantee (see `docs/PROTOCOL.md` § Leases for the canonical statement).
+Lease safety remains a required model area before any lease-backed product behavior ships. It is not part of the v0.1.0 executable walking skeleton unless later foundation work explicitly promotes a specific lease-backed workflow. The exclusivity properties are a modeled precondition gated on a future fencing model, not a v0.1.0 guarantee (see `docs/PROTOCOL.md` § Leases for the canonical statement).
 
 Properties:
 
@@ -317,8 +339,8 @@ Formal models produce implementation obligations. The implementation uses:
 Reserve the following conformance-vector families. Each is draft until its referenced model property is promoted and the vector is reviewed.
 
 - `operation-query-uniform-lifecycle`: query/read uses the normal Operation lifecycle (for example accepted, then delivered, then completed), not a direct-to-completed fast path.
-- `operation-read-no-lifecycle-reserved`: no-lifecycle reads are rejected/unavailable in v0 unless promoted by registry update.
-- `agent-send-reserved-validation`: `agent-send` submission rejects with `validation_failed` in v0.
+- `operation-read-no-lifecycle-reserved`: no-lifecycle reads are rejected/unavailable in v0.1.0 unless promoted by registry update.
+- `agent-send-reserved-validation`: `agent-send` submission rejects with `validation_failed` in v0.1.0.
 - `spawn-fleet-authority`: spawn accepted with fleet grant; rejected with only per-session grant when target session does not exist.
 - `spawn-descendant-grant`: successful spawn completion emits an explicit auditable descendant grant for the spawned session.
 - `spawn-revocation-two-levers`: revoking the spawn grant blocks future spawns but leaves descendant grants live until separately revoked.
@@ -510,9 +532,9 @@ A model becomes normative only when it includes:
 
 Draft models may explore ideas without becoming product commitments.
 
-## Seed models (v0)
+## Seed models (v0.1.0)
 
-The v0 seed formal models live under `specs/seed/`. Each model carries its promotion metadata as inline `@promotion` comment blocks (one per checked/draft property) — the machine-readable source `contracts/scripts/check-models.mjs` reads to generate the model-promotion traceability table. The product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field. The property-id vocabulary established by the seed is the Single Source of Truth that `.proto` contracts, conformance vectors, and implementation all derive from.
+The v0.1.0 seed formal models live under `specs/seed/`. Each model carries its promotion metadata as inline `@promotion` comment blocks (one per checked/draft property) — the machine-readable source `contracts/scripts/check-models.mjs` reads to generate the model-promotion traceability table. The product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field. The property-id vocabulary established by the seed is the Single Source of Truth that `.proto` contracts, conformance vectors, and implementation all derive from.
 
 ### Checked-model (model promoted; awaiting conformance vectors)
 
@@ -539,7 +561,7 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 |---|---|---|
 | `specs/seed/snapshot_recovery.qnt` | Quint | `SnapshotStaleRejected`, `SnapshotCrossDomainRejected`, `SnapshotConsistentPrefix`, `LateEventNoRewrite`, `CrashNoAcceptedLost`, `IdempotentLogReplay` |
 | `specs/seed/authority.qnt` | Quint | `NoCommandWithoutGrant` (generalizes by refinement to `NoOperationWithoutGrant`), `CompoundIssuer`, `GrantAuthorityIsCommandKinds` (generalizes by vocabulary rename to `GrantAuthorityIsOperationKinds`), `RevocationPreventsFuture` |
-| `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
+| `specs/seed/patchbay-relational.als` | Alloy | `AuthorityGraphAcyclic` (reserved — needs delegation, out of v0.1.0), `SenderMatchesClaim` (reserved — dynamic CompoundIssuer binding, belongs in authority.qnt) |
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific checked-model analog.
 

@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-This document defines Patchbay's **surface-neutral UX conformance floor** — the minimum obligations any conformant human control surface must meet — and the **v0 web cockpit as the first conformant instance** of that floor.
+This document defines Patchbay's **surface-neutral UX conformance floor** — the minimum obligations any conformant human control surface must meet — and the **v0.1.0 web cockpit as the first conformant instance** of that floor.
 
 **Surface-neutrality** is a principle symmetric to adapter-neutrality: just as adapter-specific capabilities are adapter-declared features rather than core protocol primitives, surface-specific presentation is a surface-declared feature, not a core UX primitive. A surface is conformant when it meets the floor; skins, layouts, and surface-native affordances are surface-declared above the floor.
 
@@ -18,7 +18,7 @@ Any conformant control surface must meet these obligations. Each references the 
 - **Liveness vs delivery separation.** Separate session liveness (connectivity × activity) from command delivery (`CommandState`). Accepted does not mean completed; delivered does not mean completed. Cancellation is presented as a request into a moving system: if a command completed before cancellation arrived, the UI preserves the completed command state and explains the late cancellation rather than rewriting the outcome.
 - **Identity-before-intent.** Show stable target identity (adapter id, deployment scope, runtime session id, session generation) before the operator can submit an Operation. Human-readable labels (project, cwd, name) are metadata, not identity — they must not override verified target identity.
 - **Authority/grant visibility.** The control surface must answer the operator's question "Who is allowed to control this session or resource?" (`docs/VISION.md`). Action availability is derived from grants and adapter capabilities, but **UI availability is never authority** (`docs/PROTOCOL.md`, Authority grants: control surfaces may hide unavailable actions, but UI availability is never authority). A surface must distinguish denial (`authorization_denied`) from unsupported (`unsupported_command`) from revoked, and surface operator-visible grant and audit context where needed (current-session/endpoint/adapter revocation, security lockdown). Revocation prevents future authority; already-accepted commands follow the policy attached to their grant and OperationKind.
-- **Operation affordance coverage.** Every committed v0 `OperationKind` (`spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` per `docs/PROTOCOL.md`, OperationKind registry) is either actionable through an appropriate surface flow or visibly presented as unavailable/unsupported with a canonical reason. Reserved kinds (`agent-send`, `adapter-utility-exec`) are not presented as committed v0 actions. The composer need not surface every kind — `spawn` and `attach` may be entry-point actions rather than composer actions — but the surface as a whole must cover them.
+- **Operation affordance coverage.** Every committed v0.1.0 `OperationKind` (`spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` per `docs/PROTOCOL.md`, OperationKind registry) is either actionable through an appropriate surface flow or visibly presented as unavailable/unsupported with a canonical reason. Reserved kinds (`agent-send`, `adapter-utility-exec`) are not presented as committed v0.1.0 actions. The composer need not surface every kind — `spawn` and `attach` may be entry-point actions rather than composer actions — but the surface as a whole must cover them.
 - **Failure vocabulary mapping.** Map failure text to the protocol failure/outcome vocabulary in `docs/PROTOCOL.md` so timeout, denial, rejection, expiration, cancellation, supersession, and execution failure remain distinct. Show what is safe to retry. **Retry safety is derived from the specific failure term plus the adapter's declared `idempotency_strength`, never from `CommandState` alone.** `failed` includes `execution_failed` (the target began or accepted execution and reported failure) and `execution_outcome_unknown` (execution may have occurred); neither is unconditionally safe to retry. The surface presents retry safety by combining the failure term with the capability:
 
   | Failure term | `idempotency_strength` | Retry safety |
@@ -31,7 +31,7 @@ Any conformant control surface must meet these obligations. Each references the 
 
   The surface must never present a retry as unconditionally safe without these signals. An **intentional duplicate** (a distinct new action, not a retry) is presented as a new action requiring a new command id and a new idempotency key, never as a retry of the original.
 - **Reconnect reconciliation.** On reconnect, the surface submits its last-known cursor and the core returns newer events and/or a snapshot materialized at a later log sequence number. An older snapshot is never rendered as live; the view stays marked stale until a newer authoritative snapshot or live event stream confirms it. Reconnect does not rely on wall-clock freshness alone.
-- **Elicitation presentation.** Surface pending Elicitations (approvals and questions) as attention-required state. V0 Elicitations target the operator actor (not a specific endpoint) and fan out to all subscribed operator surfaces; any authenticated endpoint may answer, and the first valid answer clears the Elicitation everywhere. The endpoint that actually answered is captured in the response Operation audit. Tighter binding (endpoint class, fallback chain) is reserved.
+- **Elicitation presentation.** Surface pending Elicitations (approvals and questions) as attention-required state. v0.1.0 Elicitations target the operator actor (not a specific endpoint) and fan out to all subscribed operator surfaces; any authenticated endpoint may answer, and the first valid answer clears the Elicitation everywhere. The endpoint that actually answered is captured in the response Operation audit. Tighter binding (endpoint class, fallback chain) is reserved.
 - **Observation/subscription-stream honesty.** Present Observations (output, lifecycle facts, status emissions) from subscription streams but never as authoritative alone; snapshots and core records reconcile. Streams are delivery optimizations.
 - **Terminal-race explanation.** Command timelines can explain terminal races — for example "Completed before cancellation arrived", "Cancelled before completion", or "Expired before adapter completion" — without adding protocol states, following `docs/PROTOCOL.md` (Cancellation, expiration, supersession, and race semantics). These are UI labels, not protocol states.
 - **No optimistic-state authority.** Optimistic UI state is never authority for command submission, grant status, or session liveness.
@@ -48,7 +48,7 @@ The layer's obligations:
 
 Implementation is **deferred**. The named layer is the future structural enforcement mechanism that makes the floor machine-checkable and skins possible; until it is implemented, conformance is enforced by the UX acceptance criteria in this document, protocol references, and later tests/vectors. The `ux-ui-design` `components` skill is the mockup-time analog of this layer. **The first real web cockpit must not proceed without either this component layer or an explicit conformance-test substitute** (a UX conformance vector/checklist that gates the web cockpit) — see Reserved follow-up.
 
-## v0 web cockpit — first conformant instance
+## v0.1.0 web cockpit — first conformant instance
 
 The first full control surface is a responsive web cockpit with mobile-first layout. It uses the shared TypeScript operator domain so the future Expo app can reuse the same delivery, reconnect, and session-state logic. The CLI provides setup, administration, debugging, and scriptable access.
 
@@ -56,14 +56,14 @@ The first full control surface is a responsive web cockpit with mobile-first lay
 
 Patchbay targets the confidence and continuity of a mature first-party remote agent app while keeping the infrastructure self-hosted and adapter-neutral. Remote Pi compatibility is the immediate migration floor (see `docs/ADAPTER-PI.md`); Claude-app-style continuity, delivery clarity, and mobile ergonomics are the quality benchmark.
 
-### Required v0 screens
+### Required v0.1.0 screens
 
 - **Session list.**
 - **Session detail** — message timeline + command delivery timeline.
 - **Composer.**
 - **Elicitation/attention surface.** — pending approvals and questions.
 
-The navigation pattern between these screens is an instance decision, deferred to the v0 surface-design mockup follow-on (see Reserved follow-up); the floor requires the screens exist, not their layout.
+The navigation pattern between these screens is an instance decision, deferred to the v0.1.0 surface-design mockup follow-on (see Reserved follow-up); the floor requires the screens exist, not their layout.
 
 ### Session list visible fields
 
@@ -103,7 +103,7 @@ The responsive web cockpit prioritizes: a readable session list on phone; clear 
 
 The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics.
 
-V0 CLI diagnostic commands are read-only projections of existing durable state. They introduce no new storage path and no new write path; they filter and present what the durable event log, audit records, and already-modeled session/adapter state already hold. Each is issued as a `query` Operation against the core (`docs/PROTOCOL.md` OperationKind registry: `query` reads status, snapshot, capabilities, lists, history, metadata, or diagnostics) — the CLI is a control surface and never touches persistence directly; the core owns storage reads through the storage port (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery). A no-lifecycle bypass read of the audit log (CLI-local, not routed as a `query` Operation) is a reserved seam, not v0 behavior.
+v0.1.0 CLI diagnostic commands are read-only projections of existing durable state. They introduce no new storage path and no new write path; they filter and present what the durable event log, audit records, and already-modeled session/adapter state already hold. Each is issued as a `query` Operation against the core (`docs/PROTOCOL.md` OperationKind registry: `query` reads status, snapshot, capabilities, lists, history, metadata, or diagnostics) — the CLI is a control surface and never touches persistence directly; the core owns storage reads through the storage port (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery). A no-lifecycle bypass read of the audit log (CLI-local, not routed as a `query` Operation) is a reserved seam, not v0.1.0 behavior.
 
 | Command | Surfaces | Data source |
 |---|---|---|
@@ -114,7 +114,7 @@ V0 CLI diagnostic commands are read-only projections of existing durable state. 
 
 The delivery trace surfaced by `inspect-command` is a **projection**, not an authoritative command state; canonical `CommandState` remains as defined in `docs/PROTOCOL.md`. The trace is consistent with the snapshot-correctness rule that UI/presentation state is never authoritative (`docs/ARCHITECTURE.md` State and snapshot plane).
 
-Deferred to post-v0: `event-inspect <lsn>` (raw event at LSN), metrics (counters/histograms/throughput), a dedicated health/status dashboard, SIEM export. These are reserved seams (`docs/SPEC.md` V0 observability scope), not silently absent.
+Deferred to post-v0.1.0: `event-inspect <lsn>` (raw event at LSN), metrics (counters/histograms/throughput), a dedicated health/status dashboard, SIEM export. These are reserved seams (`docs/SPEC.md` v0.1.0 observability scope), not silently absent.
 
 ## Reserved seams
 

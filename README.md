@@ -8,9 +8,11 @@ Patchbay starts with a **responsive web cockpit** and a **Pi-first adapter targe
 
 ## Current status
 
-Patchbay is in the **foundation/design phase** with the v0 walking skeleton now defined.
+Patchbay is in the **foundation/design phase** with the `v0.1.0` walking skeleton now defined.
 
 This repository currently contains project definition documents only. There is no daemon, web app, adapter, package, or installable release yet. The first implementation milestone is a narrow single-operator slice: responsive web cockpit + CLI admin/debug surface + one authoritative coordination core + local durable event/snapshot store + Pi adapter. The first implementation work should follow that slice rather than inventing product semantics ad hoc.
+
+`v0.1.0` gets the initial operator operational; it is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
 
 ## Why Patchbay exists
 
@@ -48,7 +50,7 @@ Patchbay coordination core
       └── future tool/project adapters
 ```
 
-The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. V0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity. Canonical command, session, and failure state names live in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. v0.1.0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity. Canonical command, session, and failure state names live in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Core ideas
 
@@ -65,9 +67,9 @@ Patchbay separates examples from architecture through explicit planes:
 - **Deployment plane** — daemon, container, VM, local service, sidecar, split deployment.
 - **Verification plane** — formal specs, contracts, conformance vectors, property tests.
 
-## V0 walking skeleton
+## v0.1.0 walking skeleton
 
-V0 proves the smallest useful control loop:
+v0.1.0 proves the smallest useful control loop:
 
 - one human operator;
 - responsive web cockpit as the primary surface;
@@ -77,7 +79,7 @@ V0 proves the smallest useful control loop:
 - Pi adapter as the first runtime integration;
 - initial commands for message/prompt delivery, cancel/interrupt where supported, status/snapshot refresh, and correlated replies/events.
 
-V0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a specific lease-backed workflow.
+v0.1.0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a specific lease-backed workflow.
 
 ## Design commitments
 

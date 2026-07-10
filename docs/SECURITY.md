@@ -1,14 +1,14 @@
 # Patchbay Security
 
-Patchbay is a high-authority control plane: a browser or CLI action can mutate remote/headless agent sessions. V0 therefore treats security as part of protocol semantics, not as a UI add-on.
+Patchbay is a high-authority control plane: a browser or CLI action can mutate remote/headless agent sessions. v0.1.0 therefore treats security as part of protocol semantics, not as a UI add-on.
 
-This document defines the v0 security posture for one human operator, one authoritative coordination core, a responsive web cockpit, a CLI, and the first Pi adapter. It should be read with `docs/PROTOCOL.md` for command/grant state and `docs/VERIFICATION.md` for model obligations.
+This document defines the v0.1.0 security posture for one human operator, one authoritative coordination core, a responsive web cockpit, a CLI, and the first Pi adapter. It should be read with `docs/PROTOCOL.md` for command/grant state and `docs/VERIFICATION.md` for model obligations.
 
 Research grounding: `.research/analysis/briefs/web-control-security.md`.
 
 ## Security objectives
 
-V0 security must ensure:
+v0.1.0 security must ensure:
 
 - only authenticated operator endpoints can submit control actions;
 - every Operation is authorized before durable acceptance;
@@ -20,13 +20,13 @@ V0 security must ensure:
 
 Patchbay does not prove cryptographic primitives, operating-system isolation, browser correctness, network latency bounds, or third-party harness internals. Those are deployment and adapter assumptions.
 
-## V0 authority domain
+## v0.1.0 authority domain
 
-V0 has one human operator and one authority domain. This is a product scope decision, not a reason to omit authority modeling.
+v0.1.0 has one human operator and one authority domain. This is a product scope decision, not a reason to omit authority modeling.
 
 The model keeps these concepts explicit:
 
-- **Operator** — the single human who controls Patchbay in v0.
+- **Operator** — the single human who controls Patchbay in v0.1.0.
 - **Actor** — represented participant: operator, agent, adapter, daemon, service, or control surface.
 - **Device** — a physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
 - **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor on a device.
@@ -35,13 +35,13 @@ The model keeps these concepts explicit:
 - **Grant** — an authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform OperationKinds against a target scope.
 - **Authority domain** — the single core-owned context in which grants, revocation, routing authority, and audit are evaluated.
 
-Future multi-operator coordination remains a reserved extension seam. V0 data structures should not assume there can only ever be one operator, but v0 UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
+Future multi-operator coordination remains a reserved extension seam. v0.1.0 data structures should not assume there can only ever be one operator, but v0.1.0 UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
 
 ## Threat model
 
 ### In scope
 
-V0 is designed against:
+v0.1.0 is designed against:
 
 - unauthenticated browser or CLI access;
 - unauthorized browser, CLI, or adapter endpoint enrollment;
@@ -58,7 +58,7 @@ V0 is designed against:
 
 ### Out of scope
 
-V0 does not attempt to solve:
+v0.1.0 does not attempt to solve:
 
 - malicious code execution inside an already-controlled host;
 - compromise of the operator's browser, device, password manager, or OS account;
@@ -72,11 +72,11 @@ Out-of-scope does not mean irrelevant. These risks belong to deployment guidance
 
 ## Enrollment and authentication
 
-V0 enrollment is intentionally narrow:
+v0.1.0 enrollment is intentionally narrow:
 
 - The first operator is created through CLI/local-console bootstrap, not through an unauthenticated network setup page.
 - Bootstrap produces a one-time setup secret that expires after use or timeout.
-- Setup establishes the operator's primary authenticator: password/passphrase for v0, with passkeys or MFA reserved as an extension seam.
+- Setup establishes the operator's primary authenticator: password/passphrase for v0.1.0, with passkeys or MFA reserved as an extension seam.
 - A browser endpoint enrolls only after successful operator authentication and creation of a server-side operator session.
 - A CLI endpoint enrolls only through local setup credentials or an existing authenticated operator session.
 - An adapter endpoint enrolls only through configured adapter attachment material or an adapter-specific trust root; an adapter cannot self-assert core authority by display name or payload field.
@@ -88,7 +88,7 @@ Interactive login must be rate-limited, track failed attempts against the operat
 
 The web cockpit uses server-side sessions. The browser receives only an opaque session cookie; Operation authority, endpoint metadata, grants, and session state remain server-side.
 
-V0 browser-session requirements:
+v0.1.0 browser-session requirements:
 
 - session identifiers are high-entropy, meaningless client-side values;
 - session records include operator id, endpoint id, created time, last-used time, expiration, revoked time, and session generation;
@@ -105,7 +105,7 @@ Default cookie shape:
 Set-Cookie: __Host-patchbay_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict
 ```
 
-`SameSite=Lax` is a reserved fallback only for a concrete operator flow that requires top-level cross-site navigation into Patchbay. `SameSite=None` is not a v0 default.
+`SameSite=Lax` is a reserved fallback only for a concrete operator flow that requires top-level cross-site navigation into Patchbay. `SameSite=None` is not a v0.1.0 default.
 
 ## CSRF and browser request protection
 
@@ -136,15 +136,15 @@ Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, 
 
 Retries with the same idempotency key return the existing command record. A new intentional action requires a new command id/key.
 
-Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. V0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0 mediated behavior.
+Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0.1.0 mediated behavior.
 
 ### Compound issuer
 
-When an Operation arrives at the core through a control surface (the v0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
+When an Operation arrives at the core through a control surface (the v0.1.0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
 
 ## Grant shape
 
-A v0 grant has at least:
+A v0.1.0 grant has at least:
 
 - grant id;
 - authority domain id;
@@ -157,17 +157,17 @@ A v0 grant has at least:
 - revocation generation or revoked time;
 - revocation policy for already accepted commands.
 
-Delegation is a reserved future direction, not a v0 field; a `parent grant id / delegated-by` field is intentionally absent from v0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time.
+Delegation is a reserved future direction, not a v0.1.0 field; a `parent grant id / delegated-by` field is intentionally absent from v0.1.0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time.
 
 ### Spawn authority
 
-Spawn is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority is reserved.
+Spawn is fleet-level by default in v0.1.0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired; no schema change is needed. Per-spawn-variant authority is reserved.
 
 Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant shape matches `docs/PROTOCOL.md` and is a normal grant instance with:
 
 - `grant id` — standard grant id (core-assigned).
 - `authority domain id` — same domain as the spawning grant.
-- `subject actor id` — the spawner (operator actor in v0).
+- `subject actor id` — the spawner (operator actor in v0.1.0).
 - `optional subject endpoint id or endpoint class` — the spawning endpoint, if applicable.
 - `target scope` — the spawned session/generation (an existing-session scope, now that the session exists).
 - `allowed OperationKinds` — the full set of committed kinds applicable to an existing session, enumerated explicitly (not a wildcard `all`): `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`. `spawn` is excluded because recursive spawning requires a separate fleet-level spawn grant; `attach` is excluded because the spawned session is already attached to its spawner's control plane.
@@ -177,15 +177,15 @@ Successful spawn completion records an explicit, auditable **descendant grant** 
 - `revocation policy for already accepted commands` — standard.
 - `audit id` — links to the spawn-completion audit event.
 
-The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
+The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0.1.0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
 
-Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0 behavior; future cascade is a query over grant provenance and needs no schema change.
+Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0.1.0 behavior; future cascade is a query over grant provenance and needs no schema change.
 
 ### Elicitation responder authorization
 
-V0 Elicitations bind to the operator actor (the `expected_responder_actor`), not a specific endpoint. Any authenticated operator endpoint may answer; the responding endpoint is captured in the response Operation audit at response time, not pre-bound in the Elicitation. First valid answer terminalizes the Elicitation for all subscribed surfaces; later attempts from other surfaces are rejected as already-terminal/stale and audited. Tighter responder binding (endpoint, endpoint class, fallback chain) and responder-actor distinction for multi-operator sessions are reserved seams.
+v0.1.0 Elicitations bind to the operator actor (the `expected_responder_actor`), not a specific endpoint. Any authenticated operator endpoint may answer; the responding endpoint is captured in the response Operation audit at response time, not pre-bound in the Elicitation. First valid answer terminalizes the Elicitation for all subscribed surfaces; later attempts from other surfaces are rejected as already-terminal/stale and audited. Tighter responder binding (endpoint, endpoint class, fallback chain) and responder-actor distinction for multi-operator sessions are reserved seams.
 
-Response Operations and spawn are state-changing and subject to the same CSRF and authority requirements as other Operations. Secret response-contract kinds (reserved, not validatable in v0) carry redaction/no-log obligations: a `secret` contract response must never be persisted in plaintext or logged raw; redaction policy is enforced at the boundary before any audit or snapshot materializes.
+Response Operations and spawn are state-changing and subject to the same CSRF and authority requirements as other Operations. Secret response-contract kinds (reserved, not validatable in v0.1.0) carry redaction/no-log obligations: a `secret` contract response must never be persisted in plaintext or logged raw; redaction policy is enforced at the boundary before any audit or snapshot materializes.
 
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 
@@ -197,7 +197,7 @@ Revocation prevents future authority. Already accepted Operations follow the pol
 - **cancel** — submit or record cancellation for accepted non-terminal Operations when supported;
 - **require reauthorization** — hold or reject delivery until a fresh grant/session is established.
 
-V0 must support these operator-facing revocation actions:
+v0.1.0 must support these operator-facing revocation actions:
 
 1. **Revoke current browser session** — delete or mark the session revoked and clear its cookie.
 2. **Revoke all browser sessions** — invalidate all operator-session generations, optionally by rotating the server-side session-signing/encryption secret.
@@ -211,7 +211,7 @@ Revocation never deletes command history. Late events after revocation are audit
 
 ## Audit events
 
-Security audit is part of v0. The audit log should be durable and queryable even before a full audit UI exists.
+Security audit is part of v0.1.0. The audit log should be durable and queryable even before a full audit UI exists.
 
 Audit records are distinct from durable command/session state-transition events. They may record rejected attempts, failed checks, and security decisions that do not create command records.
 
@@ -237,11 +237,11 @@ Audit records must not directly store raw session cookies, CSRF tokens, access t
 
 **This is the canonical no-log/redaction list for Patchbay.** Other docs (PROTOCOL, UX, ARCHITECTURE) summarize or point here; they do not maintain competing lists. Add new redacted fields to this list, not to a doc-local copy.
 
-The v0 CLI diagnostic commands (`docs/UX.md` CLI — `audit-query`, `inspect-command`, `session-health`, `adapter-status`) project these already-redacted audit and event-log records; they introduce no new raw-payload exposure path. `inspect-command` surfaces lifecycle state, timestamps, LSNs, and audit-trail entries for a command — not prompt bodies or sensitive payload content. `adapter-status` surfaces capability manifests but excludes raw `attachment_method.descriptor` (adapter attachment material is redacted per the rule above). Redaction is enforced at the boundary before audit/snapshot materializes, so diagnostic projections inherit it automatically. A future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
+The v0.1.0 CLI diagnostic commands (`docs/UX.md` CLI — `audit-query`, `inspect-command`, `session-health`, `adapter-status`) project these already-redacted audit and event-log records; they introduce no new raw-payload exposure path. `inspect-command` surfaces lifecycle state, timestamps, LSNs, and audit-trail entries for a command — not prompt bodies or sensitive payload content. `adapter-status` surfaces capability manifests but excludes raw `attachment_method.descriptor` (adapter attachment material is redacted per the rule above). Redaction is enforced at the boundary before audit/snapshot materializes, so diagnostic projections inherit it automatically. A future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
 ## Deployment posture
 
-Allowed v0 deployments:
+Allowed v0.1.0 deployments:
 
 - localhost development;
 - local workstation service;
@@ -249,7 +249,7 @@ Allowed v0 deployments:
 - LAN, VPN, or reverse-proxy deployment with HTTPS and authenticated browser sessions;
 - split deployment where adapters run near runtimes and the core remains the single authority.
 
-Forbidden v0 deployments:
+Forbidden v0.1.0 deployments:
 
 - internet-exposed unauthenticated core;
 - non-localhost HTTP browser access carrying authenticated sessions;
@@ -259,7 +259,7 @@ Forbidden v0 deployments:
 
 ## Extension pressure classification
 
-Committed v0 behavior:
+Committed v0.1.0 behavior:
 
 - one operator and one authority domain;
 - explicit actor, device, endpoint, operator-session, runtime-session, grant, revocation, and audit concepts;
@@ -282,7 +282,7 @@ Reserved extension seams:
 - SIEM export and long-retention compliance archives;
 - lease-backed exclusive coordination.
 
-Rejected v0 directions:
+Rejected v0.1.0 directions:
 
 - unauthenticated web control;
 - UI-only authorization;

@@ -14,7 +14,7 @@ A durable security or operational record of a decision, attempt, or observation.
 
 ## Authority domain
 
-A bounded Patchbay control context within which grants, revocation, routing authority, and any exclusive coordination claims are evaluated against one authoritative core state. V0 has one operator and one authority domain; future multi-human or federated deployments must define how authority domains are created, joined, delegated, audited, and isolated.
+A bounded Patchbay control context within which grants, revocation, routing authority, and any exclusive coordination claims are evaluated against one authoritative core state. v0.1.0 has one operator and one authority domain; future multi-human or federated deployments must define how authority domains are created, joined, delegated, audited, and isolated.
 
 ## Command
 
@@ -52,11 +52,11 @@ A concrete connection or addressable runtime instance for an actor on a device.
 
 ## Elicitation
 
-A durable pending response solicitation from one actor/system component to another. It opens a response slot rather than answering a prior request. V0 Elicitations bind to the operator actor (not a specific endpoint), deliver by subscription fan-out to all subscribed surfaces, and clear everywhere on first answer. The opener is always an adapter/agent/harness in v0; the core does not open Elicitations. Core prompts (lockdown, expired/revoked sessions, CSRF rejection) are NOT Elicitations. See `docs/PROTOCOL.md`.
+A durable pending response solicitation from one actor/system component to another. It opens a response slot rather than answering a prior request. v0.1.0 Elicitations bind to the operator actor (not a specific endpoint), deliver by subscription fan-out to all subscribed surfaces, and clear everywhere on first answer. The opener is always an adapter/agent/harness in v0.1.0; the core does not open Elicitations. Core prompts (lockdown, expired/revoked sessions, CSRF rejection) are NOT Elicitations. See `docs/PROTOCOL.md`.
 
 ## ElicitationId
 
-A new id space, adapter-assigned when a pending response slot is opened. The core assigns an LSN when it durably records the Elicitation; it does not assign the `ElicitationId` in v0. Separate from CommandId/MessageId/ReplyId/EventId to prevent forgery and preserve initiation-vs-response direction.
+A new id space, adapter-assigned when a pending response slot is opened. The core assigns an LSN when it durably records the Elicitation; it does not assign the `ElicitationId` in v0.1.0. Separate from CommandId/MessageId/ReplyId/EventId to prevent forgery and preserve initiation-vs-response direction.
 
 ## ElicitationState
 
@@ -76,7 +76,7 @@ A durable record of an accepted state transition.
 
 ## Grant
 
-An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific OperationKinds against a target scope. Spawn grants are fleet-level by default in v0; successful spawn records an auto-issued descendant grant for the spawned session. See `docs/PROTOCOL.md`.
+An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific OperationKinds against a target scope. Spawn grants are fleet-level by default in v0.1.0; successful spawn records an auto-issued descendant grant for the spawned session. See `docs/PROTOCOL.md`.
 
 ## Harness slash-command
 
@@ -92,11 +92,11 @@ Log sequence number. A monotonic, gap-free number assigned by the coordination c
 
 ## Message
 
-Generic operator-originated no-grant Message is not a v0 action: it is rejected for v0 because no surveyed harness exposes it as a distinct operator action. The `message id` space remains reserved for future informational surfaces and current correlation-model compatibility. Contrast with `instruct` (an authorized Operation carrying prompt/input payload) and Elicitation (an agent/adapter-opened response slot).
+Generic operator-originated no-grant Message is not a v0.1.0 action: it is rejected for v0.1.0 because no surveyed harness exposes it as a distinct operator action. The `message id` space remains reserved for future informational surfaces and current correlation-model compatibility. Contrast with `instruct` (an authorized Operation carrying prompt/input payload) and Elicitation (an agent/adapter-opened response slot).
 
 ## Lease
 
-A time-bounded exclusive claim over a resource or coordination role. V0 does not implement leases; see `docs/PROTOCOL.md` § Leases for the precondition framing.
+A time-bounded exclusive claim over a resource or coordination role. v0.1.0 does not implement leases; see `docs/PROTOCOL.md` § Leases for the precondition framing.
 
 ## Operator
 
@@ -108,11 +108,11 @@ A source-authenticated fact, event, output, status emission, reply-like result, 
 
 ## Operation
 
-An authorized control-plane request by an actor to an actor, core, adapter, fleet, session, service, or resource target. V0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam. An accepted Operation reuses the `CommandState` lifecycle by documented refinement equivalence. See `docs/PROTOCOL.md`.
+An authorized control-plane request by an actor to an actor, core, adapter, fleet, session, service, or resource target. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam. An accepted Operation reuses the `CommandState` lifecycle by documented refinement equivalence. See `docs/PROTOCOL.md`.
 
 ## OperationKind
 
-A registry-owned kind of Operation: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0), plus reserved `agent-send` and `adapter-utility-exec`. Unknown or reserved-but-not-validatable kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
+A registry-owned kind of Operation: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0.1.0), plus reserved `agent-send` and `adapter-utility-exec`. Unknown or reserved-but-not-validatable kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
 
 ## Operator session
 
@@ -128,7 +128,7 @@ The adapter-specific content or schema-bound body carried inside an Operation, O
 
 ## Presence
 
-A derived fact (from endpoint observations and session connectivity state), not a query target. One-shot "is session X present?" reads route through snapshot/status `query` Operations; there is no `query-presence` OperationKind. Single-operator v0 has no presence-leak threat; filter-scoped subscriptions for multi-operator presence-leak prevention are a reserved seam.
+A derived fact (from endpoint observations and session connectivity state), not a query target. One-shot "is session X present?" reads route through snapshot/status `query` Operations; there is no `query-presence` OperationKind. Single-operator v0.1.0 has no presence-leak threat; filter-scoped subscriptions for multi-operator presence-leak prevention are a reserved seam.
 
 ## Principal
 
@@ -136,7 +136,7 @@ A security-facing shorthand for an actor or endpoint being authorized. Patchbay 
 
 ## Response contract
 
-A `response_contract` describes what kind of response is semantically required: committed v0 contract kinds are `approval` and `question`; reserved contract kinds are `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`. UI hints (select-one, select-many, free-text, upload, draw) are optional open-set sub-fields of `question`/`approval`, not contract kinds. See `docs/PROTOCOL.md`.
+A `response_contract` describes what kind of response is semantically required: committed v0.1.0 contract kinds are `approval` and `question`; reserved contract kinds are `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`. UI hints (select-one, select-many, free-text, upload, draw) are optional open-set sub-fields of `question`/`approval`, not contract kinds. See `docs/PROTOCOL.md`.
 
 ## Subscription
 

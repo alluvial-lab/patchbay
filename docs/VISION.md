@@ -4,11 +4,17 @@ Patchbay is a deployment-neutral human control plane for operating agent session
 
 Patchbay gives an operator a reliable cockpit for discovering sessions, spawning or attaching to runtime sessions, submitting authorized Operations, receiving source-authenticated Observations, answering Elicitations, and recovering state after disconnection. The coordination core is a network-reachable fixed point: operator surfaces and agent/harness machines are reconnecting clients of it, and neither side is load-bearing for the other. Patchbay starts with a Pi adapter because Pi is the first workflow target, but Pi is an adapter, not the architecture.
 
+## Audience and release horizon
+
+Patchbay is intended to become a publishable, reliable self-hosted product that independent operators can deploy for themselves. The first executable milestone, `v0.1.0`, gets the initial operator operational; it is not the product ceiling.
+
+The `v0.x` line hardens deployment, migrations, public contracts, adapter boundaries, and implementation-backed assurance while retaining pre-1.0 freedom to make explicit breaking changes. `v1.0.0` is the public-product threshold: one human operator per deployment, one supported reference deployment path, Pi plus a credible second or materially distinct reference adapter, and stable designated public contracts. Multi-human shared deployments, federation, HA, and broader provider/adopter integrations remain explicit post-v1 seams rather than hidden assumptions or `v0.1.0` obligations.
+
 ## Why Patchbay exists
 
 Headless and remote agent work needs more than chat transport. An operator often works from several human surfaces — phone, laptop, desktop, web, CLI — while agents and runtimes live wherever the operator chooses: a VM, container, local workstation, home server, cloud host, or future deployment target.
 
-The core must remain reachable independently of any one operator device or harness host. A colocated v0 deployment is a convenience for installation and testing; it is not the architectural model. The architectural model is a durable coordination core that reconnecting surfaces and adapters can independently join.
+The core must remain reachable independently of any one operator device or harness host. A colocated v0.1.0 deployment is a convenience for installation and testing; it is not the architectural model. The architectural model is a durable coordination core that reconnecting surfaces and adapters can independently join.
 
 The control surface must answer these questions reliably:
 
@@ -51,6 +57,7 @@ Patchbay coordination core
 
 Patchbay is:
 
+- a publishable, reliable self-hosted product for independent operators;
 - a human-operated control plane for headless and distributed agent sessions;
 - a durable Operation, Observation, Elicitation, snapshot, and authority layer;
 - an adapter-neutral protocol and daemon model;
@@ -72,7 +79,7 @@ Adapters may integrate with Pi, Claude, Codex, shell jobs, project trackers, or 
 
 ## Success criteria
 
-Patchbay is successful when an operator can move among phone, laptop, desktop, and CLI while controlling remote/headless agent sessions with clear delivery state, durable history, and recoverable snapshots.
+Patchbay is successful when an operator can move among phone, laptop, desktop, and CLI while controlling remote/headless agent sessions with clear delivery state, durable history, and recoverable snapshots. At the public-product threshold, an additional operator can independently install, secure, upgrade, back up, restore, diagnose, and operate their own Patchbay deployment through the supported reference path.
 
 A useful Patchbay session has these properties:
 

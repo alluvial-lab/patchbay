@@ -1,13 +1,13 @@
-# Pi Adapter — v0 Parity Checklist
+# Pi Adapter — v0.1.0 Parity Checklist
 
 ## 1. Purpose and scope
 
-This document is the v0 parity checklist and migration floor for the Pi adapter — the first Patchbay adapter, targeting migration from the operator's current Remote Pi workflow.
+This document is the v0.1.0 parity checklist and migration floor for the Pi adapter — the first Patchbay adapter, targeting migration from the operator's current Remote Pi workflow.
 
 It defines:
 
 - the current Remote Pi workflow being migrated *from*;
-- the required Pi adapter capabilities for v0, mapped onto the canonical Patchbay `OperationKind` registry;
+- the required Pi adapter capabilities for v0.1.0, mapped onto the canonical Patchbay `OperationKind` registry;
 - the mapping from Pi session metadata to Patchbay session identity;
 - the discovery, send, stream, reconnect, and status parity surface;
 - unsupported or deferred Remote Pi features;
@@ -56,7 +56,7 @@ The migration *from* state is the operator's current Remote Pi control surface. 
 
 ### Provisioning
 
-`pi-supervisord` is a long-running daemon supervisor that spawns `pi --mode rpc` children, managed by systemd/launchd. Provisioning is **out-of-band sysadmin**: the supervisor and its service templates are installed and operated outside the operator control surface. The setup wizard explicitly excludes daemon mode from the operator surface. See §7 for the v0 classification.
+`pi-supervisord` is a long-running daemon supervisor that spawns `pi --mode rpc` children, managed by systemd/launchd. Provisioning is **out-of-band sysadmin**: the supervisor and its service templates are installed and operated outside the operator control surface. The setup wizard explicitly excludes daemon mode from the operator surface. See §7 for the v0.1.0 classification.
 
 ## 3. Pi session metadata → Patchbay session identity mapping
 
@@ -80,23 +80,23 @@ This mapping must satisfy the checked properties documented in `docs/VERIFICATIO
 
 > **`session_new` is a session replacement, not a `/clear`.** remote_pi's own code groups `session_new` with `fork`/`switch`/`reload` as "session replacement" and marks the pre-replacement SDK context permanently stale. A `/clear` on other harnesses preserves the session handle and wipes the transcript in place; Pi does the opposite — the transcript event log is rotated and the old context becomes permanently unusable. This is why the mapping bumps `session_generation` rather than treating it as a same-generation clear.
 
-## 4. Required Pi adapter capabilities for v0
+## 4. Required Pi adapter capabilities for v0.1.0
 
-This is the core of the checklist. It maps each committed v0 `OperationKind` (the registry is authoritative in `docs/PROTOCOL.md`, `### OperationKind registry`) to the Pi wire action(s) that satisfy it, and records the capability-manifest declarations the Pi adapter makes. Per-Operation delivery mapping and manifest-field declarations are kept in separate columns: manifest fields come from the manifest shape in `docs/PROTOCOL.md` (Adapter capabilities) and correspond to the generated `AdapterCapability` fields in `contracts/rust/src/gen/patchbay/patchbay.rs` — `supported_operation_kinds`, `supported_target_spec_shapes`, `streaming_support`, `snapshot_support`, `cancellation_support`, `session_replacement_support`, `idempotency_strength`, `attachment_method`, `known_failure_modes`. The names below use the manifest dimensions as prose shorthand (e.g. `streaming` for the `streaming_support` field); a delivery outcome such as `unsupported_command` is an adapter-reported delivery result, not a manifest field.
+This is the core of the checklist. It maps each committed v0.1.0 `OperationKind` (the registry is authoritative in `docs/PROTOCOL.md`, `### OperationKind registry`) to the Pi wire action(s) that satisfy it, and records the capability-manifest declarations the Pi adapter makes. Per-Operation delivery mapping and manifest-field declarations are kept in separate columns: manifest fields come from the manifest shape in `docs/PROTOCOL.md` (Adapter capabilities) and correspond to the generated `AdapterCapability` fields in `contracts/rust/src/gen/patchbay/patchbay.rs` — `supported_operation_kinds`, `supported_target_spec_shapes`, `streaming_support`, `snapshot_support`, `cancellation_support`, `session_replacement_support`, `idempotency_strength`, `attachment_method`, `known_failure_modes`. The names below use the manifest dimensions as prose shorthand (e.g. `streaming` for the `streaming_support` field); a delivery outcome such as `unsupported_command` is an adapter-reported delivery result, not a manifest field.
 
-| `OperationKind` | Pi wire action(s) | Manifest declaration (actual fields) | v0 disposition |
+| `OperationKind` | Pi wire action(s) | Manifest declaration (actual fields) | v0.1.0 disposition |
 |---|---|---|---|
-| `attach` | `session_sync` | `supported_operation_kinds` includes `attach`; `streaming=true`; `snapshot=partial`; `cancellation=true`; `session_replacement=true` | committed v0 |
-| `instruct` | `user_message` | `supported_operation_kinds` includes `instruct` | committed v0 |
-| `cancel` / `interrupt` | `cancel` | `cancellation=true` (`interrupt` aliased to `cancel` or unsupported-by-adapter at delivery) | committed v0 |
-| `approval-response` | `approve_tool` (approval Elicitation opened via the `tool_call` hook) | `supported_operation_kinds` includes `approval-response` | committed v0 |
-| `query` | `session_sync` / `list_models` / `ping` | `supported_operation_kinds` includes `query` | committed v0 |
-| `reconfigure` | `model_set` / `thinking_set` | `supported_operation_kinds` includes `reconfigure` | committed v0 |
-| `session-management` | `session_new` / `session_compact` | `session_replacement=true` (`session_new` bumps `session_generation`; `session_compact` does not) | committed v0 |
-| `spawn` | none | `supported_operation_kinds` excludes `spawn`; delivery of a `spawn` Operation returns `unsupported_command` | committed kind; Pi-adapter-unsupported in v0 (reserved seam) |
+| `attach` | `session_sync` | `supported_operation_kinds` includes `attach`; `streaming=true`; `snapshot=partial`; `cancellation=true`; `session_replacement=true` | committed v0.1.0 |
+| `instruct` | `user_message` | `supported_operation_kinds` includes `instruct` | committed v0.1.0 |
+| `cancel` / `interrupt` | `cancel` | `cancellation=true` (`interrupt` aliased to `cancel` or unsupported-by-adapter at delivery) | committed v0.1.0 |
+| `approval-response` | `approve_tool` (approval Elicitation opened via the `tool_call` hook) | `supported_operation_kinds` includes `approval-response` | committed v0.1.0 |
+| `query` | `session_sync` / `list_models` / `ping` | `supported_operation_kinds` includes `query` | committed v0.1.0 |
+| `reconfigure` | `model_set` / `thinking_set` | `supported_operation_kinds` includes `reconfigure` | committed v0.1.0 |
+| `session-management` | `session_new` / `session_compact` | `session_replacement=true` (`session_new` bumps `session_generation`; `session_compact` does not) | committed v0.1.0 |
+| `spawn` | none | `supported_operation_kinds` excludes `spawn`; delivery of a `spawn` Operation returns `unsupported_command` | committed kind; Pi-adapter-unsupported in v0.1.0 (reserved seam) |
 | `elicitation-response` | no distinct Pi non-approval question wire type; the `tool_call` approval gate is the closest | `supported_operation_kinds` includes `elicitation-response`; non-approval `question` Elicitations unsupported by the Pi adapter at delivery (`unsupported_command`) until a Pi question surface is promoted | committed core kind + committed `question` contract; Pi-adapter support for non-approval question Elicitations is a reserved adapter-level seam |
-| `agent-send` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0 | reserved seam |
-| `adapter-utility-exec` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0 | reserved seam |
+| `agent-send` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0.1.0 | reserved seam |
+| `adapter-utility-exec` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0.1.0 | reserved seam |
 
 **Snapshot-tier declaration:** the Pi adapter declares `snapshot = partial`. The transcript event log replayed via `session_sync` → `session_history` provides recent/current state, not arbitrary historical reconstruction. The core reconciles reconnects against this tier per the degraded-behavior rules in `docs/PROTOCOL.md` (Adapter snapshot capability tiers); it never fabricates a snapshot from cached state.
 
@@ -129,18 +129,18 @@ Pi-specific operations are adapter capabilities over committed `OperationKind`s,
 
 | Remote Pi feature | Classification | Note |
 |---|---|---|
-| `pi-supervisord` provisioning | reserved / adapter-external | Out-of-band sysadmin, not an operator Operation in v0. A follow-on feature may promote supervisord-control `spawn` (start/stop/restart a registered daemon). |
+| `pi-supervisord` provisioning | reserved / adapter-external | Out-of-band sysadmin, not an operator Operation in v0.1.0. A follow-on feature may promote supervisord-control `spawn` (start/stop/restart a registered daemon). |
 | `pair_request` | transport/pairing | Out of adapter Operation scope (web/transport layer); not an `attach` wire action. |
 | `queued_message_set` / `queued_message_clear` | transport/pairing | Out of adapter Operation scope (web/transport layer). Current operator-visible queued-message behavior being left outside adapter Operation scope; the switch-decision checklist (§8) requires an explicit accept-or-replace decision. |
-| Agent→operator free-form question Elicitation beyond the `tool_call` approval gate | reserved / adapter-level | The core `question` `response_contract` is committed v0 (`docs/PROTOCOL.md` `response_contract` registry). The Pi adapter has no distinct non-approval question wire type in the surveyed surface, so it declares non-approval `question` Elicitations unsupported at delivery (`unsupported_command`) until a Pi question surface is promoted. This is an adapter-support limitation, not a reclassification of the core `question` contract. |
-| `/fork` | reserved / SDK-internal | remote_pi groups fork with the replacement bug-class internally, but fork is not an operator wire action in the surveyed inbound actions; it is SDK-internal. Out of v0 Pi adapter surface. |
-| `/reload` | reserved / out-of-scope-unless-verified | Same-session `session_start:reload` against a re-`require`d module; a Pi-process concern the session-replacement harness explicitly leaves out of scope. Out of v0 Pi adapter parity scope unless a follow-on verifies it. |
+| Agent→operator free-form question Elicitation beyond the `tool_call` approval gate | reserved / adapter-level | The core `question` `response_contract` is committed v0.1.0 (`docs/PROTOCOL.md` `response_contract` registry). The Pi adapter has no distinct non-approval question wire type in the surveyed surface, so it declares non-approval `question` Elicitations unsupported at delivery (`unsupported_command`) until a Pi question surface is promoted. This is an adapter-support limitation, not a reclassification of the core `question` contract. |
+| `/fork` | reserved / SDK-internal | remote_pi groups fork with the replacement bug-class internally, but fork is not an operator wire action in the surveyed inbound actions; it is SDK-internal. Out of v0.1.0 Pi adapter surface. |
+| `/reload` | reserved / out-of-scope-unless-verified | Same-session `session_start:reload` against a re-`require`d module; a Pi-process concern the session-replacement harness explicitly leaves out of scope. Out of v0.1.0 Pi adapter parity scope unless a follow-on verifies it. |
 
 ## 8. Migration-decision criteria
 
 The operator can switch from Remote Pi to Patchbay when **all** of the following hold:
 
-- [ ] **(a) Capability coverage.** Every committed-v0 Pi capability in §4 is implemented by the Pi adapter.
+- [ ] **(a) Capability coverage.** Every committed-v0.1.0 Pi capability in §4 is implemented by the Pi adapter.
 - [ ] **(b) Identity mapping verified.** The session identity mapping in §3 is verified, including the `session_new` generation-bump rule (and the fresh-session-restart bump, and the no-bump rules for `session_compact` and `--continue` restarts).
 - [ ] **(c) Reconnect/snapshot parity.** Reconnect and snapshot parity in §5 holds against the `partial` tier; unreconciled state is shown as `stale`/`unknown`, never as live.
 - [ ] **(d) Deferred features accepted.** The deferred features in §7 are consciously accepted as gaps — including an explicit accept-or-replace decision for the Remote Pi queued-message behavior (`queued_message_set`/`queued_message_clear`), since that is current operator-visible behavior being left outside adapter Operation scope.
@@ -149,9 +149,9 @@ The operator can switch from Remote Pi to Patchbay when **all** of the following
 
 ## 9. Extension pressure classification
 
-This is the local committed-v0 / reserved-seam / rejected classification for the Pi adapter, consistent with the non-foreclosure discipline in `feature-extension-seams-non-foreclosure` and its ordering note (local per-feature classification suffices until the central extension-seams sweep runs). The central sweep will consolidate this into the project-wide registry when it executes.
+This is the local committed-v0.1.0 / reserved-seam / rejected classification for the Pi adapter, consistent with the non-foreclosure discipline in `feature-extension-seams-non-foreclosure` and its ordering note (local per-feature classification suffices until the central extension-seams sweep runs). The central sweep will consolidate this into the project-wide registry when it executes.
 
-- **Committed v0:**
+- **Committed v0.1.0:**
   - the `OperationKind` mappings in §4;
   - the `partial` snapshot tier;
   - the `session_new` generation-bump mapping (session replacement, not a same-generation clear).
@@ -160,7 +160,7 @@ This is the local committed-v0 / reserved-seam / rejected classification for the
   - free-form question Elicitation support in the Pi adapter (the core `question` contract is committed; Pi-adapter support is the reserved seam);
   - `/fork` (SDK-internal);
   - tighter Elicitation responder binding (endpoint class / fallback chain).
-- **Rejected for v0:**
+- **Rejected for v0.1.0:**
   - Pi-specific state names in core protocol;
   - treating `session_new` as a same-generation clear;
   - treating `session_new` as `spawn`.

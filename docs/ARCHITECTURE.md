@@ -12,7 +12,7 @@ The first surface is a responsive web cockpit using the shared TypeScript operat
 
 ### Operation plane
 
-The operation plane represents authorized control-plane requests through an actor-neutral vocabulary, while v0 admits only operator-originated Operations. It includes spawn, attach, instruct, cancel, interrupt, query, approval response, elicitation response, reconfiguration, and session-management Operations; non-operator Operation senders remain reserved seams. Reserved-but-not-validatable seams such as `agent-send` and `adapter-utility-exec` are named for non-operator routing and standalone adapter utility-exec pressure, but v0 submissions reject with `validation_failed`.
+The operation plane represents authorized control-plane requests through an actor-neutral vocabulary, while v0.1.0 admits only operator-originated Operations. It includes spawn, attach, instruct, cancel, interrupt, query, approval response, elicitation response, reconfiguration, and session-management Operations; non-operator Operation senders remain reserved seams. Reserved-but-not-validatable seams such as `agent-send` and `adapter-utility-exec` are named for non-operator routing and standalone adapter utility-exec pressure, but v0.1.0 submissions reject with `validation_failed`.
 
 Every accepted Operation initially reuses the canonical `CommandState` registry in `docs/PROTOCOL.md` by documented refinement equivalence. Control-surface-local submission states are separate and never become durable core states. A future rename to `OperationState` must update prose, generated contracts, formal models, conformance vectors, and implementations together.
 
@@ -20,7 +20,7 @@ Every accepted Operation initially reuses the canonical `CommandState` registry 
 
 The runtime/session plane contains harness sessions, agent processes, shell jobs, containers, worktrees, CI tasks, or other execution contexts. Patchbay observes and controls these through adapters.
 
-Spawn authority is fleet-level by default in v0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired. Spawn is one `OperationKind`; spawn variants (worktree, same-dir, session, process, cloud environment) are described by payload `target_spec.shape` from a reserved open shape registry, not by per-variant OperationKinds. See `docs/PROTOCOL.md` for the spawn authority model and `docs/SECURITY.md` for the descendant-grant and revocation rules.
+Spawn authority is fleet-level by default in v0.1.0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired. Spawn is one `OperationKind`; spawn variants (worktree, same-dir, session, process, cloud environment) are described by payload `target_spec.shape` from a reserved open shape registry, not by per-variant OperationKinds. See `docs/PROTOCOL.md` for the spawn authority model and `docs/SECURITY.md` for the descendant-grant and revocation rules.
 
 ### Adapter plane
 
@@ -101,9 +101,19 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
 └──────────────┘ └─────────────┘        └──────────────────┘
 ```
 
-## V0 component slice
+## Versioned deployment horizon
 
-The v0 executable slice is a single-authority deployment that proves the core control loop without implementing the whole future platform.
+The first executable slice and the public product share the same durable-core architecture but carry different support commitments:
+
+- **`v0.1.0`** gets the initial operator operational with one authoritative core, one operator, Pi, a responsive web cockpit, a diagnostic CLI, and durable local persistence behind ports.
+- **`v0.x`** hardens packaging, migrations, public boundaries, executable conformance, and adapter portability while contracts may still evolve through explicit breaking changes.
+- **`v1.0.0`** supports independent operators self-hosting Patchbay through one tested reference deployment path. Each v1 deployment has one human operator. Pi plus a credible second or materially distinct reference adapter proves that the adapter boundary is not merely Pi-shaped.
+
+The v1 reference support boundary includes installation, TLS/reverse-proxy guidance, identity and adapter enrollment/revocation, versioned configuration and storage migrations, upgrade/rollback expectations, backup/restore, diagnostics, and crash recovery. The architecture remains deployment-neutral even though only one golden deployment path is required to be supported. HA, federation, multi-human shared deployments, multiple storage backends, zero-downtime upgrades, and orchestration-specific packaging remain post-v1 seams.
+
+## v0.1.0 component slice
+
+The `v0.1.0` executable slice is a single-authority deployment that proves the core control loop without implementing the whole future platform.
 
 ```text
 ┌────────────────────────────┐   ┌────────────────────────────┐
@@ -132,19 +142,19 @@ The v0 executable slice is a single-authority deployment that proves the core co
 └──────────────────────────────────────────────────────────┘
 ```
 
-V0 architecture decisions:
+v0.1.0 architecture decisions:
 
-- The coordination core is singular and authoritative. Split deployments may place the web surface, CLI, core, and adapter processes on different machines, but there is no HA core or multi-writer state in v0.
+- The coordination core is singular and authoritative. Split deployments may place the web surface, CLI, core, and adapter processes on different machines, but there is no HA core or multi-writer state in v0.1.0.
 - Persistence is local and durable through a storage port owned by the core. The first backend can be embedded, but event and snapshot semantics must remain independent of the backend.
-- The Pi adapter is the only required runtime adapter. Other adapters remain future examples and must not shape the v0 core ontology.
+- The Pi adapter is the only required runtime adapter. Other adapters remain future examples and must not shape the v0.1.0 core ontology.
 - The web cockpit is the first operator surface. The CLI exists for setup, administration, debugging, and scripted access, not as a second independent product surface with divergent semantics.
-- Leases remain in the architecture and verification vocabulary, but are not required for the v0 executable skeleton unless a later scoped feature promotes a specific lease-backed workflow.
+- Leases remain in the architecture and verification vocabulary, but are not required for the v0.1.0 executable skeleton unless a later scoped feature promotes a specific lease-backed workflow.
 
-### V0 process topology
+### v0.1.0 process topology
 
-V0 runs two logical processes, not one:
+v0.1.0 runs two logical processes, not one:
 
-- **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.
+- **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.1.0.
 - **TypeScript web server** — a control-surface process that terminates HTTP/HTTPS for the browser cockpit, owns operator sessions, cookies, and CSRF protection, and speaks the generated Protobuf/Connect contract to the Rust core.
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
@@ -153,30 +163,30 @@ The browser runs the shared TypeScript operator domain (protocol client, deliver
 
 Reserved seams:
 
-- **Server-side operator-domain reuse**: v0 may run the web server as a thin HTTP→protocol translator with the operator domain executing only in the browser; promoting delivery/reconnect state machines or SSR to the server is reserved for when a concrete need arrives.
+- **Server-side operator-domain reuse**: v0.1.0 may run the web server as a thin HTTP→protocol translator with the operator domain executing only in the browser; promoting delivery/reconnect state machines or SSR to the server is reserved for when a concrete need arrives.
 - **Web↔core internal protocol design**: the specific RPC surface, streaming/event channel, operator-session/CSRF evidence crossing, and web-surface authentication to the core are designed in a follow-on feature (see `feature-web-core-protocol-seam`).
-- **Split deployment**: the web server, CLI, core, and adapters may run on different machines. V0 may colocate them on one host for installation simplicity, but that colocation is a deployment convenience, not the architecture. The Rust coordination core remains the network-reachable fixed point and the single durable writer.
+- **Split deployment**: the web server, CLI, core, and adapters may run on different machines. v0.1.0 may colocate them on one host for installation simplicity, but that colocation is a deployment convenience, not the architecture. The Rust coordination core remains the network-reachable fixed point and the single durable writer.
 
 This topology is consistent with the single-authoritative-core commitment: there is one writer to the durable log (the Rust core), and the HTTP-terminating process is a control surface whose authority is delegated and revocable.
 
-### V0 persistence topology
+### v0.1.0 persistence topology
 
-The v0 persistence layer is a single-writer, local-first, port-isolated store owned by the coordination core:
+The v0.1.0 persistence layer is a single-writer, local-first, port-isolated store owned by the coordination core:
 
 - **Single writer**: one authoritative core process appends to the durable event log. No multi-writer coordination, no HA, no split-brain recovery.
 - **Embedded default backend**: the first backend may be embedded in the core process (e.g. a local file or embedded database). Domain semantics must not depend on the backend choice.
 - **Storage port**: the core reads and writes through a storage port; adapters and control surfaces never touch persistence directly. This is the Ports & Adapters boundary for durability.
 - **Log + snapshots**: the durable event log is the source of truth; snapshots are derived checkpoints used to bound recovery replay cost. A snapshot is never an alternate ordering authority.
 - **Crash recovery**: on restart the core replays the log (or loads the latest snapshot then replays the tail) to reconstruct in-memory state up to the last committed log sequence number. Accepted Operations are restored; no accepted Operation disappears silently.
-- **No remote replication**: v0 does not require WAL shipping, remote replicas, or storage-engine hot swap. Those are reserved seams for HA/federated deployments.
+- **No remote replication**: v0.1.0 does not require WAL shipping, remote replicas, or storage-engine hot swap. Those are reserved seams for HA/federated deployments.
 
-Revision and cursor semantics for events and snapshots are defined in `docs/PROTOCOL.md`. V0 does not require multi-region replication, point-in-time cloning, or cross-backend snapshot portability.
+Revision and cursor semantics for events and snapshots are defined in `docs/PROTOCOL.md`. v0.1.0 does not require multi-region replication, point-in-time cloning, or cross-backend snapshot portability.
 
-Future architecture planes remain valid direction, but v0 implementation should prefer seams over breadth: define the port, registry, or capability boundary needed for later growth without implementing native mobile, HA, multi-operator coordination, or arbitrary adapters.
+Future architecture planes remain valid direction, but v0.1.0 implementation should prefer seams over breadth: define the port, registry, or capability boundary needed for later growth without implementing native mobile, HA, multi-operator coordination, or arbitrary adapters.
 
 ## Data flow
 
-1. A control surface submits an operator-originated Operation through the shared TypeScript client. (Non-operator Operation submitters remain reserved seams in v0.)
+1. A control surface submits an operator-originated Operation through the shared TypeScript client. (Non-operator Operation submitters remain reserved seams in v0.1.0.)
 2. The coordination core validates identity, authority, target scope, idempotency key, `OperationKind`, and payload shape.
 3. Accepted Operations are durably recorded before delivery is attempted.
 4. The target adapter receives the Operation or reports an explicit failure; adapters and actors emit source-authenticated Observations.
@@ -198,4 +208,4 @@ Future architecture planes remain valid direction, but v0 implementation should 
 
 The Pi adapter provides the first real runtime integration. It exposes Pi sessions to Patchbay without making Pi session semantics global. Pi-specific features appear as adapter capabilities, not as core protocol requirements.
 
-The migration target is functional parity with the operator's current Remote Pi workflow and a UX quality bar closer to a mature remote agent app. The v0 Pi adapter parity checklist, capability mapping, and migration-decision criteria live in `docs/ADAPTER-PI.md`.
+The migration target is functional parity with the operator's current Remote Pi workflow and a UX quality bar closer to a mature remote agent app. The v0.1.0 Pi adapter parity checklist, capability mapping, and migration-decision criteria live in `docs/ADAPTER-PI.md`.
