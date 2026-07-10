@@ -15,7 +15,7 @@ updated: 2026-07-10
 
 ## Scope
 
-Demote `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (from `session_generation.qnt`), `ElicitationTimeoutNeitherSuccessNorDenial`, and `LateGenerationInert` (from `elicitation_lifecycle.qnt`) from `status: promoted` to `status: draft`. These four properties have formulas too narrow to support their product-claim names.
+Demote `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, and `LateGenerationInert` (from `session_generation.qnt`) and `ElicitationTimeoutNeitherSuccessNorDenial` (from `elicitation_lifecycle.qnt`) from `status: promoted` to `status: draft`. These four properties have formulas too narrow to support their product-claim names.
 
 ## Unit
 
@@ -23,10 +23,11 @@ Demote `SessionIdentityTuple`, `LabelsCannotOverrideIdentity` (from `session_gen
 
 ## Files
 
-- `specs/seed/session_generation.qnt` — two `@promotion` blocks
-- `specs/seed/elicitation_lifecycle.qnt` — two `@promotion` blocks
+- `specs/seed/session_generation.qnt` — three `@promotion` blocks (`SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `LateGenerationInert`)
+- `specs/seed/elicitation_lifecycle.qnt` — one `@promotion` block (`ElicitationTimeoutNeitherSuccessNorDenial`)
 - `contracts/scripts/check-vectors.mjs` — `CHECKED_MODEL_PROPERTIES` / `STATED_NORMATIVE_PROPERTIES` arrays
 - `docs/VERIFICATION.md` — prose lists, seed-model summary, generated tables
+- `docs/ADAPTER-PI.md` — lines 75-79 reference `LabelsCannotOverrideIdentity` and `LateGenerationInert` as checked
 
 ## Implementation
 
@@ -38,28 +39,31 @@ For each of the four properties:
    - Add `demotion_reason: <explanation from the design>`
 
 2. In `contracts/scripts/check-vectors.mjs`:
-   - Remove `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `ElicitationTimeoutNeitherSuccessNorDenial`, `LateGenerationInert` from `CHECKED_MODEL_PROPERTIES`
+   - Remove `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `LateGenerationInert`, `ElicitationTimeoutNeitherSuccessNorDenial` from `CHECKED_MODEL_PROPERTIES`
    - Add them to `STATED_NORMATIVE_PROPERTIES`
 
-3. Run `node contracts/scripts/check-vectors.mjs` FIRST, then `node contracts/scripts/check-models.mjs`.
+3. Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates conformance table), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates model table), then run both again to confirm exit 0.
 
 4. Update VERIFICATION.md prose that is NOT generated:
    - The checked-model property lists for `session_generation.qnt` and `elicitation_lifecycle.qnt`
    - The seed-model summary tables for both models — move the demoted properties to the draft column
    - The summary line — update promoted/draft counts
 
+5. Update `docs/ADAPTER-PI.md:75-79` — `LabelsCannotOverrideIdentity` and `LateGenerationInert` are referenced as checked properties. Mark these as stated-normative.
+
 ## Demotion reasons
 
-- `SessionIdentityTuple`: adapter id, deployment scope, and runtime id are constants (`ADAPTER_IDS = Set("a1")`, etc.), not per-session identity state. The formula checks generation mirroring and that three singleton sets have size one, not the four-field identity tuple named in the metadata.
-- `LabelsCannotOverrideIdentity`: proves labels use strings disjoint from three constant singleton sets and that generation mirrors remain equal. Models no routing/target-selection path in which a label could override identity.
-- `ElicitationTimeoutNeitherSuccessNorDenial`: metadata and VERIFICATION.md claim timeout never implies "grant," but the model has no grant state. The formula checks only answer/decline fields.
-- `LateGenerationInert`: the formula proves only that generation and `identityGeneration` do not change. Its promoted semantics additionally claim a `stale_event` audit record, but no audit state is modeled.
+- `SessionIdentityTuple` (in `session_generation.qnt`): adapter id, deployment scope, and runtime id are constants (`ADAPTER_IDS = Set("a1")`, etc.), not per-session identity state. The formula checks generation mirroring and that three singleton sets have size one, not the four-field identity tuple named in the metadata.
+- `LabelsCannotOverrideIdentity` (in `session_generation.qnt`): proves labels use strings disjoint from three constant singleton sets and that generation mirrors remain equal. Models no routing/target-selection path in which a label could override identity.
+- `LateGenerationInert` (in `session_generation.qnt`): the formula proves only that generation and `identityGeneration` do not change. Its promoted semantics additionally claim a `stale_event` audit record, but no audit state is modeled.
+- `ElicitationTimeoutNeitherSuccessNorDenial` (in `elicitation_lifecycle.qnt`): metadata and VERIFICATION.md claim timeout never implies "grant," but the model has no grant state. The formula checks only answer/decline fields.
 
 ## Acceptance criteria
 
 - [ ] Four `@promotion` blocks changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
 - [ ] Four ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; then `node contracts/scripts/check-models.mjs` exits 0.
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] VERIFICATION.md prose updated: checked-model property lists, seed-model summary tables.
+- [ ] `docs/ADAPTER-PI.md:75-79` updated: `LabelsCannotOverrideIdentity` and `LateGenerationInert` marked stated-normative.
 - [ ] The genuine promoted properties in those models remain promoted: `GenerationMonotonic`, `TypedCorrelation`, `ElicitationCorrelationTyped`, `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`.
 - [ ] `quint parse specs/seed/session_generation.qnt` and `quint parse specs/seed/elicitation_lifecycle.qnt` exit 0.

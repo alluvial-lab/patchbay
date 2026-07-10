@@ -11,11 +11,11 @@ created: 2026-07-10
 updated: 2026-07-10
 ---
 
-# Remove misleading draft formulas from snapshot_recovery and authority
+# Remove misleading draft formulas and demote SpawnCreatesDescendantGrant
 
 ## Scope
 
-Remove the `val` definitions for ten draft properties whose formulas mislead — they look like real checks but don't model the claimed behavior. Removing the `val` entirely (rather than replacing with `true`) ensures `quint verify --invariant <name>` fails because the invariant doesn't exist, rather than passing vacuously. The `@promotion` blocks stay (status: draft, invocation: `<TBD>`) so the property ids survive as stated-normative obligations. Also fix the VERIFICATION.md authority-tier contradiction.
+Remove the `val` definitions for eleven draft properties whose formulas mislead — they look like real checks but don't model the claimed behavior. Removing the `val` entirely (rather than replacing with `true`) ensures `quint verify --invariant <name>` fails because the invariant doesn't exist, rather than passing vacuously. Also demote `SpawnCreatesDescendantGrant` from promoted to draft (it uses invented kind names contradicting PROTOCOL.md:181 and a hard-coded allowed-kind function that isn't mutation-survivable). The `@promotion` blocks stay (status: draft, invocation: `<TBD>`) so the property ids survive as stated-normative obligations. Also fix the VERIFICATION.md authority-tier contradiction.
 
 ## Unit
 
@@ -24,14 +24,26 @@ Remove the `val` definitions for ten draft properties whose formulas mislead —
 ## Files
 
 - `specs/seed/snapshot_recovery.qnt` — six draft `val` definitions to remove
-- `specs/seed/authority.qnt` — four draft `val` definitions to remove
+- `specs/seed/authority.qnt` — five `val` definitions to remove (four already-draft + `SpawnCreatesDescendantGrant` to demote first)
+- `contracts/scripts/check-vectors.mjs` — move `SpawnCreatesDescendantGrant` from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES`
 - `docs/VERIFICATION.md` — authority-tier contradiction (lines ~116-133)
 
 ## Implementation
 
+### Demote SpawnCreatesDescendantGrant
+
+1. In `specs/seed/authority.qnt`, in the `SpawnCreatesDescendantGrant` `@promotion` block:
+   - Change `status: promoted` → `status: draft`
+   - Replace `invocation` with `<TBD — demoted; model uses invented kind names (reboot/snapshot/stop_session) contradicting PROTOCOL.md:181; allowed-kind set is a hard-coded pure function, not action-created state; v1 formal gate owns the real property>`
+   - Add `demotion_reason: uses invented kind names contradicting canonical descendant-grant allowed-kind set; allowed-kind set is hard-coded, not mutation-survivable`
+
+2. In `contracts/scripts/check-vectors.mjs`:
+   - Remove `SpawnCreatesDescendantGrant` from `CHECKED_MODEL_PROPERTIES`
+   - Add it to `STATED_NORMATIVE_PROPERTIES`
+
 ### Remove misleading `val` definitions
 
-For each of the ten properties, remove the `val <name> = <formula>` definition entirely. Keep the `@promotion` block above it (status stays draft, invocation stays `<TBD>`). Do not change the model's actions or state.
+For each of the eleven properties, remove the `val <name> = <formula>` definition entirely. Keep the `@promotion` block above it (status stays draft, invocation stays `<TBD>`). Do not change the model's actions or state.
 
 **`snapshot_recovery.qnt`** (6 properties):
 - `SnapshotStaleRejected` — checks `SnapshotRevision >= Cursor` (non-decreasing revision), not that stale snapshots are rejected as authority sources.
@@ -41,21 +53,27 @@ For each of the ten properties, remove the `val <name> = <formula>` definition e
 - `CrashNoAcceptedLost` — copies `PreCrashRecoveredState` into `RecoveredCommandState` during replay rather than deriving from log entries — assumes the answer.
 - `IdempotentLogReplay` — checks numeric bounds, not that replay produces identical state.
 
-**`authority.qnt`** (4 properties):
+**`authority.qnt`** (5 properties):
 - `NoCommandWithoutGrant = true` — literal placeholder.
 - `CompoundIssuer = true` — literal placeholder.
 - `GrantAuthorityIsCommandKinds = true` — literal placeholder.
 - `RevocationPreventsFuture = always(true)` — literal placeholder.
+- `SpawnCreatesDescendantGrant` — demoted above; remove the `val` definition.
 
 ### Fix VERIFICATION.md authority-tier contradiction
 
-The `### authority.qnt promotion status` section (lines ~116-133) contradicts itself: it says the four general authority properties "remain draft/stated-normative" but then lists them under "Checked-model spawn properties." Correct the list to include only the genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) and explicitly state the four general properties (`NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`) are stated-normative with no executable formula.
+The `### authority.qnt promotion status` section (lines ~116-133) contradicts itself: it says the four general authority properties "remain draft/stated-normative" but then lists them under "Checked-model spawn properties." Correct the list to include only the genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) and explicitly state the five properties (`NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`, `SpawnCreatesDescendantGrant`) are stated-normative with no executable formula.
+
+### Verification
+
+Run `node contracts/scripts/check-vectors.mjs` (exits 1, regenerates), then `node contracts/scripts/check-models.mjs` (exits 1, regenerates), then both again to confirm exit 0.
 
 ## Acceptance criteria
 
-- [ ] All ten draft property `val` definitions removed from `snapshot_recovery.qnt` and `authority.qnt`.
-- [ ] `@promotion` blocks unchanged (status stays draft, invocation stays `<TBD>`).
-- [ ] `node contracts/scripts/check-models.mjs` exits 0 (no metadata change).
+- [ ] `SpawnCreatesDescendantGrant` `@promotion` block changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
+- [ ] `SpawnCreatesDescendantGrant` moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
+- [ ] All eleven draft property `val` definitions removed from `snapshot_recovery.qnt` and `authority.qnt`.
+- [ ] `@promotion` blocks for the other ten unchanged (status stays draft, invocation stays `<TBD>`).
+- [ ] `node contracts/scripts/check-vectors.mjs` exits 0 on second run; `node contracts/scripts/check-models.mjs` exits 0 on second run.
 - [ ] `quint parse specs/seed/snapshot_recovery.qnt` and `quint parse specs/seed/authority.qnt` exit 0.
-- [ ] VERIFICATION.md authority-tier contradiction fixed: only the 4 genuinely promoted spawn properties listed as checked-model; the 4 general properties explicitly stated-normative with no executable formula.
-- [ ] No generated table change required (tables derive from `@promotion` metadata, which is unchanged).
+- [ ] VERIFICATION.md authority-tier contradiction fixed: only the 3 genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) listed as checked-model; the 5 general/descendant properties explicitly stated-normative with no executable formula.
