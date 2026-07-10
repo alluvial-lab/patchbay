@@ -40,6 +40,7 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
    - Change `status: promoted` → `status: draft`
    - Replace `invocation` with `<TBD — demoted; assertion checks a constraint already imposed by the ActorIdsUnique fact; actor uniqueness belongs in generated/database constraints plus executable negative tests>`
    - Add `demotion_reason: fact-consequence check; the assert verifies the ActorIdsUnique fact holds across all instances but does not establish non-vacuity independently`
+   - Rewrite `semantics` so it states actor-id injectivity remains the product obligation while the retained fact-consequence check is only a structural regression against accidental fact weakening; remove the false claim that the assert proves non-vacuity
 
 2. Keep the `check ActorIdsUniqueAssert for 5` line but add a comment above it:
    ```
@@ -69,7 +70,7 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
 
 ## Acceptance criteria
 
-- [ ] `ActorIdsUnique` `@promotion` block changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
+- [ ] `ActorIdsUnique` `@promotion` block changed to `status: draft` with `demotion_reason`, `<TBD>` invocation, and semantics that do not claim the fact-consequence assert proves non-vacuity.
 - [ ] `check ActorIdsUniqueAssert for 5` line kept with a comment clarifying it is not promoted assurance.
 - [ ] `ActorIdsUnique` moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
 - [ ] `patchbay-invariants.als`, `Counter.qnt`, `Counter.tla`, `Counter.cfg` relocated out of `specs/seed/` to skill example directories.

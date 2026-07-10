@@ -38,6 +38,8 @@ For each of the four properties:
    - Replace the concrete `invocation` with `<TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>`
    - Add `demotion_reason: <explanation from the design>`
 
+   Rename the property-section headings at `session_generation.qnt:108` and `elicitation_lifecycle.qnt:538` so they describe mixed promotion metadata rather than claiming every following block is promoted.
+
 2. In `contracts/scripts/check-vectors.mjs`:
    - Remove `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, `LateGenerationInert`, `ElicitationTimeoutNeitherSuccessNorDenial` from `CHECKED_MODEL_PROPERTIES`
    - Add them to `STATED_NORMATIVE_PROPERTIES`
@@ -48,6 +50,7 @@ For each of the four properties:
    - The checked-model property lists for `session_generation.qnt` and `elicitation_lifecycle.qnt`
    - The seed-model summary tables for both models — move the demoted properties to the draft column
    - The summary line — update promoted/draft counts
+   - The sentence near line 566 — `ElicitationTimeoutNeitherSuccessNorDenial` is now a stated-normative Elicitation-specific obligation, not a checked-model analog
 
 5. Update `docs/ADAPTER-PI.md:75-79` — `LabelsCannotOverrideIdentity` and `LateGenerationInert` are referenced as checked properties. Mark these as stated-normative.
 
@@ -63,7 +66,8 @@ For each of the four properties:
 - [ ] Four `@promotion` blocks changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
 - [ ] Four ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
 - [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
-- [ ] VERIFICATION.md prose updated: checked-model property lists, seed-model summary tables.
+- [ ] VERIFICATION.md prose updated: checked-model property lists, seed-model summary tables, and the stale `ElicitationTimeoutNeitherSuccessNorDenial` checked-model-analog sentence near line 566.
+- [ ] The property-section headings at `session_generation.qnt:108` and `elicitation_lifecycle.qnt:538` no longer label mixed promoted/draft blocks as all promoted.
 - [ ] `docs/ADAPTER-PI.md:75-79` updated: `LabelsCannotOverrideIdentity` and `LateGenerationInert` marked stated-normative.
 - [ ] The genuine promoted properties in those models remain promoted: `GenerationMonotonic`, `TypedCorrelation`, `ElicitationCorrelationTyped`, `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`.
 - [ ] `quint parse specs/seed/session_generation.qnt` and `quint parse specs/seed/elicitation_lifecycle.qnt` exit 0.

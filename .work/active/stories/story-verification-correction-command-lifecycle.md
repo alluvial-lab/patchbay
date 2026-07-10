@@ -37,6 +37,8 @@ For each of the five properties:
    - Replace the concrete `invocation` with `<TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property>`
    - Add `demotion_reason: <explanation from the design>`
 
+   Rename the property-section heading at `command_lifecycle.qnt:165` so it describes mixed promotion metadata rather than claiming every following block is promoted.
+
 2. In `contracts/scripts/check-vectors.mjs`:
    - Remove `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, `RetryAfterTerminalReturnsExisting` from `CHECKED_MODEL_PROPERTIES`
    - Add them to `STATED_NORMATIVE_PROPERTIES`
@@ -63,6 +65,7 @@ For each of the five properties:
 ## Acceptance criteria
 
 - [ ] Five `@promotion` blocks in `command_lifecycle.qnt` changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
+- [ ] The property-section heading at `command_lifecycle.qnt:165` no longer labels the mixed promoted/draft blocks as all promoted.
 - [ ] Five ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
 - [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run; generated tables reflect the demotion.
 - [ ] VERIFICATION.md prose updated: checked-model property list, refinement table, property definitions, idempotent-retry section (~line 213), seed-model summary (including adding `NoAcceptedToCompleted`).
