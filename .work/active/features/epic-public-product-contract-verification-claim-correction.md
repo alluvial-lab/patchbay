@@ -1,14 +1,14 @@
 ---
 id: epic-public-product-contract-verification-claim-correction
 kind: feature
-stage: done
+stage: implementing
 tags: [verification, protocol, foundation]
 parent: epic-public-product-contract
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-11
 ---
 
 # Verification claim correction
@@ -331,4 +331,25 @@ All six child stories implemented and advanced to `stage: review` via `implement
 
 **Nits**: none recorded.
 
-**Notes**: Both phases independently converged on the same 4 prose drift points (high confidence these are real, not reviewer noise). The `SpawnRevocationDoesNotCascade` concern was Phase 2's deepest finding; on analysis it is a model-coverage observation, not a semantics-vs-formula mismatch — the narrowed `semantics:` text is accurate to what the formula proves over reachable traces, and the design explicitly defers real failure-boundary modeling to the v1 gate. Demoted to important and filed as a backlog note for the v1 gate rather than a blocker. All 11 demotion reasons verified accurate against their actual formulas (Phase 2 read each formula at HEAD). Array consistency clean (47 unique ids, no duplicates, sorted). Checker green after prose fixes (`check-models` exit 0). Not archived: parent epic `epic-public-product-contract` is still at `stage: implementing`.
+**Notes**: Both phases independently converged on the same 4 prose drift points (high confidence these are real, not reviewer noise). All 4 fixed inline in this review stride. All 11 demotion reasons verified accurate against their actual formulas. Array consistency clean (47 unique ids, no duplicates, sorted). Checker green after prose fixes.
+
+## Review round 2 (2026-07-10)
+
+**Verdict**: Request changes
+
+**Lane**: deep, adversarial convergence pass, `openai-codex/gpt-5.6-sol` (xhigh), fresh-context. Given the round-1 fixes (applied by the host, not fresh-context-verified) and the standing evidence that silent overclaims survive review, a second convergence pass was run.
+
+**Blockers** (3, all independently verified by the host against HEAD):
+- `SpawnRevocationDoesNotCascade` (`authority.qnt`) is not a mutation-survivable oracle. Host ran the reviewer's mutation: setting `gDescOs3Live' = "no"` in `revokeSpawnGrant` (deleting the descendant during fleet revocation) still passes `quint verify --temporal spawn_revocation_does_not_cascade`. The round-1 backlog note (`idea-spawn-revocation-model-coverage`) incorrectly called the formula "a genuine mutation-survivable independent oracle" — that classification was wrong; the mutation test disproves it. Superseded by `story-verification-correction-trace-fidelity-demotion`.
+- `FleetAuthorityForSpawn`, `ElicitationResponderAuthority`, `SubscriptionGrantChecked` (authority/subscription) have a trace-fidelity defect: their invariants inspect state (`LastSpawnActor`, `ResponseEndpoint*`/`ResponseClaimedActor*`, `LastSubscriptionActor`/`LastSubscriptionScope`) written by the *same action* that decides acceptance. A mutation that accepts arbitrary inputs while recording the expected values passes. The formulas prove recorded-state consistency, not independent submitting-actor/endpoint/scope authority. Verified via diff: this feature did not introduce the architecture (the vals/actions are untouched by Units 1-6), but the defect contradicts the feature's own honesty theme and the narrowed `semantics:` still overclaims what the formula independently establishes.
+- `GenerationMonotonic` hand-authored prose (`VERIFICATION.md:204`, `ADAPTER-PI.md:78`) presents action-enforced strict-supersession as checked-model behavior. The `@promotion` `semantics:` (SSOT) explicitly says strict-supersession "is NOT a checked temporal property." This feature's Unit 2 touched the surrounding list line and left the overclaim.
+
+**Important** (2):
+- VERIFICATION.md:122,144 hand-authored `FleetAuthorityForSpawn`/`SubscriptionGrantChecked` descriptions don't match their generated `semantics:` rows. Addressed by the demotion (they leave the checked-model list).
+- `idea-check-models-draft-discipline-enforcement.md` is overbroad (a blanket ban on draft executable definitions would reject intentionally-retained non-vacuous demoted formulas). Needs refinement before implementation.
+
+**Nits**: the 2 round-1 backlog files use active-item-style frontmatter; canonical parked-item frontmatter is minimal.
+
+**Disposition**: Bounced the feature `done → implementing`. Filed `story-verification-correction-trace-fidelity-demotion` (Unit 7, depends on Unit 6) to demote the 4 trace-fidelity-defective properties, fix the `GenerationMonotonic` prose, and reconcile the tier changes across docs. The round-1 backlog note `idea-spawn-revocation-model-coverage` is superseded (the property demotes rather than staying promoted-with-a-note). Operator chose Option 2 (demote) over Option 1 (narrow-and-keep) for the trace-fidelity properties, consistent with how the other 11 overclaims were handled.
+
+**Notes**: Round 2 did not converge — it escalated, finding defects round 1 missed. The convergence loop continues after Unit 7 lands. The host verified each round-2 claim independently (ran the `SpawnRevocationDoesNotCascade` mutation test, confirmed the `GenerationMonotonic` `@promotion` semantics vs. prose mismatch, confirmed via diff that the trace-fidelity architecture is pre-existing not feature-introduced) rather than accepting the reviewer's assertions. `SubscriptionAudited` and `SubscriptionCursorReplayAuthorized` assessed as NOT sharing the trace-fidelity defect (structural invariants, not recorded-state inspection) — they stay promoted.
