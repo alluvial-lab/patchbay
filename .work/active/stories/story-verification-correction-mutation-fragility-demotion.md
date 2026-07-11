@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-mutation-fragility-demotion
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol, bug]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-trace-fidelity-demotion]
@@ -149,6 +149,12 @@ node contracts/scripts/check-models.mjs
 - This unit supersedes the host's round-3 scope-routing argument. The routing was correct for the *re-architecture* (attempted-evidence state is v1-gate work) but wrong for the *demotion* of properties with confirmed mutation failure — that is in-scope claim correction.
 - The `idea-csrf-trace-fidelity` backlog item and the `executable-release-assurance` design-input section (both updated in the round-3 disposition) remain accurate: they route the *re-architecture* and the *untested-property* question to the v1 gate. After this unit, there are no untested surviving promoted properties in the affected model families.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Files changed: `specs/seed/command_lifecycle.qnt`, `specs/seed/session_generation.qnt`, `specs/seed/elicitation_lifecycle.qnt`, `specs/seed/subscription_authority.qnt`, `specs/seed/reply_correlation.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, `docs/SPEC.md`, `docs/PROTOCOL.md`, `docs/GLOSSARY.md`, and `docs/ADAPTER-PI.md`. The adapter doc had no references to the nine newly demoted ids; its adjacent `LateGenerationInert` wording was corrected because Part A removed that already-draft formula.

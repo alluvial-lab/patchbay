@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-alloy-and-toys
 kind: story
-stage: review
+stage: done
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-session-elicitation]
@@ -80,6 +80,12 @@ Demote `ActorIdsUnique` from `status: promoted` to `status: draft` (keeping the 
 - [ ] The two already-draft Alloy properties (`AuthorityGraphAcyclic`, `SenderMatchesClaim`) remain draft.
 - [ ] The Alloy file's sigs, facts, and the `check` command are preserved.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Files changed: `specs/seed/patchbay-relational.als`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, and the Alloy/Quint/TLA+ skill references; relocated the four toy artifacts with `git mv` into `.agents/skills/{alloy,quint,tla-plus}/examples/`.

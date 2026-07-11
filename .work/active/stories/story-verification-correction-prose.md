@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-prose
 kind: story
-stage: review
+stage: done
 tags: [verification, foundation]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-draft-formulas]
@@ -81,6 +81,12 @@ Fix stale PROTOCOL.md, VERIFICATION.md, and ADAPTER-PI.md assertions that contra
 - [ ] `*.emitted.tla` files audited: no prose presents them as independent evidence.
 - [ ] `node contracts/scripts/check-models.mjs` exits 0.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Delivery mode: direct-read prose reconciliation; the target surfaces and current model metadata were explicit, so no exploratory agent was needed.

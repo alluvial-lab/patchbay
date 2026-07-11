@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-retained-semantics
 kind: story
-stage: review
+stage: done
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-prose]
@@ -62,6 +62,12 @@ For each of the seven properties, update only the `semantics:` field in the `@pr
 - [ ] `node contracts/scripts/check-models.mjs` exits 0 (semantics text changes don't affect tier derivation).
 - [ ] `quint parse` exits 0 for all affected model files.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - `NoAcceptedToCompleted`: clarified that completion may follow either `delivered` or `running`, while still excluding a direct `accepted` → `completed` transition.

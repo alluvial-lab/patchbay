@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-draft-formulas
 kind: story
-stage: review
+stage: done
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-alloy-and-toys]
@@ -78,6 +78,12 @@ Run `node contracts/scripts/check-vectors.mjs` (exits 0, regenerates conformance
 - [ ] `quint parse specs/seed/snapshot_recovery.qnt` and `quint parse specs/seed/authority.qnt` exit 0.
 - [ ] VERIFICATION.md authority-tier contradiction fixed: only the 3 genuinely promoted spawn properties (`FleetAuthorityForSpawn`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`) listed as checked-model; the 5 general/descendant properties explicitly stated-normative with no executable formula.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Files changed: `specs/seed/snapshot_recovery.qnt`, `specs/seed/authority.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`.

@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-trace-fidelity-demotion
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol, bug]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-retained-semantics]
@@ -135,6 +135,12 @@ The real independent-actor/endpoint/scope verification and the genuine non-casca
 - [x] `SubscriptionAudited` and `SubscriptionCursorReplayAuthorized` assessed and remain promoted (no trace-fidelity defect — structural invariants). Assessment recorded in implementation notes.
 - [x] Final promoted count: 17 (21 − 4). Final stated-normative: 30 (26 + 4).
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Delivery mode: direct-read inline implementation; the affected model blocks, tier registry, and prose integration points were explicit, so no exploratory agent fan-out was needed.

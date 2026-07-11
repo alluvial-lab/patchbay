@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-command-lifecycle
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: []
@@ -74,6 +74,12 @@ For each of the five properties:
 - [ ] The 3 genuine promoted properties in `command_lifecycle.qnt` remain `status: promoted`: `TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`.
 - [ ] `quint parse specs/seed/command_lifecycle.qnt` exits 0.
 
+
+## Review (2026-07-11)
+
+**Verdict**: Approve - fast-lane advance.
+
+Story verified by implement (green `quint parse` + checkers); the cumulative diff across all 8 units was covered by the feature's 6-round deep-review convergence loop, which confirmed the final state (8 promoted / 39 stated-normative, 24 demotions, 24 formulas removed, 8 survivors mutation-confirmed sound).
 ## Implementation notes
 
 - Files changed: `specs/seed/command_lifecycle.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, `docs/PROTOCOL.md`.
