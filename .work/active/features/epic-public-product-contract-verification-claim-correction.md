@@ -1,7 +1,7 @@
 ---
 id: epic-public-product-contract-verification-claim-correction
 kind: feature
-stage: implementing
+stage: done
 tags: [verification, protocol, foundation]
 parent: epic-public-product-contract
 depends_on: []
@@ -411,3 +411,15 @@ Units 1–6 were the original design; Unit 7 was added by the round-2 deep revie
 2. Operational handoffs not rolled through Unit 8: the feature Implementation summary (still said 7 stories/15 demotions/17-30), the `executable-release-assurance` design-input section (still described 9 properties as surviving/promoted), and `idea-csrf-trace-fidelity` (still said the host partially disputes the finding). All rolled forward to the Unit 8 outcome: 8 stories, 24 demotions, 8/39 tiers, dispute retracted, re-architecture still deferred to the v1 gate.
 
 **Notes**: Round 5 converged on the core question (the 8 survivors are sound) but found prose drift Unit 8 left behind — the same pattern as rounds 1 and 3 (mechanical demotions land, hand-authored prose drifts). The reviewer's assessment: "Fix those targeted drifts and another mutation round should not be necessary; a focused confirmation pass should suffice." The host fixed both blockers inline. The loop's substantive question — which properties deserve promoted status — is settled: 8, each independently confirmed mutation-survivable.
+
+## Review round 6 (2026-07-11)
+
+**Verdict**: Approve — converged
+
+**Lane**: focused confirmation pass, `openai-codex/gpt-5.6-terra` (high), fresh-context. Confirmation pass after round 5 converged on the core question.
+
+**Findings**: none. Both round-5 prose fixes landed (VERIFICATION.md:548, GLOSSARY.md:63 now state stated-normative). All three operational handoffs reflect 8 stories / 24 demotions / 8-39 tiers with the dispute retracted. Docs sweep found no surviving hand-authored claim that any of the 24 demoted properties is checked/verified/promoted. The 8 survivors are intact and their prose matches `@promotion` semantics. All `quint parse` and both checkers pass.
+
+**Convergence determination**: The loop converged. The substantive question (which properties deserve promoted status) was settled in round 5 (8 survivors, each independently mutation-tested and confirmed to catch claim-breaking mutations). Rounds 1, 3, and 5 each found prose drift that mechanical demotions left behind — a consistent pattern worth noting for future verification work: demotion campaigns must include a prose-reconciliation pass that greps every demoted property name across all docs, not just the generated tables. Feature advanced to `done`.
+
+**Final state**: 8 promoted / 39 stated-normative = 47 total. 24 properties demoted, 24 defective formulas removed. The 8 promoted survivors: `TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`, `GenerationMonotonic`, `CsrfRejectsMissingProof`, `CsrfRejectsUnauthenticated`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority`. The attempted-evidence model re-architecture and genuine formulas for the 24 demoted properties are deferred to `epic-public-product-contract-executable-release-assurance` (v1 formal gate).
