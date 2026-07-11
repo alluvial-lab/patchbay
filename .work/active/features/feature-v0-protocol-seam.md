@@ -1,18 +1,18 @@
 ---
-id: feature-web-core-protocol-seam
+id: feature-v0-protocol-seam
 kind: feature
 stage: drafting
 tags: [protocol, adapter, security]
-parent: null
-depends_on: []
+parent: epic-v0-1-0-implementation
+depends_on: [feature-v0-core]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-11
 gate_origin: null
 release_binding: null
 research_origin: null
 ---
 
-# Design the web↔core internal protocol seam
+# Feature: Web↔core internal protocol seam
 
 With the v0 process topology settled (a TypeScript web server terminates HTTP for the browser cockpit and speaks the generated Protobuf/Connect contract to the Rust coordination core), the internal seam between the web server and the core needs genuine design work. This is a design-bearing feature, not prose — it pins RPC shapes, a streaming channel, an internal auth boundary, and failure modes.
 
@@ -26,9 +26,9 @@ With the v0 process topology settled (a TypeScript web server terminates HTTP fo
 - How the browser's operator domain composes with the web server's translations (and what stays in the browser vs. what the web server owns).
 - Relationship to the shared Protobuf+Buf contract: is the internal surface the *same* contract as the browser-facing one, or a superset restricted to control-surface principals?
 
-## Why parked (not active)
+## Status
 
-Foundation-hardening prose work (security threat model, persistence/snapshot, session-identity/adapter-contract) is still in flight and informs this seam — especially session identity, adapter capability tiers, and grant shape. Promoting this to active design once those land avoids designing the seam against a moving target.
+Promoted from backlog on 2026-07-11 into `epic-v0-1-0-implementation`. The foundation-hardening work it was waiting on (security threat model, persistence/snapshot, session-identity/adapter-contract) is now `done`, so the seam can be designed against settled foundations. Depends on `feature-v0-core` because the seam is the first consumer of the core's RPC surface.
 
 ## Expected output
 

@@ -3,15 +3,19 @@ id: epic-public-product-contract
 kind: epic
 stage: implementing
 tags: [foundation, protocol, verification]
-depends_on: [epic-foundation-hardening]
+depends_on: [epic-foundation-hardening, epic-v0-1-0-implementation]
 parent: null
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-11
 gate_origin: null
 release_binding: null
 ---
 
 # Epic: Public product contract and assurance calibration
+
+## Status
+
+Sidelined pending `epic-v0-1-0-implementation` as of 2026-07-11. The v0.1.0 walking skeleton is fully designed but entirely unbuilt; the v1.0.0 public product cannot ship without it. This epic's `depends_on` now includes `epic-v0-1-0-implementation` to reflect that honestly. The v1.0.0 design work that already landed (`epic-public-product-contract-verification-claim-correction`, done) is preserved; the remaining unbuilt v1.0.0 features stay at `stage: drafting` and are blocked on v0.1.0 implementation. v1.0.0 design work may still proceed in parallel where it does not depend on running code, but the release is gated on v0.1.0 existing.
 
 ## Brief
 
