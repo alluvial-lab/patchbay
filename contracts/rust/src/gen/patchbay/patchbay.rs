@@ -150,6 +150,26 @@ pub struct TimeWindow {
     #[prost(message, optional, tag = "2")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
 }
+/// A durably-recorded state-transition event in the authority-domain log.
+/// The payload is a serialized Protobuf message whose type is identified by
+/// `kind`. Storage treats the payload as opaque bytes; the kind is the only
+/// field storage inspects.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StoredEventPayload {
+    #[prost(enumeration = "StoredEventKind", tag = "1")]
+    pub kind: i32,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+/// An idempotency key for boundary deduplication. A key dedups only against
+/// existing commands to the same target (see docs/PROTOCOL.md § Idempotency
+/// and retry). The storage layer uses this as the atomic check-and-register
+/// handle — the formal model's `appliedKeys` set.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IdempotencyKey {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum TargetScopeKind {
@@ -225,6 +245,49 @@ impl PayloadContentType {
             "PAYLOAD_CONTENT_TYPE_TEXT_UTF8" => Some(Self::TextUtf8),
             "PAYLOAD_CONTENT_TYPE_JSON" => Some(Self::Json),
             "PAYLOAD_CONTENT_TYPE_PROTOBUF" => Some(Self::Protobuf),
+            _ => None,
+        }
+    }
+}
+/// Storage-level event envelope. The durable event log stores these; the
+/// discriminator lets recovery/replay know how to deserialize the payload
+/// without inspecting its bytes. This is the Generated Contracts approach to
+/// event-type discrimination: the schema owns the variant set, not a
+/// hand-maintained byte tag in Rust or SQLite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StoredEventKind {
+    Unspecified = 0,
+    Operation = 1,
+    Observation = 2,
+    Elicitation = 3,
+    Authority = 4,
+    Session = 5,
+}
+impl StoredEventKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "STORED_EVENT_KIND_UNSPECIFIED",
+            Self::Operation => "STORED_EVENT_KIND_OPERATION",
+            Self::Observation => "STORED_EVENT_KIND_OBSERVATION",
+            Self::Elicitation => "STORED_EVENT_KIND_ELICITATION",
+            Self::Authority => "STORED_EVENT_KIND_AUTHORITY",
+            Self::Session => "STORED_EVENT_KIND_SESSION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STORED_EVENT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "STORED_EVENT_KIND_OPERATION" => Some(Self::Operation),
+            "STORED_EVENT_KIND_OBSERVATION" => Some(Self::Observation),
+            "STORED_EVENT_KIND_ELICITATION" => Some(Self::Elicitation),
+            "STORED_EVENT_KIND_AUTHORITY" => Some(Self::Authority),
+            "STORED_EVENT_KIND_SESSION" => Some(Self::Session),
             _ => None,
         }
     }

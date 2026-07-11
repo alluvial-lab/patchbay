@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/common.proto.
  */
 export const file_patchbay_common: GenFile = /*@__PURE__*/
-  fileDesc("ChVwYXRjaGJheS9jb21tb24ucHJvdG8SCHBhdGNoYmF5IhoKCUNvbW1hbmRJZBINCgV2YWx1ZRgBIAEoCSIaCglNZXNzYWdlSWQSDQoFdmFsdWUYASABKAkiGAoHUmVwbHlJZBINCgV2YWx1ZRgBIAEoCSJfCgdFdmVudElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIaCgNsc24YAiABKAsyDS5wYXRjaGJheS5Mc24iHgoNRWxpY2l0YXRpb25JZBINCgV2YWx1ZRgBIAEoCSIUCgNMc24SDQoFdmFsdWUYASABKAQiGAoHQWN0b3JJZBINCgV2YWx1ZRgBIAEoCSIbCgpFbmRwb2ludElkEg0KBXZhbHVlGAEgASgJIhkKCERldmljZUlkEg0KBXZhbHVlGAEgASgJIhoKCUFkYXB0ZXJJZBINCgV2YWx1ZRgBIAEoCSIhChBSdW50aW1lU2Vzc2lvbklkEg0KBXZhbHVlGAEgASgJIiIKEUF1dGhvcml0eURvbWFpbklkEg0KBXZhbHVlGAEgASgJIhgKB0dyYW50SWQSDQoFdmFsdWUYASABKAkiIgoRT3BlcmF0b3JTZXNzaW9uSWQSDQoFdmFsdWUYASABKAkiHwoOU3Vic2NyaXB0aW9uSWQSDQoFdmFsdWUYASABKAkiGwoKR2VuZXJhdGlvbhINCgV2YWx1ZRgBIAEoBCK8AQoQQWN0b3JFbmRwb2ludFJlZhIjCghhY3Rvcl9pZBgBIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAiABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgDIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIrcCCgtUYXJnZXRTY29wZRInCgRraW5kGAEgASgOMhkucGF0Y2hiYXkuVGFyZ2V0U2NvcGVLaW5kEiMKCGFjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBInCgphZGFwdGVyX2lkGAMgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgEIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAUgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIYChBkZXBsb3ltZW50X3Njb3BlGAYgASgJEhgKEHByb2plY3Rfb3JfZ3JvdXAYByABKAkSEwoLcmVzb3VyY2VfaWQYCCABKAki8AEKEFR5cGVkQ29ycmVsYXRpb24SKQoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZEgAEikKCm1lc3NhZ2VfaWQYAiABKAsyEy5wYXRjaGJheS5NZXNzYWdlSWRIABIlCghyZXBseV9pZBgDIAEoCzIRLnBhdGNoYmF5LlJlcGx5SWRIABIlCghldmVudF9pZBgEIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWRIABIxCg5lbGljaXRhdGlvbl9pZBgFIAEoCzIXLnBhdGNoYmF5LkVsaWNpdGF0aW9uSWRIAEIFCgNyZWYiagoPUGF5bG9hZEVudmVsb3BlEg8KB3BheWxvYWQYASABKAwSMgoMY29udGVudF90eXBlGAIgASgOMhwucGF0Y2hiYXkuUGF5bG9hZENvbnRlbnRUeXBlEhIKCnNjaGVtYV9yZWYYAyABKAkiawoKVGltZVdpbmRvdxItCglzdGFydHNfYXQYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKrQCCg9UYXJnZXRTY29wZUtpbmQSIQodVEFSR0VUX1NDT1BFX0tJTkRfVU5TUEVDSUZJRUQQABIbChdUQVJHRVRfU0NPUEVfS0lORF9BQ1RPUhABEh0KGVRBUkdFVF9TQ09QRV9LSU5EX0FEQVBURVIQAhIlCiFUQVJHRVRfU0NPUEVfS0lORF9SVU5USU1FX1NFU1NJT04QAxIrCidUQVJHRVRfU0NPUEVfS0lORF9QUk9KRUNUX1NFU1NJT05fR1JPVVAQBBImCiJUQVJHRVRfU0NPUEVfS0lORF9GTEVFVF9TVVBFUlZJU09SEAUSHgoaVEFSR0VUX1NDT1BFX0tJTkRfUkVTT1VSQ0UQBhImCiJUQVJHRVRfU0NPUEVfS0lORF9BVVRIT1JJVFlfRE9NQUlOEAcqwQEKElBheWxvYWRDb250ZW50VHlwZRIkCiBQQVlMT0FEX0NPTlRFTlRfVFlQRV9VTlNQRUNJRklFRBAAEh8KG1BBWUxPQURfQ09OVEVOVF9UWVBFX0JJTkFSWRABEiIKHlBBWUxPQURfQ09OVEVOVF9UWVBFX1RFWFRfVVRGOBACEh0KGVBBWUxPQURfQ09OVEVOVF9UWVBFX0pTT04QAxIhCh1QQVlMT0FEX0NPTlRFTlRfVFlQRV9QUk9UT0JVRhAEYgZwcm90bzM", [file_google_protobuf_timestamp]);
+  fileDesc("ChVwYXRjaGJheS9jb21tb24ucHJvdG8SCHBhdGNoYmF5IhoKCUNvbW1hbmRJZBINCgV2YWx1ZRgBIAEoCSIaCglNZXNzYWdlSWQSDQoFdmFsdWUYASABKAkiGAoHUmVwbHlJZBINCgV2YWx1ZRgBIAEoCSJfCgdFdmVudElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIaCgNsc24YAiABKAsyDS5wYXRjaGJheS5Mc24iHgoNRWxpY2l0YXRpb25JZBINCgV2YWx1ZRgBIAEoCSIUCgNMc24SDQoFdmFsdWUYASABKAQiGAoHQWN0b3JJZBINCgV2YWx1ZRgBIAEoCSIbCgpFbmRwb2ludElkEg0KBXZhbHVlGAEgASgJIhkKCERldmljZUlkEg0KBXZhbHVlGAEgASgJIhoKCUFkYXB0ZXJJZBINCgV2YWx1ZRgBIAEoCSIhChBSdW50aW1lU2Vzc2lvbklkEg0KBXZhbHVlGAEgASgJIiIKEUF1dGhvcml0eURvbWFpbklkEg0KBXZhbHVlGAEgASgJIhgKB0dyYW50SWQSDQoFdmFsdWUYASABKAkiIgoRT3BlcmF0b3JTZXNzaW9uSWQSDQoFdmFsdWUYASABKAkiHwoOU3Vic2NyaXB0aW9uSWQSDQoFdmFsdWUYASABKAkiGwoKR2VuZXJhdGlvbhINCgV2YWx1ZRgBIAEoBCK8AQoQQWN0b3JFbmRwb2ludFJlZhIjCghhY3Rvcl9pZBgBIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAiABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgDIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIrcCCgtUYXJnZXRTY29wZRInCgRraW5kGAEgASgOMhkucGF0Y2hiYXkuVGFyZ2V0U2NvcGVLaW5kEiMKCGFjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBInCgphZGFwdGVyX2lkGAMgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgEIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAUgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIYChBkZXBsb3ltZW50X3Njb3BlGAYgASgJEhgKEHByb2plY3Rfb3JfZ3JvdXAYByABKAkSEwoLcmVzb3VyY2VfaWQYCCABKAki8AEKEFR5cGVkQ29ycmVsYXRpb24SKQoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZEgAEikKCm1lc3NhZ2VfaWQYAiABKAsyEy5wYXRjaGJheS5NZXNzYWdlSWRIABIlCghyZXBseV9pZBgDIAEoCzIRLnBhdGNoYmF5LlJlcGx5SWRIABIlCghldmVudF9pZBgEIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWRIABIxCg5lbGljaXRhdGlvbl9pZBgFIAEoCzIXLnBhdGNoYmF5LkVsaWNpdGF0aW9uSWRIAEIFCgNyZWYiagoPUGF5bG9hZEVudmVsb3BlEg8KB3BheWxvYWQYASABKAwSMgoMY29udGVudF90eXBlGAIgASgOMhwucGF0Y2hiYXkuUGF5bG9hZENvbnRlbnRUeXBlEhIKCnNjaGVtYV9yZWYYAyABKAkiawoKVGltZVdpbmRvdxItCglzdGFydHNfYXQYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KElN0b3JlZEV2ZW50UGF5bG9hZBInCgRraW5kGAEgASgOMhkucGF0Y2hiYXkuU3RvcmVkRXZlbnRLaW5kEg8KB3BheWxvYWQYAiABKAwiHwoOSWRlbXBvdGVuY3lLZXkSDQoFdmFsdWUYASABKAkqtAIKD1RhcmdldFNjb3BlS2luZBIhCh1UQVJHRVRfU0NPUEVfS0lORF9VTlNQRUNJRklFRBAAEhsKF1RBUkdFVF9TQ09QRV9LSU5EX0FDVE9SEAESHQoZVEFSR0VUX1NDT1BFX0tJTkRfQURBUFRFUhACEiUKIVRBUkdFVF9TQ09QRV9LSU5EX1JVTlRJTUVfU0VTU0lPThADEisKJ1RBUkdFVF9TQ09QRV9LSU5EX1BST0pFQ1RfU0VTU0lPTl9HUk9VUBAEEiYKIlRBUkdFVF9TQ09QRV9LSU5EX0ZMRUVUX1NVUEVSVklTT1IQBRIeChpUQVJHRVRfU0NPUEVfS0lORF9SRVNPVVJDRRAGEiYKIlRBUkdFVF9TQ09QRV9LSU5EX0FVVEhPUklUWV9ET01BSU4QByrBAQoSUGF5bG9hZENvbnRlbnRUeXBlEiQKIFBBWUxPQURfQ09OVEVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASHwobUEFZTE9BRF9DT05URU5UX1RZUEVfQklOQVJZEAESIgoeUEFZTE9BRF9DT05URU5UX1RZUEVfVEVYVF9VVEY4EAISHQoZUEFZTE9BRF9DT05URU5UX1RZUEVfSlNPThADEiEKHVBBWUxPQURfQ09OVEVOVF9UWVBFX1BST1RPQlVGEAQq2wEKD1N0b3JlZEV2ZW50S2luZBIhCh1TVE9SRURfRVZFTlRfS0lORF9VTlNQRUNJRklFRBAAEh8KG1NUT1JFRF9FVkVOVF9LSU5EX09QRVJBVElPThABEiEKHVNUT1JFRF9FVkVOVF9LSU5EX09CU0VSVkFUSU9OEAISIQodU1RPUkVEX0VWRU5UX0tJTkRfRUxJQ0lUQVRJT04QAxIfChtTVE9SRURfRVZFTlRfS0lORF9BVVRIT1JJVFkQBBIdChlTVE9SRURfRVZFTlRfS0lORF9TRVNTSU9OEAViBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * Distinct protocol id spaces. These wrappers intentionally do not collapse to raw strings.
@@ -474,6 +474,55 @@ export const TimeWindowSchema: GenMessage<TimeWindow> = /*@__PURE__*/
   messageDesc(file_patchbay_common, 20);
 
 /**
+ * A durably-recorded state-transition event in the authority-domain log.
+ * The payload is a serialized Protobuf message whose type is identified by
+ * `kind`. Storage treats the payload as opaque bytes; the kind is the only
+ * field storage inspects.
+ *
+ * @generated from message patchbay.StoredEventPayload
+ */
+export type StoredEventPayload = Message<"patchbay.StoredEventPayload"> & {
+  /**
+   * @generated from field: patchbay.StoredEventKind kind = 1;
+   */
+  kind: StoredEventKind;
+
+  /**
+   * @generated from field: bytes payload = 2;
+   */
+  payload: Uint8Array;
+};
+
+/**
+ * Describes the message patchbay.StoredEventPayload.
+ * Use `create(StoredEventPayloadSchema)` to create a new message.
+ */
+export const StoredEventPayloadSchema: GenMessage<StoredEventPayload> = /*@__PURE__*/
+  messageDesc(file_patchbay_common, 21);
+
+/**
+ * An idempotency key for boundary deduplication. A key dedups only against
+ * existing commands to the same target (see docs/PROTOCOL.md § Idempotency
+ * and retry). The storage layer uses this as the atomic check-and-register
+ * handle — the formal model's `appliedKeys` set.
+ *
+ * @generated from message patchbay.IdempotencyKey
+ */
+export type IdempotencyKey = Message<"patchbay.IdempotencyKey"> & {
+  /**
+   * @generated from field: string value = 1;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message patchbay.IdempotencyKey.
+ * Use `create(IdempotencyKeySchema)` to create a new message.
+ */
+export const IdempotencyKeySchema: GenMessage<IdempotencyKey> = /*@__PURE__*/
+  messageDesc(file_patchbay_common, 22);
+
+/**
  * @generated from enum patchbay.TargetScopeKind
  */
 export enum TargetScopeKind {
@@ -559,4 +608,51 @@ export enum PayloadContentType {
  */
 export const PayloadContentTypeSchema: GenEnum<PayloadContentType> = /*@__PURE__*/
   enumDesc(file_patchbay_common, 1);
+
+/**
+ * Storage-level event envelope. The durable event log stores these; the
+ * discriminator lets recovery/replay know how to deserialize the payload
+ * without inspecting its bytes. This is the Generated Contracts approach to
+ * event-type discrimination: the schema owns the variant set, not a
+ * hand-maintained byte tag in Rust or SQLite.
+ *
+ * @generated from enum patchbay.StoredEventKind
+ */
+export enum StoredEventKind {
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_OPERATION = 1;
+   */
+  OPERATION = 1,
+
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_OBSERVATION = 2;
+   */
+  OBSERVATION = 2,
+
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_ELICITATION = 3;
+   */
+  ELICITATION = 3,
+
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_AUTHORITY = 4;
+   */
+  AUTHORITY = 4,
+
+  /**
+   * @generated from enum value: STORED_EVENT_KIND_SESSION = 5;
+   */
+  SESSION = 5,
+}
+
+/**
+ * Describes the enum patchbay.StoredEventKind.
+ */
+export const StoredEventKindSchema: GenEnum<StoredEventKind> = /*@__PURE__*/
+  enumDesc(file_patchbay_common, 2);
 

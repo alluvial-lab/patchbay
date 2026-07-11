@@ -5,10 +5,15 @@
 //! lands in `story-v0-core-persistence-proptests`. This test confirms:
 //! - The `Storage` trait is usable (a no-op impl compiles).
 //! - `event_id()` builds the canonical `(authority_domain_id, LSN)` tuple.
-//! - `RecordedEvent` and `StorageError` construct as designed.
+//! - `RecordedEvent`, `StoredSnapshot`, `DedupOutcome`, `StorageError` construct.
+//! - `append_dedup` is part of the trait (the atomic dedup handle).
 
-use patchbay_contracts::patchbay::{AuthorityDomainId, EventId, Lsn};
-use patchbay_core::storage::{event_id, RecordedEvent, Storage, StorageError};
+use patchbay_contracts::patchbay::{
+    AuthorityDomainId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
+};
+use patchbay_core::storage::{
+    event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot,
+};
 
 /// A no-op storage impl that exists only to prove the trait is implementable
 /// and the types compose. The real rusqlite impl lands in the next story.
@@ -18,15 +23,25 @@ impl Storage for NoopStorage {
     async fn append(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        _payload: Vec<u8>,
-    ) -> Result<EventId, StorageError> {
+        _payload: StoredEventPayload,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
         Ok(event_id(authority_domain_id.clone(), 1))
     }
 
-    async fn read_prefix(
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        _key: &IdempotencyKey,
+        _target: &str,
+        _payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        Ok(DedupOutcome::Appended(event_id(authority_domain_id.clone(), 1)))
+    }
+
+    async fn read_after(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _cursor: u64,
+        _cursor: Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
         Ok(vec![])
     }
@@ -34,7 +49,7 @@ impl Storage for NoopStorage {
     async fn write_snapshot(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _snapshot_lsn: u64,
+        _snapshot_lsn: Lsn,
         _snapshot_payload: Vec<u8>,
     ) -> Result<(), StorageError> {
         Ok(())
@@ -43,9 +58,16 @@ impl Storage for NoopStorage {
     async fn load_latest_snapshot(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _at_or_before: Option<u64>,
-    ) -> Result<Option<(u64, Vec<u8>)>, StorageError> {
+        _at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
         Ok(None)
+    }
+}
+
+fn sample_payload() -> StoredEventPayload {
+    StoredEventPayload {
+        kind: StoredEventKind::Operation as i32,
+        payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
     }
 }
 
@@ -54,7 +76,7 @@ async fn event_id_builds_canonical_tuple() {
     let domain = AuthorityDomainId {
         value: "operator-domain".to_string(),
     };
-    let id: EventId = event_id(domain.clone(), 42);
+    let id = event_id(domain.clone(), 42);
     assert_eq!(id.authority_domain_id.as_ref().unwrap(), &domain);
     assert_eq!(id.lsn.as_ref().unwrap(), &Lsn { value: 42 });
 }
@@ -65,23 +87,51 @@ async fn noop_storage_trait_compiles_and_runs() {
     let domain = AuthorityDomainId {
         value: "test".to_string(),
     };
-    let id = storage.append(&domain, vec![1, 2, 3]).await.unwrap();
+    let id = storage.append(&domain, sample_payload()).await.unwrap();
     assert_eq!(id.lsn.as_ref().unwrap().value, 1);
-    let events = storage.read_prefix(&domain, 0).await.unwrap();
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap();
     assert!(events.is_empty());
 }
 
 #[tokio::test]
-async fn recorded_event_constructs() {
+async fn append_dedup_returns_outcome() {
+    let storage = NoopStorage;
+    let domain = AuthorityDomainId {
+        value: "test".to_string(),
+    };
+    let key = IdempotencyKey {
+        value: "k1".to_string(),
+    };
+    let outcome = storage
+        .append_dedup(&domain, &key, "target-1", sample_payload())
+        .await
+        .unwrap();
+    match outcome {
+        DedupOutcome::Appended(id) => assert_eq!(id.lsn.as_ref().unwrap().value, 1),
+        DedupOutcome::Duplicate(_) => panic!("expected Appended for new key"),
+    }
+}
+
+#[tokio::test]
+async fn recorded_event_and_snapshot_construct() {
     let domain = AuthorityDomainId {
         value: "d".to_string(),
     };
     let event = RecordedEvent {
-        event_id: event_id(domain, 7),
-        payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        event_id: event_id(domain.clone(), 7),
+        payload: sample_payload(),
     };
     assert_eq!(event.event_id.lsn.as_ref().unwrap().value, 7);
-    assert_eq!(event.payload, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(event.payload.kind, StoredEventKind::Operation as i32);
+
+    let snapshot = StoredSnapshot {
+        event_id: event_id(domain, 10),
+        payload: vec![0x01, 0x02],
+    };
+    assert_eq!(snapshot.event_id.lsn.as_ref().unwrap().value, 10);
 }
 
 #[test]
@@ -90,4 +140,17 @@ fn storage_error_variants_construct() {
     assert!(stale.to_string().contains("older than current state"));
     let wrong = StorageError::SnapshotWrongDomain;
     assert!(wrong.to_string().contains("different authority domain"));
+    let conflict = StorageError::IdempotencyConflict;
+    assert!(conflict.to_string().contains("payload differs"));
+    let write_err = StorageError::WriteFailed {
+        message: "disk full".to_string(),
+        retryable: false,
+    };
+    assert!(write_err.to_string().contains("disk full"));
+    let unavail = StorageError::Unavailable("writer closed".to_string());
+    assert!(unavail.to_string().contains("writer closed"));
+    let corrupt = StorageError::CorruptRecord("bad magic".to_string());
+    assert!(corrupt.to_string().contains("bad magic"));
+    let invalid_lsn = StorageError::InvalidSnapshotLsn(99);
+    assert!(invalid_lsn.to_string().contains("does not correspond"));
 }

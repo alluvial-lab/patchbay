@@ -9,4 +9,4 @@
 
 pub mod port;
 
-pub use port::{event_id, RecordedEvent, Storage, StorageError};
+pub use port::{event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot};

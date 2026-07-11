@@ -127,3 +127,34 @@ message TimeWindow {
   google.protobuf.Timestamp starts_at = 1;
   google.protobuf.Timestamp expires_at = 2;
 }
+
+// Storage-level event envelope. The durable event log stores these; the
+// discriminator lets recovery/replay know how to deserialize the payload
+// without inspecting its bytes. This is the Generated Contracts approach to
+// event-type discrimination: the schema owns the variant set, not a
+// hand-maintained byte tag in Rust or SQLite.
+enum StoredEventKind {
+  STORED_EVENT_KIND_UNSPECIFIED = 0;
+  STORED_EVENT_KIND_OPERATION = 1;
+  STORED_EVENT_KIND_OBSERVATION = 2;
+  STORED_EVENT_KIND_ELICITATION = 3;
+  STORED_EVENT_KIND_AUTHORITY = 4;
+  STORED_EVENT_KIND_SESSION = 5;
+}
+
+// A durably-recorded state-transition event in the authority-domain log.
+// The payload is a serialized Protobuf message whose type is identified by
+// `kind`. Storage treats the payload as opaque bytes; the kind is the only
+// field storage inspects.
+message StoredEventPayload {
+  StoredEventKind kind = 1;
+  bytes payload = 2;
+}
+
+// An idempotency key for boundary deduplication. A key dedups only against
+// existing commands to the same target (see docs/PROTOCOL.md § Idempotency
+// and retry). The storage layer uses this as the atomic check-and-register
+// handle — the formal model's `appliedKeys` set.
+message IdempotencyKey {
+  string value = 1;
+}
