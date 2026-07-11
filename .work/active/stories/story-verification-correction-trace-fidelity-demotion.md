@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-trace-fidelity-demotion
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, bug]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-retained-semantics]
@@ -122,15 +122,29 @@ The real independent-actor/endpoint/scope verification and the genuine non-casca
 
 ## Acceptance criteria
 
-- [ ] Four `@promotion` blocks changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
-- [ ] Four `val`/`temporal` definitions removed from `authority.qnt` (3) and `subscription_authority.qnt` (1); `@promotion` blocks preserved.
-- [ ] Four ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
-- [ ] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
-- [ ] `quint parse specs/seed/authority.qnt` and `quint parse specs/seed/subscription_authority.qnt` exit 0.
-- [ ] VERIFICATION.md prose updated: checked-model property lists, authority-tier section, seed-model summaries, `GenerationMonotonic` prose (~204), `FleetAuthorityForSpawn`/`SubscriptionGrantChecked` descriptions removed from checked-model list.
-- [ ] ADAPTER-PI.md:78 `GenerationMonotonic` prose narrowed.
-- [ ] SPEC.md:70 verification floor updated: the 4 demoted properties moved from checked-model to stated-normative.
-- [ ] PROTOCOL.md verified: no surviving checked-model references to the 4 demoted properties.
-- [ ] `GenerationMonotonic` stays promoted; its prose now says "never decreases (checked)" and describes strict-supersession as action-enforced, not checked.
-- [ ] `SubscriptionAudited` and `SubscriptionCursorReplayAuthorized` assessed and remain promoted (no trace-fidelity defect — structural invariants). Assessment recorded in implementation notes.
-- [ ] Final promoted count: 17 (21 − 4). Final stated-normative: 30 (26 + 4).
+- [x] Four `@promotion` blocks changed to `status: draft` with `demotion_reason` and `<TBD>` invocation.
+- [x] Four `val`/`temporal` definitions removed from `authority.qnt` (3) and `subscription_authority.qnt` (1); `@promotion` blocks preserved.
+- [x] Four ids moved from `CHECKED_MODEL_PROPERTIES` to `STATED_NORMATIVE_PROPERTIES` in `check-vectors.mjs`.
+- [x] `node contracts/scripts/check-vectors.mjs` exits 0; `node contracts/scripts/check-models.mjs` exits 0 on second run.
+- [x] `quint parse specs/seed/authority.qnt` and `quint parse specs/seed/subscription_authority.qnt` exit 0.
+- [x] VERIFICATION.md prose updated: checked-model property lists, authority-tier section, seed-model summaries, `GenerationMonotonic` prose (~204), `FleetAuthorityForSpawn`/`SubscriptionGrantChecked` descriptions removed from checked-model list.
+- [x] ADAPTER-PI.md:78 `GenerationMonotonic` prose narrowed.
+- [x] SPEC.md:70 verification floor updated: the 4 demoted properties moved from checked-model to stated-normative.
+- [x] PROTOCOL.md verified: no surviving checked-model references to the 4 demoted properties.
+- [x] `GenerationMonotonic` stays promoted; its prose now says "never decreases (checked)" and describes strict-supersession as action-enforced, not checked.
+- [x] `SubscriptionAudited` and `SubscriptionCursorReplayAuthorized` assessed and remain promoted (no trace-fidelity defect — structural invariants). Assessment recorded in implementation notes.
+- [x] Final promoted count: 17 (21 − 4). Final stated-normative: 30 (26 + 4).
+
+## Implementation notes
+
+- Delivery mode: direct-read inline implementation; the affected model blocks, tier registry, and prose integration points were explicit, so no exploratory agent fan-out was needed.
+- Files changed: `specs/seed/authority.qnt`, `specs/seed/subscription_authority.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, `docs/ADAPTER-PI.md`, and `docs/SPEC.md`.
+- Demoted `FleetAuthorityForSpawn`, `ElicitationResponderAuthority`, `SpawnRevocationDoesNotCascade`, and `SubscriptionGrantChecked` to draft metadata and removed their executable definitions. Each retained `@promotion` block names the concrete trace-fidelity or mutation-survivability defect and reserves the property id for the v1 formal gate.
+- Tier SSOT and generated artifacts: moved all four ids to `STATED_NORMATIVE_PROPERTIES`; final registry/model counts are 17 checked-model and 30 stated-normative (27 modeled draft plus 3 reserved-unmodeled). `docs/VERIFICATION.md` generated tables were regenerated only through the checker scripts.
+- `GenerationMonotonic` remains promoted. Hand-authored prose in `docs/VERIFICATION.md` and `docs/ADAPTER-PI.md` now distinguishes checked non-decrease from strict-supersession enforced by the action guard.
+- Retained-subscription assessment: `SubscriptionAudited` checks structural counters (`operationRecordsCreated == 0`, `auditRecords == SubscriptionEstablishAttempts`, and the attempt bound), rather than action-recorded submitting evidence. `SubscriptionCursorReplayAuthorized` checks replayed-event structure through cursor, LSN, stream/filter, and grant facts. Neither uses an accepting action's recorded actor/scope as proof of that same submitted claim, so both remain promoted.
+- `docs/PROTOCOL.md` was searched for all four property ids; it contains no checked-model references requiring an edit.
+- Verification results: both Quint parses exited 0; `check-vectors.mjs` exited 0; the first `check-models.mjs` run exited 1 as expected while regenerating the model table; the second run exited 0 with 44 promotion blocks, 17 checked-model properties, and 30 stated-normative properties.
+- Discrepancies resolved in-stride: none. The generated model summary expresses the stated-normative total as 27 modeled drafts plus 3 reserved-unmodeled properties, matching the requested total of 30.
+- Tests added: none; verification is provided by the existing Quint parser and traceability checkers.
+- Adjacent issues parked: none.

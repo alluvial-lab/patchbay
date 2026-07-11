@@ -343,17 +343,17 @@ module authority {
   // }
   // @promotion {
   //   property:    FleetAuthorityForSpawn
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/authority.qnt --invariant fleet_authority_for_spawn --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property>
   //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
+  //   demotion_reason: invariant inspects LastSpawnActor written by the accepting action, so it proves recorded-actor consistency rather than independently checking the submitting actor against the fleet grant; accepting arbitrary input while recording the grant subject can pass
   //   semantics:   spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session
   // }
-  val fleet_authority_for_spawn = (SpawnAccepted == "no") or ((SpawnAttempted == "yes") and acceptedSpawnHasRawFleetGrant)
 
   // @promotion {
   //   property:    SpawnCreatesDescendantGrant
@@ -371,29 +371,29 @@ module authority {
 
   // @promotion {
   //   property:    SpawnRevocationDoesNotCascade
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify specs/seed/authority.qnt --temporal spawn_revocation_does_not_cascade --max-steps 10
+  //   invocation:  <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property>
   //   bounds:      { actors: 3, sessions: 3, spawn_grant_scopes: 2, grant_statuses: 2, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
+  //   demotion_reason: formula makes the descendant condition true after deletion; mutating fleet revocation to set gDescOs3Live' = "no" still passes, so preservation is action-encoded rather than a mutation-survivable non-cascade oracle
   //   semantics:   revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it
   // }
-  temporal spawn_revocation_does_not_cascade = always(spawnRevocationNoCascadeState)
 
   // @promotion {
   //   property:    ElicitationResponderAuthority
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/authority.qnt --invariant elicitation_responder_authority --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property>
   //   bounds:      { actors: 3, endpoints: 3, response_operations: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
+  //   demotion_reason: invariant inspects ResponseEndpoint and ResponseClaimedActor fields written by the accepting action, so it proves recorded endpoint/actor consistency rather than independently checking submitted responder evidence; accepting arbitrary input while recording expected values can pass
   //   semantics:   response Operations are accepted only when the modeled submitting endpoint maps to the expected responder actor and the claimed actor matches that responder
   // }
-  val elicitation_responder_authority = RESPONSE_OP_IDS.forall(ro => (responseAccepted(ro) == "no") or acceptedResponseIndependentOk(ro))
 }

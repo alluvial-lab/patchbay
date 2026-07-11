@@ -206,19 +206,17 @@ module subscription_authority {
 
   // @promotion {
   //   property:    SubscriptionGrantChecked
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/subscription_authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/subscription_authority.qnt --invariant subscription_grant_checked --max-steps 12
+  //   invocation:  <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property>
   //   bounds:      { actors: 3, streams: 2, filters: 2, grant_statuses: 2, cursors: 5, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
+  //   demotion_reason: invariant inspects LastSubscriptionActor and LastSubscriptionScope written by the establishing action, so it proves recorded actor/scope consistency rather than independently checking submitted subscription evidence; accepting arbitrary input while recording the grant subject and scope can pass
   //   semantics:   subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope
   // }
-  val subscription_grant_checked =
-    (SubscriptionAccepted == "no" and subscriptionId == "none")
-      or (SubscriptionAccepted == "yes" and subscriptionId == "sub1" and acceptedSubscriptionHasRawGrant)
 
   // @promotion {
   //   property:    SubscriptionAudited
