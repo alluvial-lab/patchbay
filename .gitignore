@@ -13,3 +13,5 @@ out/
 tmp/
 _apalache-out/
 states/
+core/target/
+
