@@ -1,7 +1,7 @@
 ---
 id: epic-v0-core
 kind: epic
-stage: drafting
+stage: implementing
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: []
@@ -40,20 +40,22 @@ The 39 stated-normative properties (demoted during verification-claim-correction
 
 ## Decomposition
 
-Four feature-sized sub-arcs, each with its own formal-model backing and design surface. `epic-design` will confirm this decomposition and declare child-feature dependencies.
+Split by capability, not by layer. The four sub-arcs are independent enough to parallelize after the shared persistence feature lands: acceptance, authority, and sessions interact through Ports & Adapters (grant-check port, target-identity port) rather than direct coupling, so they can proceed simultaneously once the event log and storage port exist.
 
-### Child features (provisional — epic-design confirms)
+### Child features
 
-- `feature-v0-core-persistence` — durable event log, storage port, embedded backend, snapshots, crash recovery — formal backing: `BoundaryDedup` (promoted); crash/replay/snapshot convergence (stated-normative, v1 gate) — depends on: `[]`
-- `feature-v0-core-acceptance` — CommandState machine, operation submission, idempotency, retry, terminal races — formal backing: `TerminalFinality`, `NoAcceptedToCompleted` (promoted) — depends on: `[feature-v0-core-persistence]`
-- `feature-v0-core-authority` — grants, revocation, spawn authority, descendant grants, audit — formal backing: `RevokedSessionCannotCommand` (promoted); `authority.qnt` (stated-normative) — depends on: `[feature-v0-core-persistence]`
-- `feature-v0-core-sessions` — session registry, connectivity × activity axes, generation monotonicity, replacement, stale/offline/unknown — formal backing: `GenerationMonotonic` (promoted) — depends on: `[feature-v0-core-persistence]`
+- `feature-v0-core-persistence` — durable event log, storage port, embedded backend, snapshots, crash recovery — depends on: `[]`
+- `feature-v0-core-acceptance` — CommandState machine, operation submission, idempotency, retry, terminal races, observation/elicitation ingestion — depends on: `[feature-v0-core-persistence]`
+- `feature-v0-core-authority` — grants, revocation, spawn authority, descendant grants, audit — depends on: `[feature-v0-core-persistence]`
+- `feature-v0-core-sessions` — session registry, connectivity × activity axes, generation monotonicity, replacement, stale/offline/unknown — depends on: `[feature-v0-core-persistence]`
 
 ### Decomposition risks
 
-- **Persistence is the root.** Acceptance, authority, and sessions all read and write through the storage port and depend on the event log. The persistence feature must land (or at least its port interface must be designed) before the others can proceed.
-- **Cross-cutting formal properties.** Some promoted properties span sub-arcs (e.g. `NoAcceptedToCompleted` touches acceptance + persistence). `epic-design` should map which properties each child feature owns vs. which are integration properties verified at the epic boundary.
-- **CSRF/browser properties.** The four `csrf_browser.qnt` promoted properties are web-server-facing, not core-internal. They belong to `feature-v0-web-server`, not this epic; they're listed above only because they're part of the v0.1.0 promoted set. `epic-design` should clarify the boundary.
+- **Persistence is the root and the riskiest feature.** Acceptance, authority, and sessions all read and write through the storage port and depend on the event log. Backend choice affects crash recovery correctness and the qualitative responsiveness floor. The persistence feature's port interface must be designed (not necessarily fully implemented) before the other three can proceed in parallel.
+- **Cross-cutting formal properties.** `BoundaryDedup` spans persistence (the `appliedKeys` set and `lsn` live in the event log) and acceptance (the dedup boundary is enforced at acceptance). The persistence feature owns the state; the acceptance feature owns the enforcement. `NoAcceptedToCompleted` touches acceptance + persistence (the transition guard reads command state that persistence durably records). Each child feature's `feature-design` pass should clarify which properties it owns vs. which are integration properties verified at the epic boundary.
+- **Authority has the weakest formal backing.** All `authority.qnt` properties are stated-normative (draft). The one promoted property touching authority (`RevokedSessionCannotCommand`) lives in `csrf_browser.qnt` and models the browser/CSRF boundary — it is web-server-facing, not core-internal. The authority feature's obligations are real but not yet checked; the v1 formal gate owns the real authority properties.
+- **CSRF/browser properties are out of scope for this epic.** The four `csrf_browser.qnt` promoted properties (`CsrfRejectsMissingProof`, `CsrfRejectsUnauthenticated`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority`) are web-server-facing and belong to `feature-v0-web-server`, not this epic.
+- **Elicitation scope.** Elicitation lifecycle handling folds into the acceptance feature as part of the operation/observation/elicitations plane. If the scope is too large, `feature-design` may spawn a child story for elicitation specifically.
 
 ## Foundation references
 
