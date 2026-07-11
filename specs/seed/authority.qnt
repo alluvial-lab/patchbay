@@ -1,9 +1,15 @@
-// Patchbay seed model: authority safety (partially promoted)
+// Patchbay seed model: authority safety (all properties stated-normative)
 //
-// Unit SA promotes spawn-authority properties. The original four authority
-// properties remain draft. Grant records are represented as explicit scalar
-// tuples for the bounded grant ids; descendant grants are real grant records,
-// not boolean authority side-channels.
+// All authority properties are currently stated-normative (draft): the spawn-
+// authority and responder-authority invariants were demoted because their
+// formulas inspect state recorded by the accepting action rather than
+// independent attempted evidence (trace-fidelity defect), and the descendant-
+// grant property is not mutation-survivable. The real independent-actor/
+// endpoint/scope verification and the genuine non-cascade formula are v1
+// formal-gate work (epic-public-product-contract-executable-release-assurance).
+// Grant records are represented as explicit scalar tuples for the bounded
+// grant ids; descendant grants are real grant records, not boolean authority
+// side-channels.
 module authority {
   pure val ACTORS = Set("alice", "bob", "svc")
   pure val ENDPOINTS = Set("ep-web", "ep-cli", "ep-grpc")

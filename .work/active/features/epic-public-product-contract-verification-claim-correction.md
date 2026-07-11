@@ -287,7 +287,7 @@ Units 1–4 are sequenced via `depends_on` because they all touch `check-vectors
 
 ## Implementation summary
 
-All six child stories implemented and advanced to `stage: review` via `implement-orchestrator` (sequential wave, width 1 — the `depends_on` chain is strictly linear because every unit touches `check-vectors.mjs` and the generated VERIFICATION.md tables):
+All seven child stories implemented and advanced to `stage: review` via `implement-orchestrator` (sequential wave, width 1 — the `depends_on` chain is strictly linear because every unit touches `check-vectors.mjs` and the generated VERIFICATION.md tables):
 
 | Unit | Story | Commit | Status |
 |---|---|---|---|
@@ -297,19 +297,22 @@ All six child stories implemented and advanced to `stage: review` via `implement
 | 4 | `story-verification-correction-draft-formulas` | `c4e8279` | review |
 | 5 | `story-verification-correction-prose` | `48fe336` | review |
 | 6 | `story-verification-correction-retained-semantics` | `15276ce` | review |
+| 7 | `story-verification-correction-trace-fidelity-demotion` | `19f54c4` | review |
 
-**Net verification-claim result:** 11 properties demoted from promoted (checked-model) to draft (stated-normative): 5 from `command_lifecycle.qnt`, 4 from `session_generation.qnt`/`elicitation_lifecycle.qnt`, 1 Alloy (`ActorIdsUnique`), 1 from `authority.qnt` (`SpawnCreatesDescendantGrant`). 11 misleading draft `val`/`temporal` formulas removed entirely (not stubbed to `true`) so `quint verify --invariant <name>` fails honestly rather than passing vacuously. 7 retained promoted properties' `semantics:` text narrowed to match their formulas. 4 superseded toy artifacts relocated out of `specs/seed/` to skill example directories. 3 stale model header comments fixed. Stale prose reconciled across PROTOCOL.md, VERIFICATION.md, ADAPTER-PI.md, SPEC.md, GLOSSARY.md.
+Units 1–6 were the original design; Unit 7 was added by the round-2 deep review (4 promoted properties with trace-fidelity/mutation-fragility defects the original design missed).
 
-**Final property tier counts:** 21 promoted / 26 stated-normative (23 modeled-draft + 3 reserved-unmodeled) = 47 total. Down from 32 promoted / 15 stated-normative pre-correction.
+**Net verification-claim result:** 15 properties demoted from promoted (checked-model) to draft (stated-normative): 5 from `command_lifecycle.qnt`, 4 from `session_generation.qnt`/`elicitation_lifecycle.qnt`, 1 Alloy (`ActorIdsUnique`), 1 from `authority.qnt` (`SpawnCreatesDescendantGrant`), and 4 trace-fidelity-defective (`FleetAuthorityForSpawn`, `ElicitationResponderAuthority`, `SpawnRevocationDoesNotCascade`, `SubscriptionGrantChecked`). 15 misleading/defective `val`/`temporal` formulas removed entirely (not stubbed to `true`) so `quint verify --invariant <name>` fails honestly rather than passing vacuously or on a defective formula. 7 retained promoted properties' `semantics:` text narrowed to match their formulas. `GenerationMonotonic` prose corrected (strict-supersession is action-enforced, not checked). 4 superseded toy artifacts relocated out of `specs/seed/` to skill example directories. 4 stale model header comments fixed. Stale prose reconciled across PROTOCOL.md, VERIFICATION.md, ADAPTER-PI.md, SPEC.md, GLOSSARY.md.
+
+**Final property tier counts:** 17 promoted / 30 stated-normative (27 modeled-draft + 3 reserved-unmodeled) = 47 total. Down from 32 promoted / 15 stated-normative pre-correction.
 
 **Cross-cutting deviations:**
 - Unit 3 (alloy-and-toys): the toy files are referenced in `.research/analysis/briefs/*.md` (historical attestations) and `feature-formal-model-seed.md` (a done feature body) beyond the 3 in-scope skill SKILL.md files. The worker left both untouched — research attestations are historical records that remain true, and editing a done feature re-opens its review surface. Recorded as deferred references.
 - Unit 5 (prose): the story's Files list omitted `docs/SPEC.md` and `docs/GLOSSARY.md` (acceptance items 10-12); the worker handled both. Also corrected a residual `SpawnCreatesDescendantGrant` checked-model reference left by Unit 4.
 - Unit 6 (retained-semantics): the story body said "five" properties but the design narrowed seven (the review phase added `ElicitationStaleTargetInert` and `SpawnRevocationDoesNotCascade`). The worker corrected the count.
 
-**Verification status:** `quint parse` exits 0 for all affected model files; `check-vectors.mjs` exits 0; `check-models.mjs` exits 0 (tables current). Generated VERIFICATION.md tables reflect the demotions. No promoted property lost its genuine-checking mutation proof.
+**Verification status:** `quint parse` exits 0 for all affected model files; `check-vectors.mjs` exits 0; `check-models.mjs` exits 0 (tables current). Generated VERIFICATION.md tables reflect the demotions. The 4 trace-fidelity demotions (Unit 7) were each verified by an independent mutation test before demotion; the round-3 review's broader claim that 9 *surviving* promoted properties share the defect is partially disputed by the host (the `ElicitationPendingFinality` mutation was caught by the property, not passed as the reviewer claimed) and routed to `executable-release-assurance` as a model-architecture question rather than absorbed as further demotions in this feature.
 
-**Deferred to v1 formal gate (`epic-public-product-contract-executable-release-assurance`):** real formulas for the 11 demoted properties (crash/restart durability, competing pre-append candidates, retry-input identity, returned-record identity, per-session identity tuple, label-override routing, stale-event audit, elicitation-timeout grant boundary, descendant-grant allowed-kind set with action-created state, snapshot/recovery failure boundaries, general authority).
+**Deferred to v1 formal gate (`epic-public-product-contract-executable-release-assurance`):** real formulas for the 15 demoted properties (crash/restart durability, competing pre-append candidates, retry-input identity, returned-record identity, per-session identity tuple, label-override routing, stale-event audit, elicitation-timeout grant boundary, descendant-grant allowed-kind set with action-created state, snapshot/recovery failure boundaries, general authority, independent-actor/endpoint/scope verification, genuine non-cascade formula with pre/post state). Also deferred: the systematic trace-fidelity question across the surviving promoted properties (see `idea-csrf-trace-fidelity` and the round-3 review record) — whether each surviving property's formula is an independent oracle against the model's own actions is a model-architecture determination the v1 gate makes when it builds the real formal checker.
 
 ## Review (2026-07-10)
 
