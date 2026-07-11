@@ -1,41 +1,32 @@
 ---
 id: idea-check-models-draft-discipline-enforcement
 kind: backlog
-stage: backlog
-tags: [verification, protocol]
-parent: null
-depends_on: []
-release_binding: null
-gate_origin: null
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-11
+tags: [verification, protocol]
+research_refs: []
 ---
 
-# check-models.mjs does not enforce the demotion/draft discipline
+# Backlog: check-models.mjs should enforce the demotion/draft discipline
 
-## Origin
+Filed from the round-2 deep review of `epic-public-product-contract-verification-claim-correction`.
 
-Deep review (Phase 2 adversarial) of `epic-public-product-contract-verification-claim-correction`. Filed as an important finding.
+`contracts/scripts/check-models.mjs` validates `@promotion` block shape but does not enforce the discipline the verification-claim correction relied on:
 
-## Finding
+- `demotion_reason` is not required for `status: draft` blocks.
+- draft `invocation` is not validated (a concrete `quint verify ...` instead of `<TBD...>` passes; invocation validation at `check-models.mjs:198-209` only applies to promoted blocks).
+- executable-definition presence is not checked — a `status: draft` property whose `val`/`temporal` was removed (the intended state for stubbed properties) is indistinguishable from one with a misleading `= true` formula.
 
-`contracts/scripts/check-models.mjs` validates `@promotion` blocks but does not enforce the discipline that the verification-claim correction relied on:
+The misleading-formula defect this feature corrected can recur while all metadata checks stay green.
 
-- **`demotion_reason` is not required** for `status: draft` blocks. A demoted property without a `demotion_reason` passes silently.
-- **Draft invocation is not validated.** A draft block with a concrete `quint verify ...` invocation (instead of `<TBD...>`) passes silently. Invocation validation (`check-models.mjs:198-209`) only applies to `status: promoted` blocks.
-- **Executable-definition presence is not checked.** A `status: draft` property whose `val`/`temporal` definition was removed (the intended state for the 11 stubbed properties) is indistinguishable to the checker from one that still has a misleading `= true` formula. The misleading-formula defect this feature corrected can recur while all metadata checks remain green.
+## Three-way distinction the check needs
 
-## Why this matters
+A blanket ban on draft executable definitions would be wrong — not all drafts are formula-less. The checker must distinguish:
 
-The verification-claim correction removed `val` definitions entirely (rather than `= true`) precisely so `quint verify --invariant <name>` fails honestly. But `check-models.mjs` — the metadata/traceability gate — does not verify this invariant. A future contributor could re-add a `= true` stub to a draft property, or demote a property without recording why, and CI would stay green.
+1. **Formula-less reservations** (`status: draft`, no `val`/`temporal`, invocation `<TBD>`): the intended state for demoted properties whose misleading formulas were removed, and for reserved-unmodeled ids. No executable definition should exist.
+2. **Demoted-but-retained formulas** (if any future draft keeps a genuine-but-insufficient formula): `status: draft` with a real formula. Currently none exist in the seed models, but the discipline should not forbid them outright.
+3. **Forbidden vacuous stubs** (`= true`, `always(true)`): the defect class to detect and reject.
 
-The parked `idea-proto-prose-registry-consistency-check.md` addresses prose drift; this is the complementary checker-side gap for block discipline.
+Suggested check shape: for `status: draft`, require `invocation` starts with `<TBD`; require `demotion_reason` when a `demoted:` marker is present (or introduce an explicit draft-disposition field); and warn/fail when a draft block has a `val`/`temporal` whose body is a literal `true`/`always(true)` (the vacuous-stub detector). The formula-less-vs-retained distinction can be left to author judgment unless a stricter rule is wanted.
 
-## Suggested work
-
-Strengthen `check-models.mjs` validation:
-- draft blocks must have `invocation` starting with `<TBD`.
-- demoted drafts (those with a `demotion_reason` field, or a new explicit `demoted: true` marker) must carry `demotion_reason`.
-- consider: for `status: draft` properties, warn (or fail) if a matching `val`/`temporal` definition exists in the model file — the property is stated-normative and an executable formula that passes vacuously is the defect to prevent. (This requires the checker to cross-reference block names with parsed definitions, which is a non-trivial extension; a lighter version cross-references the `invocation` `<TBD>` marker.)
-
-Scope this as a `[verification]` feature under `epic-public-product-contract-public-compatibility` (which owns the long-term drift-detection mechanisms) or as a standalone hardening item.
+Scope under `epic-public-product-contract-public-compatibility` (which owns long-term drift-detection mechanisms) or as a standalone hardening item.
