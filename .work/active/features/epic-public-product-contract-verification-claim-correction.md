@@ -380,3 +380,19 @@ Units 1–6 were the original design; Unit 7 was added by the round-2 deep revie
 **Disposition**: Filed two items for the confirmed important findings (header comment + summary roll-through). The disputed round-3 blockers (9 promoted properties) require operator judgment: whether to (a) accept the reviewer's sweeping claim and demote 9 more properties (v1-gate-scale scope expansion into model architecture), (b) treat the host's disputed mutation results as sufficient to retain the Elicitation properties and file only the confirmed `SubscriptionAudited` narrower defect, or (c) pause this feature's convergence loop and route the systematic trace-fidelity question to a dedicated design/research engagement given it spans the whole formal-model substrate.
 
 **Notes**: Round 3 did not converge cleanly — the reviewer's findings are partially disputed by the host's independent mutation tests. This is the convergence loop's tension point: the reviewer is applying a maximally-strict independent-oracle standard that, if fully applied, would demote most of the seed model's promoted properties and defer nearly all formal verification to the v1 gate. The host verified the `SpawnRevocationDoesNotCascade` defect in round 2 (genuine) but could not reproduce the `ElicitationPendingFinality` defect in round 3 (the property caught the mutation). The two confirmed items (header comment, summary roll-through) are in-scope and will be fixed; the 9-property dispute needs an operator decision on how strict the independent-oracle bar should be for this feature's scope.
+
+## Review round 4 (2026-07-11)
+
+**Verdict**: Request changes (host accepts — round-3 dispute was wrong)
+
+**Lane**: deep, adversarial convergence pass, `openai-codex/gpt-5.6-sol` (xhigh), fresh-context.
+
+**Blockers** (2, both confirmed real by the host):
+1. **9 demoted properties still have their `val`/`temporal` definitions** (Units 1-2 demoted `@promotion` status but left the formulas). `quint verify --invariant command_durability` still passes on a draft property — the exact vacuous-pass the feature exists to prevent. A Phase 7 verification miss across the original 6 waves.
+2. **9 surviving promoted properties are mutation-fragile** — the host's round-3 dispute was **wrong**. The round-3 test mutated the wrong branch (already-terminal, which the `__saved_` baseline catches); the reviewer's mutation (first-terminal branch, re-terminalization from any state + lying about the baseline) passes. The host reproduced it. All 9 confirmed: 6 Elicitation, 2 subscription, `TypedCorrelation`.
+
+**Host correction**: The round-3 scope-routing argument was correct for the *re-architecture* (attempted-evidence state is v1-gate work) but wrong for the *demotion* of properties with confirmed mutation failure — that is in-scope claim correction per the feature's brief. The operator confirmed absorbing both as Unit 8.
+
+**Disposition**: Filed `story-verification-correction-mutation-fragility-demotion` (Unit 8, depends on Unit 7) to (a) remove the 9 leftover formulas and (b) demote the 9 mutation-fragile properties. The `idea-csrf-trace-fidelity` backlog item and `executable-release-assurance` design-input section remain accurate (they route the re-architecture, not the demotions). After Unit 8: 8 promoted / 39 stated-normative; the 8 survivors were confirmed clean (CSRF uses attempted evidence; the 3 lifecycle + GenerationMonotonic check transition/structural invariants not recorded by the accepting action).
+
+**Notes**: Round 4 did not converge. The host's round-3 dispute is retracted — it was based on an incomplete mutation test. This is the convergence loop's hardest lesson: the host must run the *right* mutation (the one that breaks the property's actual claim), not just *a* mutation. The loop continues after Unit 8 lands.
