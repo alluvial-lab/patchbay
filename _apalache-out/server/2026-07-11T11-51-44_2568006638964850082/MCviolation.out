@@ -1,0 +1,72 @@
+@!@!@STARTMSG 2262:0 @!@!@
+Created by Apalache on Sat Jul 11 11:51:48 MDT 2026
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2110:1 @!@!@
+Invariant is violated.
+@!@!@ENDMSG 2110 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ accepted = FALSE
+/\ attemptedProof = "missing_proof"
+/\ attemptedSession = "missing_session"
+/\ browserLocalGrantClaim = FALSE
+/\ browserLocalSessionLive = FALSE
+/\ csrfProofs = SetAsFun({ <<"missing_session", "wrong_proof">>,
+  <<"s_active", "proof_active">>,
+  <<"s_expired", "proof_expired">>,
+  <<"s_revoked", "proof_revoked">> })
+/\ lastProof = "missing_proof"
+/\ lastSession = "missing_session"
+/\ operatorSessions = { "s_active", "s_expired", "s_revoked" }
+/\ requestPending = FALSE
+/\ sessionStatus = SetAsFun({ <<"missing_session", "active">>,
+  <<"s_active", "active">>,
+  <<"s_expired", "expired">>,
+  <<"s_revoked", "revoked">> })
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <Next>
+/\ accepted = FALSE
+/\ attemptedProof = "proof_revoked"
+/\ attemptedSession = "s_active"
+/\ browserLocalGrantClaim = TRUE
+/\ browserLocalSessionLive = TRUE
+/\ csrfProofs = SetAsFun({ <<"missing_session", "wrong_proof">>,
+  <<"s_active", "proof_active">>,
+  <<"s_expired", "proof_expired">>,
+  <<"s_revoked", "proof_revoked">> })
+/\ lastProof = "missing_proof"
+/\ lastSession = "missing_session"
+/\ operatorSessions = { "s_active", "s_expired", "s_revoked" }
+/\ requestPending = TRUE
+/\ sessionStatus = SetAsFun({ <<"missing_session", "active">>,
+  <<"s_active", "active">>,
+  <<"s_expired", "expired">>,
+  <<"s_revoked", "revoked">> })
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <Next>
+/\ accepted = TRUE
+/\ attemptedProof = "proof_revoked"
+/\ attemptedSession = "s_active"
+/\ browserLocalGrantClaim = TRUE
+/\ browserLocalSessionLive = TRUE
+/\ csrfProofs = SetAsFun({ <<"missing_session", "wrong_proof">>,
+  <<"s_active", "proof_active">>,
+  <<"s_expired", "proof_expired">>,
+  <<"s_revoked", "proof_revoked">> })
+/\ lastProof = "proof_active"
+/\ lastSession = "s_active"
+/\ operatorSessions = { "s_active", "s_expired", "s_revoked" }
+/\ requestPending = FALSE
+/\ sessionStatus = SetAsFun({ <<"missing_session", "active">>,
+  <<"s_active", "active">>,
+  <<"s_expired", "expired">>,
+  <<"s_revoked", "revoked">> })
+
+@!@!@ENDMSG 2217 @!@!@

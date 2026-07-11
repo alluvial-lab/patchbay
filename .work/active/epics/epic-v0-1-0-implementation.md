@@ -28,7 +28,7 @@ This epic turns a complete design into a running system across six layers (coord
 ## Critical path
 
 ```
-feature-v0-core  (root — nothing starts until the core exists)
+epic-v0-core  (root — nothing starts until the core exists)
     │
     ├── feature-v0-protocol-seam  [depends: core]
     │       │
@@ -70,9 +70,9 @@ Six child features, one per architectural layer. The coordination core is the la
 
 ### Child features
 
-- `feature-v0-core` — Rust coordination core: durable event log, storage port, operation acceptance + idempotency, authority checks, snapshots, crash recovery — depends on: `[]`
-- `feature-v0-protocol-seam` — web↔core internal protocol seam: internal RPC, streaming channel, auth boundary — depends on: `[feature-v0-core]`
-- `feature-v0-pi-adapter` — Pi adapter: session discovery, prompt delivery, cancel/interrupt, replies/events/snapshots — depends on: `[feature-v0-core]`
+- `epic-v0-core` — Rust coordination core: durable event log, storage port, operation acceptance + idempotency, authority checks, snapshots, crash recovery — depends on: `[]` (epic-sized; decomposes into child features via `epic-design`)
+- `feature-v0-protocol-seam` — web↔core internal protocol seam: internal RPC, streaming channel, auth boundary — depends on: `[epic-v0-core]`
+- `feature-v0-pi-adapter` — Pi adapter: session discovery, prompt delivery, cancel/interrupt, replies/events/snapshots — depends on: `[epic-v0-core]`
 - `feature-v0-web-server` — TS web server: HTTP termination, operator sessions, CSRF, speaks Connect to core — depends on: `[feature-v0-protocol-seam]`
 - `feature-v0-web-cockpit` — responsive web cockpit: session list, composer, delivery states, reconnect — depends on: `[feature-v0-web-server]`
 - `feature-v0-cli` — CLI: setup, admin, debug, scripted access — depends on: `[feature-v0-protocol-seam]`

@@ -4,7 +4,7 @@ kind: feature
 stage: drafting
 tags: [protocol, adapter, security]
 parent: epic-v0-1-0-implementation
-depends_on: [feature-v0-core]
+depends_on: [epic-v0-core]
 created: 2026-06-28
 updated: 2026-07-11
 gate_origin: null

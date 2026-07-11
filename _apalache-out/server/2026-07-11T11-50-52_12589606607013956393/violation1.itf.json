@@ -1,0 +1,207 @@
+{
+  "#meta": {
+    "format": "ITF",
+    "varTypes": {
+      "state": "(Str -> Str)",
+      "idemKey": "(Str -> Str)",
+      "appliedKeys": "Set(Str)",
+      "applyCount": "(Str -> Int)",
+      "lsn": "Int",
+      "terminalLsn": "(Str -> Int)"
+    },
+    "format-description": "https://apalache-mc.org/docs/adr/015adr-trace.html",
+    "description": "Created by Apalache on Sat Jul 11 11:50:57 MDT 2026"
+  },
+  "vars": [
+    "state",
+    "idemKey",
+    "appliedKeys",
+    "applyCount",
+    "lsn",
+    "terminalLsn"
+  ],
+  "states": [
+    {
+      "#meta": {
+        "index": 0
+      },
+      "appliedKeys": {
+        "#set": [
+          "k1",
+          "k2",
+          "k3"
+        ]
+      },
+      "applyCount": {
+        "#map": [
+          [
+            "k1",
+            {
+              "#bigint": "1"
+            }
+          ],
+          [
+            "k2",
+            {
+              "#bigint": "1"
+            }
+          ],
+          [
+            "k3",
+            {
+              "#bigint": "1"
+            }
+          ]
+        ]
+      },
+      "idemKey": {
+        "#map": [
+          [
+            "c1",
+            "k1"
+          ],
+          [
+            "c2",
+            "k2"
+          ],
+          [
+            "c3",
+            "k3"
+          ]
+        ]
+      },
+      "lsn": {
+        "#bigint": "3"
+      },
+      "state": {
+        "#map": [
+          [
+            "c1",
+            "accepted"
+          ],
+          [
+            "c2",
+            "accepted"
+          ],
+          [
+            "c3",
+            "accepted"
+          ]
+        ]
+      },
+      "terminalLsn": {
+        "#map": [
+          [
+            "c1",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "c2",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "c3",
+            {
+              "#bigint": "0"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "#meta": {
+        "index": 1
+      },
+      "appliedKeys": {
+        "#set": [
+          "k1",
+          "k2",
+          "k3"
+        ]
+      },
+      "applyCount": {
+        "#map": [
+          [
+            "k1",
+            {
+              "#bigint": "2"
+            }
+          ],
+          [
+            "k2",
+            {
+              "#bigint": "1"
+            }
+          ],
+          [
+            "k3",
+            {
+              "#bigint": "1"
+            }
+          ]
+        ]
+      },
+      "idemKey": {
+        "#map": [
+          [
+            "c1",
+            "k1"
+          ],
+          [
+            "c2",
+            "k2"
+          ],
+          [
+            "c3",
+            "k3"
+          ]
+        ]
+      },
+      "lsn": {
+        "#bigint": "3"
+      },
+      "state": {
+        "#map": [
+          [
+            "c1",
+            "accepted"
+          ],
+          [
+            "c2",
+            "accepted"
+          ],
+          [
+            "c3",
+            "accepted"
+          ]
+        ]
+      },
+      "terminalLsn": {
+        "#map": [
+          [
+            "c1",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "c2",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "c3",
+            {
+              "#bigint": "0"
+            }
+          ]
+        ]
+      }
+    }
+  ]
+}

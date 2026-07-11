@@ -1,0 +1,105 @@
+@!@!@STARTMSG 2262:0 @!@!@
+Created by Apalache on Sat Jul 11 11:51:05 MDT 2026
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2110:1 @!@!@
+Invariant is violated.
+@!@!@ENDMSG 2110 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ __InLoop = FALSE
+/\ __q::temporalProps_init = FALSE
+/\ __saved___temporal_t_1 = FALSE
+/\ __saved___temporal_t_2 = FALSE
+/\ __saved_appliedKeys = { "k1", "k2", "k3" }
+/\ __saved_applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ __saved_idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ __saved_lsn = 3
+/\ __saved_state = SetAsFun({ <<"c1", "accepted">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ __saved_terminalLsn = SetAsFun({ <<"c1", 0>>, <<"c2", 0>>, <<"c3", 0>> })
+/\ __temporal_t_1 = FALSE
+/\ __temporal_t_2 = FALSE
+/\ __temporal_t_2_unroll = TRUE
+/\ __temporal_t_2_unroll_prev = TRUE
+/\ appliedKeys = { "k1", "k2", "k3" }
+/\ applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ lsn = 3
+/\ state = SetAsFun({ <<"c1", "accepted">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ terminalLsn = SetAsFun({ <<"c1", 0>>, <<"c2", 0>>, <<"c3", 0>> })
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <Next>
+/\ __InLoop = FALSE
+/\ __q::temporalProps_init = FALSE
+/\ __saved___temporal_t_1 = FALSE
+/\ __saved___temporal_t_2 = FALSE
+/\ __saved_appliedKeys = { "k1", "k2", "k3" }
+/\ __saved_applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ __saved_idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ __saved_lsn = 3
+/\ __saved_state = SetAsFun({ <<"c1", "accepted">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ __saved_terminalLsn = SetAsFun({ <<"c1", 0>>, <<"c2", 0>>, <<"c3", 0>> })
+/\ __temporal_t_1 = FALSE
+/\ __temporal_t_2 = TRUE
+/\ __temporal_t_2_unroll = TRUE
+/\ __temporal_t_2_unroll_prev = TRUE
+/\ appliedKeys = { "k1", "k2", "k3" }
+/\ applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ lsn = 4
+/\ state = SetAsFun({ <<"c1", "completed">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ terminalLsn = SetAsFun({ <<"c1", 4>>, <<"c2", 0>>, <<"c3", 0>> })
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <Next>
+/\ __InLoop = FALSE
+/\ __q::temporalProps_init = FALSE
+/\ __saved___temporal_t_1 = FALSE
+/\ __saved___temporal_t_2 = FALSE
+/\ __saved_appliedKeys = { "k1", "k2", "k3" }
+/\ __saved_applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ __saved_idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ __saved_lsn = 3
+/\ __saved_state = SetAsFun({ <<"c1", "accepted">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ __saved_terminalLsn = SetAsFun({ <<"c1", 0>>, <<"c2", 0>>, <<"c3", 0>> })
+/\ __temporal_t_1 = TRUE
+/\ __temporal_t_2 = TRUE
+/\ __temporal_t_2_unroll = TRUE
+/\ __temporal_t_2_unroll_prev = TRUE
+/\ appliedKeys = { "k1", "k2", "k3" }
+/\ applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ lsn = 4
+/\ state = SetAsFun({ <<"c1", "completed">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ terminalLsn = SetAsFun({ <<"c1", 4>>, <<"c2", 0>>, <<"c3", 0>> })
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+4: <Next>
+/\ __InLoop = TRUE
+/\ __q::temporalProps_init = FALSE
+/\ __saved___temporal_t_1 = TRUE
+/\ __saved___temporal_t_2 = TRUE
+/\ __saved_appliedKeys = { "k1", "k2", "k3" }
+/\ __saved_applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ __saved_idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ __saved_lsn = 4
+/\ __saved_state = SetAsFun({ <<"c1", "completed">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ __saved_terminalLsn = SetAsFun({ <<"c1", 4>>, <<"c2", 0>>, <<"c3", 0>> })
+/\ __temporal_t_1 = TRUE
+/\ __temporal_t_2 = TRUE
+/\ __temporal_t_2_unroll = TRUE
+/\ __temporal_t_2_unroll_prev = TRUE
+/\ appliedKeys = { "k1", "k2", "k3" }
+/\ applyCount = SetAsFun({ <<"k1", 1>>, <<"k2", 1>>, <<"k3", 1>> })
+/\ idemKey = SetAsFun({ <<"c1", "k1">>, <<"c2", "k2">>, <<"c3", "k3">> })
+/\ lsn = 4
+/\ state = SetAsFun({ <<"c1", "completed">>, <<"c2", "accepted">>, <<"c3", "accepted">> })
+/\ terminalLsn = SetAsFun({ <<"c1", 4>>, <<"c2", 0>>, <<"c3", 0>> })
+
+@!@!@ENDMSG 2217 @!@!@
