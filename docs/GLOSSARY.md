@@ -60,7 +60,7 @@ A new id space, adapter-assigned when a pending response slot is opened. The cor
 
 ## ElicitationState
 
-The lifecycle registry for an Elicitation. Initial state is `opened`; transitions include `opened` → `pending` or direct `opened` → terminal, and `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. The lifecycle has partial checked-model coverage for pending finality, the first valid answer terminal, typed correlation, invalid-response rejection, stale-target inertness, and withdrawal finality; the timeout/grant obligation remains stated-normative. None of this coverage is checked-normative until promoted conformance vectors land.
+The lifecycle registry for an Elicitation. Initial state is `opened`; transitions include `opened` → `pending` or direct `opened` → terminal, and `pending` → terminal (`answered`, `declined`, `expired`, `cancelled`, `withdrawn`, `superseded`, `stale`). First durable terminal commit wins; first valid answer clears the Elicitation for all subscribed surfaces. The Elicitation lifecycle properties are currently stated-normative with no executable formula: their seed formulas inspected state recorded by the accepting action rather than independent attempted evidence and were not mutation-survivable oracles. The v1 formal gate owns the genuine formulas. None of these properties are checked-normative until promoted conformance vectors land.
 
 ## Adapter capability
 
