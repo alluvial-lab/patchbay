@@ -1,10 +1,10 @@
-// Patchbay seed model: subscription authority (promoted)
+// Patchbay seed model: subscription authority (draft obligations; no promoted properties)
 //
 // Unit SUB is split out of authority.qnt because composing subscription cursor/event
 // state with the spawn temporal property caused Apalache's temporal backend to fail
-// before checking Unit SA's promoted temporal property. The semantics are unchanged:
+// before checking Unit SA's former temporal property. The semantics are unchanged:
 // subscription authorization queries real bounded Grant tuples, establishment is
-// permissive and audited, and replay is checked by an independent raw-state oracle.
+// permissive and audited, and replay state is available for future independent-oracle work.
 module subscription_authority {
   pure val ACTORS = Set("alice", "bob", "svc")
   pure val STREAMS = Set("stream-ops", "stream-elicitations")
@@ -47,7 +47,7 @@ module subscription_authority {
   def grantScope(g) = if (g == "g-sub-ops-all") streamScope("stream-ops", "all") else if (g == "g-sub-elicitations-ops") streamScope("stream-elicitations", "ops-only") else "none"
   def grantAllows(g, kind) = GRANTS.contains(g) and kind == "subscribe"
 
-  // Action-side helper. Promoted invariants below intentionally do not call this.
+  // Action-side helper. Future promoted invariants must not reuse this acceptance predicate.
   def actionGrantAuthorizesSubscription(g, actor, stream, filt) =
     if (grantLive(g))
       if (grantStatus(g) == "active")
@@ -69,8 +69,9 @@ module subscription_authority {
 
   def subscriptionAllowed(actor, stream, filt) = liveSubscriptionGrantId(actor, stream, filt) != "none"
 
-  // Independent raw-state oracle. It does not call actionGrantAuthorizesSubscription,
-  // liveSubscriptionGrantId, or subscriptionAllowed.
+  // Recorded-state consistency helper. It does not call actionGrantAuthorizesSubscription,
+  // liveSubscriptionGrantId, or subscriptionAllowed, but its inputs are still written by
+  // the accepting action; it is therefore not an independent attempted-evidence oracle.
   def acceptedSubscriptionHasRawGrant =
     if (GRANTS.contains(subscriptionGrantId))
       if (grantLive(subscriptionGrantId))
@@ -128,7 +129,7 @@ module subscription_authority {
 
   // PERMISSIVE establishment: every bounded actor/stream/filter/cursor attempt is
   // recorded, allowed or denied. The action consults Grant tuples to decide the
-  // acceptance flag; the oracle independently checks the raw tuple facts.
+  // acceptance flag and writes the state available to future trace-faithful formulas.
   action attemptEstablish(actor, stream, filt, cursor) = all {
     actor.in(ACTORS), stream.in(STREAMS), filt.in(FILTERS), cursor.in(CURSORS),
     gSubOpsAllStatus' = gSubOpsAllStatus,
@@ -220,33 +221,28 @@ module subscription_authority {
 
   // @promotion {
   //   property:    SubscriptionAudited
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/subscription_authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/subscription_authority.qnt --invariant subscription_audited --max-steps 12
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: invariant compares `auditRecords == SubscriptionEstablishAttempts`, but the establishment action writes both counters. A mutation setting `auditRecords' = SubscriptionEstablishAttempts + 1` can lie about the audit and still pass, so this is not an independent audit oracle.
   //   bounds:      { actors: 3, streams: 2, filters: 2, grant_statuses: 2, cursors: 5, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   subscription allow/deny decisions create audit records without creating OperationState records
   // }
-  val subscription_audited =
-    operationRecordsCreated == 0
-      and auditRecords == SubscriptionEstablishAttempts
-      and SubscriptionEstablishAttempts <= 1
-
   // @promotion {
   //   property:    SubscriptionCursorReplayAuthorized
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/subscription_authority.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify specs/seed/subscription_authority.qnt --invariant subscription_cursor_replay_authorized --max-steps 12
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: invariant calls `replayedEventIndependentOk`, which reads grant, scope, stream, and filter state recorded by the accepting actions. Forcing the helper to `true` passes, so replay authorization is not checked against independent attempted evidence.
   //   bounds:      { actors: 3, streams: 2, filters: 2, grant_statuses: 2, cursors: 5, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   cursor replay returns only events with LSN greater than the requested cursor and inside the authorized subscription stream/filter
   // }
-  val subscription_cursor_replay_authorized =
-    (replayedEvents == 0) or replayedEventIndependentOk(replayedEvents)
 }

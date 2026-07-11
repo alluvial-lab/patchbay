@@ -1,22 +1,22 @@
 // Patchbay seed model: Elicitation lifecycle (first durable terminal commit wins)
 //
-// This model covers the promoted ElicitationState lifecycle properties from
+// This model reserves stated-normative ElicitationState lifecycle obligations from
 // docs/PROTOCOL.md § ElicitationState lifecycle. It models opened/pending
 // Elicitations, terminal races, response-Operation typed correlation, stale target
 // generations, invalid response rejection, and duplicate response behavior.
 //
 // Rich-model note (formal-model-realignment Unit EL): response Operations carry
 // their OWN domain/session/generation/actor/endpoint context. The Elicitation-side
-// context and response-Operation-side context are both modeled so forged or stale
-// response Operations are rejected by independent oracles rather than hidden by a
-// thin lifecycle-only state machine.
+// context and response-Operation-side context are both modeled so future formulas
+// can check forged or stale response Operations against attempted evidence rather
+// than hiding them behind a thin lifecycle-only state machine.
 //
-// Genuine-checking discipline (load-bearing): actions are PERMISSIVE. The driver
-// attempts valid and invalid response Operations, forged ids, wrong domains,
-// mismatched sessions/generations, wrong actors, stale target generations,
-// duplicate answers, and competing terminal candidates. Properties check raw state
-// facts and response-Operation fields; they do not call the helper predicates that
-// gate action branches.
+// Future genuine-checking requirement (load-bearing): actions are PERMISSIVE and the
+// driver attempts valid and invalid response Operations, forged ids, wrong domains,
+// mismatched sessions/generations, wrong actors, stale target generations, duplicate
+// answers, and competing terminal candidates. The current property ids are draft:
+// replacement formulas must inspect independent attempted evidence that accepting
+// actions cannot rewrite, rather than action-recorded response or terminal baselines.
 module elicitation_lifecycle {
   // --- ElicitationState registry (docs/PROTOCOL.md canonical table) ---
   pure val TERMINAL = Set("answered", "declined", "expired", "cancelled", "withdrawn", "superseded", "stale")
@@ -37,8 +37,8 @@ module elicitation_lifecycle {
   pure val RESPONSE_KINDS = Set("approval-response", "elicitation-response")
   pure val ATTEMPTED_RESPONSE_KINDS = RESPONSE_KINDS.union(Set("spawn"))
 
-  // Separate id spaces used by the typed-correlation oracle. These are intentionally
-  // disjoint from ELICITATION_IDS in the promoted invariant.
+  // Separate id spaces retained for the stated typed-correlation obligation. These
+  // are intentionally disjoint from ELICITATION_IDS.
   pure val COMMAND_IDS = Set("c1", "c2")
   pure val MESSAGE_IDS = Set("m1", "m2")
   pure val REPLY_IDS = Set("r1", "r2")
@@ -72,16 +72,15 @@ module elicitation_lifecycle {
 
   // Supplemental proof/audit variable: records which response Operation, if any,
   // committed the durable answer. `answeredBy` is endpoint-only audit data; this op id
-  // lets duplicate/invalid-response invariants prove that rejected response Operations
-  // never become the committed answer.
+  // remains available for a future trace-faithful duplicate/invalid-response formula.
   var answeredResponseOp: str -> str      // ElicitationId -> committed responseOpId ("none" if not answered)
   var firstTerminalState: str -> str      // ElicitationId -> first terminal state selected ("none" if not terminal)
   var firstAnsweredBy: str -> str         // ElicitationId -> first terminal answer endpoint snapshot
   var firstAnsweredResponseOp: str -> str // ElicitationId -> first terminal answer responseOp snapshot
 
   // ---------------------------------------------------------------------------
-  // Helpers used by actions only. Promoted invariants below intentionally check raw
-  // facts inline instead of calling these helpers.
+  // Helpers used by actions. Future promoted formulas must check independent attempted
+  // evidence rather than reusing these helpers or state written by the accepting action.
   // ---------------------------------------------------------------------------
 
   def targetLive(eid) = targetGeneration.get(eid) == sessionGeneration.get(targetSession.get(eid))
@@ -535,65 +534,48 @@ module elicitation_lifecycle {
   }
 
   // ---------------------------------------------------------------------------
-  // Model properties (each with an inline @promotion block; mixed promoted/draft status)
+  // Draft model obligations (each retained as an inline @promotion block)
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    ElicitationPendingFinality
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify elicitation_lifecycle.qnt --temporal elicitation_pending_finality --max-steps 10
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: temporal formula checks `state == firstTerminalState`, but `commitTerminal` writes both in the same action. A mutation allowing re-terminalization from any state while rewriting the baseline to match passes, so this is not a mutation-survivable terminal-finality oracle.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, endpoints: 2, contract_kinds: 2, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   once an Elicitation reaches a terminal state, later answer/cancel/expire/withdraw/stale candidates do not mutate it
   // }
-  temporal elicitation_pending_finality =
-    always((terminalLsn.get("e1") > 0).implies(
-      state.get("e1") == firstTerminalState.get("e1")
-        and answeredBy.get("e1") == firstAnsweredBy.get("e1")
-        and answeredResponseOp.get("e1") == firstAnsweredResponseOp.get("e1")))
-
   // @promotion {
   //   property:    ElicitationFirstAnswerWins
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify elicitation_lifecycle.qnt --temporal elicitation_first_answer_wins --max-steps 10
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: formula compares state, answeredBy, and answeredResponseOp with first-terminal baselines written by the same `commitTerminal` action. Allowing re-terminalization while rewriting those baselines to match passes, so it cannot independently establish first-answer-wins.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, endpoints: 2, contract_kinds: 2, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   for single-answer contracts, the first durably committed valid answer wins and later answers are no-ops
   // }
-  temporal elicitation_first_answer_wins =
-    always((firstTerminalState.get("e1") == "answered").implies(
-      state.get("e1") == "answered"
-        and answeredBy.get("e1") == firstAnsweredBy.get("e1")
-        and answeredResponseOp.get("e1") == firstAnsweredResponseOp.get("e1")))
-
   // @promotion {
   //   property:    ElicitationCorrelationTyped
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify elicitation_lifecycle.qnt --invariant elicitation_correlation_typed --max-steps 12
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: invariant inspects `recordedResponseIndependentOk`, which reads response fields recorded by the accepting action. Forcing that helper to `true` lets the property pass vacuously instead of detecting forged attempted correlation evidence.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, id_spaces: 5, domains: 2, sessions: 2, generations: 3, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   response Operations reference a known ElicitationId in the same authority/session/generation/responder context and cannot forge across id spaces
   // }
-  val elicitation_correlation_typed =
-    ELICITATION_IDS.intersect(COMMAND_IDS).size() == 0
-      and ELICITATION_IDS.intersect(MESSAGE_IDS).size() == 0
-      and ELICITATION_IDS.intersect(REPLY_IDS).size() == 0
-      and ELICITATION_IDS.intersect(EVENT_IDS).size() == 0
-      and RESPONSE_OP_IDS.forall(ro =>
-        responseValid.get(ro).implies(recordedResponseIndependentOk(ro)))
-
   // @promotion {
   //   property:    ElicitationTimeoutNeitherSuccessNorDenial
   //   status:      draft
@@ -607,79 +589,43 @@ module elicitation_lifecycle {
   //   proto_fields: [none]
   //   semantics:   timeout terminalizes as expired; timeout never implies answer, denial, or grant
   // }
-  val elicitation_timeout_neither_success_nor_denial =
-    ELICITATION_IDS.forall(eid =>
-      (firstTerminalState.get(eid) == "expired").implies(
-        answeredBy.get(eid) == "none"
-          and answeredResponseOp.get(eid) == "none"
-          and state.get(eid) != "answered"
-          and state.get(eid) != "declined"))
-
   // @promotion {
   //   property:    ElicitationInvalidResponseRejected
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify elicitation_lifecycle.qnt --invariant elicitation_invalid_response_rejected --max-steps 12
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: formula uses `not(recordedResponseIndependentOk(ro))` as its rejection antecedent, but that helper reads action-recorded response fields. Forcing it to `true` makes the antecedent false and the property pass vacuously.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, endpoints: 2, contract_kinds: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   invalid or duplicate response Operations are rejected/idempotent and never mutate the terminal answer
   // }
-  val elicitation_invalid_response_rejected =
-    RESPONSE_OP_IDS.forall(ro =>
-      (not(recordedResponseIndependentOk(ro))).implies(
-        not(responseValid.get(ro))
-          and ELICITATION_IDS.forall(eid => answeredResponseOp.get(eid) != ro)))
-      and RESPONSE_OP_IDS.forall(ro =>
-        responseDuplicate.get(ro).implies(
-          not(responseValid.get(ro))
-            and ELICITATION_IDS.forall(eid => answeredResponseOp.get(eid) != ro)))
-      and ELICITATION_IDS.forall(eid =>
-        (answeredResponseOp.get(eid) != "none").implies(
-          RESPONSE_OP_IDS.contains(answeredResponseOp.get(eid))
-            and responseValid.get(answeredResponseOp.get(eid))
-            and recordedResponseIndependentOk(answeredResponseOp.get(eid))))
-      and ELICITATION_IDS.forall(eid =>
-        (firstTerminalState.get(eid) == "answered").implies(
-          answeredBy.get(eid) == firstAnsweredBy.get(eid)
-            and answeredResponseOp.get(eid) == firstAnsweredResponseOp.get(eid)))
-
   // @promotion {
   //   property:    ElicitationStaleTargetInert
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify elicitation_lifecycle.qnt --temporal elicitation_stale_target_inert --max-steps 10
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: formula relies on `firstTerminalState` and answer fields recorded by `commitTerminal`. A mutation allowing re-terminalization while rewriting the first-terminal baseline to match passes, so stale attempted target evidence is not independently checked.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, sessions: 2, generations: 3, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   responses to stale target/session generations do not cause the Elicitation to become answered or record answer data
   // }
-  temporal elicitation_stale_target_inert =
-    always((targetGeneration.get("e1") < sessionGeneration.get(targetSession.get("e1"))).implies(
-      state.get("e1") != "answered"
-        and firstTerminalState.get("e1") != "answered"
-        and answeredBy.get("e1") == "none"
-        and answeredResponseOp.get("e1") == "none"))
-
   // @promotion {
   //   property:    ElicitationWithdrawalFinality
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/elicitation_lifecycle.qnt
   //   language:    quint
   //   backend:     apalache-temporal
-  //   invocation:  echo y | quint verify elicitation_lifecycle.qnt --temporal elicitation_withdrawal_finality --max-steps 10
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: formula compares state and answer data with first-terminal baselines written by the same `commitTerminal` action. Allowing re-terminalization while rewriting those baselines to match passes, so withdrawal finality lacks an independent oracle.
   //   bounds:      { elicitation_ids: 1, response_ops: 2, terminal_candidates: 7, max_steps: 10 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   opener withdrawal terminalizes the Elicitation without allowing later response mutation
   // }
-  temporal elicitation_withdrawal_finality =
-    always((firstTerminalState.get("e1") == "withdrawn").implies(
-      state.get("e1") == "withdrawn"
-        and answeredBy.get("e1") == firstAnsweredBy.get("e1")
-        and answeredResponseOp.get("e1") == firstAnsweredResponseOp.get("e1")))
 }

@@ -179,8 +179,6 @@ module command_lifecycle {
   //   proto_fields: [none]
   //   semantics:   an accepted command is durably recorded before delivery and cannot vanish silently
   // }
-  val command_durability = CMD_IDS.forall(c => state.keys().contains(c))
-
   // @promotion {
   //   property:    TerminalFinality
   //   status:      promoted
@@ -217,13 +215,6 @@ module command_lifecycle {
   //   semantics:   before an LSN is assigned, the terminal winner may be chosen nondeterministically;
   //                after assignment, the LSN order is stable and determines all later snapshots/replay
   // }
-  temporal pre_append_terminal_choice =
-    always(CMD_IDS.forall(cmd =>
-      // before an LSN is assigned (terminalLsn=0), a transition to terminal assigns one;
-      // after assignment, the LSN is stable (recorded, not re-chosen)
-      (terminalLsn.get(cmd) == 0 and next(state.get(cmd)).in(TERMINAL)).implies(
-        next(terminalLsn.get(cmd)) > 0)))
-
   // @promotion {
   //   property:    LsnDeterminesTerminalWinner
   //   status:      draft
@@ -238,10 +229,6 @@ module command_lifecycle {
   //   semantics:   for competing valid terminal candidates, the terminal winner is the one with the
   //                lowest committed LSN in the authority domain; once terminal, exactly one LSN records it
   // }
-  temporal lsn_determines_terminal_winner =
-    always(CMD_IDS.forall(cmd =>
-      state.get(cmd).in(TERMINAL).implies(terminalLsn.get(cmd) > 0)))
-
   // @promotion {
   //   property:    BoundaryDedup
   //   status:      promoted
@@ -274,11 +261,6 @@ module command_lifecycle {
   //                binding is stable after acceptance (an intentional duplicate action uses a new
   //                command id and a new idempotency key, which is outside this model's `retry` action)
   // }
-  // Genuine check: the command-id -> idempotency-key binding never changes after init. Temporal
-  // (binding stability is a two-state property: the binding now equals the binding in every next state).
-  temporal retry_reuses_id_and_key =
-    always(CMD_IDS.forall(cmd => next(idemKey.get(cmd)) == idemKey.get(cmd)))
-
   // @promotion {
   //   property:    RetryAfterTerminalReturnsExisting
   //   status:      draft
@@ -293,10 +275,6 @@ module command_lifecycle {
   //   semantics:   retrying after a command is terminal returns the existing terminal record rather
   //                than creating a later terminal candidate
   // }
-  temporal retry_after_terminal_returns_existing =
-    always(CMD_IDS.forall(cmd =>
-      state.get(cmd).in(TERMINAL).implies(next(state.get(cmd)) == state.get(cmd))))
-
   // @promotion {
   //   property:    NoAcceptedToCompleted
   //   status:      promoted

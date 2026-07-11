@@ -1,19 +1,19 @@
 // Patchbay seed model: typed reply correlation across separate id spaces
 //
-// This model covers the promoted TypedCorrelation model property from
+// This model reserves the stated-normative TypedCorrelation obligation from
 // docs/PROTOCOL.md "Messages, commands, and replies". It models command ids,
 // message ids, reply ids, event ids (LSN/event references are never accepted as
 // typed correlation targets), Elicitation ids, and response-Operation ids as
 // separate bounded spaces.
 //
-// Genuine-checking discipline (load-bearing): createReply(replyId, corrId,
+// Genuine-checking requirement (load-bearing): createReply(replyId, corrId,
 // corrType) and createResponseOperation(responseOpId, opKind, corrId, corrType)
 // are PERMISSIVE in their inputs. The driver attempts every bounded id as a
 // reply/response Operation id, every bounded id as a correlation target, and
-// valid plus invalid kind/type tags. The actions record only typed same-context
-// references; the invariant checks all recorded facts with independent raw-state
-// oracles. Mutation test: if an action-side reference helper is weakened to allow
-// forged ids into state, the invariant must fail.
+// valid plus invalid kind/type tags. The current TypedCorrelation property is
+// draft because recorded-state helpers are not independent of actions that can
+// accept arbitrary input while writing canonical evidence. A replacement formula
+// must inspect attempted correlation evidence those actions cannot rewrite.
 module reply_correlation {
   // --- finite id spaces (event id is the explicit LSN/event space, never a corr target) ---
   pure val COMMAND_ID_SPACE = Set("c1", "c2")
@@ -104,13 +104,10 @@ module reply_correlation {
     else
       false
 
-  // INDEPENDENT property oracle: checks raw id-space/context facts WITHOUT calling
-  // typedReferenceOk (the helper the action's replyRecordable filter uses). This is the
-  // genuine-checking discipline from the design: the invariant must not re-use the
-  // predicate that gates the action, or it can never catch a broken predicate.
-  // Mutation test: if typedReferenceOk is broken to `true`, this oracle still asserts the
-  // raw facts (corrId is a known prior command/message, types match, contexts match, id
-  // spaces disjoint) and a real forgery would fail it.
+  // Recorded-reply consistency helper: checks id-space/context facts without calling
+  // typedReferenceOk (the helper the action's replyRecordable filter uses). This catches
+  // some isolated guard mutations, but it is not an independent attempted-evidence oracle:
+  // createReply can accept arbitrary input while recording canonical evidence.
   def recordedReplyIndependentOk(replyId) =
     REPLY_ID_SPACE.contains(replyId)
       and replyCorrelatesTo.keys().contains(replyId)
@@ -128,12 +125,11 @@ module reply_correlation {
           and replyContext.get(replyId) == messageContext.get(replyCorrelatesTo.get(replyId)))
       )
 
-  // INDEPENDENT property oracle: checks raw response Operation facts WITHOUT
+  // Recorded-response consistency helper: checks response Operation facts without
   // calling typedResponseReferenceOk, elicitationCorrelationOk, or
-  // responseOperationRecordable. This keeps the response→Elicitation correlation
-  // check independent from the action's guard. Mutation test: weakening the
-  // action-side helper to accept any corrId lets a ReplyId/EventId/CommandId be
-  // recorded, and this oracle rejects it from raw id-space/context facts.
+  // responseOperationRecordable. It is independent of those guard helpers but not
+  // of createResponseOperation's writes; a coordinated mutation can record canonical
+  // evidence regardless of attempted input.
   def recordedResponseOpIndependentOk(responseOpId) =
     RESPONSE_OP_ID_SPACE.contains(responseOpId)
       and responseCorrelatesTo.keys().contains(responseOpId)
@@ -207,8 +203,8 @@ module reply_correlation {
   // Operation kind, correlation id, and correlation type may be anything in the
   // bounded adversarial domains. Only response Operations with a typed, same
   // authority/session/responder-context Elicitation correlation are recorded; all
-  // other attempts leave no response Operation record. If the action-side helper is
-  // weakened, forged records enter state and the independent oracle catches them.
+  // other attempts leave no response Operation record. This action also writes the
+  // evidence consumed by the recorded-state helper, which is why TypedCorrelation is draft.
   action createResponseOperation(responseOpId, opKind, corrId, corrType) = any {
     all {
       responseOperationRecordable(responseOpId, opKind, corrId, corrType),
@@ -255,52 +251,20 @@ module reply_correlation {
   }
 
   // ---------------------------------------------------------------------------
-  // Promoted model property
+  // Draft model obligation
   // ---------------------------------------------------------------------------
 
   // @promotion {
   //   property:    TypedCorrelation
-  //   status:      promoted
+  //   status:      draft
   //   model:       specs/seed/reply_correlation.qnt
   //   language:    quint
   //   backend:     apalache
-  //   invocation:  quint verify reply_correlation.qnt --invariant typed_correlation --max-steps 12
+  //   invocation:  <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property>
+  //   demotion_reason: `createResponseOperation` records correlation evidence in the same action that decides recordability. A mutation accepting arbitrary input while recording canonical correlation data passes, so the formula cannot independently detect forged attempted correlation evidence.
   //   bounds:      { command_ids: 2, message_ids: 2, reply_ids: 2, event_ids: 2, elicitation_ids: 2, response_op_ids: 2, max_steps: 12 }
   //   expected:    pass
   //   proto_fields: [none]
   //   semantics:   replies use typed same-context references to known prior commands/messages, response Operations use typed same authority/session/responder-context references to known prior Elicitations, and neither can masquerade across CommandId/MessageId/ReplyId/EventId/ElicitationId spaces
   // }
-  val typed_correlation =
-    commandIds.subseteq(COMMAND_ID_SPACE)
-      and messageIds.subseteq(MESSAGE_ID_SPACE)
-      and elicitationIds.subseteq(ELICITATION_ID_SPACE)
-      and replyIds.subseteq(REPLY_ID_SPACE)
-      and responseOperationIds.subseteq(RESPONSE_OP_ID_SPACE)
-      and COMMAND_ID_SPACE.intersect(MESSAGE_ID_SPACE).size() == 0
-      and COMMAND_ID_SPACE.intersect(REPLY_ID_SPACE).size() == 0
-      and COMMAND_ID_SPACE.intersect(EVENT_ID_SPACE).size() == 0
-      and COMMAND_ID_SPACE.intersect(ELICITATION_ID_SPACE).size() == 0
-      and MESSAGE_ID_SPACE.intersect(REPLY_ID_SPACE).size() == 0
-      and MESSAGE_ID_SPACE.intersect(EVENT_ID_SPACE).size() == 0
-      and MESSAGE_ID_SPACE.intersect(ELICITATION_ID_SPACE).size() == 0
-      and REPLY_ID_SPACE.intersect(EVENT_ID_SPACE).size() == 0
-      and REPLY_ID_SPACE.intersect(ELICITATION_ID_SPACE).size() == 0
-      and EVENT_ID_SPACE.intersect(ELICITATION_ID_SPACE).size() == 0
-      and commandIds.intersect(messageIds).size() == 0
-      and commandIds.intersect(replyIds).size() == 0
-      and commandIds.intersect(EVENT_ID_SPACE).size() == 0
-      and commandIds.intersect(elicitationIds).size() == 0
-      and messageIds.intersect(replyIds).size() == 0
-      and messageIds.intersect(EVENT_ID_SPACE).size() == 0
-      and messageIds.intersect(elicitationIds).size() == 0
-      and replyIds.intersect(EVENT_ID_SPACE).size() == 0
-      and replyIds.intersect(elicitationIds).size() == 0
-      and EVENT_ID_SPACE.intersect(elicitationIds).size() == 0
-      and responseOperationIds.intersect(commandIds).size() == 0
-      and responseOperationIds.intersect(messageIds).size() == 0
-      and responseOperationIds.intersect(replyIds).size() == 0
-      and responseOperationIds.intersect(EVENT_ID_SPACE).size() == 0
-      and responseOperationIds.intersect(elicitationIds).size() == 0
-      and replyIds.forall(r => recordedReplyIndependentOk(r))
-      and responseOperationIds.forall(ro => recordedResponseOpIndependentOk(ro))
 }

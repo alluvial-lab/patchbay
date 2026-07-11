@@ -68,7 +68,7 @@ A declaration an adapter makes about the Operations and guarantees it supports: 
 
 ## Correlation context
 
-The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. Response Operations to Elicitations use a typed correlation reference to a known `ElicitationId` in the same authority/session/responder context. `TypedCorrelation` covers both correlation shapes across disjoint id spaces as checked-model; promoted conformance vectors are still required for checked-normative status. See `docs/PROTOCOL.md` Operations, Observations, Elicitations, payloads, and correlation.
+The authority/session scope in which a reply's typed correlation reference must resolve to a known prior command or message id. A reply cannot forge correlation across id spaces (a reply id cannot masquerade as a command id) or across session/authority contexts. Response Operations to Elicitations use a typed correlation reference to a known `ElicitationId` in the same authority/session/responder context. `TypedCorrelation` reserves both correlation shapes across disjoint id spaces as stated-normative; its model has no promoted formula until independent attempted correlation evidence is represented. See `docs/PROTOCOL.md` Operations, Observations, Elicitations, payloads, and correlation.
 
 ## Event
 

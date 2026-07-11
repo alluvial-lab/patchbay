@@ -17,19 +17,10 @@ const CHECKED_MODEL_PROPERTIES = [
   'browser_local_state_not_authority',
   'CsrfRejectsMissingProof',
   'CsrfRejectsUnauthenticated',
-  'ElicitationCorrelationTyped',
-  'ElicitationFirstAnswerWins',
-  'ElicitationInvalidResponseRejected',
-  'ElicitationPendingFinality',
-  'ElicitationStaleTargetInert',
-  'ElicitationWithdrawalFinality',
   'GenerationMonotonic',
   'NoAcceptedToCompleted',
   'RevokedSessionCannotCommand',
-  'SubscriptionAudited',
-  'SubscriptionCursorReplayAuthorized',
   'TerminalFinality',
-  'TypedCorrelation',
 ];
 
 // Currently empty by docs/VERIFICATION.md: checked-model properties are not
@@ -44,8 +35,14 @@ const STATED_NORMATIVE_PROPERTIES = [
   'CommandDurability',
   'CompoundIssuer',
   'CrashNoAcceptedLost',
+  'ElicitationCorrelationTyped',
+  'ElicitationFirstAnswerWins',
+  'ElicitationInvalidResponseRejected',
+  'ElicitationPendingFinality',
   'ElicitationResponderAuthority',
+  'ElicitationStaleTargetInert',
   'ElicitationTimeoutNeitherSuccessNorDenial',
+  'ElicitationWithdrawalFinality',
   'FleetAuthorityForSpawn',
   'GrantAuthorityIsCommandKinds',
   'GrantAuthorityIsOperationKinds',
@@ -67,8 +64,11 @@ const STATED_NORMATIVE_PROPERTIES = [
   'SnapshotStaleRejected',
   'SpawnCreatesDescendantGrant',
   'SpawnRevocationDoesNotCascade',
+  'SubscriptionAudited',
+  'SubscriptionCursorReplayAuthorized',
   'SubscriptionGrantChecked',
   'TimeoutNeitherSuccessNorDenial',
+  'TypedCorrelation',
 ];
 
 // Descriptive, non-formal ids that may appear in draft boundary vectors. They

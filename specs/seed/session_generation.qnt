@@ -121,16 +121,6 @@ module session_generation {
   //   proto_fields: [none]
   //   semantics:   session target identity is adapter id + deployment scope + runtime session id + generation, excluding project/cwd/name metadata
   // }
-  val session_identity_tuple = SESSION_IDS.forall(sid => and {
-    generation.keys().contains(sid),
-    identityGeneration.keys().contains(sid),
-    identityGeneration.get(sid) == generation.get(sid),
-    generation.get(sid).in(GENERATIONS),
-    ADAPTER_IDS.size() == 1,
-    DEPLOY_SCOPES.size() == 1,
-    RUNTIME_IDS.size() == 1,
-  })
-
   // @promotion {
   //   property:    GenerationMonotonic
   //   status:      promoted
@@ -173,18 +163,6 @@ module session_generation {
   //   proto_fields: [none]
   //   semantics:   late replies/events for tombstoned generations are stale_event audit records and do not mutate the live generation
   // }
-  // GENUINE check (not vacuous): the 'late' event is only enabled when (attemptedSid, attemptedGen)
-  // is genuinely tombstoned (the step guard requires it). This property proves that such a late
-  // event does not mutate the live generation or identityGeneration. The previous version's 'late'
-  // branch was a dead stutter (no tombstone requirement), so the property passed vacuously.
-  temporal late_generation_inert =
-    always(SESSION_IDS.forall(sid =>
-      (next(attemptedKind) == "late" and next(attemptedSid) == sid
-        and tombstoned.get((sid, next(attemptedGen))))
-        .implies(
-          next(generation.get(sid)) == generation.get(sid)
-            and next(identityGeneration.get(sid)) == identityGeneration.get(sid))))
-
   // @promotion {
   //   property:    LabelsCannotOverrideIdentity
   //   status:      draft
@@ -198,12 +176,4 @@ module session_generation {
   //   proto_fields: [none]
   //   semantics:   project/cwd/name labels update independently and cannot override the verified session identity tuple
   // }
-  val labels_cannot_override_identity = SESSION_IDS.forall(sid => and {
-    label.keys().contains(sid),
-    label.get(sid).in(LABELS),
-    not(label.get(sid).in(ADAPTER_IDS)),
-    not(label.get(sid).in(DEPLOY_SCOPES)),
-    not(label.get(sid).in(RUNTIME_IDS)),
-    identityGeneration.get(sid) == generation.get(sid),
-  })
 }

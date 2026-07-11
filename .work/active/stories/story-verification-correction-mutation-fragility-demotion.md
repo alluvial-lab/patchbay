@@ -1,7 +1,7 @@
 ---
 id: story-verification-correction-mutation-fragility-demotion
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol, bug]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-trace-fidelity-demotion]
@@ -148,3 +148,14 @@ node contracts/scripts/check-models.mjs
 - The 8 surviving promoted properties were confirmed clean: the 4 CSRF properties inspect `attemptedSession`/`attemptedProof` (raw evidence, fixed in `story-fix-csrf-trace-and-ssot-drift`); `TerminalFinality`/`BoundaryDedup`/`NoAcceptedToCompleted`/`GenerationMonotonic` check transition/structural invariants not recorded by the accepting action (round 3 confirmed).
 - This unit supersedes the host's round-3 scope-routing argument. The routing was correct for the *re-architecture* (attempted-evidence state is v1-gate work) but wrong for the *demotion* of properties with confirmed mutation failure — that is in-scope claim correction.
 - The `idea-csrf-trace-fidelity` backlog item and the `executable-release-assurance` design-input section (both updated in the round-3 disposition) remain accurate: they route the *re-architecture* and the *untested-property* question to the v1 gate. After this unit, there are no untested surviving promoted properties in the affected model families.
+
+## Implementation notes
+
+- Files changed: `specs/seed/command_lifecycle.qnt`, `specs/seed/session_generation.qnt`, `specs/seed/elicitation_lifecycle.qnt`, `specs/seed/subscription_authority.qnt`, `specs/seed/reply_correlation.qnt`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`, `docs/SPEC.md`, `docs/PROTOCOL.md`, `docs/GLOSSARY.md`, and `docs/ADAPTER-PI.md`. The adapter doc had no references to the nine newly demoted ids; its adjacent `LateGenerationInert` wording was corrected because Part A removed that already-draft formula.
+- Removed all 9 leftover draft formulas from Units 1–2 and all 9 mutation-fragile promoted formulas. Preserved every `@promotion` block; each new demotion records the exact coordinated-lie mutation and now has a `<TBD>` invocation.
+- Moved the 9 ids from the checked-model registry to the stated-normative registry. Final tier derivation is 8 checked-model and 39 stated-normative properties.
+- Updated stale model headers/comments in the Elicitation, subscription, and reply-correlation models so they no longer claim promoted or independent-oracle coverage after demotion.
+- Verification: all five required `quint parse` commands exited 0; `check-vectors.mjs` exited 0; the first `check-models.mjs` run exited 1 after regenerating the model table as expected; the second exited 0 and reported 8 checked-model / 39 stated-normative properties. `git diff --check` passed.
+- Tests added: none; this correction is verified by Quint parsing plus the vector/model registry checkers.
+- Discrepancies from design: none. Approximate line numbers had shifted, but every named block and formula matched the described scope. Direct-read only; no exploratory dispatch was needed because the story named every integration point and mutation result.
+- Adjacent issues parked: none.
