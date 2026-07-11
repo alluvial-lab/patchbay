@@ -11,3 +11,5 @@ contracts/ts/*.tsbuildinfo
 # local output: generated artifacts, scratch docs, anything not source
 out/
 tmp/
+_apalache-out/
+states/
