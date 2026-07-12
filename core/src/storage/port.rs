@@ -135,12 +135,6 @@ pub enum StorageError {
     /// can deserialize it unambiguously.
     #[error("stored event kind is unspecified or unknown")]
     InvalidEventKind,
-
-    /// A `TargetKey` was empty or could not be constructed. Rejected at the
-    /// boundary (Fail Fast) — the dedup-scope rule requires a non-empty
-    /// canonical target identity.
-    #[error("target key must be non-empty")]
-    EmptyTargetKey,
 }
 
 /// The outcome of an idempotent append ([`Storage::append_dedup`]).
@@ -241,10 +235,11 @@ pub trait Storage: Send + Sync {
     /// transaction so the snapshot cannot reorder the log.
     ///
     /// This obligation split is deliberate: the port enforces the LSN anchor
-    /// and the write atomicity; the caller (the core's snapshot materializer)
-    /// enforces the prefix consistency of the payload content. A future
-    /// revision may move materialization into the port if a consistent-read
-    /// transaction boundary proves necessary.
+    /// and the write atomicity (the snapshot write does not reorder the log);
+    /// the caller (the core's snapshot materializer) enforces the prefix
+    /// consistency of the payload content. A future revision may move
+    /// materialization into the port if a consistent-read transaction boundary
+    /// proves necessary.
     fn write_snapshot(
         &self,
         authority_domain_id: &AuthorityDomainId,

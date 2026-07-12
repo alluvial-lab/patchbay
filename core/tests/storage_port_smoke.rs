@@ -156,8 +156,6 @@ fn storage_error_variants_construct() {
     assert!(invalid_lsn.to_string().contains("does not correspond"));
     let invalid_kind = StorageError::InvalidEventKind;
     assert!(invalid_kind.to_string().contains("unspecified or unknown"));
-    let empty_target = StorageError::EmptyTargetKey;
-    assert!(empty_target.to_string().contains("non-empty"));
 }
 
 #[test]

@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-persistence-workspace-and-port
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-persistence
 depends_on: []
@@ -101,3 +101,11 @@ Addressed all 3 blockers, all 4 important findings, and all 3 nits:
 **Nits**: `Duplicate(EventId)` returns the log record id, not the full command record — documented that the calling layer is responsible for projecting to the command record/state. Added `stored_event_kind_variants_are_concrete` test verifying Grant != DescendantGrant != Revocation.
 
 **Verification**: 7/7 tests pass (added `target_key_rejects_empty` and `stored_event_kind_variants_are_concrete`). Generated contracts regenerated cleanly (17 insertions, 6 deletions — the enum variant renames).
+
+## Re-review (round 3, converged — Approve)
+
+Fresh-context review (openai-codex/gpt-5.6-sol) returned **Approve** with 2 nits, both fixed in-stride:
+- Removed `StorageError::EmptyTargetKey` variant — it was unreachable because `TargetKey::new` returns `Option<TargetKey>` (None for empty), so the error could never be constructed through the public API.
+- Tightened the snapshot doc comment: "writes the snapshot and the log atomically" → "the snapshot write does not reorder the log" (more precise — `write_snapshot` writes only the derived snapshot, not the log).
+
+Story advanced review → done.
