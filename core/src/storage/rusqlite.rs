@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     key TEXT NOT NULL,
     target TEXT NOT NULL,
     lsn INTEGER NOT NULL,
-    payload_hash BLOB NOT NULL,
+    payload_bytes BLOB NOT NULL,
     PRIMARY KEY (authority_domain_id, key, target)
 );
 
@@ -178,6 +178,17 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
     }
 }
 
+/// Convert a u64 LSN to i64 for SQLite storage. Returns an error if the
+/// value exceeds i64::MAX (Fail Fast — LSNs should never reach this in practice).
+fn lsn_to_i64(lsn: u64) -> Result<i64, StorageError> {
+    lsn.try_into().map_err(|_| {
+        StorageError::ReadFailed {
+            message: format!("LSN {lsn} exceeds i64::MAX"),
+            retryable: false,
+        }
+    })
+}
+
 /// Validate the event kind is not unspecified. `try_from` succeeds for
 /// `Unspecified` (it's a valid enum value), so we explicitly reject it.
 fn validate_kind(payload: &StoredEventPayload) -> Result<StoredEventKind, StorageError> {
@@ -203,14 +214,15 @@ fn decode_payload(bytes: &[u8]) -> Result<StoredEventPayload, StorageError> {
         .map_err(|e| StorageError::CorruptRecord(format!("decode failed: {e}")))
 }
 
-/// Hash a payload for idempotency conflict detection.
-fn payload_hash(payload: &StoredEventPayload) -> Vec<u8> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    payload.kind.hash(&mut hasher);
-    payload.payload.hash(&mut hasher);
-    hasher.finish().to_le_bytes().to_vec()
+/// The encoded payload bytes for idempotency conflict detection.
+///
+/// The protocol requires exact payload equivalence for dedup
+/// (`docs/PROTOCOL.md` § "Idempotency and retry": "A retry must carry the
+/// same payload as the original"). We store the full encoded bytes and
+/// compare directly — no hash, so no collision risk. This is byte-exact
+/// equivalence, which is what the protocol demands.
+fn payload_canonical(payload: &StoredEventPayload) -> Result<Vec<u8>, StorageError> {
+    encode_payload(payload)
 }
 
 fn do_append(
@@ -245,25 +257,25 @@ fn do_append_dedup(
 ) -> Result<DedupOutcome, StorageError> {
     let kind = validate_kind(payload)?;
     let encoded = encode_payload(payload)?;
-    let hash = payload_hash(payload);
+    let canonical = payload_canonical(payload)?;
     let tx = db.transaction().map_err(map_write_err)?;
 
     // Check if the key already exists for this target. query_row returns
     // Err(QueryReturnedNoRows) when absent — that's the new-key path.
     let existing: Option<(i64, Vec<u8>)> = match tx.query_row(
-        "SELECT lsn, payload_hash FROM idempotency_keys
+        "SELECT lsn, payload_bytes FROM idempotency_keys
          WHERE authority_domain_id = ?1 AND key = ?2 AND target = ?3",
         rusqlite::params![authority_domain_id, key, target],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
     ) {
         Ok(row) => Some(row),
         Err(rusqlite::Error::QueryReturnedNoRows) => None,
-        Err(e) => return Err(map_read_err(e)),
+        Err(e) => return Err(map_write_err(e)),
     };
 
     match existing {
-        Some((existing_lsn, existing_hash)) => {
-            if existing_hash != hash {
+        Some((existing_lsn, existing_bytes)) => {
+            if existing_bytes != canonical {
                 tx.rollback().map_err(map_write_err)?;
                 return Err(StorageError::IdempotencyConflict);
             }
@@ -285,9 +297,9 @@ fn do_append_dedup(
             .map_err(map_write_err)?;
             let lsn = tx.last_insert_rowid();
             tx.execute(
-                "INSERT INTO idempotency_keys (authority_domain_id, key, target, lsn, payload_hash)
+                "INSERT INTO idempotency_keys (authority_domain_id, key, target, lsn, payload_bytes)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![authority_domain_id, key, target, lsn, hash],
+                rusqlite::params![authority_domain_id, key, target, lsn, canonical],
             )
             .map_err(map_write_err)?;
             tx.commit().map_err(map_write_err)?;
@@ -307,15 +319,16 @@ fn do_write_snapshot(
     snapshot_lsn: u64,
     payload: &[u8],
 ) -> Result<(), StorageError> {
+    let snapshot_lsn_i64 = lsn_to_i64(snapshot_lsn)?;
     let tx = db.transaction().map_err(map_write_err)?;
     // Validate the snapshot LSN corresponds to a committed event.
     let exists: bool = tx
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM events WHERE authority_domain_id = ?1 AND lsn = ?2)",
-            rusqlite::params![authority_domain_id, snapshot_lsn as i64],
+            rusqlite::params![authority_domain_id, snapshot_lsn_i64],
             |row| row.get(0),
         )
-        .map_err(map_read_err)?;
+        .map_err(map_write_err)?;
     if !exists {
         tx.rollback().map_err(map_write_err)?;
         return Err(StorageError::InvalidSnapshotLsn(snapshot_lsn));
@@ -323,7 +336,7 @@ fn do_write_snapshot(
     tx.execute(
         "INSERT OR REPLACE INTO snapshots (authority_domain_id, snapshot_lsn, payload)
          VALUES (?1, ?2, ?3)",
-        rusqlite::params![authority_domain_id, snapshot_lsn as i64, payload],
+        rusqlite::params![authority_domain_id, snapshot_lsn_i64, payload],
     )
     .map_err(map_write_err)?;
     tx.commit().map_err(map_write_err)?;
@@ -378,6 +391,7 @@ impl Storage for RusqliteStorage {
         authority_domain_id: &AuthorityDomainId,
         cursor: Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
+        let cursor_i64 = lsn_to_i64(cursor.value)?;
         let db = self.read_db.lock().await;
         let mut stmt = db
             .prepare(
@@ -388,19 +402,27 @@ impl Storage for RusqliteStorage {
             .map_err(map_read_err)?;
         let rows = stmt
             .query_map(
-                rusqlite::params![authority_domain_id.value, cursor.value as i64],
+                rusqlite::params![authority_domain_id.value, cursor_i64],
                 |row| {
                     let lsn: i64 = row.get(0)?;
-                    let kind: i32 = row.get(1)?;
+                    let sql_kind: i32 = row.get(1)?;
                     let payload_bytes: Vec<u8> = row.get(2)?;
-                    Ok((lsn, kind, payload_bytes))
+                    Ok((lsn, sql_kind, payload_bytes))
                 },
             )
             .map_err(map_read_err)?;
         let mut events = Vec::new();
         for row in rows {
-            let (lsn, _kind, payload_bytes) = row.map_err(map_read_err)?;
+            let (lsn, sql_kind, payload_bytes) = row.map_err(map_read_err)?;
             let payload = decode_payload(&payload_bytes)?;
+            // Validate the decoded kind and check SQL/envelope agreement.
+            let decoded_kind = validate_kind(&payload)?;
+            if decoded_kind as i32 != sql_kind {
+                return Err(StorageError::CorruptRecord(format!(
+                    "kind mismatch at LSN {lsn}: SQL column says {sql_kind}, envelope says {}",
+                    decoded_kind as i32
+                )));
+            }
             events.push(RecordedEvent {
                 event_id: event_id(
                     AuthorityDomainId {
@@ -441,13 +463,14 @@ impl Storage for RusqliteStorage {
         at_or_before: Option<Lsn>,
     ) -> Result<Option<StoredSnapshot>, StorageError> {
         let db = self.read_db.lock().await;
-        let result = match at_or_before {
-            Some(lsn) => db
-                .query_row(
+        let row_result = match at_or_before {
+            Some(lsn) => {
+                let lsn_i64 = lsn_to_i64(lsn.value)?;
+                db.query_row(
                     "SELECT snapshot_lsn, payload FROM snapshots
                      WHERE authority_domain_id = ?1 AND snapshot_lsn <= ?2
                      ORDER BY snapshot_lsn DESC LIMIT 1",
-                    rusqlite::params![authority_domain_id.value, lsn.value as i64],
+                    rusqlite::params![authority_domain_id.value, lsn_i64],
                     |row| {
                         Ok(StoredSnapshot {
                             event_id: event_id(
@@ -460,36 +483,29 @@ impl Storage for RusqliteStorage {
                         })
                     },
                 )
-                .ok(),
-            None => db
-                .query_row(
-                    "SELECT snapshot_lsn, payload FROM snapshots
-                     WHERE authority_domain_id = ?1
-                     ORDER BY snapshot_lsn DESC LIMIT 1",
-                    rusqlite::params![authority_domain_id.value],
-                    |row| {
-                        Ok(StoredSnapshot {
-                            event_id: event_id(
-                                AuthorityDomainId {
-                                    value: authority_domain_id.value.clone(),
-                                },
-                                row.get::<_, i64>(0)? as u64,
-                            ),
-                            payload: row.get(1)?,
-                        })
-                    },
-                )
-                .ok(),
-        };
-        // Distinguish "no row" (None) from a real error.
-        match result {
-            Some(s) => Ok(Some(s)),
-            None => {
-                // Check if it was QueryReturnedNoRows or an actual error.
-                // query_row returns Err(QueryReturnedNoRows) for no match, which
-                // .ok() converts to None. That's the expected "no snapshot" case.
-                Ok(None)
             }
+            None => db.query_row(
+                "SELECT snapshot_lsn, payload FROM snapshots
+                 WHERE authority_domain_id = ?1
+                 ORDER BY snapshot_lsn DESC LIMIT 1",
+                rusqlite::params![authority_domain_id.value],
+                |row| {
+                    Ok(StoredSnapshot {
+                        event_id: event_id(
+                            AuthorityDomainId {
+                                value: authority_domain_id.value.clone(),
+                            },
+                            row.get::<_, i64>(0)? as u64,
+                        ),
+                        payload: row.get(1)?,
+                    })
+                },
+            ),
+        };
+        match row_result {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_read_err(e)),
         }
     }
 }

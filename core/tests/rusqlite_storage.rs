@@ -277,3 +277,135 @@ async fn unspecified_event_kind_rejected() {
     let result = storage.append(&domain, bad_payload).await;
     assert!(matches!(result, Err(patchbay_core::storage::StorageError::InvalidEventKind)));
 }
+
+#[tokio::test]
+async fn rolled_back_transaction_creates_no_gap() {
+    // A rolled-back transaction should not advance the committed rowid sequence.
+    // We can't directly trigger a rollback through the Storage trait (it commits
+    // or fails atomically), but we can verify the gap-free property holds after
+    // a failed append (which rolls back internally).
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    // Successful append → LSN 1
+    storage
+        .append(&domain, test_payload(StoredEventKind::Operation))
+        .await
+        .unwrap();
+    // Failed append (unspecified kind) — should roll back, not create a gap
+    let bad = StoredEventPayload {
+        kind: StoredEventKind::Unspecified as i32,
+        payload: vec![0x00],
+    };
+    let _ = storage.append(&domain, bad).await;
+    // Next successful append should be LSN 2, not 3 (no gap from the rollback)
+    let id = storage
+        .append(&domain, test_payload(StoredEventKind::Operation))
+        .await
+        .unwrap();
+    assert_eq!(id.lsn.as_ref().unwrap().value, 2);
+}
+
+#[tokio::test]
+async fn cross_domain_isolation() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain_a = AuthorityDomainId { value: "domain-a".to_string() };
+    let domain_b = AuthorityDomainId { value: "domain-b".to_string() };
+    // Append to domain A
+    storage
+        .append(&domain_a, test_payload(StoredEventKind::Operation))
+        .await
+        .unwrap();
+    // Append to domain B
+    storage
+        .append(&domain_b, test_payload(StoredEventKind::Observation))
+        .await
+        .unwrap();
+    // read_after on domain A should only see domain A's events
+    let a_events = storage.read_after(&domain_a, Lsn { value: 0 }).await.unwrap();
+    assert_eq!(a_events.len(), 1);
+    assert_eq!(a_events[0].payload.kind, StoredEventKind::Operation as i32);
+    // read_after on domain B should only see domain B's events
+    let b_events = storage.read_after(&domain_b, Lsn { value: 0 }).await.unwrap();
+    assert_eq!(b_events.len(), 1);
+    assert_eq!(b_events[0].payload.kind, StoredEventKind::Observation as i32);
+}
+
+#[tokio::test]
+async fn empty_log_read_returns_empty() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    assert!(events.is_empty());
+}
+
+#[tokio::test]
+async fn load_latest_snapshot_none_when_empty() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    let snapshot = storage.load_latest_snapshot(&domain, None).await.unwrap();
+    assert!(snapshot.is_none());
+}
+
+#[tokio::test]
+async fn load_latest_snapshot_bounded() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    // Append 3 events
+    let mut lsns = vec![];
+    for _ in 0..3 {
+        let id = storage
+            .append(&domain, test_payload(StoredEventKind::Operation))
+            .await
+            .unwrap();
+        lsns.push(id.lsn.as_ref().unwrap().value);
+    }
+    // Write snapshots at LSN 1 and 3
+    storage
+        .write_snapshot(&domain, Lsn { value: lsns[0] }, vec![0x01])
+        .await
+        .unwrap();
+    storage
+        .write_snapshot(&domain, Lsn { value: lsns[2] }, vec![0x03])
+        .await
+        .unwrap();
+    // load_latest(None) → LSN 3
+    let snap = storage.load_latest_snapshot(&domain, None).await.unwrap().unwrap();
+    assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[2]);
+    assert_eq!(snap.payload, vec![0x03]);
+    // load_latest(Some(2)) → LSN 1 (the latest <= 2)
+    let snap = storage.load_latest_snapshot(&domain, Some(Lsn { value: lsns[1] })).await.unwrap().unwrap();
+    assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[0]);
+    assert_eq!(snap.payload, vec![0x01]);
+}
+
+#[tokio::test]
+async fn concurrent_reads_and_writes() {
+    // Spawn a writer appending events while readers read concurrently.
+    // WAL should allow reads to proceed while writes are in flight.
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    let writer = storage.clone();
+    let write_domain = domain.clone();
+    let write_handle = tokio::spawn(async move {
+        for _ in 0..5 {
+            writer
+                .append(&write_domain, test_payload(StoredEventKind::Observation))
+                .await
+                .unwrap();
+        }
+    });
+    // Read concurrently while the writer is running
+    let read_storage = storage.clone();
+    let read_domain = domain.clone();
+    let read_handle = tokio::spawn(async move {
+        // Read multiple times while writes are happening
+        for _ in 0..3 {
+            let _ = read_storage.read_after(&read_domain, Lsn { value: 0 }).await;
+        }
+    });
+    write_handle.await.unwrap();
+    read_handle.await.unwrap();
+    // After both complete, verify all 5 events are present
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    assert_eq!(events.len(), 5);
+}

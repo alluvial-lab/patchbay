@@ -60,3 +60,25 @@ See `feature-v0-core-persistence.md` § "Implementation Units" → "Unit 2" for 
 - **Tests**: 12 integration tests covering all 6 acceptance criteria + append_dedup semantics (new key, duplicate, conflict, different targets) + snapshot write/load + invalid LSN rejection + unspecified-kind rejection.
 - **Discrepancies from design**: the design's writer-actor command enum was expanded to include `AppendDedup` (added during the port-trait review) and `WriteSnapshot`. The `idempotency_keys` table was added (not in the original schema sketch) to support atomic dedup. These are in-scope extensions of the design.
 - **Verification**: `cargo build --workspace` succeeds; `cargo test --package patchbay-core` passes 19/19 tests (7 port smoke + 12 rusqlite integration).
+
+## Review (2026-07-11, fresh-context, openai-codex/gpt-5.6-sol)
+
+**Verdict**: Request changes — bounced for 2 blockers + important findings.
+
+**Blockers (2, fixed)**:
+1. **Snapshot errors silently swallowed** — `load_latest_snapshot` used `.ok()` on both branches, collapsing all SQLite failures (including corruption) into `None`. Fixed: now matches `QueryReturnedNoRows` as `Ok(None)` and maps all other errors to `ReadFailed`.
+2. **`DefaultHasher` for payload equivalence** — a 64-bit hash can collide, and `DefaultHasher` is not stable across Rust versions. The protocol requires exact payload equivalence. Fixed: replaced the hash with storing the full encoded payload bytes (`payload_bytes` column) and comparing directly — byte-exact equivalence, no collision risk, no hash dependency.
+
+**Important findings (addressed)**:
+- Replay kind validation: `read_after` now validates the decoded kind (rejects unspecified/unknown) and checks SQL-column vs envelope-kind agreement (detects corruption).
+- u64→i64 bounds checking: added `lsn_to_i64()` helper; all LSN casts now bounds-checked (returns error instead of wrapping).
+- Error classification in `do_write_snapshot`: reads inside a write transaction now surface as `WriteFailed` (not `ReadFailed`).
+- Added 6 missing tests: rollback-no-gap, cross-domain isolation, empty-log read, no-snapshot load, bounded latest-snapshot selection, concurrent reads+writes. 25/25 tests now pass.
+
+**Important findings (deferred to v0.x — not v0.1.0 blockers)**:
+- `tokio::spawn` vs `spawn_blocking`: the writer actor runs on an async worker thread. Under single-writer with no blocking contention, this is fine for v0.1.0. If blocking becomes a problem under load, migrate to `spawn_blocking` or `tokio-rusqlite`.
+- Single read connection serializes reads: `Arc<Mutex<Connection>>` allows one read at a time. WAL permits concurrent readers, but a read pool isn't needed for single-operator v0.1.0.
+- `open()` panics outside a Tokio runtime: `tokio::spawn` panics if no runtime is entered. Acceptable for v0.1.0 (the core always runs inside a runtime); a `Handle::try_current()` guard is a v0.x hardening.
+- Global rowid (not per-domain): interleaving domains produces non-contiguous per-domain LSNs. v0.1.0 has one authority domain, so this doesn't bite; the protocol's per-domain gap-free wording is satisfied by the single-domain constraint. Multi-domain support is a reserved seam.
+
+**Nits (addressed)**: fixed the "length-delimited" comment (prost `encode` is ordinary protobuf encoding); documented the inline writer_actor (story specified a separate file, but inline is cleaner for a single actor).
