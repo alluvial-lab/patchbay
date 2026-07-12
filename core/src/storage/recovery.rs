@@ -2,8 +2,9 @@
 //!
 //! On startup, the core reconstructs in-memory state by loading the latest
 //! snapshot (if any) and replaying events with `LSN > snapshot_lsn`. Recovery
-//! is deterministic — replaying the same committed prefix produces identical
-//! raw materials (`IdempotentLogReplay` obligation at the domain layer).
+//! is deterministic — for unchanged storage contents (events and snapshots),
+//! it returns identical raw materials. Full idempotent replay depends on the
+//! domain layer's deterministic `apply` (`IdempotentLogReplay` obligation).
 //!
 //! # Formal-model alignment
 //!
@@ -95,12 +96,15 @@ impl RecoveryState {
 /// (newer) raw materials. This is correct behavior, not a violation: recovery
 /// reflects the current committed state at call time.
 ///
-/// # Crash safety
+/// # Crash safety (storage-layer portion)
 ///
-/// After a crash (no clean shutdown), `recover()` reconstructs state up to
-/// the last committed LSN. No accepted event is lost — the durable event log
-/// is the source of truth, and snapshots are derived checkpoints that only
-/// bound replay cost.
+/// After a crash (no clean shutdown), `recover()` returns raw materials
+/// reflecting the last committed LSN. No committed event is absent from the
+/// returned snapshot+tail — the durable event log is the source of truth, and
+/// snapshots are derived checkpoints that only bound replay cost. Full
+/// "no accepted event is lost" depends additionally on the acceptance pipeline
+/// committing before acknowledgement (the acceptance feature) and the domain
+/// layer's deterministic application of these raw materials.
 pub async fn recover<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,

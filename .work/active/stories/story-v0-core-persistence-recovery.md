@@ -15,7 +15,7 @@ release_binding: null
 
 ## Scope
 
-Implement crash recovery: on startup, load the latest snapshot (if any) and replay events with `LSN > snapshot_lsn` to reconstruct in-memory state. Recovery is idempotent — replaying the same committed prefix produces identical state.
+Implement crash recovery: on startup, load the latest snapshot (if any) and replay events with `LSN > snapshot_lsn` to reconstruct in-memory state. Recovery is deterministic for unchanged storage contents — replaying the same committed prefix produces identical raw materials. Full idempotent replay depends on the domain layer's deterministic `apply`.
 
 ## Units
 
@@ -25,16 +25,16 @@ Implement crash recovery: on startup, load the latest snapshot (if any) and repl
 ## Key implementation details
 
 - Recovery loads the latest snapshot, then replays the tail (`LSN > snapshot_lsn`). Bounds replay cost.
-- `apply` is idempotent — replaying the same committed prefix produces identical state (`IdempotentLogReplay`, stated-normative).
+- `apply` is deterministic — replaying the same committed prefix produces identical state at the domain layer (`IdempotentLogReplay`, stated-normative). This module provides the mechanism (deterministic raw materials); the domain layer's `apply` must be deterministic for the property to hold end-to-end.
 - Snapshot is a derived checkpoint, never an alternate ordering authority. A snapshot with LSN < current state is rejected as stale (Fail Fast).
-- `SnapshotConsistentPrefix` (stated-normative): snapshot materialization reads a consistent log prefix — satisfied by writing the snapshot in the same transaction as the event at `snapshot_lsn`.
+- `SnapshotConsistentPrefix` (stated-normative): snapshot materialization reads a consistent log prefix — this is the *caller's* obligation per `port.rs` `write_snapshot`; the port validates the LSN anchor, the materializer constructs the consistent-prefix payload.
 - A snapshot from a different authority domain is rejected outright.
 
 ## Acceptance criteria
 
 - [ ] After a clean shutdown + restart, `recover()` reconstructs state identical to pre-shutdown.
 - [ ] After a simulated crash (no clean shutdown), `recover()` reconstructs state up to the last committed LSN; no accepted event is lost.
-- [ ] Replay is idempotent: calling `recover()` twice produces identical state.
+- [ ] Replay is deterministic for unchanged storage contents: calling `recover()` twice with no intervening writes produces identical `RecoveryState`.
 - [ ] A snapshot at LSN N + replay of events N+1..M produces state identical to replaying from 0.
 - [ ] A stale snapshot (LSN < current state) is rejected, not silently applied.
 
@@ -49,7 +49,7 @@ See `feature-v0-core-persistence.md` § "Implementation Units" → "Unit 3" for 
 - **`snapshot.rs` not created**: the story mentioned a `snapshot.rs` for snapshot helpers, but the snapshot logic (stale rejection, wrong-domain rejection, LSN validation) is already in the port trait + the rusqlite impl. Recovery only needs to *load* the latest snapshot and read the tail — no separate snapshot module needed.
 - **`RecoveryState`**: carries `snapshot: Option<StoredSnapshot>` and `tail: Vec<RecordedEvent>`. Helper methods: `start_lsn()` (the LSN at which recovery starts — snapshot LSN or 0), `events()` (iterator over the tail in LSN order).
 - **`recover()`**: loads the latest snapshot via `load_latest_snapshot(None)`, determines the cursor (snapshot LSN or 0), reads the tail via `read_after(cursor)`. Returns the `RecoveryState`.
-- **Idempotency**: `recover()` is idempotent — the snapshot and tail are derived from the committed log (append-only). Calling it twice produces identical state. This is the storage-level mechanism for the `IdempotentLogReplay` stated-normative obligation; the proptest suite provides executable evidence.
-- **Tests**: 7 tests covering all 5 acceptance criteria: no-snapshot recovery, crash recovery, idempotency, snapshot+tail equivalence to replay-from-0, start_lsn, empty log, snapshot bounds replay cost.
+- **Determinism, not unconditional idempotency**: `recover()` is deterministic for unchanged storage contents — two calls with no intervening writes produce identical `RecoveryState`. If events or newer snapshots commit between calls, the second may return newer raw materials. This is correct behavior, not a violation. Full `IdempotentLogReplay` depends on the domain layer's deterministic `apply`; this module provides the storage-level mechanism.
+- **Tests**: 9 tests covering all 5 acceptance criteria + edge cases: no-snapshot recovery, crash recovery, determinism, snapshot+tail equivalence to replay-from-0, start_lsn, empty log, snapshot bounds replay cost, snapshot-at-log-head (empty tail), malformed-snapshot (no LSN) rejection.
 - **Discrepancies from design**: the design's `apply` function is not in this story — `apply` is the domain layer's job (it receives the `RecoveryState` and applies events to its own state). The storage layer provides the raw materials; the domain layer owns the application. This is the Ports & Adapters split.
-- **Verification**: `cargo build --workspace` succeeds; `cargo test --package patchbay-core` passes 32/32 tests (7 port smoke + 18 rusqlite + 7 recovery).
+- **Verification**: `cargo build --workspace` succeeds; `cargo test --package patchbay-core` passes 34/34 tests (7 port smoke + 18 rusqlite + 9 recovery).

@@ -84,16 +84,22 @@ async fn recover_after_crash_reconstructs_up_to_last_committed() {
 }
 
 #[tokio::test]
-async fn recover_is_idempotent() {
+async fn recover_deterministic_for_unchanged_contents() {
+    // Two calls with no intervening writes produce identical RecoveryState.
+    // (If writes happen between calls, the second may differ — that's correct.)
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain = test_domain();
-    for i in 0..5u8 {
+    for i in 0..4u8 {
         storage.append(&domain, test_payload(i)).await.unwrap();
     }
-    // Recover twice — should produce identical state
+    // Write a snapshot so the equality covers the complete snapshot + tail result
+    storage
+        .write_snapshot(&domain, Lsn { value: 2 }, vec![0xEE])
+        .await
+        .unwrap();
     let recovery1 = recover(&storage, &domain).await.unwrap();
     let recovery2 = recover(&storage, &domain).await.unwrap();
-    assert_eq!(collect_state(&recovery1), collect_state(&recovery2));
+    assert_eq!(recovery1, recovery2);
 }
 
 #[tokio::test]
@@ -243,16 +249,66 @@ async fn recover_snapshot_at_log_head_empty_tail() {
 }
 
 #[tokio::test]
-async fn recover_deterministic_for_unchanged_contents() {
-    // Two calls with no intervening writes produce identical RecoveryState.
-    // (If writes happen between calls, the second may differ — that's correct.)
-    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
-    let domain = test_domain();
-    for i in 0..4u8 {
-        storage.append(&domain, test_payload(i)).await.unwrap();
+async fn malformed_snapshot_without_lsn_is_rejected() {
+    // A snapshot with no LSN is malformed — recover() must return CorruptRecord,
+    // not silently default to 0 (which would replay events the snapshot reflects).
+    use patchbay_contracts::patchbay::{EventId, StoredEventPayload};
+    use patchbay_core::storage::{RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey};
+    use patchbay_contracts::patchbay::IdempotencyKey;
+
+    struct MalformedSnapshotStorage;
+
+    impl Storage for MalformedSnapshotStorage {
+        async fn append(
+            &self,
+            _domain: &AuthorityDomainId,
+            _payload: StoredEventPayload,
+        ) -> Result<EventId, StorageError> {
+            unreachable!()
+        }
+        async fn append_dedup(
+            &self,
+            _domain: &AuthorityDomainId,
+            _key: &IdempotencyKey,
+            _target: &TargetKey,
+            _payload: StoredEventPayload,
+        ) -> Result<patchbay_core::storage::DedupOutcome, StorageError> {
+            unreachable!()
+        }
+        async fn read_after(
+            &self,
+            _domain: &AuthorityDomainId,
+            _cursor: Lsn,
+        ) -> Result<Vec<RecordedEvent>, StorageError> {
+            // Should not be called — recover must fail before reading the tail
+            unreachable!("read_after called on malformed snapshot")
+        }
+        async fn write_snapshot(
+            &self,
+            _domain: &AuthorityDomainId,
+            _lsn: Lsn,
+            _payload: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            unreachable!()
+        }
+        async fn load_latest_snapshot(
+            &self,
+            _domain: &AuthorityDomainId,
+            _at_or_before: Option<Lsn>,
+        ) -> Result<Option<StoredSnapshot>, StorageError> {
+            // Return a snapshot with no LSN — malformed
+            Ok(Some(StoredSnapshot {
+                event_id: EventId {
+                    authority_domain_id: Some(AuthorityDomainId { value: "d".to_string() }),
+                    lsn: None, // malformed
+                },
+                payload: vec![0x00],
+            }))
+        }
     }
-    let recovery1 = recover(&storage, &domain).await.unwrap();
-    let recovery2 = recover(&storage, &domain).await.unwrap();
-    // RecoveryState now derives PartialEq, Eq — compare directly
-    assert_eq!(recovery1, recovery2);
+
+    let storage = MalformedSnapshotStorage;
+    let domain = test_domain();
+    let result = recover(&storage, &domain).await;
+    assert!(matches!(result, Err(StorageError::CorruptRecord(_))));
 }
