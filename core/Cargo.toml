@@ -10,8 +10,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 prost = "0.14"
 thiserror = "2"
 tracing = "0.1"
+tempfile = "3"
 
 [dev-dependencies]
 proptest = "1"
-tempfile = "3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "test-util"] }
