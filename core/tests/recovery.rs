@@ -177,13 +177,13 @@ async fn recover_start_lsn_is_snapshot_lsn() {
         .await
         .unwrap();
     let recovery = recover(&storage, &domain).await.unwrap();
-    assert_eq!(recovery.start_lsn(), 2);
+    assert_eq!(recovery.start_lsn().unwrap(), 2);
     // No snapshot case
     let storage2 = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain2 = test_domain();
     storage2.append(&domain2, test_payload(0)).await.unwrap();
     let recovery2 = recover(&storage2, &domain2).await.unwrap();
-    assert_eq!(recovery2.start_lsn(), 0);
+    assert_eq!(recovery2.start_lsn().unwrap(), 0);
 }
 
 #[tokio::test]
@@ -211,11 +211,48 @@ async fn recover_with_snapshot_bounds_replay_cost() {
     let recovery = recover(&storage, &domain).await.unwrap();
     // Should only replay events 9,10 — not all 10
     assert_eq!(recovery.tail.len(), 2);
-    assert_eq!(recovery.start_lsn(), 8);
+    assert_eq!(recovery.start_lsn().unwrap(), 8);
     let tail_payloads: Vec<u8> = recovery
         .tail
         .iter()
         .map(|e| e.payload.payload[0])
         .collect();
     assert_eq!(tail_payloads, vec![8, 9]); // payloads of events 9,10
+}
+
+#[tokio::test]
+async fn recover_snapshot_at_log_head_empty_tail() {
+    // Snapshot at the last committed LSN → tail is empty, start_lsn = snapshot LSN.
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    // Append 3 events (LSNs 1-3)
+    for i in 0..3u8 {
+        storage.append(&domain, test_payload(i)).await.unwrap();
+    }
+    // Write a snapshot at LSN 3 (the last committed)
+    storage
+        .write_snapshot(&domain, Lsn { value: 3 }, vec![0xDD])
+        .await
+        .unwrap();
+    let recovery = recover(&storage, &domain).await.unwrap();
+    assert!(recovery.snapshot.is_some());
+    assert_eq!(recovery.start_lsn().unwrap(), 3);
+    assert!(recovery.tail.is_empty());
+    // State = just the snapshot payload
+    assert_eq!(collect_state(&recovery), vec![vec![0xDD]]);
+}
+
+#[tokio::test]
+async fn recover_deterministic_for_unchanged_contents() {
+    // Two calls with no intervening writes produce identical RecoveryState.
+    // (If writes happen between calls, the second may differ — that's correct.)
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    for i in 0..4u8 {
+        storage.append(&domain, test_payload(i)).await.unwrap();
+    }
+    let recovery1 = recover(&storage, &domain).await.unwrap();
+    let recovery2 = recover(&storage, &domain).await.unwrap();
+    // RecoveryState now derives PartialEq, Eq — compare directly
+    assert_eq!(recovery1, recovery2);
 }

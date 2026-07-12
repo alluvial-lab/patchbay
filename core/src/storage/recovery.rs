@@ -2,26 +2,32 @@
 //!
 //! On startup, the core reconstructs in-memory state by loading the latest
 //! snapshot (if any) and replaying events with `LSN > snapshot_lsn`. Recovery
-//! is idempotent — replaying the same committed prefix produces identical
-//! state (the `IdempotentLogReplay` stated-normative obligation).
+//! is deterministic — replaying the same committed prefix produces identical
+//! raw materials (`IdempotentLogReplay` obligation at the domain layer).
 //!
 //! # Formal-model alignment
 //!
-//! - `IdempotentLogReplay` (stated-normative, `snapshot_recovery.qnt`):
-//!   replaying the same committed prefix produces identical state. This module
-//!   provides the mechanism; the proptest suite
-//!   (`story-v0-core-persistence-proptests`) provides the executable evidence.
-//! - `CrashNoAcceptedLost` (stated-normative): after a crash, accepted
-//!   pre-crash commands remain reconstructable. The durable event log +
-//!   snapshot checkpointing satisfies this at the storage layer.
-//! - `SnapshotConsistentPrefix` (stated-normative): snapshot materialization
-//!   reads a consistent log prefix. The snapshot + tail replay produces state
-//!   identical to replaying from 0, which is the storage-level expression of
-//!   this property.
+//! This module provides the *mechanism* that supports three stated-normative
+//! obligations from `snapshot_recovery.qnt`. It does not itself satisfy them —
+//! satisfaction depends on the domain layer's deterministic event application
+//! and the acceptance pipeline's commit-before-ack discipline:
+//!
+//! - `IdempotentLogReplay`: replaying the same committed prefix produces
+//!   identical state. This module returns deterministic raw materials (the
+//!   same snapshot + tail for the same committed log contents); the domain
+//!   layer's `apply` must be deterministic for the property to hold end-to-end.
+//! - `CrashNoAcceptedLost`: after a crash, accepted pre-crash commands remain
+//!   reconstructable. This depends on the durable event log (this layer) AND
+//!   acceptance committing before acknowledgement (the acceptance feature).
+//! - `SnapshotConsistentPrefix`: snapshot materialization reads a consistent
+//!   log prefix. This is the *caller's* obligation per `port.rs`
+//!   `write_snapshot` — the port validates the LSN anchor; the materializer
+//!   constructs the consistent-prefix payload.
 //!
 //! These are stated-normative — they do not yet carry checked formal-model
-//! formulas. The v1 formal gate owns the real properties. This module
-//! provides implementation-backed evidence (the proptest suite).
+//! formulas. The v1 formal gate owns the real properties. The proptest suite
+//! (`story-v0-core-persistence-proptests`) provides implementation-backed
+//! evidence for the storage-layer portion of each obligation.
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn};
 
@@ -35,7 +41,7 @@ use super::port::{RecordedEvent, Storage, StorageError, StoredSnapshot};
 /// This struct gives the domain layer the raw materials: a snapshot (opaque
 /// bytes the domain layer knows how to deserialize) and the event tail to
 /// apply on top.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryState {
     /// The snapshot loaded as the recovery starting point, if any.
     /// `None` means no snapshot exists — replay from LSN 0.
@@ -49,10 +55,22 @@ impl RecoveryState {
     /// The LSN at which recovery starts. If a snapshot was loaded, this is
     /// the snapshot's LSN (events at or before this LSN are already reflected
     /// in the snapshot). If no snapshot, this is 0 (replay from the beginning).
-    pub fn start_lsn(&self) -> u64 {
+    ///
+    /// Returns `StorageError::CorruptRecord` if the snapshot exists but has
+    /// no LSN (malformed — Fail Fast rather than silently defaulting to 0).
+    pub fn start_lsn(&self) -> Result<u64, StorageError> {
         match &self.snapshot {
-            Some(s) => s.event_id.lsn.as_ref().map(|l| l.value).unwrap_or(0),
-            None => 0,
+            Some(s) => s
+                .event_id
+                .lsn
+                .as_ref()
+                .map(|l| l.value)
+                .ok_or_else(|| {
+                    StorageError::CorruptRecord(
+                        "snapshot has no LSN".to_string(),
+                    )
+                }),
+            None => Ok(0),
         }
     }
 
@@ -69,11 +87,13 @@ impl RecoveryState {
 /// domain layer) applies the snapshot payload and the event tail to
 /// reconstruct its in-memory state.
 ///
-/// # Idempotency
+/// # Determinism (not unconditional idempotency)
 ///
-/// Calling `recover()` twice produces an identical `RecoveryState` — the
-/// snapshot and the tail are derived from the committed log, which is
-/// append-only. Replaying the same committed prefix produces identical state.
+/// For unchanged storage contents (the same committed log), `recover()` is
+/// deterministic — it returns the same snapshot + tail. If events or newer
+/// snapshots commit between two calls, the second call may return different
+/// (newer) raw materials. This is correct behavior, not a violation: recovery
+/// reflects the current committed state at call time.
 ///
 /// # Crash safety
 ///
@@ -89,13 +109,18 @@ pub async fn recover<S: Storage>(
     let snapshot = storage.load_latest_snapshot(authority_domain_id, None).await?;
 
     // Determine the cursor: the snapshot's LSN, or 0 if no snapshot.
+    // Fail Fast: a snapshot without an LSN is malformed — reject it rather
+    // than silently defaulting to 0 (which would replay events the snapshot
+    // already reflects, causing duplicate application).
     let cursor = match &snapshot {
         Some(s) => s
             .event_id
             .lsn
             .as_ref()
             .map(|l| Lsn { value: l.value })
-            .unwrap_or(Lsn { value: 0 }),
+            .ok_or_else(|| {
+                StorageError::CorruptRecord("snapshot has no LSN".to_string())
+            })?,
         None => Lsn { value: 0 },
     };
 
