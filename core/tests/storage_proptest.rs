@@ -478,10 +478,11 @@ proptest! {
                 .append_dedup(&domain, &key, &target, payload.clone())
                 .await
                 .unwrap();
-            let first_lsn = match first {
-                patchbay_core::storage::DedupOutcome::Appended(id) => lsn_of(&id),
+            let first_id = match first {
+                patchbay_core::storage::DedupOutcome::Appended(id) => id,
                 _ => unreachable!("first append must be Appended"),
             };
+            let first_lsn = lsn_of(&first_id);
             for _ in 0..retries {
                 let outcome = storage
                     .append_dedup(&domain, &key, &target, payload.clone())
@@ -489,6 +490,11 @@ proptest! {
                     .unwrap();
                 match outcome {
                     patchbay_core::storage::DedupOutcome::Duplicate(id) => {
+                        // Verify the FULL EventId tuple (domain + LSN), not
+                        // just the bare LSN — a wrong-domain Duplicate
+                        // with the right LSN must be caught.
+                        prop_assert_eq!(&id, &first_id,
+                            "retry returned a different EventId than the original");
                         prop_assert_eq!(lsn_of(&id), first_lsn,
                             "retry returned a different LSN than the original");
                     }
@@ -582,7 +588,7 @@ proptest! {
     #[test]
     fn dedup_appends_remain_gap_free(
         ops in prop::collection::vec(
-            (any_payload(), "[a-z]{1,6}", "[a-z]{1,6}"),
+            ("[a-z]{1,6}", "[a-z]{1,6}"),
             1..40
         )
     ) {
@@ -590,33 +596,52 @@ proptest! {
         rt.block_on(async {
             let storage = fresh_storage().await;
             let domain = test_domain();
-            let mut lsns = Vec::new();
-            let mut appended_count = 0u64;
-            for (payload, key, target) in ops {
+            let payload = indexed_payload(0);
+            let mut seen: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            let mut expected_lsns: Vec<u64> = Vec::new();
+            for (key, target) in ops {
                 let key = IdempotencyKey { value: key };
                 let target = TargetKey::new(target).unwrap();
                 let outcome = storage
-                    .append_dedup(&domain, &key, &target, payload)
+                    .append_dedup(&domain, &key, &target, payload.clone())
                     .await
                     .unwrap();
-                if let patchbay_core::storage::DedupOutcome::Appended(id) = outcome {
-                    lsns.push(lsn_of(&id));
-                    appended_count += 1;
+                let pair = (key.value, target.as_str().to_string());
+                if seen.insert(pair) {
+                    match outcome {
+                        patchbay_core::storage::DedupOutcome::Appended(id) => {
+                            expected_lsns.push(lsn_of(&id));
+                        }
+                        patchbay_core::storage::DedupOutcome::Duplicate(_) => {
+                            return Err(proptest::test_runner::TestCaseError::fail(
+                                "first-seen (key,target) returned Duplicate instead of Appended",
+                            ));
+                        }
+                    }
+                } else {
+                    match outcome {
+                        patchbay_core::storage::DedupOutcome::Duplicate(_) => {}
+                        patchbay_core::storage::DedupOutcome::Appended(_) => {
+                            return Err(proptest::test_runner::TestCaseError::fail(
+                                "repeat (key,target) appended instead of duplicating",
+                            ));
+                        }
+                    }
                 }
             }
-            // Contiguous LSNs on appended events.
-            for w in lsns.windows(2) {
-                prop_assert_eq!(w[1] - w[0], 1, "gap in appended LSNs: {:?}", lsns);
+            for w in expected_lsns.windows(2) {
+                prop_assert_eq!(w[1] - w[0], 1, "gap in appended LSNs: {:?}", expected_lsns);
             }
-            // Readback count oracle: the log must contain exactly the
-            // appended events. Catches an always-Duplicate mutant.
             let events = storage.read_after(&domain, lsn(0)).await.unwrap();
-            prop_assert_eq!(events.len() as u64, appended_count,
-                "log count != appended count: always-Duplicate or double-apply mutant");
-            // The LSNs from readback must match the appended LSNs.
+            prop_assert_eq!(
+                events.len(),
+                expected_lsns.len(),
+                "log count != expected appended count"
+            );
             let readback_lsns: Vec<u64> = events.iter().map(|e| lsn_of(&e.event_id)).collect();
-            prop_assert_eq!(readback_lsns, lsns);
-            Ok(())
+            prop_assert_eq!(readback_lsns, expected_lsns);
+            Ok::<(), TestCaseError>(())
         })?;
     }
 
@@ -631,7 +656,7 @@ proptest! {
         payload in any_payload(),
         key in "[a-z]{1,8}",
         target in "[a-z]{1,8}",
-        n_concurrent in 2usize..8,
+        n_concurrent in 2usize..=8,
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
