@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-persistence-rusqlite-impl
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-persistence
 depends_on: [story-v0-core-persistence-workspace-and-port]
@@ -82,3 +82,11 @@ See `feature-v0-core-persistence.md` § "Implementation Units" → "Unit 2" for 
 - Global rowid (not per-domain): interleaving domains produces non-contiguous per-domain LSNs. v0.1.0 has one authority domain, so this doesn't bite; the protocol's per-domain gap-free wording is satisfied by the single-domain constraint. Multi-domain support is a reserved seam.
 
 **Nits (addressed)**: fixed the "length-delimited" comment (prost `encode` is ordinary protobuf encoding); documented the inline writer_actor (story specified a separate file, but inline is cleaner for a single actor).
+
+## Re-review (round 2, converged — Approve)
+
+Fresh-context review returned **Approve**. 2 nits fixed in-stride:
+- Fixed `encode_payload` doc comment (ordinary protobuf encoding, not length-delimited)
+- `lsn_to_i64` now returns `WriteFailed` (write-path precondition) instead of `ReadFailed`
+
+Important finding noted but not blocking: test evidence for `synchronous_full_is_set` and `rolled_back_transaction_creates_no_gap` is weaker than ideal (the former doesn't query the PRAGMA directly; the latter fails validation before opening a transaction). The formal property tests in `story-v0-core-persistence-proptests` will provide stronger evidence. Story advanced review → done.

@@ -180,9 +180,10 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
 
 /// Convert a u64 LSN to i64 for SQLite storage. Returns an error if the
 /// value exceeds i64::MAX (Fail Fast — LSNs should never reach this in practice).
+/// Surfaces as `WriteFailed` since this is a write-path precondition.
 fn lsn_to_i64(lsn: u64) -> Result<i64, StorageError> {
     lsn.try_into().map_err(|_| {
-        StorageError::ReadFailed {
+        StorageError::WriteFailed {
             message: format!("LSN {lsn} exceeds i64::MAX"),
             retryable: false,
         }
@@ -199,8 +200,8 @@ fn validate_kind(payload: &StoredEventPayload) -> Result<StoredEventKind, Storag
     Ok(kind)
 }
 
-/// Serialize a StoredEventPayload for storage. Uses prost length-delimited
-/// encoding.
+/// Serialize a StoredEventPayload for storage. Uses prost protobuf encoding
+/// (not length-delimited — ordinary `Message::encode`).
 fn encode_payload(payload: &StoredEventPayload) -> Result<Vec<u8>, StorageError> {
     let mut buf = Vec::with_capacity(payload.payload.len() + 8);
     prost::Message::encode(payload, &mut buf)
