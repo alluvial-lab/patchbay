@@ -8,10 +8,14 @@
 //!
 //! # Architecture
 //!
-//! - A **writer actor** owns the single write `Connection` on a dedicated tokio
-//!   task. It receives commands via `mpsc` and executes them in transactions,
-//!   replying via `oneshot`. This keeps blocking SQLite calls off the async
-//!   runtime's worker threads and serializes all writes (single-writer).
+//! - A **writer actor** owns the single write `Connection` on a tokio task. It
+//!   receives commands via `mpsc` and executes them in transactions,
+//!   replying via `oneshot`. This serializes all writes (single-writer) and
+//!   gives async semantics to callers. NOTE: the actor runs on a tokio
+//!   runtime worker, so synchronous SQLite calls occupy a worker thread
+//!   during each transaction. Under single-writer with modest write volume
+//!   this is acceptable for v0.1.0; if SQLite latency becomes a bottleneck,
+//!   the actor should move to a dedicated blocking thread (`spawn_blocking`).
 //! - A **read connection** (behind a `Mutex`) serves `read_after` and
 //!   `load_latest_snapshot`. WAL mode allows concurrent readers while the
 //!   writer commits.
@@ -25,7 +29,9 @@ use patchbay_contracts::patchbay::{
 use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use super::port::{event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey};
+use super::port::{
+    event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+};
 
 /// SQLite schema. The `lsn` column is a bare `INTEGER PRIMARY KEY` (the rowid);
 /// no `AUTOINCREMENT`, so rolled-back transactions do not create gaps and the
@@ -103,9 +109,12 @@ impl RusqliteStorage {
     /// Spawns the writer actor on the current tokio runtime.
     pub fn open(path: &str) -> Result<Self, StorageError> {
         let write_db = Connection::open(path).map_err(map_write_err)?;
-        write_db.execute_batch(SCHEMA).map_err(|e| {
-            StorageError::WriteFailed { message: e.to_string(), retryable: false }
-        })?;
+        write_db
+            .execute_batch(SCHEMA)
+            .map_err(|e| StorageError::WriteFailed {
+                message: e.to_string(),
+                retryable: false,
+            })?;
         let read_db = Connection::open(path).map_err(map_read_err)?;
         // Apply WAL + synchronous to the read connection too (WAL is persistent
         // on the DB file, but synchronous is per-connection).
@@ -124,21 +133,29 @@ impl RusqliteStorage {
         Ok(Self { writer_tx, read_db })
     }
 
-    /// Open an in-memory storage backend (for tests). Uses a temp file under
-    /// the hood because WAL mode requires a file-backed database; the temp
-    /// file is cleaned up when the returned guard is dropped.
+    /// Open an in-memory storage backend (for tests). Uses a temp file
+    /// because WAL mode requires a file-backed database. The temp file is
+    /// intentionally retained for the storage's lifetime (via `keep()`);
+    /// tests are short-lived and OS cleanup handles eventual removal. This
+    /// leaks one file per `open_in_memory()` call — acceptable for the test
+    /// suite, not for production paths (which use `open()`).
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let temp = tempfile::NamedTempFile::new().map_err(|e| StorageError::WriteFailed {
             message: format!("temp file creation failed: {e}"),
             retryable: false,
         })?;
-        // Leak the temp file path (the file persists for the DB's lifetime).
-        // Tests are short-lived; OS cleanup handles it.
-        let path = temp.into_temp_path().keep().map_err(|e| StorageError::WriteFailed {
-            message: format!("temp path keep failed: {e}"),
+        let path = temp
+            .into_temp_path()
+            .keep()
+            .map_err(|e| StorageError::WriteFailed {
+                message: format!("temp path keep failed: {e}"),
+                retryable: false,
+            })?;
+        let path_str = path.to_str().ok_or_else(|| StorageError::WriteFailed {
+            message: "temp path is not valid UTF-8".to_string(),
             retryable: false,
         })?;
-        Self::open(path.to_str().unwrap_or("./patchbay-test.db"))
+        Self::open(path_str)
     }
 }
 
@@ -162,7 +179,8 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                 payload,
                 reply,
             } => {
-                let result = do_append_dedup(&mut db, &authority_domain_id, &key, &target, &payload);
+                let result =
+                    do_append_dedup(&mut db, &authority_domain_id, &key, &target, &payload);
                 let _ = reply.send(result);
             }
             WriterCommand::WriteSnapshot {
@@ -171,7 +189,8 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                 payload,
                 reply,
             } => {
-                let result = do_write_snapshot(&mut db, &authority_domain_id, snapshot_lsn, &payload);
+                let result =
+                    do_write_snapshot(&mut db, &authority_domain_id, snapshot_lsn, &payload);
                 let _ = reply.send(result);
             }
         }
@@ -182,18 +201,17 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
 /// value exceeds i64::MAX (Fail Fast — LSNs should never reach this in practice).
 /// Surfaces as `WriteFailed` since this is a write-path precondition.
 fn lsn_to_i64(lsn: u64) -> Result<i64, StorageError> {
-    lsn.try_into().map_err(|_| {
-        StorageError::WriteFailed {
-            message: format!("LSN {lsn} exceeds i64::MAX"),
-            retryable: false,
-        }
+    lsn.try_into().map_err(|_| StorageError::WriteFailed {
+        message: format!("LSN {lsn} exceeds i64::MAX"),
+        retryable: false,
     })
 }
 
 /// Validate the event kind is not unspecified. `try_from` succeeds for
 /// `Unspecified` (it's a valid enum value), so we explicitly reject it.
 fn validate_kind(payload: &StoredEventPayload) -> Result<StoredEventKind, StorageError> {
-    let kind = StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
+    let kind =
+        StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
     if kind == StoredEventKind::Unspecified {
         return Err(StorageError::InvalidEventKind);
     }
@@ -516,11 +534,10 @@ fn map_write_err(e: rusqlite::Error) -> StorageError {
         e,
         rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error {
-            code:
-                rusqlite::ffi::ErrorCode::DatabaseBusy
-                | rusqlite::ffi::ErrorCode::DatabaseLocked,
-            ..
-        },
+                code: rusqlite::ffi::ErrorCode::DatabaseBusy
+                    | rusqlite::ffi::ErrorCode::DatabaseLocked,
+                ..
+            },
             _
         )
     );
@@ -535,11 +552,10 @@ fn map_read_err(e: rusqlite::Error) -> StorageError {
         e,
         rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error {
-            code:
-                rusqlite::ffi::ErrorCode::DatabaseBusy
-                | rusqlite::ffi::ErrorCode::DatabaseLocked,
-            ..
-        },
+                code: rusqlite::ffi::ErrorCode::DatabaseBusy
+                    | rusqlite::ffi::ErrorCode::DatabaseLocked,
+                ..
+            },
             _
         )
     );

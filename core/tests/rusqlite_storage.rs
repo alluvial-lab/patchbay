@@ -66,7 +66,11 @@ async fn consecutive_appends_produce_contiguous_lsns() {
 
 #[tokio::test]
 async fn crash_recovery_recovers_all_committed_events() {
-    let temp_path = tempfile::NamedTempFile::new().unwrap().into_temp_path().keep().unwrap();
+    let temp_path = tempfile::NamedTempFile::new()
+        .unwrap()
+        .into_temp_path()
+        .keep()
+        .unwrap();
     let path = temp_path.to_str().unwrap();
     let mut written_lsns = vec![];
     {
@@ -93,43 +97,41 @@ async fn crash_recovery_recovers_all_committed_events() {
 }
 
 #[tokio::test]
-async fn synchronous_full_is_set() {
+async fn synchronous_full_configured_in_schema() {
+    // The SCHEMA constant sets `PRAGMA synchronous = FULL`. This test
+    // confirms the schema applies without error and writes commit+persist.
+    // It does NOT prove power-loss durability — that's a config assertion
+    // (`synchronous=FULL`), not a property an in-process test can verify
+    // without a fault-injection harness that kills the process mid-transaction.
+    // See the proptest story's documented limits.
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
-    // The synchronous pragma is set at schema init. Verify by reading it back
-    // through the read connection (accessible via a test helper would be ideal;
-    // here we verify via behavior — the DB accepts writes and they persist).
     let domain = test_domain();
     let id = storage
         .append(&domain, test_payload(StoredEventKind::Operation))
         .await
         .unwrap();
-    // If synchronous=FULL were not set, the write might not be durable.
-    // The fact that read_after returns it immediately confirms the commit.
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_id.lsn.as_ref().unwrap(), &Lsn { value: 1 });
-    let _ = id; // suppress unused
+    let _ = id;
 }
 
 #[tokio::test]
-async fn wal_concurrent_reads_during_write() {
+async fn wal_allows_concurrent_reads() {
+    // WAL mode allows a concurrent reader while the writer is active. This
+    // test reads after writes have committed; true read-during-write overlap
+    // is exercised by `concurrent_reads_and_writes` below (which spawns a
+    // writer and reader concurrently). This test confirms the read path
+    // works under WAL without taking a write lock.
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain = test_domain();
-    // Write a few events
     for _ in 0..3 {
         storage
             .append(&domain, test_payload(StoredEventKind::Observation))
             .await
             .unwrap();
     }
-    // Concurrent reads should work while the writer is idle (WAL allows it)
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 3);
 }
 
@@ -159,7 +161,12 @@ async fn append_dedup_duplicate_key_returns_existing() {
     let payload = test_payload(StoredEventKind::Operation);
     // First append — new key
     let outcome1 = storage
-        .append_dedup(&domain, &test_key("k1"), &test_target("t1"), payload.clone())
+        .append_dedup(
+            &domain,
+            &test_key("k1"),
+            &test_target("t1"),
+            payload.clone(),
+        )
         .await
         .unwrap();
     let first_lsn = match outcome1 {
@@ -178,10 +185,7 @@ async fn append_dedup_duplicate_key_returns_existing() {
         DedupOutcome::Appended(_) => panic!("expected Duplicate for retry"),
     }
     // Verify only one event was appended
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 1);
 }
 
@@ -203,7 +207,10 @@ async fn append_dedup_conflict_on_differing_payload() {
     let result = storage
         .append_dedup(&domain, &test_key("k1"), &test_target("t1"), payload2)
         .await;
-    assert!(matches!(result, Err(patchbay_core::storage::StorageError::IdempotencyConflict)));
+    assert!(matches!(
+        result,
+        Err(patchbay_core::storage::StorageError::IdempotencyConflict)
+    ));
 }
 
 #[tokio::test]
@@ -213,7 +220,12 @@ async fn append_dedup_different_targets_dont_dedup() {
     let payload = test_payload(StoredEventKind::Operation);
     // Same key, different targets — should both append
     let o1 = storage
-        .append_dedup(&domain, &test_key("k1"), &test_target("t1"), payload.clone())
+        .append_dedup(
+            &domain,
+            &test_key("k1"),
+            &test_target("t1"),
+            payload.clone(),
+        )
         .await
         .unwrap();
     let o2 = storage
@@ -222,10 +234,7 @@ async fn append_dedup_different_targets_dont_dedup() {
         .unwrap();
     assert!(matches!(o1, DedupOutcome::Appended(_)));
     assert!(matches!(o2, DedupOutcome::Appended(_)));
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 2);
 }
 
@@ -245,10 +254,7 @@ async fn write_and_load_snapshot() {
         .await
         .unwrap();
     // Load it
-    let snapshot = storage
-        .load_latest_snapshot(&domain, None)
-        .await
-        .unwrap();
+    let snapshot = storage.load_latest_snapshot(&domain, None).await.unwrap();
     assert!(snapshot.is_some());
     let snapshot = snapshot.unwrap();
     assert_eq!(snapshot.event_id.lsn.as_ref().unwrap().value, lsn);
@@ -263,7 +269,10 @@ async fn write_snapshot_rejects_invalid_lsn() {
     let result = storage
         .write_snapshot(&domain, Lsn { value: 99 }, vec![0x00])
         .await;
-    assert!(matches!(result, Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(99))));
+    assert!(matches!(
+        result,
+        Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(99))
+    ));
 }
 
 #[tokio::test]
@@ -275,15 +284,26 @@ async fn unspecified_event_kind_rejected() {
         payload: vec![0x00],
     };
     let result = storage.append(&domain, bad_payload).await;
-    assert!(matches!(result, Err(patchbay_core::storage::StorageError::InvalidEventKind)));
+    assert!(matches!(
+        result,
+        Err(patchbay_core::storage::StorageError::InvalidEventKind)
+    ));
 }
 
 #[tokio::test]
-async fn rolled_back_transaction_creates_no_gap() {
-    // A rolled-back transaction should not advance the committed rowid sequence.
-    // We can't directly trigger a rollback through the Storage trait (it commits
-    // or fails atomically), but we can verify the gap-free property holds after
-    // a failed append (which rolls back internally).
+async fn failed_append_does_not_create_gap() {
+    // A failed append (rejected at validation, before the transaction opens)
+    // must not consume an LSN — the next successful append must be contiguous.
+    //
+    // Note: this verifies the validation-rejection path, not a genuine
+    // transaction rollback. `do_append` validates the kind BEFORE opening the
+    // transaction, so an unspecified-kind payload is rejected without ever
+    // starting a transaction. A true mid-transaction rollback (e.g. commit
+    // failure) is hard to trigger through the public Storage trait without a
+    // corrupt DB; the gap-free property on the success path is covered by the
+    // proptest `committed_lsns_are_gap_free_and_monotonic`, and the
+    // bare-INTEGER-PRIMARY-KEY gap-free guarantee is a standard SQLite
+    // property (no AUTOINCREMENT, append-only, no deletes).
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain = test_domain();
     // Successful append → LSN 1
@@ -291,13 +311,13 @@ async fn rolled_back_transaction_creates_no_gap() {
         .append(&domain, test_payload(StoredEventKind::Operation))
         .await
         .unwrap();
-    // Failed append (unspecified kind) — should roll back, not create a gap
+    // Failed append (unspecified kind) — rejected at validation, no LSN consumed
     let bad = StoredEventPayload {
         kind: StoredEventKind::Unspecified as i32,
         payload: vec![0x00],
     };
     let _ = storage.append(&domain, bad).await;
-    // Next successful append should be LSN 2, not 3 (no gap from the rollback)
+    // Next successful append should be LSN 2, not 3 (no gap from the failed append)
     let id = storage
         .append(&domain, test_payload(StoredEventKind::Operation))
         .await
@@ -308,8 +328,12 @@ async fn rolled_back_transaction_creates_no_gap() {
 #[tokio::test]
 async fn cross_domain_isolation() {
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
-    let domain_a = AuthorityDomainId { value: "domain-a".to_string() };
-    let domain_b = AuthorityDomainId { value: "domain-b".to_string() };
+    let domain_a = AuthorityDomainId {
+        value: "domain-a".to_string(),
+    };
+    let domain_b = AuthorityDomainId {
+        value: "domain-b".to_string(),
+    };
     // Append to domain A
     storage
         .append(&domain_a, test_payload(StoredEventKind::Operation))
@@ -321,13 +345,22 @@ async fn cross_domain_isolation() {
         .await
         .unwrap();
     // read_after on domain A should only see domain A's events
-    let a_events = storage.read_after(&domain_a, Lsn { value: 0 }).await.unwrap();
+    let a_events = storage
+        .read_after(&domain_a, Lsn { value: 0 })
+        .await
+        .unwrap();
     assert_eq!(a_events.len(), 1);
     assert_eq!(a_events[0].payload.kind, StoredEventKind::Operation as i32);
     // read_after on domain B should only see domain B's events
-    let b_events = storage.read_after(&domain_b, Lsn { value: 0 }).await.unwrap();
+    let b_events = storage
+        .read_after(&domain_b, Lsn { value: 0 })
+        .await
+        .unwrap();
     assert_eq!(b_events.len(), 1);
-    assert_eq!(b_events[0].payload.kind, StoredEventKind::Observation as i32);
+    assert_eq!(
+        b_events[0].payload.kind,
+        StoredEventKind::Observation as i32
+    );
 }
 
 #[tokio::test]
@@ -369,11 +402,19 @@ async fn load_latest_snapshot_bounded() {
         .await
         .unwrap();
     // load_latest(None) → LSN 3
-    let snap = storage.load_latest_snapshot(&domain, None).await.unwrap().unwrap();
+    let snap = storage
+        .load_latest_snapshot(&domain, None)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[2]);
     assert_eq!(snap.payload, vec![0x03]);
     // load_latest(Some(2)) → LSN 1 (the latest <= 2)
-    let snap = storage.load_latest_snapshot(&domain, Some(Lsn { value: lsns[1] })).await.unwrap().unwrap();
+    let snap = storage
+        .load_latest_snapshot(&domain, Some(Lsn { value: lsns[1] }))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[0]);
     assert_eq!(snap.payload, vec![0x01]);
 }
@@ -400,7 +441,9 @@ async fn concurrent_reads_and_writes() {
     let read_handle = tokio::spawn(async move {
         // Read multiple times while writes are happening
         for _ in 0..3 {
-            let _ = read_storage.read_after(&read_domain, Lsn { value: 0 }).await;
+            let _ = read_storage
+                .read_after(&read_domain, Lsn { value: 0 })
+                .await;
         }
     });
     write_handle.await.unwrap();

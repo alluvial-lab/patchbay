@@ -35,7 +35,10 @@ impl Storage for NoopStorage {
         _target: &TargetKey,
         _payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
-        Ok(DedupOutcome::Appended(event_id(authority_domain_id.clone(), 1)))
+        Ok(DedupOutcome::Appended(event_id(
+            authority_domain_id.clone(),
+            1,
+        )))
     }
 
     async fn read_after(
@@ -89,10 +92,7 @@ async fn noop_storage_trait_compiles_and_runs() {
     };
     let id = storage.append(&domain, sample_payload()).await.unwrap();
     assert_eq!(id.lsn.as_ref().unwrap().value, 1);
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert!(events.is_empty());
 }
 
@@ -170,8 +170,20 @@ fn target_key_rejects_empty() {
 fn stored_event_kind_variants_are_concrete() {
     // Verify the kind enum has concrete per-message variants, not family-level.
     // This is what makes replay unambiguous: Grant != DescendantGrant != Revocation.
-    assert_ne!(StoredEventKind::Grant as i32, StoredEventKind::DescendantGrant as i32);
-    assert_ne!(StoredEventKind::Grant as i32, StoredEventKind::Revocation as i32);
-    assert_ne!(StoredEventKind::DescendantGrant as i32, StoredEventKind::Revocation as i32);
-    assert_ne!(StoredEventKind::Operation as i32, StoredEventKind::Observation as i32);
+    assert_ne!(
+        StoredEventKind::Grant as i32,
+        StoredEventKind::DescendantGrant as i32
+    );
+    assert_ne!(
+        StoredEventKind::Grant as i32,
+        StoredEventKind::Revocation as i32
+    );
+    assert_ne!(
+        StoredEventKind::DescendantGrant as i32,
+        StoredEventKind::Revocation as i32
+    );
+    assert_ne!(
+        StoredEventKind::Operation as i32,
+        StoredEventKind::Observation as i32
+    );
 }

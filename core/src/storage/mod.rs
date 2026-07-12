@@ -11,6 +11,8 @@ pub mod port;
 pub mod recovery;
 pub mod rusqlite;
 
-pub use port::{event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey};
+pub use port::{
+    event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+};
 pub use recovery::{recover, RecoveryState};
 pub use rusqlite::RusqliteStorage;

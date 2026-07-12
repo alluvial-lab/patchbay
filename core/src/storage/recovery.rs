@@ -66,11 +66,7 @@ impl RecoveryState {
                 .lsn
                 .as_ref()
                 .map(|l| l.value)
-                .ok_or_else(|| {
-                    StorageError::CorruptRecord(
-                        "snapshot has no LSN".to_string(),
-                    )
-                }),
+                .ok_or_else(|| StorageError::CorruptRecord("snapshot has no LSN".to_string())),
             None => Ok(0),
         }
     }
@@ -110,7 +106,9 @@ pub async fn recover<S: Storage>(
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<RecoveryState, StorageError> {
     // Load the latest snapshot.
-    let snapshot = storage.load_latest_snapshot(authority_domain_id, None).await?;
+    let snapshot = storage
+        .load_latest_snapshot(authority_domain_id, None)
+        .await?;
 
     // Determine the cursor: the snapshot's LSN, or 0 if no snapshot.
     // Fail Fast: a snapshot without an LSN is malformed — reject it rather
@@ -122,9 +120,7 @@ pub async fn recover<S: Storage>(
             .lsn
             .as_ref()
             .map(|l| Lsn { value: l.value })
-            .ok_or_else(|| {
-                StorageError::CorruptRecord("snapshot has no LSN".to_string())
-            })?,
+            .ok_or_else(|| StorageError::CorruptRecord("snapshot has no LSN".to_string()))?,
         None => Lsn { value: 0 },
     };
 

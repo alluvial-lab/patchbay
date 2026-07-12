@@ -7,9 +7,7 @@
 //! - snapshot + tail replay produces state identical to replaying from 0
 //! - stale snapshot is rejected (tested at the storage impl level)
 
-use patchbay_contracts::patchbay::{
-    AuthorityDomainId, Lsn, StoredEventKind, StoredEventPayload,
-};
+use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn, StoredEventKind, StoredEventPayload};
 use patchbay_core::storage::{recover, RecoveryState, Storage};
 
 fn test_domain() -> AuthorityDomainId {
@@ -218,11 +216,7 @@ async fn recover_with_snapshot_bounds_replay_cost() {
     // Should only replay events 9,10 — not all 10
     assert_eq!(recovery.tail.len(), 2);
     assert_eq!(recovery.start_lsn().unwrap(), 8);
-    let tail_payloads: Vec<u8> = recovery
-        .tail
-        .iter()
-        .map(|e| e.payload.payload[0])
-        .collect();
+    let tail_payloads: Vec<u8> = recovery.tail.iter().map(|e| e.payload.payload[0]).collect();
     assert_eq!(tail_payloads, vec![8, 9]); // payloads of events 9,10
 }
 
@@ -252,9 +246,9 @@ async fn recover_snapshot_at_log_head_empty_tail() {
 async fn malformed_snapshot_without_lsn_is_rejected() {
     // A snapshot with no LSN is malformed — recover() must return CorruptRecord,
     // not silently default to 0 (which would replay events the snapshot reflects).
+    use patchbay_contracts::patchbay::IdempotencyKey;
     use patchbay_contracts::patchbay::{EventId, StoredEventPayload};
     use patchbay_core::storage::{RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey};
-    use patchbay_contracts::patchbay::IdempotencyKey;
 
     struct MalformedSnapshotStorage;
 
@@ -299,7 +293,9 @@ async fn malformed_snapshot_without_lsn_is_rejected() {
             // Return a snapshot with no LSN — malformed
             Ok(Some(StoredSnapshot {
                 event_id: EventId {
-                    authority_domain_id: Some(AuthorityDomainId { value: "d".to_string() }),
+                    authority_domain_id: Some(AuthorityDomainId {
+                        value: "d".to_string(),
+                    }),
                     lsn: None, // malformed
                 },
                 payload: vec![0x00],

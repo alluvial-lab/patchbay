@@ -373,16 +373,32 @@ Stories 1-3 are sequential (each depends on the prior). Story 4 depends on 3. Th
 ## Testing
 
 ### Unit Tests: `core/tests/storage_proptest.rs`
-- Gap-free LSN property (validates rowid choice empirically)
-- Idempotent replay (stated-normative `IdempotentLogReplay`)
-- Crash recovery loses no committed event (stated-normative `CrashNoAcceptedLost`)
-- Snapshot prefix consistency (stated-normative `SnapshotConsistentPrefix`)
-- Stale snapshot rejection (Fail Fast)
-- Wrong-domain snapshot rejection (Fail Fast)
+- Gap-free LSN property (validates rowid choice empirically; full-event readback, not LSN-only)
+- Deterministic replay for unchanged contents (storage-layer portion of `IdempotentLogReplay`; end-to-end depends on domain `apply`)
+- Crash recovery preserves full events (`CrashNoAcceptedLost`; payload comparison, not LSN-only — catches payload-corruption mutants)
+- Snapshot bounds replay to the correct tail (storage-layer portion of `SnapshotConsistentPrefix`; the snapshot *payload content* is a caller obligation on opaque bytes)
+- Fail Fast: invalid-snapshot-LSN rejection (above-head, LSN 0, cross-domain); cross-domain snapshot isolation
+- `BoundaryDedup` (promoted): retry no double-apply, per-target scope, conflict rejects-and-persists-nothing, concurrent same-key, dedup keys survive restart
+- Mutation discipline: 3 fault-injection tests prove non-vacuity on the highest-safety-weight properties (gap-free LSN, crash payload, dedup double-apply)
+
+**Honest scope:** "reopen" is not a process-level crash — it does not prove `synchronous=FULL` durability against power loss. `SnapshotStale`/`SnapshotWrongDomain` are reserved error variants the current API cannot trigger (non-foreclosure seam). `SnapshotConsistentPrefix` payload-content materialization is a caller obligation, not a storage-layer guarantee. These limits are documented in the proptest story body and test doc-comments.
 
 ### Integration Points
-- The `Storage` trait is the seam the sibling core features (acceptance, authority, sessions) consume. Their `feature-design` passes will define ports that call `Storage::append` and `Storage::read_prefix`.
+- The `Storage` trait is the seam the sibling core features (acceptance, authority, sessions) consume. Their `feature-design` passes will define ports that call `Storage::append` and `Storage::append_dedup`.
 - The writer actor's `mpsc` channel is the async/sync boundary — tested via concurrent append calls from multiple tokio tasks.
+- **Event registry extension:** `StoredEventKind` is a proto3 enum — siblings add variants during their own `feature-design`. Whether `STORED_EVENT_KIND_OPERATION`'s payload is `Operation` or a richer `CommandRecord` is the **acceptance feature's** design decision, not persistence's. The storage layer treats payloads as opaque bytes; it does not inspect inner-message shape.
+
+## Extension pressure classification
+
+Per `AGENTS.md` extension pressure-test checklist, the v0.1.0 decisions in this feature:
+
+- **Q1 (rusqlite + writer actor): committed v0.1.0.** The rusqlite binding is an adapter-declared feature, not a core protocol primitive — the `Storage` trait is adapter-neutral. `StorageError` carries no `rusqlite::Error`. Promoting a second backend is a new `Storage` impl, not a protocol change.
+- **Q2 (bare INTEGER PRIMARY KEY as LSN): committed v0.1.0 for single-domain.** The global rowid is gap-free per-domain only because v0.1.0 has one authority domain. Multi-domain gap-free-per-domain is a **reserved seam** — it would require per-domain LSN allocation and is not a v0.1.0 requirement. The proptest documents this honestly (cross-domain = monotonic, not contiguous).
+- **Q3 (same-DB snapshots table): committed v0.1.0.** Snapshots live in the same SQLite DB, written in the same transaction as the LSN anchor. The design's original "same transaction as the log prefix they materialize" was **refined during the workspace-and-port review**: the port validates the LSN anchor + writes atomically; the **consistent-prefix content materialization is a caller obligation** (the caller must read a consistent prefix before calling `write_snapshot`). This is a deliberate obligation split, not a gap — the storage layer cannot prove prefix consistency because the payload is opaque bytes.
+- **Q4 (opaque BLOB payload): committed v0.1.0.** The SQL `kind` column is a derived discriminator verified against the envelope on readback — not an independent message schema (SSOT preserved).
+- **Q5 (separate workspace crate): committed v0.1.0.** Generated contracts (`patchbay-contracts`) stay purely generated; owned logic lives in `patchbay-core`.
+- **`SnapshotStale` / `SnapshotWrongDomain` error variants: reserved seam.** Defined in `StorageError` but not returned by any current operation — the current API shape (domain as a call parameter, LSN-anchor validation) cannot trigger them. They exist for future snapshot-reconciliation operations (loading a snapshot older than current state, or carrying a conflicting domain). They get tests when the operations that can trigger them are implemented.
+- **`TargetKey` canonicalization: reserved seam.** `TargetKey::new` enforces non-emptiness but not canonical derivation from `TargetScope`. The acceptance feature must define one authoritative projection (else equivalent targets could get different keys). Documented in `port.rs`.
 - WAL concurrent-reader behavior — tested by reading while a write is in flight.
 
 ## Risks
