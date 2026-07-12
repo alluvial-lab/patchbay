@@ -24,6 +24,34 @@ use patchbay_contracts::patchbay::{
     AuthorityDomainId, EventId, IdempotencyKey, Lsn, StoredEventPayload,
 };
 
+/// A canonical, non-empty target identity for idempotency-key scoping.
+///
+/// Per `docs/PROTOCOL.md` § "Idempotency and retry": a key dedups only
+/// against existing commands to the same target. This newtype enforces
+/// non-emptiness and gives a canonical type for the dedup-scope rule, rather
+/// than accepting a raw `&str` that could be empty or inconsistently
+/// serialized. The caller constructs it from the operation's `TargetScope`
+/// (or a canonical projection of it) at acceptance time.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TargetKey(String);
+
+impl TargetKey {
+    /// Construct a `TargetKey` from a non-empty string. Returns `None` for
+    /// empty input (Fail Fast at the boundary).
+    pub fn new(s: String) -> Option<Self> {
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
+    }
+
+    /// The canonical string form, used as the storage dedup-scope key.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A durably-recorded state-transition event in the authority-domain log.
 ///
 /// The `event_id` carries the full `(authority_domain_id, LSN)` tuple, not a
@@ -100,6 +128,19 @@ pub enum StorageError {
     /// A snapshot must materialize at a real committed LSN.
     #[error("snapshot LSN {0} does not correspond to a committed event")]
     InvalidSnapshotLsn(u64),
+
+    /// A stored event payload carried `STORED_EVENT_KIND_UNSPECIFIED` or an
+    /// unknown kind value. Rejected at the boundary (Fail Fast) — every
+    /// durably-recorded event must carry a concrete, known kind so replay
+    /// can deserialize it unambiguously.
+    #[error("stored event kind is unspecified or unknown")]
+    InvalidEventKind,
+
+    /// A `TargetKey` was empty or could not be constructed. Rejected at the
+    /// boundary (Fail Fast) — the dedup-scope rule requires a non-empty
+    /// canonical target identity.
+    #[error("target key must be non-empty")]
+    EmptyTargetKey,
 }
 
 /// The outcome of an idempotent append ([`Storage::append_dedup`]).
@@ -152,21 +193,25 @@ pub trait Storage: Send + Sync {
     ///
     /// This is the atomic check-and-register handle for the formal model's
     /// `appliedKeys` set. The key is scoped per-target (the caller passes the
-    /// target identity as part of the key context); a key reused across
-    /// different targets does not dedup. The check and the append happen in
-    /// one durable transaction, so concurrent acceptance handlers cannot both
-    /// pass the check before their appends serialize.
+    /// target identity as a [`TargetKey`]); a key reused across different
+    /// targets does not dedup. The check and the append happen in one durable
+    /// transaction, so concurrent acceptance handlers cannot both pass the
+    /// check before their appends serialize.
     ///
     /// Returns [`DedupOutcome::Appended`] for a new key, or
     /// [`DedupOutcome::Duplicate`] for a retry of the same key + identical
-    /// payload. Returns [`StorageError::IdempotencyConflict`] if the key is
-    /// already applied but the payload differs (protocol: reject with
+    /// payload. `Duplicate` returns the existing event's [`EventId`] (the log
+    /// record identity); the calling layer is responsible for projecting that
+    /// to the full command record and state if needed (per `docs/PROTOCOL.md` §
+    /// "Idempotency and retry": a retry returns the existing command record).
+    /// Returns [`StorageError::IdempotencyConflict`] if the key is already
+    /// applied but the payload differs (protocol: reject with
     /// `validation_failed` before acceptance).
     fn append_dedup(
         &self,
         authority_domain_id: &AuthorityDomainId,
         key: &IdempotencyKey,
-        target: &str,
+        target: &TargetKey,
         payload: StoredEventPayload,
     ) -> impl std::future::Future<Output = Result<DedupOutcome, StorageError>> + Send;
 
@@ -182,10 +227,24 @@ pub trait Storage: Send + Sync {
 
     /// Write a snapshot materialized at the given LSN.
     ///
-    /// Must reflect a consistent log prefix: every event with
-    /// `LSN <= snapshot_lsn` and no event with `LSN > snapshot_lsn`. The
-    /// implementation must ensure the snapshot LSN corresponds to a real
-    /// committed event (returns [`StorageError::InvalidSnapshotLsn`] if not).
+    /// # Consistent-prefix obligation
+    ///
+    /// The snapshot payload must reflect a consistent log prefix: every event
+    /// with `LSN <= snapshot_lsn` and no event with `LSN > snapshot_lsn`
+    /// (`docs/PROTOCOL.md` § "Atomicity between events and snapshots"). The
+    /// storage port validates that `snapshot_lsn` corresponds to a real
+    /// committed event (returns [`StorageError::InvalidSnapshotLsn`] if not),
+    /// but the **consistent-prefix construction** of the payload itself is the
+    /// caller's responsibility — the caller must materialize the payload by
+    /// reading a consistent prefix up to `snapshot_lsn` before calling this.
+    /// The implementation writes the snapshot and the log atomically in one
+    /// transaction so the snapshot cannot reorder the log.
+    ///
+    /// This obligation split is deliberate: the port enforces the LSN anchor
+    /// and the write atomicity; the caller (the core's snapshot materializer)
+    /// enforces the prefix consistency of the payload content. A future
+    /// revision may move materialization into the port if a consistent-read
+    /// transaction boundary proves necessary.
     fn write_snapshot(
         &self,
         authority_domain_id: &AuthorityDomainId,

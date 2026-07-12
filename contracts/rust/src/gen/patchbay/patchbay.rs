@@ -254,6 +254,11 @@ impl PayloadContentType {
 /// without inspecting its bytes. This is the Generated Contracts approach to
 /// event-type discrimination: the schema owns the variant set, not a
 /// hand-maintained byte tag in Rust or SQLite.
+///
+/// One variant per concrete storable message type, not per family — this
+/// makes replay unambiguous. E.g. STORED_EVENT_KIND_GRANT vs
+/// STORED_EVENT_KIND_REVOCATION (both are authority-family events but
+/// different message types that must deserialize differently).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum StoredEventKind {
@@ -261,8 +266,10 @@ pub enum StoredEventKind {
     Operation = 1,
     Observation = 2,
     Elicitation = 3,
-    Authority = 4,
-    Session = 5,
+    Grant = 4,
+    DescendantGrant = 5,
+    Revocation = 6,
+    SessionState = 7,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -275,8 +282,10 @@ impl StoredEventKind {
             Self::Operation => "STORED_EVENT_KIND_OPERATION",
             Self::Observation => "STORED_EVENT_KIND_OBSERVATION",
             Self::Elicitation => "STORED_EVENT_KIND_ELICITATION",
-            Self::Authority => "STORED_EVENT_KIND_AUTHORITY",
-            Self::Session => "STORED_EVENT_KIND_SESSION",
+            Self::Grant => "STORED_EVENT_KIND_GRANT",
+            Self::DescendantGrant => "STORED_EVENT_KIND_DESCENDANT_GRANT",
+            Self::Revocation => "STORED_EVENT_KIND_REVOCATION",
+            Self::SessionState => "STORED_EVENT_KIND_SESSION_STATE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -286,8 +295,10 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_OPERATION" => Some(Self::Operation),
             "STORED_EVENT_KIND_OBSERVATION" => Some(Self::Observation),
             "STORED_EVENT_KIND_ELICITATION" => Some(Self::Elicitation),
-            "STORED_EVENT_KIND_AUTHORITY" => Some(Self::Authority),
-            "STORED_EVENT_KIND_SESSION" => Some(Self::Session),
+            "STORED_EVENT_KIND_GRANT" => Some(Self::Grant),
+            "STORED_EVENT_KIND_DESCENDANT_GRANT" => Some(Self::DescendantGrant),
+            "STORED_EVENT_KIND_REVOCATION" => Some(Self::Revocation),
+            "STORED_EVENT_KIND_SESSION_STATE" => Some(Self::SessionState),
             _ => None,
         }
     }

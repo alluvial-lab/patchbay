@@ -86,3 +86,18 @@ Addressed all 3 blockers, all 4 important findings, and all 3 nits:
 - **Nit 3**: `StoredSnapshot { event_id, payload }` type instead of `(u64, Vec<u8>)`.
 
 **Verification**: `cargo build --workspace` succeeds; `cargo test --package patchbay-core` passes 5/5 tests (added `append_dedup_returns_outcome` test). Generated contracts regenerated cleanly (63 additive lines in Rust gen, no reformatting drift).
+
+## Re-review (2026-07-11, fresh-context, openai-codex/gpt-5.6-sol, round 2)
+
+**Verdict**: Request changes — bounced again on a narrower blocker.
+
+**Blocker (1)**: `StoredEventKind` was family-level (`AUTHORITY`, `SESSION`), not message-level. `STORED_EVENT_KIND_AUTHORITY` couldn't distinguish `Grant` from `DescendantGrant` from `Revocation` during replay — replay remained ambiguous for authority-family events. Fixed by making the enum one-variant-per-concrete-storable-message: `GRANT`, `DESCENDANT_GRANT`, `REVOCATION`, `SESSION_STATE` (plus `OPERATION`, `OBSERVATION`, `ELICITATION`). Now replay can deserialize unambiguously.
+
+**Important (3)**:
+- Snapshot consistency was documented but not encoded — `InvalidSnapshotLsn` validated only the LSN anchor, not the payload's consistent-prefix provenance. Fixed by documenting the obligation split: the port enforces the LSN anchor + write atomicity; the caller (core's snapshot materializer) enforces the prefix consistency of the payload content. A future revision may move materialization into the port if a consistent-read transaction boundary proves necessary.
+- Dedup target was stringly-typed (`&str`) — permitted empty/label-based/inconsistently-serialized identities. Fixed by introducing `TargetKey` newtype that enforces non-empty construction (`TargetKey::new` returns `Option<TargetKey>`, `None` for empty). Added `EmptyTargetKey` error variant.
+- `IdempotencyKey` wrapper not used by `Operation` proto (which still has `string idempotency_key`). Noted as a follow-up — unifying the contract shape from submission through persistence is a proto-schema change that belongs in the acceptance feature's design pass, not this storage-port story.
+
+**Nits**: `Duplicate(EventId)` returns the log record id, not the full command record — documented that the calling layer is responsible for projecting to the command record/state. Added `stored_event_kind_variants_are_concrete` test verifying Grant != DescendantGrant != Revocation.
+
+**Verification**: 7/7 tests pass (added `target_key_rejects_empty` and `stored_event_kind_variants_are_concrete`). Generated contracts regenerated cleanly (17 insertions, 6 deletions — the enum variant renames).

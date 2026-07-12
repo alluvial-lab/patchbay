@@ -12,7 +12,7 @@ use patchbay_contracts::patchbay::{
     AuthorityDomainId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
 use patchbay_core::storage::{
-    event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot,
+    event_id, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
 /// A no-op storage impl that exists only to prove the trait is implementable
@@ -32,7 +32,7 @@ impl Storage for NoopStorage {
         &self,
         authority_domain_id: &AuthorityDomainId,
         _key: &IdempotencyKey,
-        _target: &str,
+        _target: &TargetKey,
         _payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
         Ok(DedupOutcome::Appended(event_id(authority_domain_id.clone(), 1)))
@@ -105,8 +105,9 @@ async fn append_dedup_returns_outcome() {
     let key = IdempotencyKey {
         value: "k1".to_string(),
     };
+    let target = TargetKey::new("target-1".to_string()).unwrap();
     let outcome = storage
-        .append_dedup(&domain, &key, "target-1", sample_payload())
+        .append_dedup(&domain, &key, &target, sample_payload())
         .await
         .unwrap();
     match outcome {
@@ -153,4 +154,26 @@ fn storage_error_variants_construct() {
     assert!(corrupt.to_string().contains("bad magic"));
     let invalid_lsn = StorageError::InvalidSnapshotLsn(99);
     assert!(invalid_lsn.to_string().contains("does not correspond"));
+    let invalid_kind = StorageError::InvalidEventKind;
+    assert!(invalid_kind.to_string().contains("unspecified or unknown"));
+    let empty_target = StorageError::EmptyTargetKey;
+    assert!(empty_target.to_string().contains("non-empty"));
+}
+
+#[test]
+fn target_key_rejects_empty() {
+    assert!(TargetKey::new("".to_string()).is_none());
+    assert!(TargetKey::new("target-1".to_string()).is_some());
+    let key = TargetKey::new("target-1".to_string()).unwrap();
+    assert_eq!(key.as_str(), "target-1");
+}
+
+#[test]
+fn stored_event_kind_variants_are_concrete() {
+    // Verify the kind enum has concrete per-message variants, not family-level.
+    // This is what makes replay unambiguous: Grant != DescendantGrant != Revocation.
+    assert_ne!(StoredEventKind::Grant as i32, StoredEventKind::DescendantGrant as i32);
+    assert_ne!(StoredEventKind::Grant as i32, StoredEventKind::Revocation as i32);
+    assert_ne!(StoredEventKind::DescendantGrant as i32, StoredEventKind::Revocation as i32);
+    assert_ne!(StoredEventKind::Operation as i32, StoredEventKind::Observation as i32);
 }
