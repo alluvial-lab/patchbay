@@ -397,10 +397,14 @@ proptest! {
         })?;
     }
 
-    /// Fail Fast: a snapshot at an LSN with no committed event is rejected.
+    /// Fail Fast: a snapshot at an LSN with no committed event in THIS
+    /// domain is rejected. Covers three invalid-anchor cases:
+    /// (a) an LSN strictly past the head (no such event),
+    /// (b) LSN 0 (rowid starts at 1; LSN 0 never corresponds to an event),
+    /// (c) an LSN that exists in domain A but not domain B (cross-domain).
     #[test]
     fn write_snapshot_rejects_invalid_lsn(
-        n_events in 0u64..30,
+        n_events in 1u64..30,
         offset in 1u64..50,
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -410,15 +414,37 @@ proptest! {
             for i in 0..n_events {
                 storage.append(&domain, indexed_payload(i as usize)).await.unwrap();
             }
-            let invalid_lsn = n_events + offset;
+            // (a) above-head LSN.
+            let invalid_above = n_events + offset;
             let result = storage
-                .write_snapshot(&domain, lsn(invalid_lsn), vec![0x00])
+                .write_snapshot(&domain, lsn(invalid_above), vec![0x00])
                 .await;
             prop_assert!(matches!(
                 result,
-                Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(v)) if v == invalid_lsn
-            ), "expected InvalidSnapshotLsn({invalid_lsn}), got {:?}", result);
-            Ok(())
+                Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(v)) if v == invalid_above
+            ), "expected InvalidSnapshotLsn({invalid_above}), got {:?}", result);
+            // (b) LSN 0 — never a committed event (rowid starts at 1).
+            let result0 = storage
+                .write_snapshot(&domain, lsn(0), vec![0x00])
+                .await;
+            prop_assert!(matches!(
+                result0,
+                Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(0))
+            ), "expected InvalidSnapshotLsn(0), got {:?}", result0);
+            // (c) cross-domain: an LSN that exists in domain A but not B.
+            let domain_b = AuthorityDomainId { value: "domain-b".to_string() };
+            // LSN 1 exists in `domain` (n_events >= 1) but domain_b is empty.
+            let result_cross = storage
+                .write_snapshot(&domain_b, lsn(1), vec![0x00])
+                .await;
+            prop_assert!(matches!(
+                result_cross,
+                Err(patchbay_core::storage::StorageError::InvalidSnapshotLsn(1))
+            ), "expected InvalidSnapshotLsn(1) for cross-domain, got {:?}", result_cross);
+            // Sanity: a valid LSN in the correct domain is accepted.
+            let ok = storage.write_snapshot(&domain, lsn(n_events), vec![0x00]).await;
+            prop_assert!(ok.is_ok(), "valid snapshot rejected: {:?}", ok);
+            Ok::<(), TestCaseError>(())
         })?;
     }
 
@@ -630,9 +656,12 @@ proptest! {
                     }
                 }
             }
-            for w in expected_lsns.windows(2) {
-                prop_assert_eq!(w[1] - w[0], 1, "gap in appended LSNs: {:?}", expected_lsns);
-            }
+            // Anchor the sequence at LSN 1 and assert exact contiguity.
+            // A windows-only check would let a mutant starting at [2,3,4,...]
+            // pass; the exact-equality check catches an initial gap.
+            let expected: Vec<u64> = (1..=expected_lsns.len() as u64).collect();
+            prop_assert_eq!(&expected_lsns, &expected,
+                "appended LSNs are not 1..=N (gap-free from 1)");
             let events = storage.read_after(&domain, lsn(0)).await.unwrap();
             prop_assert_eq!(
                 events.len(),
@@ -640,7 +669,7 @@ proptest! {
                 "log count != expected appended count"
             );
             let readback_lsns: Vec<u64> = events.iter().map(|e| lsn_of(&e.event_id)).collect();
-            prop_assert_eq!(readback_lsns, expected_lsns);
+            prop_assert_eq!(&readback_lsns, &expected_lsns);
             Ok::<(), TestCaseError>(())
         })?;
     }
