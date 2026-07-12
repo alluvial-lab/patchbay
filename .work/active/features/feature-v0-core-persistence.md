@@ -1,14 +1,14 @@
 ---
 id: feature-v0-core-persistence
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # Feature: Core persistence, event log, and recovery
