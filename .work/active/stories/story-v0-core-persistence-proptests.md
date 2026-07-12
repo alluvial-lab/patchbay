@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-persistence-proptests
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-persistence
 depends_on: [story-v0-core-persistence-recovery]
