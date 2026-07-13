@@ -12,3 +12,8 @@ cc 033413aac1d709613a4a076f15ae8b41ff3a3c6a2b91d3367d35de65334cc426 # shrinks to
 cc d51bcb56b05088b0e10535edf6d1996dcb3e8231c347efbfc740e443c1a28035 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a", n_concurrent = 2
 cc 927195d08aab95a0f9fda6c3049b8fe78b9ad09713aab6a70ca1141798680474 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
 cc 9947d2b945692779d5a94bd4504d3730dd3af720f93b806970150d5c090e573b # shrinks to payload_a = StoredEventPayload { kind: Operation, payload: [] }, payload_b = StoredEventPayload { kind: Operation, payload: [0] }, key = "a", target = "a"
+cc fa58c453e9a176aa6f8b382d58d40cfe79e3e8a62c491a30e47023ba86205923 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a", retries = 1
+cc 67b15e029f68de401781aeddf2d425fb89789ae26c4ac1a120399e5c370b4033 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a"
+cc 008d94f836297a75005bc2795491918b3b9a91d7c5102b412843d2d91ca0f50b # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc ed2bf32e9c18e91f79eb3e383f8626a1cab92a7a754e6b917bd17f42dcc74bb5 # shrinks to ops = [("a", "a")]
+cc 2d1f74183877a94d91e50d86d6017bd192c315f6f304a8b9ec4aaa9bab3b2555 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]

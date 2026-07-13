@@ -121,16 +121,25 @@ where
             // A retry returns the EXISTING command's state, not a hardcoded
             // Accepted. The command may have advanced (delivered, running,
             // or terminal) since the original accept. Look it up.
-            let existing_state = state_lookup
+            //
+            // If the lookup returns None, the command exists in the durable
+            // log (storage said Duplicate) but not in the in-memory index —
+            // an inconsistency. Fail fast rather than silently returning
+            // Accepted (which would reproduce the original blocker).
+            let snapshot = state_lookup
                 .current_state(validated.command_id)
                 .await
-                .map(|snapshot| snapshot.state)
-                .unwrap_or(OperationState::Accepted);
+                .ok_or_else(|| {
+                    AcceptanceError::CorruptRecord(format!(
+                        "duplicate submission for command {:?} not found in the command index",
+                        validated.command_id
+                    ))
+                })?;
             accepted_result(
                 validated.command_id.clone(),
                 validated.authority_domain_id,
                 event_id,
-                existing_state,
+                snapshot.state,
                 true,
             )
         }

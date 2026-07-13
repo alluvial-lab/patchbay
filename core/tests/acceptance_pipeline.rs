@@ -7,8 +7,8 @@ use patchbay_contracts::patchbay::{
     RuntimeSessionId, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::{
-    submit, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied,
-    TargetBinding, TargetNotFound, TargetResolver,
+    submit, AcceptanceError, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck,
+    GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
 };
 use patchbay_core::storage::{RusqliteStorage, Storage};
 use prost::Message;
@@ -100,6 +100,17 @@ impl CommandStateLookup for AlwaysAccepted {
             correlations: vec![],
             terminal_lsn: None,
         })
+    }
+}
+
+/// A CommandStateLookup that always returns None — simulates a missing
+/// command in the index (inconsistency between the durable log and the
+/// in-memory projection).
+struct NotFoundLookup;
+
+impl CommandStateLookup for NotFoundLookup {
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        None
     }
 }
 
@@ -413,4 +424,37 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
     );
     assert!(retry.deduplicated);
     assert_eq!(retry.command_id, first.command_id);
+}
+
+#[tokio::test]
+async fn retry_with_missing_index_entry_fails_fast() {
+    // If storage says Duplicate (the command exists in the durable log) but
+    // the command index doesn't have it (inconsistency), the pipeline must
+    // fail fast — NOT silently return Accepted (which would reproduce the
+    // original blocker). This is the Fail Fast discipline: an inconsistent
+    // projection is a corruption, not a reason to guess.
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let submitted = operation();
+
+    // First submit — accepted (AlwaysAccepted returns Some).
+    let first = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(state(&first), OperationState::Accepted);
+
+    // Retry with a lookup that returns None (command not in index).
+    let result = submit(&storage, &grant, &resolver, &NotFoundLookup, submitted).await;
+
+    assert!(
+        matches!(result, Err(AcceptanceError::CorruptRecord(_))),
+        "missing index entry must fail fast, not silently return Accepted; got {result:?}"
+    );
 }
