@@ -1,12 +1,12 @@
 ---
 id: story-v0-core-acceptance-state-machine
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-acceptance
 depends_on: []
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-13
 gate_origin: null
 release_binding: null
 ---
@@ -39,3 +39,12 @@ Implement the `CommandState` transition adjacency (the SSOT for allowed transiti
 ## Design reference
 
 See `feature-v0-core-acceptance.md` § "Implementation Units" → "Unit 1".
+
+## Implementation notes
+
+- Files changed: `core/src/acceptance/mod.rs`, `core/src/acceptance/state.rs`, `core/src/acceptance/transitions.rs`, `core/src/lib.rs`, and `core/tests/acceptance_state_machine.rs`.
+- Implemented the protocol-derived 18-edge adjacency, fail-fast transition folding, terminal metadata capture, command-record construction, and public acceptance-module exports.
+- Tests added: 8 integration tests, including the exhaustive 9×9 adjacency oracle and coverage for all 18 allowed transitions; all 60 `patchbay-core` tests pass.
+- Discrepancies from design: generated prost enum fields are `i32`, so transition application validates and converts them before mutation; Rust's orphan rule prevents an inherent `impl OperationState`, so the ergonomic method is provided by the re-exported `OperationStateExt` trait; generated `Operation` implements `PartialEq` but not `Eq`, so `CommandRecord` derives the strongest supported equality trait. The accepted-event LSN is used in constructor corruption diagnostics but is not duplicated in `CommandRecord`, matching the designed field set.
+- Verification: build, full package tests, clippy for all targets, and rustfmt check pass with `CARGO_HOME=/tmp/cargo-home`.
+- Adjacent issues parked: none.
