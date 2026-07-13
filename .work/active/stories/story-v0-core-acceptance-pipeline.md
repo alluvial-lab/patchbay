@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-acceptance-pipeline
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-acceptance
 depends_on: [story-v0-core-acceptance-state-machine]
