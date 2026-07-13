@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-sessions-state-machine
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: []
@@ -34,15 +34,24 @@ See `feature-v0-core-sessions.md` Unit 1 for exact signatures. Key points:
 
 ## Acceptance Criteria
 
-- [ ] `allowed_connectivity_transition` matches the protocol table exactly (exhaustive table test)
-- [ ] `allowed_activity_transition` matches the protocol table exactly (exhaustive table test)
-- [ ] `SessionIdentity` equality ignores project/cwd/name
-- [ ] `effective_connectivity` returns `Stale`/`Unknown` when connectivity is stale/unknown, regardless of activity
-- [ ] `Unspecified` is the only initial state for both axes
-- [ ] `core/src/session/mod.rs` and `core/src/session/state.rs` compile; module is exported from `core/src/lib.rs`
+- [x] `allowed_connectivity_transition` matches the protocol table exactly (exhaustive table test)
+- [x] `allowed_activity_transition` matches the protocol table exactly (exhaustive table test)
+- [x] `SessionIdentity` equality ignores project/cwd/name
+- [x] `effective_connectivity` returns `Stale`/`Unknown` when connectivity is stale/unknown, regardless of activity
+- [x] `Unspecified` is the only initial state for both axes
+- [x] `core/src/session/mod.rs` and `core/src/session/state.rs` compile; module is exported from `core/src/lib.rs`
 
 ## Notes
 
 - No deps. This is the foundation the registry, ingest, and replay stories build on.
 - The `SessionError` enum lives in `mod.rs` so all session submodules can use it.
 - Do NOT implement the registry or ingest here — only the state machine + identity + error type.
+
+## Implementation notes
+
+- Added the generated-contract-backed `SessionIdentity` tuple and canonical connectivity/activity adjacency functions in `core/src/session/state.rs`. Both tables are `const fn` single sources of truth and include only the specified pre-observation transitions from `Unspecified` plus the protocol adjacency.
+- Added exhaustive table-cell unit tests for both axes, identity-field isolation, and effective-connectivity behavior across activity values.
+- Added `SessionError` and the session module re-exports in `core/src/session/mod.rs`, then exported `session` from the crate root. No registry, ingestion, replay, or resolver modules were forward-declared.
+- Mechanical implementation detail: generated prost `SessionState` exposes raw `i32` fields and no typed accessor in the checked-in binding. `effective_connectivity` converts with `SessionConnectivityState::try_from` and uses prost's `Unspecified` fallback for an unrecognized value; protocol-boundary validation remains responsible for rejecting such values.
+- Mechanical deviation from the sketched error attribute: generated `Generation` implements `Debug` but not `Display`, so `StaleGeneration` formats `live` and `reported` with `:?` to keep the typed generated fields and compile cleanly.
+- Verification: `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core` passed; `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core` passed with no failures.
