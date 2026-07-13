@@ -544,3 +544,30 @@ Per `AGENTS.md` extension pressure-test checklist:
 - **Q3 observation ingestion: committed v0.1.0.** The ingestion method is the adapter→core ingress. The streaming/subscription layer is a reserved seam (protocol-seam owns it).
 - **Q4 A2 elicitation decoupling: committed v0.1.0.** The slot layer is an independent log consumer. The responder-binding seam and responder-identity audit seam are reserved (per `docs/PROTOCOL.md` § Elicitation) — v0.1.0 binds to the operator actor; multi-operator responder distinction is a future promotion.
 - **`StoredEventKind::CommandTransition`: committed v0.1.0.** Added to the schema-owned variant set. Future event kinds add variants.
+
+## Deep review (feature-level, 2026-07-12)
+
+Feature-level deep review after all 6 stories reached `done`. Verdict: **Request changes** — 5 blockers + 4 important. The pure state machine, replay fold, and dedup boundary are sound; the gaps are at the end-to-end boundary and the port shapes for sibling features. Findings:
+
+### Blockers (to resolve before advancing to `done`)
+
+1. **Retry returns `accepted`, not the existing command's state.** `DedupOutcome::Duplicate` calls the same `accepted_result` constructor as a new command, which hardcodes `OperationState::Accepted`. A retry after completion/cancellation/failure returns the wrong state (PROTOCOL.md § Idempotency: a retry returns the existing command record and state). **Fix:** the duplicate path must look up the existing command's `OperationState` (via the `CommandIndex`/`CommandStateLookup`) and return it, not hardcode `Accepted`.
+
+2. **Target resolution discards the binding.** `TargetResolver::resolve`'s result is reduced to `.is_err()` and discarded — the `TargetBinding` is never used for delivery or recorded. `TargetBinding` also only represents runtime-session targets, but committed Operations include fleet/adapter/actor/resource targets (and `spawn` has no pre-existing runtime session). **Status:** the `TargetBinding` shape and its consumption are a forward-dependency on the sessions feature — the sessions `feature-design` will define what target binding means for delivery. The port is the seam; this is not a persistence-blocking gap.
+
+3. **Authorization boundary cannot distinguish verified identity from a payload claim.** `GrantCheck` receives `operation.sender` directly from the wire — no verified authenticated principal is passed for comparison. **Status:** this is a forward-dependency on the protocol-seam / web-server (which holds the authenticated session) and the authority feature (which defines grant evaluation against a verified principal). The port is the seam; the sibling features fill it in.
+
+4. **Observation ingress is not source-authenticated.** `ingest_observation` validates only a non-empty authority-domain before persisting. `CommandStateLookup` accepts only a command id — it cannot verify adapter identity, target session, or generation. **Status:** source-authentication of adapter reports is a protocol-seam / pi-adapter concern (the adapter's authenticated channel is established at attach time). The ingestion method is the seam; the authentication is upstream. Documented as a reserved seam.
+
+5. **A2 correlations don't flow end-to-end.** The Elicitation layer requires `CommandTransition` to carry an `ElicitationId` correlation, but observation ingestion copies only the Observation's correlations into the transition — a response Operation correlated to an Elicitation followed by a result Observation correlated only to its command won't close the slot. Tests mask this by manually placing the Elicitation correlation on synthetic transitions. **Fix:** `derive_transition` must carry the originating Operation's correlations (looked up via the command record) into the `CommandTransition`, so the Elicitation correlation flows from the Operation → through the transition → to the slot layer.
+
+### Important
+
+- Transition metadata not semantically validated (failure codes on non-terminal transitions; `Completed + ExecutionFailed` inconsistency).
+- Storage failures bypass the submission outcome vocabulary (should be `SubmissionOutcome::Failed`/`Unknown`, not `Err(AcceptanceError::Storage)`).
+- Story records stale: the replay story still claims snapshot checkpointing is implemented; the feature body still claims late candidates never become transition events (the TOCTOU policy allows race-produced duplicates, skipped at replay).
+- Replay silently ignores `StoredEventKind::Unspecified` instead of fail-fast.
+
+### Assessment
+
+The pure command lifecycle (state machine, transition adjacency, terminal finality, replay fold, dedup boundary) is a sound foundation. The three promoted properties hold by construction and have mutation-tested evidence. The gaps are at the end-to-end boundary — the port shapes and the authenticated-principal/source-auth concerns that the sibling features (authority, sessions, protocol-seam) are designed to fill. Blocker 1 (retry state) is a real bug fixable now; blocker 5 (correlation flow) is a real design gap fixable now; blockers 2-4 are forward-dependencies on sibling features and are correctly framed as reserved seams. The feature stays at `stage: review` until blockers 1 and 5 are resolved and the forward-dependency seams are documented as reserved.
