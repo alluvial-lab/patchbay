@@ -1,12 +1,12 @@
 ---
 id: story-v0-core-acceptance-elicitation-slot
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-acceptance
 depends_on: [story-v0-core-acceptance-replay]
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-13
 gate_origin: null
 release_binding: null
 ---
@@ -38,3 +38,11 @@ Implement the Elicitation-slot layer as an independent event-log consumer (desig
 ## Design reference
 
 See `feature-v0-core-acceptance.md` § "Implementation Units" → "Unit 5".
+
+## Implementation notes
+
+- Files changed: `core/src/acceptance/elicitation.rs`, `core/src/acceptance/mod.rs`, `core/tests/acceptance_elicitation.rs`.
+- Tests added: six integration tests covering response-terminal slot closure, first-answer-wins by LSN, event-consumer decoupling, live/replay equivalence, idempotent re-observation, non-terminal response handling, and generated initial-state use.
+- Discrepancies from design: the finalized story's pure-consumer shape supersedes the parent sketch's generic storage-owning struct; `ElicitationSlotLayer` owns only its projection and `rebuild_slots_from_log` receives the storage port. Per the v0.1.0 brief, every correlated terminal response maps to `answered`; contract-aware explicit-denial mapping to `declined` remains a later refinement rather than failure-code guessing in this layer.
+- Implementation discovery: direct-read only; the existing `CommandIndex` and `rebuild_from_log` folds fully established the integration pattern. Duplicate opening and already-terminal response events are idempotent no-ops, so replay cannot reset a terminal winner.
+- Adjacent issues parked: none.
