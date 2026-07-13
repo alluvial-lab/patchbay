@@ -1,14 +1,14 @@
 ---
 id: feature-v0-core-acceptance
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-12
+updated: 2026-07-13
 ---
 
 # Feature: Operation acceptance and command lifecycle
