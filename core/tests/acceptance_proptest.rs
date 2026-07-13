@@ -499,7 +499,12 @@ proptest! {
                 [(first_index + second_offset) % TERMINAL_STATES.len()];
             let later_lsn = append_transition(
                 &storage,
-                &transition(&command_id, first_terminal, second_terminal),
+                // The real TOCTOU race: both candidates read the same pre-terminal
+                // state before either append, so both encode Delivered as
+                // from_state. A mutant that checks from_state before terminal
+                // finality would reject this as a CorruptLog (Delivered != first_terminal),
+                // masking the stale-candidate skip bug.
+                &transition(&command_id, OperationState::Delivered, second_terminal),
             )
             .await;
 
@@ -716,11 +721,32 @@ fn boundary_dedup_catches_injected_double_apply() {
                 .is_ok(),
             "the production implementation must deduplicate an identical retry"
         );
+        // Verify the real store has exactly ONE event (not just that the oracle passed).
+        let real_events = real
+            .read_after(&authority_domain(), Lsn { value: 0 })
+            .await
+            .unwrap();
+        assert_eq!(
+            real_events.len(),
+            1,
+            "production must persist exactly one event"
+        );
 
         let mutant = DoubleApplyStorage(RusqliteStorage::open_in_memory().unwrap());
         assert!(
             run_boundary_dedup_check(&mutant, submitted).await.is_err(),
             "the BoundaryDedup property did not catch an always-append storage adapter"
+        );
+        // Directly prove the mutant persisted TWO events (double-apply),
+        // independent of the oracle's early exit on deduplicated=false.
+        let mutant_events = mutant
+            .read_after(&authority_domain(), Lsn { value: 0 })
+            .await
+            .unwrap();
+        assert_eq!(
+            mutant_events.len(),
+            2,
+            "the always-append mutant must persist exactly two events (double-apply)"
         );
     });
 }
@@ -754,9 +780,11 @@ fn first_terminal_wins_catches_injected_last_writer_bug() {
         .expect("delivered-to-completed is valid");
         let _ = applier(
             &mut record,
+            // The real TOCTOU race: the stale candidate encodes the same
+            // pre-terminal from_state (Delivered), not the first terminal.
             &transition(
                 command_id,
-                OperationState::Completed,
+                OperationState::Delivered,
                 OperationState::Failed,
             ),
             4,
@@ -773,4 +801,42 @@ fn first_terminal_wins_catches_injected_last_writer_bug() {
         mutant.state != OperationState::Completed || mutant.terminal_lsn != Some(3),
         "the first-terminal oracle did not catch last-writer-wins"
     );
+}
+
+/// Exhaustive TerminalFinality: every terminal-state × candidate-state pair
+/// is rejected. The proptest samples this finite domain; this test enumerates
+/// all 6 terminal × 9 candidate = 54 pairs deterministically so a bug
+/// confined to one pair cannot escape by chance.
+#[test]
+fn terminal_finality_exhaustive_all_pairs() {
+    let terminal_states = [
+        OperationState::Completed,
+        OperationState::Rejected,
+        OperationState::Failed,
+        OperationState::Expired,
+        OperationState::Cancelled,
+        OperationState::Superseded,
+    ];
+    let candidate_states = [
+        OperationState::Unspecified,
+        OperationState::Accepted,
+        OperationState::Delivered,
+        OperationState::Running,
+        OperationState::Completed,
+        OperationState::Rejected,
+        OperationState::Failed,
+        OperationState::Expired,
+        OperationState::Cancelled,
+        OperationState::Superseded,
+    ];
+
+    for terminal in &terminal_states {
+        for candidate in &candidate_states {
+            let command_id = format!("exhaustive-{terminal:?}-{candidate:?}");
+            assert!(
+                terminal_finality_holds(apply_transition, &command_id, *terminal, *candidate,),
+                "TerminalFinality failed for terminal={terminal:?}, candidate={candidate:?}"
+            );
+        }
+    }
 }

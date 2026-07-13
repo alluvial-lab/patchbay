@@ -1,0 +1,14 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 73ed368bd2076def2452cf4e40738e64aa16ae7245c73cb998859e14cf713d09 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a"
+cc 0e3b53210255142095e09e01c329b678d0eae228a67e3b5e14b8eb54f4a97a32 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target_a = "a", target_b = "b"
+cc 8d564bf3705400f061645220960153a36cb93788f68b74f024bf2454acc87f1e # shrinks to ops = [("a", "a")]
+cc 9738f8c3677ad64e72ca1188bf15ce968e06c95735a511bb72f7f57705e44294 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc 033413aac1d709613a4a076f15ae8b41ff3a3c6a2b91d3367d35de65334cc426 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a", retries = 1
+cc d51bcb56b05088b0e10535edf6d1996dcb3e8231c347efbfc740e443c1a28035 # shrinks to payload = StoredEventPayload { kind: Operation, payload: [] }, key = "a", target = "a", n_concurrent = 2
+cc 927195d08aab95a0f9fda6c3049b8fe78b9ad09713aab6a70ca1141798680474 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc 9947d2b945692779d5a94bd4504d3730dd3af720f93b806970150d5c090e573b # shrinks to payload_a = StoredEventPayload { kind: Operation, payload: [] }, payload_b = StoredEventPayload { kind: Operation, payload: [0] }, key = "a", target = "a"
