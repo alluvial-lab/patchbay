@@ -5,6 +5,36 @@ package patchbay;
 import "google/protobuf/timestamp.proto";
 import "patchbay/common.proto";
 
+// A durable command lifecycle transition. One event per real transition
+// (accept→delivered→running→terminal). The accept itself is an OPERATION
+// event (the Operation message); subsequent transitions are
+// COMMAND_TRANSITION events. Late terminal candidates are stale_event
+// Observations — they never become transition events, which is what makes
+// first-durable-terminal-commit-wins structural (the first terminal
+// COMMAND_TRANSITION in LSN order wins; later candidates are audit-only).
+//
+// Mirrors command_lifecycle.qnt: advance/commitTerminal consume an LSN and
+// set state; lateTerminalCandidate is a no-op. The from_state is recorded
+// for replay validation (Fail Fast on a corrupted log that violates
+// adjacency) but the in-memory apply reads only to_state + failure_code.
+message CommandTransition {
+  CommandId command_id = 1;
+  // The state being transitioned INTO. One of OperationState (which refines
+  // CommandState per docs/PROTOCOL.md).
+  OperationState to_state = 2;
+  // The state being transitioned FROM. For replay validation: applying a
+  // transition whose from_state doesn't match the current in-memory state
+  // indicates log corruption (Fail Fast).
+  OperationState from_state = 3;
+  // Set on terminal transitions. UNSPECIFIED for non-terminal.
+  FailureCode failure_code = 4;
+  // When the transition was committed (durable-commit time).
+  google.protobuf.Timestamp committed_at = 5;
+  // Links to the triggering Observation or response Operation, when there is
+  // one. Empty for core-triggered transitions (expired/cancelled/superseded).
+  repeated TypedCorrelation correlations = 6;
+}
+
 message Operation {
   CommandId command_id = 1;
   AuthorityDomainId authority_domain_id = 2;

@@ -147,6 +147,11 @@ enum StoredEventKind {
   STORED_EVENT_KIND_DESCENDANT_GRANT = 5;
   STORED_EVENT_KIND_REVOCATION = 6;
   STORED_EVENT_KIND_SESSION_STATE = 7;
+  // A command lifecycle transition (accepted→delivered→running→terminal).
+  // The payload is a serialized CommandTransition (operations.proto).
+  // Added by feature-v0-core-acceptance: one event per real transition;
+  // late terminal candidates are stale_event Observations, not transitions.
+  STORED_EVENT_KIND_COMMAND_TRANSITION = 8;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.
