@@ -6,6 +6,7 @@
 //! semantics from the write path.
 
 pub mod index;
+pub mod observation;
 pub mod pipeline;
 pub mod ports;
 pub mod replay;
@@ -13,6 +14,7 @@ pub mod state;
 pub mod transitions;
 
 pub use index::CommandIndex;
+pub use observation::{ingest_observation, CommandStateLookup, IngestResult, TransitionCandidate};
 pub use pipeline::{submit, target_key_for};
 pub use ports::{
     Authorized, GrantCheck, GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
