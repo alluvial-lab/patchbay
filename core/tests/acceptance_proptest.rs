@@ -22,7 +22,8 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::acceptance::{
     apply_transition, is_terminal, rebuild_from_log, submit, AcceptanceError, Authorized,
-    CommandRecord, GrantCheck, GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
+    CommandRecord, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied, TargetBinding,
+    TargetNotFound, TargetResolver,
 };
 use patchbay_core::storage::{
     DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
@@ -220,6 +221,18 @@ impl TargetResolver for AlwaysResolved {
     }
 }
 
+struct AlwaysAccepted;
+
+impl CommandStateLookup for AlwaysAccepted {
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        Some(CommandSnapshot {
+            state: OperationState::Accepted,
+            correlations: vec![],
+            terminal_lsn: None,
+        })
+    }
+}
+
 fn terminal_finality_holds(
     applier: fn(&mut CommandRecord, &CommandTransition, u64) -> Result<(), AcceptanceError>,
     command_id: &str,
@@ -258,6 +271,7 @@ async fn run_boundary_dedup_check<S: Storage>(
         storage,
         &AlwaysAuthorized,
         &AlwaysResolved,
+        &AlwaysAccepted,
         submitted.clone(),
     )
     .await
@@ -266,6 +280,7 @@ async fn run_boundary_dedup_check<S: Storage>(
         storage,
         &AlwaysAuthorized,
         &AlwaysResolved,
+        &AlwaysAccepted,
         submitted.clone(),
     )
     .await

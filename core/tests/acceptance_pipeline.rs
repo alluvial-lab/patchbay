@@ -7,7 +7,8 @@ use patchbay_contracts::patchbay::{
     RuntimeSessionId, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::{
-    submit, Authorized, GrantCheck, GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
+    submit, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied,
+    TargetBinding, TargetNotFound, TargetResolver,
 };
 use patchbay_core::storage::{RusqliteStorage, Storage};
 use prost::Message;
@@ -82,6 +83,22 @@ impl TargetResolver for TestTargetResolver {
             Err(TargetNotFound::NotFound {
                 target: "session-1".to_owned(),
             })
+        })
+    }
+}
+
+/// A CommandStateLookup stub that always reports Accepted with no
+/// correlations. Used by pipeline tests that don't build a full CommandIndex.
+/// The retry test that needs the existing-state behavior uses a real
+/// CommandIndex via rebuild_from_log.
+struct AlwaysAccepted;
+
+impl CommandStateLookup for AlwaysAccepted {
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        Some(CommandSnapshot {
+            state: OperationState::Accepted,
+            correlations: vec![],
+            terminal_lsn: None,
         })
     }
 }
@@ -164,7 +181,7 @@ async fn unknown_and_reserved_operation_kinds_reject_before_grant() {
         let mut submitted = operation();
         submitted.kind = raw_kind;
 
-        let result = submit(&storage, &grant, &resolver, submitted)
+        let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
             .await
             .unwrap();
 
@@ -206,7 +223,7 @@ async fn missing_required_fields_reject_before_grant_without_durable_state() {
         let grant = TestGrantCheck::new(true);
         let resolver = TestTargetResolver::new(true);
 
-        let result = submit(&storage, &grant, &resolver, submitted)
+        let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
             .await
             .unwrap();
 
@@ -224,7 +241,7 @@ async fn unauthorized_submission_rejects_without_durable_state() {
     let grant = TestGrantCheck::new(false);
     let resolver = TestTargetResolver::new(true);
 
-    let result = submit(&storage, &grant, &resolver, operation())
+    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, operation())
         .await
         .unwrap();
 
@@ -242,7 +259,7 @@ async fn unknown_target_rejects_without_durable_state() {
     let grant = TestGrantCheck::new(true);
     let resolver = TestTargetResolver::new(false);
 
-    let result = submit(&storage, &grant, &resolver, operation())
+    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, operation())
         .await
         .unwrap();
 
@@ -261,9 +278,15 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
     let resolver = TestTargetResolver::new(true);
     let submitted = operation();
 
-    let result = submit(&storage, &grant, &resolver, submitted.clone())
-        .await
-        .unwrap();
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&result), SubmissionOutcome::Accepted);
     assert_eq!(failure(&result), FailureCode::Unspecified);
@@ -289,10 +312,16 @@ async fn identical_retry_returns_existing_acceptance_without_double_append() {
     let resolver = TestTargetResolver::new(true);
     let submitted = operation();
 
-    let first = submit(&storage, &grant, &resolver, submitted.clone())
-        .await
-        .unwrap();
-    let retry = submit(&storage, &grant, &resolver, submitted)
+    let first = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
+    let retry = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
         .await
         .unwrap();
 
@@ -311,13 +340,19 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
     let resolver = TestTargetResolver::new(true);
     let original = operation();
 
-    submit(&storage, &grant, &resolver, original.clone())
-        .await
-        .unwrap();
+    submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        original.clone(),
+    )
+    .await
+    .unwrap();
 
     let mut conflicting = original;
     conflicting.payload.as_mut().unwrap().payload = b"different instruction".to_vec();
-    let result = submit(&storage, &grant, &resolver, conflicting)
+    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, conflicting)
         .await
         .unwrap();
 
@@ -326,4 +361,56 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
     assert_eq!(state(&result), OperationState::Unspecified);
     assert!(!result.deduplicated);
     assert_eq!(durable_events(&storage).await.len(), 1);
+}
+
+/// A CommandStateLookup that reports a specific command as Completed. Used
+/// to verify a retry of an already-completed command returns Completed,
+/// not a hardcoded Accepted.
+struct CompletedLookup;
+
+impl CommandStateLookup for CompletedLookup {
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        Some(CommandSnapshot {
+            state: OperationState::Completed,
+            correlations: vec![],
+            terminal_lsn: Some(5),
+        })
+    }
+}
+
+#[tokio::test]
+async fn retry_returns_existing_state_not_hardcoded_accepted() {
+    // Blocker 1 fix: a deduplicated retry must return the EXISTING command's
+    // state, not a hardcoded Accepted. The command may have advanced to
+    // Completed (or any other state) since the original accept.
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let submitted = operation();
+
+    let first = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(state(&first), OperationState::Accepted);
+
+    // The command has since reached Completed (via observation transitions).
+    // The retry must return Completed, not Accepted.
+    let retry = submit(&storage, &grant, &resolver, &CompletedLookup, submitted)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
+    assert_eq!(
+        state(&retry),
+        OperationState::Completed,
+        "retry must return the existing command's state (Completed), not hardcoded Accepted"
+    );
+    assert!(retry.deduplicated);
+    assert_eq!(retry.command_id, first.command_id);
 }

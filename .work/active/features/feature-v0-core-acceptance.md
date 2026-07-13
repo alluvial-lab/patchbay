@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-acceptance
 kind: feature
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]

@@ -253,3 +253,18 @@ fn dedup_key_for(operation: &Operation) -> Result<DedupKey, AcceptanceError> {
         target_key.as_str().to_owned(),
     ))
 }
+
+impl crate::acceptance::CommandStateLookup for CommandIndex {
+    async fn current_state(
+        &self,
+        command_id: &CommandId,
+    ) -> Option<crate::acceptance::CommandSnapshot> {
+        self.commands
+            .get(command_id)
+            .map(|record| crate::acceptance::CommandSnapshot {
+                state: record.state,
+                correlations: record.operation.correlations.clone(),
+                terminal_lsn: record.terminal_lsn,
+            })
+    }
+}

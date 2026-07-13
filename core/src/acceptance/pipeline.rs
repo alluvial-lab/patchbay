@@ -9,7 +9,7 @@ use prost::Message;
 
 use crate::storage::{DedupOutcome, Storage, StorageError, TargetKey};
 
-use super::{AcceptanceError, GrantCheck, TargetResolver};
+use super::{AcceptanceError, CommandStateLookup, GrantCheck, TargetResolver};
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
 /// not appear here, so adding another generated enum variant remains fail
@@ -42,16 +42,18 @@ struct ValidatedOperation<'a> {
 /// The ordering is protocol-significant: boundary validation, authority check,
 /// target binding, and only then the atomic deduplicating durable append.
 /// Every rejection before that append leaves the command log untouched.
-pub async fn submit<S, G, R>(
+pub async fn submit<S, G, R, L>(
     storage: &S,
     grant_check: &G,
     target_resolver: &R,
+    state_lookup: &L,
     operation: Operation,
 ) -> Result<SubmissionResult, AcceptanceError>
 where
     S: Storage,
     G: GrantCheck,
     R: TargetResolver,
+    L: CommandStateLookup,
 {
     let validated = match validate_operation(&operation) {
         Ok(validated) => validated,
@@ -112,14 +114,26 @@ where
             validated.command_id.clone(),
             validated.authority_domain_id,
             event_id,
+            OperationState::Accepted,
             false,
         ),
-        Ok(DedupOutcome::Duplicate(event_id)) => accepted_result(
-            validated.command_id.clone(),
-            validated.authority_domain_id,
-            event_id,
-            true,
-        ),
+        Ok(DedupOutcome::Duplicate(event_id)) => {
+            // A retry returns the EXISTING command's state, not a hardcoded
+            // Accepted. The command may have advanced (delivered, running,
+            // or terminal) since the original accept. Look it up.
+            let existing_state = state_lookup
+                .current_state(validated.command_id)
+                .await
+                .map(|snapshot| snapshot.state)
+                .unwrap_or(OperationState::Accepted);
+            accepted_result(
+                validated.command_id.clone(),
+                validated.authority_domain_id,
+                event_id,
+                existing_state,
+                true,
+            )
+        }
         Err(StorageError::IdempotencyConflict) => Ok(rejected_result(
             Some(validated.command_id.clone()),
             FailureCode::ValidationFailed,
@@ -229,6 +243,7 @@ fn accepted_result(
     command_id: CommandId,
     expected_domain: &AuthorityDomainId,
     event_id: EventId,
+    operation_state: OperationState,
     deduplicated: bool,
 ) -> Result<SubmissionResult, AcceptanceError> {
     match event_id.authority_domain_id.as_ref() {
@@ -254,7 +269,7 @@ fn accepted_result(
     Ok(SubmissionResult {
         outcome: SubmissionOutcome::Accepted as i32,
         command_id: Some(command_id),
-        operation_state: OperationState::Accepted as i32,
+        operation_state: operation_state as i32,
         failure_code: FailureCode::Unspecified as i32,
         diagnostic_message: String::new(),
         accepted_lsn: Some(accepted_lsn),

@@ -16,7 +16,9 @@ pub mod transitions;
 
 pub use elicitation::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlotLayer};
 pub use index::CommandIndex;
-pub use observation::{ingest_observation, CommandStateLookup, IngestResult, TransitionCandidate};
+pub use observation::{
+    ingest_observation, CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,
+};
 pub use pipeline::{submit, target_key_for};
 pub use ports::{
     Authorized, GrantCheck, GrantDenied, TargetBinding, TargetNotFound, TargetResolver,

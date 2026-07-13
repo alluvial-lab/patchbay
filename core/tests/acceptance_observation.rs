@@ -6,7 +6,7 @@ use patchbay_contracts::patchbay::{
     Observation, ObservationKind, OperationState, StoredEventKind, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
-    ingest_observation, AcceptanceError, CommandStateLookup, IngestResult,
+    ingest_observation, AcceptanceError, CommandSnapshot, CommandStateLookup, IngestResult,
 };
 use patchbay_core::storage::{RusqliteStorage, Storage};
 use prost::Message;
@@ -28,8 +28,12 @@ impl CommandStateLookup for TestCommandStates {
     fn current_state(
         &self,
         command_id: &CommandId,
-    ) -> impl std::future::Future<Output = Option<OperationState>> + Send {
-        ready(self.states.get(command_id).copied())
+    ) -> impl std::future::Future<Output = Option<CommandSnapshot>> + Send {
+        ready(self.states.get(command_id).map(|state| CommandSnapshot {
+            state: *state,
+            correlations: vec![],
+            terminal_lsn: None,
+        }))
     }
 }
 
@@ -331,5 +335,68 @@ async fn transition_for_unknown_command_fails_after_recording_evidence() {
     assert_eq!(
         StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
         StoredEventKind::Observation
+    );
+}
+
+#[tokio::test]
+async fn transition_carries_command_elicitation_correlation() {
+    // Blocker 5 fix: a derived CommandTransition must carry the originating
+    // Operation's correlations (e.g. ElicitationId for response Operations)
+    // so the Elicitation-slot layer can correlate a response terminal
+    // transition back to its Elicitation.
+    use patchbay_contracts::patchbay::{
+        typed_correlation, CommandTransition, ElicitationId, TypedCorrelation,
+    };
+
+    let _elicitation_corr = TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
+            value: "elicitation-from-op".to_owned(),
+        })),
+    };
+
+    struct LookupWithCorrelation;
+    impl CommandStateLookup for LookupWithCorrelation {
+        async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+            Some(CommandSnapshot {
+                state: OperationState::Delivered,
+                correlations: vec![TypedCorrelation {
+                    r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
+                        value: "elicitation-from-op".to_owned(),
+                    })),
+                }],
+                terminal_lsn: None,
+            })
+        }
+    }
+
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let obs = observation(ObservationKind::Result, FailureCode::Unspecified);
+    let result = ingest_observation(&storage, &LookupWithCorrelation, obs)
+        .await
+        .unwrap();
+
+    let IngestResult::Transitioned { .. } = result else {
+        panic!("expected a transition");
+    };
+
+    let events = storage
+        .read_after(&authority_domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    let transition_event = events
+        .iter()
+        .find(|e| {
+            StoredEventKind::try_from(e.payload.kind).unwrap() == StoredEventKind::CommandTransition
+        })
+        .expect("a CommandTransition event was emitted");
+
+    let transition: CommandTransition =
+        prost::Message::decode(transition_event.payload.payload.as_slice()).unwrap();
+    assert!(
+        transition.correlations.iter().any(|c| matches!(
+            c.r#ref.as_ref(),
+            Some(typed_correlation::Ref::ElicitationId(id)) if id.value == "elicitation-from-op"
+        )),
+        "the derived transition must carry the command's ElicitationId correlation"
     );
 }
