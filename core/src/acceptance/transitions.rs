@@ -87,6 +87,22 @@ pub fn apply_transition(
         )));
     }
 
+    // Identity check: the transition must belong to this command. A
+    // transition for a different command_id (or a missing command_id)
+    // indicates a routing/corruption error — fail fast before mutation.
+    let transition_cmd = transition.command_id.as_ref().ok_or_else(|| {
+        AcceptanceError::CorruptLog(format!(
+            "transition for command {:?} is missing its own command_id",
+            record.command_id
+        ))
+    })?;
+    if transition_cmd != &record.command_id {
+        return Err(AcceptanceError::CorruptLog(format!(
+            "command_id mismatch: transition is for {:?}, record is for {:?}",
+            transition_cmd, record.command_id
+        )));
+    }
+
     if !allowed_transition(record.state, to_state) {
         return Err(AcceptanceError::CorruptLog(format!(
             "disallowed transition {:?} -> {to_state:?} for command {:?}",

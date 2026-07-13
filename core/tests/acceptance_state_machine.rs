@@ -79,6 +79,22 @@ fn transition(
     }
 }
 
+/// A transition with a caller-specified command_id (for identity-mismatch tests).
+fn transition_for(
+    cmd: &str,
+    from_state: OperationState,
+    to_state: OperationState,
+) -> CommandTransition {
+    CommandTransition {
+        command_id: Some(CommandId {
+            value: cmd.to_owned(),
+        }),
+        from_state: from_state as i32,
+        to_state: to_state as i32,
+        ..CommandTransition::default()
+    }
+}
+
 #[test]
 fn allowed_transition_matches_every_protocol_table_cell() {
     for from in STATES {
@@ -131,10 +147,16 @@ fn accepted_to_completed_is_rejected() {
 
 #[test]
 fn from_state_mismatch_is_rejected_without_mutation() {
+    // The mismatch must be the ONLY reason for rejection: the to_state must
+    // be ALLOWED from the record's actual state, so that without the
+    // mismatch guard the transition would apply. An Accepted record + a
+    // Delivered->Delivered event: Accepted->Delivered is allowed, so only
+    // the from_state mismatch (Delivered != Accepted) prevents mutation.
+    // This is the non-vacuous test — removing the guard would let it through.
     let mut record = record_at(OperationState::Accepted);
     let event = transition(
         OperationState::Delivered,
-        OperationState::Running,
+        OperationState::Delivered,
         FailureCode::Unspecified,
     );
 
@@ -144,6 +166,40 @@ fn from_state_mismatch_is_rejected_without_mutation() {
     assert_eq!(record.state, OperationState::Accepted);
     assert_eq!(record.terminal_lsn, None);
     assert_eq!(record.failure_code, None);
+}
+
+#[test]
+fn command_id_mismatch_is_rejected_without_mutation() {
+    // A transition for a different command must not mutate this record,
+    // even if the from/to states are valid for it.
+    let mut record = record_at(OperationState::Accepted);
+    let event = transition_for(
+        "command-2",
+        OperationState::Accepted,
+        OperationState::Delivered,
+    );
+
+    let result = apply_transition(&mut record, &event, 10);
+
+    assert!(matches!(result, Err(AcceptanceError::CorruptLog(_))));
+    assert_eq!(record.state, OperationState::Accepted);
+    assert_eq!(record.terminal_lsn, None);
+}
+
+#[test]
+fn transition_without_command_id_is_rejected() {
+    let mut record = record_at(OperationState::Accepted);
+    let mut event = transition(
+        OperationState::Accepted,
+        OperationState::Delivered,
+        FailureCode::Unspecified,
+    );
+    event.command_id = None;
+
+    let result = apply_transition(&mut record, &event, 10);
+
+    assert!(matches!(result, Err(AcceptanceError::CorruptLog(_))));
+    assert_eq!(record.state, OperationState::Accepted);
 }
 
 #[test]
@@ -190,6 +246,18 @@ fn terminal_transition_retains_a_concrete_failure_code() {
     assert_eq!(record.state, OperationState::Failed);
     assert_eq!(record.terminal_lsn, Some(41));
     assert_eq!(record.failure_code, Some(FailureCode::ExecutionFailed));
+}
+
+#[test]
+fn command_record_new_initializes_at_accepted_and_preserves_operation() {
+    let op = operation();
+    let record = CommandRecord::new(op.clone(), 1).expect("valid operation");
+
+    assert_eq!(record.command_id, *op.command_id.as_ref().unwrap());
+    assert_eq!(record.state, OperationState::Accepted);
+    assert_eq!(record.terminal_lsn, None);
+    assert_eq!(record.failure_code, None);
+    assert_eq!(record.operation, op);
 }
 
 #[test]
