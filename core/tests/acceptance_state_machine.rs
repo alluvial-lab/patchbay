@@ -122,7 +122,7 @@ fn every_terminal_state_rejects_transitions_out() {
         let result = apply_transition(&mut record, &event, 99);
 
         assert!(
-            matches!(result, Err(AcceptanceError::CorruptLog(_))),
+            matches!(result, Err(AcceptanceError::AlreadyTerminal(_))),
             "{terminal_state:?} accepted a transition out"
         );
         assert_eq!(record.state, terminal_state);

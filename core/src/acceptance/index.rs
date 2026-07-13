@@ -100,6 +100,7 @@ impl CommandIndex {
         self.commands.is_empty()
     }
 
+    #[allow(dead_code)] // retained for the deferred snapshot checkpoint
     pub(super) fn records(&self) -> impl Iterator<Item = &CommandRecord> {
         self.commands.values()
     }
@@ -195,7 +196,13 @@ impl CommandIndex {
             )));
         }
 
-        apply_transition(record, &transition, event_lsn)
+        apply_transition(record, &transition, event_lsn).or_else(|err| match err {
+            // A duplicate terminal transition from a race-produced TOCTOU
+            // window. The first terminal wins (TerminalFinality); the
+            // second is a stale candidate, not corruption. Skip it.
+            AcceptanceError::AlreadyTerminal(_) => Ok(()),
+            other => Err(other),
+        })
     }
 }
 

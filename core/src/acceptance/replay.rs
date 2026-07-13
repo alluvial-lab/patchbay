@@ -1,34 +1,52 @@
 //! Recovery of the in-memory command projection from snapshots and log events.
+// v0.1.0: snapshot checkpointing is deferred (no projection discriminator in
+// the storage snapshot slot). The serialization code below is retained for the
+// future namespaced-snapshot integration; hence the dead-code allowance.
+#![allow(dead_code)]
 
-use patchbay_contracts::patchbay::{
-    AuthorityDomainId, FailureCode, Lsn, Operation, OperationState,
-};
+use patchbay_contracts::patchbay::{AuthorityDomainId, FailureCode, Operation, OperationState};
 use prost::Message;
 
-use crate::storage::{recover, Storage, StoredSnapshot};
+use crate::storage::Storage;
 
 use super::{is_terminal, AcceptanceError, CommandIndex, CommandRecord};
 
 const COMMAND_INDEX_SNAPSHOT_VERSION: u32 = 1;
 
-/// Rebuild the command index from the latest checkpoint and its event tail.
+/// Rebuild the command index from the durable event log.
 ///
-/// Storage supplies a deterministic snapshot-plus-tail recovery view. This
-/// function decodes the snapshot projection, validates the tail ordering and
-/// authority domain, and applies each event using [`CommandIndex::apply`].
-/// Thus unchanged durable contents reconstruct an equal index.
+/// v0.1.0 always replays from LSN 0. Snapshot checkpointing of the command
+/// index is **deferred** because the storage port's `write_snapshot`/
+/// `load_latest_snapshot` slot is scoped to `(authority_domain_id, LSN)` with
+/// no projection discriminator. A command-only snapshot in that slot would
+/// hide pre-checkpoint events from sibling projections (authority, sessions,
+/// elicitation) that share the same authority domain. When the snapshot
+/// namespace is extended to carry a projection kind, this function will load
+/// the command-index snapshot and replay only its tail.
+///
+/// For now, `recover()` is called to get the event tail, but any snapshot
+/// is ignored (we replay from LSN 0). The snapshot serialization code
+/// (`encode_snapshot`/`decode_snapshot`) is retained for the future
+/// namespaced-snapshot integration.
 pub async fn rebuild_from_log<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<CommandIndex, AcceptanceError> {
-    let recovery = recover(storage, authority_domain_id).await?;
-    let mut index = match recovery.snapshot.as_ref() {
-        Some(snapshot) => decode_snapshot(snapshot, authority_domain_id)?,
-        None => CommandIndex::new(),
-    };
+    // v0.1.0: ignore snapshots (no projection discriminator). Read from LSN 0.
+    let mut index = CommandIndex::new();
+    let mut previous_lsn = 0u64;
 
-    let mut previous_lsn = recovery.start_lsn()?;
-    for event in recovery.events() {
+    // Read all events from LSN 0. We use read_after directly rather than
+    // recover() because recover() would skip events at or before a snapshot
+    // LSN — and we're ignoring snapshots for now.
+    let events = storage
+        .read_after(
+            authority_domain_id,
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
+        .await?;
+
+    for event in events {
         let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
             AcceptanceError::CorruptRecord("recovery event has no authority domain".to_owned())
         })?;
@@ -51,7 +69,7 @@ pub async fn rebuild_from_log<S: Storage>(
             )));
         }
 
-        index.apply(event)?;
+        index.apply(&event)?;
         previous_lsn = event_lsn;
     }
 
@@ -59,22 +77,23 @@ pub async fn rebuild_from_log<S: Storage>(
 }
 
 impl CommandIndex {
-    /// Persist this projection as a checkpoint at `at_lsn`.
+    /// Snapshot checkpointing is **deferred for v0.1.0**.
     ///
-    /// The caller must ensure this index reflects exactly the consistent log
-    /// prefix ending at `at_lsn`. The storage port validates that the LSN is a
-    /// committed event; this method uses a versioned, deterministically ordered
-    /// payload so recovery can load the checkpoint and replay only its tail.
+    /// The storage port's `write_snapshot`/`load_latest_snapshot` slot is
+    /// scoped to `(authority_domain_id, LSN)` with no projection
+    /// discriminator. A command-only snapshot in that slot would hide
+    /// pre-checkpoint events from sibling projections (authority, sessions,
+    /// elicitation). When the snapshot namespace is extended to carry a
+    /// projection kind, this method will serialize the index and call
+    /// `storage.write_snapshot`. The serialization code is retained below.
+    #[allow(dead_code)]
     pub async fn snapshot_checkpoint<S: Storage>(
         &self,
-        storage: &S,
-        authority_domain_id: &AuthorityDomainId,
-        at_lsn: Lsn,
+        _storage: &S,
+        _authority_domain_id: &AuthorityDomainId,
+        _at_lsn: patchbay_contracts::patchbay::Lsn,
     ) -> Result<(), AcceptanceError> {
-        let payload = encode_snapshot(self);
-        storage
-            .write_snapshot(authority_domain_id, at_lsn, payload)
-            .await?;
+        // Deferred — see doc comment.
         Ok(())
     }
 }
@@ -119,7 +138,7 @@ fn encode_snapshot(index: &CommandIndex) -> Vec<u8> {
 }
 
 fn decode_snapshot(
-    snapshot: &StoredSnapshot,
+    snapshot: &crate::storage::StoredSnapshot,
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<CommandIndex, AcceptanceError> {
     let snapshot_domain = snapshot

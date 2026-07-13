@@ -17,6 +17,21 @@ pub enum AcceptanceError {
     #[error("corrupt command log: {0}")]
     CorruptLog(String),
 
+    /// A transition event arrived for a command that is already terminal.
+    ///
+    /// This is NOT corruption — it is the race-produced duplicate that the
+    /// first-durable-terminal-wins design expects. Under concurrency, two
+    /// terminal candidates can both pass the in-memory `current_state` check
+    /// (a TOCTOU window) and both append `COMMAND_TRANSITION` events. The
+    /// first wins (TerminalFinality); the second is this variant. The replay
+    /// fold catches it and skips the event rather than aborting recovery.
+    /// The live `ingest_observation` path checks `current_state` before
+    /// appending to prevent the common case, but the race window exists by
+    /// design — the log is append-only, and TerminalFinality is a STATE
+    /// property (enforced by `apply_transition`), not a LOG property.
+    #[error("transition for already-terminal command {0}")]
+    AlreadyTerminal(String),
+
     /// A target scope cannot be projected to a canonical idempotency key.
     #[error("invalid target scope: {0}")]
     InvalidTargetScope(String),
@@ -65,8 +80,8 @@ pub fn apply_transition(
     event_lsn: u64,
 ) -> Result<(), AcceptanceError> {
     if record.state.is_terminal() {
-        return Err(AcceptanceError::CorruptLog(format!(
-            "transition for already-terminal command {:?}",
+        return Err(AcceptanceError::AlreadyTerminal(format!(
+            "{:?}",
             record.command_id
         )));
     }

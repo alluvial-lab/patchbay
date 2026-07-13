@@ -1,10 +1,10 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Lsn, Observation,
+    AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Observation,
     Operation, OperationKind, OperationState, RuntimeSessionId, StoredEventKind,
     StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::{rebuild_from_log, target_key_for, AcceptanceError, CommandIndex};
-use patchbay_core::storage::{recover, RusqliteStorage, Storage};
+use patchbay_core::storage::{RusqliteStorage, Storage};
 use prost::Message;
 
 fn authority_domain() -> AuthorityDomainId {
@@ -262,11 +262,17 @@ async fn duplicate_operation_identity_is_corrupt_log() {
 }
 
 #[tokio::test]
-async fn snapshot_checkpoint_restores_prefix_and_replays_only_the_tail() {
+async fn duplicate_terminal_transition_is_skipped_not_corruption() {
+    // The TOCTOU race: under concurrency, two terminal candidates can both
+    // pass the in-memory current_state check and both append COMMAND_TRANSITION
+    // events. The first wins (TerminalFinality); the second is a race-produced
+    // duplicate. The replay fold catches AlreadyTerminal and SKIPS the event
+    // (it's not corruption — it's the expected first-durable-terminal-wins
+    // outcome), rather than aborting recovery.
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let accepted = operation("command-1", "key-1");
     append_operation(&storage, &accepted).await;
-    let checkpoint_lsn = append_transition(
+    append_transition(
         &storage,
         &transition(
             "command-1",
@@ -276,21 +282,60 @@ async fn snapshot_checkpoint_restores_prefix_and_replays_only_the_tail() {
         ),
     )
     .await;
+    let first_terminal_lsn = append_transition(
+        &storage,
+        &transition(
+            "command-1",
+            OperationState::Delivered,
+            OperationState::Completed,
+            FailureCode::Unspecified,
+        ),
+    )
+    .await;
+    // A second terminal transition (the race-produced duplicate).
+    append_transition(
+        &storage,
+        &transition(
+            "command-1",
+            OperationState::Completed,
+            OperationState::Failed,
+            FailureCode::ExecutionFailed,
+        ),
+    )
+    .await;
 
-    let checkpoint_index = rebuild_from_log(&storage, &authority_domain())
+    let rebuilt = rebuild_from_log(&storage, &authority_domain())
         .await
-        .unwrap();
-    checkpoint_index
-        .snapshot_checkpoint(
-            &storage,
-            &authority_domain(),
-            Lsn {
-                value: checkpoint_lsn,
-            },
-        )
-        .await
-        .unwrap();
+        .expect("duplicate terminal transition should be skipped, not abort recovery");
+    let record = rebuilt
+        .get_command(accepted.command_id.as_ref().unwrap())
+        .expect("command reconstructed");
+    // The FIRST terminal (Completed) wins; the second (Failed) is skipped.
+    assert_eq!(record.state, OperationState::Completed);
+    assert_eq!(record.terminal_lsn, Some(first_terminal_lsn));
+    assert_eq!(record.failure_code, None);
+}
 
+#[tokio::test]
+async fn rebuild_ignores_snapshots_and_replays_full_log() {
+    // v0.1.0: snapshot checkpointing is deferred because the storage snapshot
+    // slot has no projection discriminator. rebuild_from_log always replays
+    // from LSN 0. This test verifies that even if a snapshot is written to
+    // the authority-domain slot (by some other code path), rebuild_from_log
+    // ignores it and reconstructs the full index from the complete event log.
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let accepted = operation("command-1", "key-1");
+    append_operation(&storage, &accepted).await;
+    append_transition(
+        &storage,
+        &transition(
+            "command-1",
+            OperationState::Accepted,
+            OperationState::Delivered,
+            FailureCode::Unspecified,
+        ),
+    )
+    .await;
     append_transition(
         &storage,
         &transition(
@@ -312,20 +357,18 @@ async fn snapshot_checkpoint_restores_prefix_and_replays_only_the_tail() {
     )
     .await;
 
-    let raw_recovery = recover(&storage, &authority_domain()).await.unwrap();
-    assert_eq!(raw_recovery.start_lsn().unwrap(), checkpoint_lsn);
-    assert_eq!(raw_recovery.tail.len(), 2, "only the post-snapshot tail");
-
+    // Rebuild — should reconstruct the full lifecycle from LSN 0.
     let rebuilt = rebuild_from_log(&storage, &authority_domain())
         .await
         .unwrap();
     let record = rebuilt
         .get_command(accepted.command_id.as_ref().unwrap())
-        .expect("snapshot prefix restored the accepted command");
+        .expect("full replay restored the accepted command");
     assert_eq!(record.state, OperationState::Completed);
     assert_eq!(record.terminal_lsn, Some(terminal_lsn));
     assert_eq!(record.failure_code, None);
 
+    // Determinism: rebuild again, same result.
     let rebuilt_again = rebuild_from_log(&storage, &authority_domain())
         .await
         .unwrap();
