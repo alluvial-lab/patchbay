@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/sessions.proto.
  */
 export const file_patchbay_sessions: GenFile = /*@__PURE__*/
-  fileDesc("ChdwYXRjaGJheS9zZXNzaW9ucy5wcm90bxIIcGF0Y2hiYXki4QMKB1Nlc3Npb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEicKCmFkYXB0ZXJfaWQYAiABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgDIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYBCABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgFIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDwoHcHJvamVjdBgGIAEoCRILCgNjd2QYByABKAkSDAoEbmFtZRgIIAEoCRIlCgVzdGF0ZRgJIAEoCzIWLnBhdGNoYmF5LlNlc3Npb25TdGF0ZRItChZsYXN0X2F1dGhvcml0YXRpdmVfbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgp0b21ic3RvbmVkGAwgASgIEigKEXN1cGVyc2VkZWRfYXRfbHNuGA0gASgLMg0ucGF0Y2hiYXkuTHNuInoKDFNlc3Npb25TdGF0ZRI4Cgxjb25uZWN0aXZpdHkYASABKA4yIi5wYXRjaGJheS5TZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSMAoIYWN0aXZpdHkYAiABKA4yHi5wYXRjaGJheS5TZXNzaW9uQWN0aXZpdHlTdGF0ZSKpAgoPU2Vzc2lvblNuYXBzaG90EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIjCgxzbmFwc2hvdF9sc24YAiABKAsyDS5wYXRjaGJheS5Mc24SLQoPY29yZV9nZW5lcmF0aW9uGAMgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIjCghzZXNzaW9ucxgEIAMoCzIRLnBhdGNoYmF5LlNlc3Npb24SLgoOdmlld19yZXZpc2lvbnMYBSADKAsyFi5wYXRjaGJheS5WaWV3UmV2aXNpb24SMwoPbWF0ZXJpYWxpemVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJgCgxWaWV3UmV2aXNpb24SKwoMdGFyZ2V0X3Njb3BlGAEgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSIwoMcmV2aXNpb25fbHNuGAIgASgLMg0ucGF0Y2hiYXkuTHNuKogCChhTZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSKgomU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfVU5TUEVDSUZJRUQQABIjCh9TRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9MSVZFEAESJAogU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfU1RBTEUQAhImCiJTRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9PRkZMSU5FEAMSJgoiU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfVU5LTk9XThAEEiUKIVNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX0ZBSUxFRBAFKqcBChRTZXNzaW9uQWN0aXZpdHlTdGF0ZRImCiJTRVNTSU9OX0FDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASHwobU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9JRExFEAESIgoeU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9XT1JLSU5HEAISIgoeU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9VTktOT1dOEANiBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common]);
+  fileDesc("ChdwYXRjaGJheS9zZXNzaW9ucy5wcm90bxIIcGF0Y2hiYXki4QMKB1Nlc3Npb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEicKCmFkYXB0ZXJfaWQYAiABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgDIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYBCABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgFIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDwoHcHJvamVjdBgGIAEoCRILCgNjd2QYByABKAkSDAoEbmFtZRgIIAEoCRIlCgVzdGF0ZRgJIAEoCzIWLnBhdGNoYmF5LlNlc3Npb25TdGF0ZRItChZsYXN0X2F1dGhvcml0YXRpdmVfbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgp0b21ic3RvbmVkGAwgASgIEigKEXN1cGVyc2VkZWRfYXRfbHNuGA0gASgLMg0ucGF0Y2hiYXkuTHNuInoKDFNlc3Npb25TdGF0ZRI4Cgxjb25uZWN0aXZpdHkYASABKA4yIi5wYXRjaGJheS5TZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSMAoIYWN0aXZpdHkYAiABKA4yHi5wYXRjaGJheS5TZXNzaW9uQWN0aXZpdHlTdGF0ZSKpAgoPU2Vzc2lvblNuYXBzaG90EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIjCgxzbmFwc2hvdF9sc24YAiABKAsyDS5wYXRjaGJheS5Mc24SLQoPY29yZV9nZW5lcmF0aW9uGAMgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIjCghzZXNzaW9ucxgEIAMoCzIRLnBhdGNoYmF5LlNlc3Npb24SLgoOdmlld19yZXZpc2lvbnMYBSADKAsyFi5wYXRjaGJheS5WaWV3UmV2aXNpb24SMwoPbWF0ZXJpYWxpemVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJgCgxWaWV3UmV2aXNpb24SKwoMdGFyZ2V0X3Njb3BlGAEgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSIwoMcmV2aXNpb25fbHNuGAIgASgLMg0ucGF0Y2hiYXkuTHNuIoEDChFTZXNzaW9uU3RhdGVFdmVudBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMQoKcmVnaXN0ZXJlZBgCIAEoCzIbLnBhdGNoYmF5LlNlc3Npb25SZWdpc3RlcmVkSAASPgoRZ2VuZXJhdGlvbl9idW1wZWQYAyABKAsyIS5wYXRjaGJheS5TZXNzaW9uR2VuZXJhdGlvbkJ1bXBlZEgAEkQKFGNvbm5lY3Rpdml0eV9jaGFuZ2VkGAQgASgLMiQucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eUNoYW5nZWRIABI8ChBhY3Rpdml0eV9jaGFuZ2VkGAUgASgLMiAucGF0Y2hiYXkuU2Vzc2lvbkFjdGl2aXR5Q2hhbmdlZEgAEi8KCXJlbGFiZWxlZBgGIAEoCzIaLnBhdGNoYmF5LlNlc3Npb25SZWxhYmVsZWRIAEIKCghtdXRhdGlvbiKbAgoRU2Vzc2lvblJlZ2lzdGVyZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhItCg1pbml0aWFsX3N0YXRlGAUgASgLMhYucGF0Y2hiYXkuU2Vzc2lvblN0YXRlEg8KB3Byb2plY3QYBiABKAkSCwoDY3dkGAcgASgJEgwKBG5hbWUYCCABKAki8AEKF1Nlc3Npb25HZW5lcmF0aW9uQnVtcGVkEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgCIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYAyABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEi0KD2Zyb21fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SKwoNdG9fZ2VuZXJhdGlvbhgFIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24iqwIKGlNlc3Npb25Db25uZWN0aXZpdHlDaGFuZ2VkEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgCIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYAyABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SMAoEZnJvbRgFIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRIuCgJ0bxgGIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZSKfAgoWU2Vzc2lvbkFjdGl2aXR5Q2hhbmdlZBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEiwKBGZyb20YBSABKA4yHi5wYXRjaGJheS5TZXNzaW9uQWN0aXZpdHlTdGF0ZRIqCgJ0bxgGIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlIusBChBTZXNzaW9uUmVsYWJlbGVkEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgCIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYAyABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDwoHcHJvamVjdBgFIAEoCRILCgNjd2QYBiABKAkSDAoEbmFtZRgHIAEoCSqIAgoYU2Vzc2lvbkNvbm5lY3Rpdml0eVN0YXRlEioKJlNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASIwofU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfTElWRRABEiQKIFNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1NUQUxFEAISJgoiU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfT0ZGTElORRADEiYKIlNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1VOS05PV04QBBIlCiFTRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9GQUlMRUQQBSqnAQoUU2Vzc2lvbkFjdGl2aXR5U3RhdGUSJgoiU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9VTlNQRUNJRklFRBAAEh8KG1NFU1NJT05fQUNUSVZJVFlfU1RBVEVfSURMRRABEiIKHlNFU1NJT05fQUNUSVZJVFlfU1RBVEVfV09SS0lORxACEiIKHlNFU1NJT05fQUNUSVZJVFlfU1RBVEVfVU5LTk9XThADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common]);
 
 /**
  * @generated from message patchbay.Session
@@ -178,6 +178,285 @@ export type ViewRevision = Message<"patchbay.ViewRevision"> & {
  */
 export const ViewRevisionSchema: GenMessage<ViewRevision> = /*@__PURE__*/
   messageDesc(file_patchbay_sessions, 3);
+
+/**
+ * A durable session-state delta event. One event per mutation kind. The payload
+ * for StoredEventKind::SessionState. The core writes these; the SessionRegistry
+ * projection folds them into in-memory state. Mirrors acceptance's CommandTransition.
+ *
+ * @generated from message patchbay.SessionStateEvent
+ */
+export type SessionStateEvent = Message<"patchbay.SessionStateEvent"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from oneof patchbay.SessionStateEvent.mutation
+   */
+  mutation: {
+    /**
+     * @generated from field: patchbay.SessionRegistered registered = 2;
+     */
+    value: SessionRegistered;
+    case: "registered";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionGenerationBumped generation_bumped = 3;
+     */
+    value: SessionGenerationBumped;
+    case: "generationBumped";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionConnectivityChanged connectivity_changed = 4;
+     */
+    value: SessionConnectivityChanged;
+    case: "connectivityChanged";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionActivityChanged activity_changed = 5;
+     */
+    value: SessionActivityChanged;
+    case: "activityChanged";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionRelabeled relabeled = 6;
+     */
+    value: SessionRelabeled;
+    case: "relabeled";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message patchbay.SessionStateEvent.
+ * Use `create(SessionStateEventSchema)` to create a new message.
+ */
+export const SessionStateEventSchema: GenMessage<SessionStateEvent> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 4);
+
+/**
+ * @generated from message patchbay.SessionRegistered
+ */
+export type SessionRegistered = Message<"patchbay.SessionRegistered"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation session_generation = 4;
+   */
+  sessionGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.SessionState initial_state = 5;
+   */
+  initialState?: SessionState | undefined;
+
+  /**
+   * @generated from field: string project = 6;
+   */
+  project: string;
+
+  /**
+   * @generated from field: string cwd = 7;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string name = 8;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message patchbay.SessionRegistered.
+ * Use `create(SessionRegisteredSchema)` to create a new message.
+ */
+export const SessionRegisteredSchema: GenMessage<SessionRegistered> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 5);
+
+/**
+ * @generated from message patchbay.SessionGenerationBumped
+ */
+export type SessionGenerationBumped = Message<"patchbay.SessionGenerationBumped"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation from_generation = 4;
+   */
+  fromGeneration?: Generation | undefined;
+
+  /**
+   * The prior generation is tombstoned at this event's LSN. The tombstone
+   * fact (generation N existed, superseded at LSN X) is retained indefinitely.
+   *
+   * @generated from field: patchbay.Generation to_generation = 5;
+   */
+  toGeneration?: Generation | undefined;
+};
+
+/**
+ * Describes the message patchbay.SessionGenerationBumped.
+ * Use `create(SessionGenerationBumpedSchema)` to create a new message.
+ */
+export const SessionGenerationBumpedSchema: GenMessage<SessionGenerationBumped> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 6);
+
+/**
+ * @generated from message patchbay.SessionConnectivityChanged
+ */
+export type SessionConnectivityChanged = Message<"patchbay.SessionConnectivityChanged"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation session_generation = 4;
+   */
+  sessionGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.SessionConnectivityState from = 5;
+   */
+  from: SessionConnectivityState;
+
+  /**
+   * @generated from field: patchbay.SessionConnectivityState to = 6;
+   */
+  to: SessionConnectivityState;
+};
+
+/**
+ * Describes the message patchbay.SessionConnectivityChanged.
+ * Use `create(SessionConnectivityChangedSchema)` to create a new message.
+ */
+export const SessionConnectivityChangedSchema: GenMessage<SessionConnectivityChanged> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 7);
+
+/**
+ * @generated from message patchbay.SessionActivityChanged
+ */
+export type SessionActivityChanged = Message<"patchbay.SessionActivityChanged"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation session_generation = 4;
+   */
+  sessionGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.SessionActivityState from = 5;
+   */
+  from: SessionActivityState;
+
+  /**
+   * @generated from field: patchbay.SessionActivityState to = 6;
+   */
+  to: SessionActivityState;
+};
+
+/**
+ * Describes the message patchbay.SessionActivityChanged.
+ * Use `create(SessionActivityChangedSchema)` to create a new message.
+ */
+export const SessionActivityChangedSchema: GenMessage<SessionActivityChanged> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 8);
+
+/**
+ * @generated from message patchbay.SessionRelabeled
+ */
+export type SessionRelabeled = Message<"patchbay.SessionRelabeled"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation session_generation = 4;
+   */
+  sessionGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: string project = 5;
+   */
+  project: string;
+
+  /**
+   * @generated from field: string cwd = 6;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string name = 7;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message patchbay.SessionRelabeled.
+ * Use `create(SessionRelabeledSchema)` to create a new message.
+ */
+export const SessionRelabeledSchema: GenMessage<SessionRelabeled> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 9);
 
 /**
  * @generated from enum patchbay.SessionConnectivityState

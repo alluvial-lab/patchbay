@@ -55,3 +55,66 @@ message ViewRevision {
   TargetScope target_scope = 1;
   Lsn revision_lsn = 2;
 }
+
+// A durable session-state delta event. One event per mutation kind. The payload
+// for StoredEventKind::SessionState. The core writes these; the SessionRegistry
+// projection folds them into in-memory state. Mirrors acceptance's CommandTransition.
+message SessionStateEvent {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof mutation {
+    SessionRegistered registered = 2;
+    SessionGenerationBumped generation_bumped = 3;
+    SessionConnectivityChanged connectivity_changed = 4;
+    SessionActivityChanged activity_changed = 5;
+    SessionRelabeled relabeled = 6;
+  }
+}
+
+message SessionRegistered {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  SessionState initial_state = 5;
+  string project = 6;
+  string cwd = 7;
+  string name = 8;
+}
+
+message SessionGenerationBumped {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation from_generation = 4;
+  Generation to_generation = 5;
+  // The prior generation is tombstoned at this event's LSN. The tombstone
+  // fact (generation N existed, superseded at LSN X) is retained indefinitely.
+}
+
+message SessionConnectivityChanged {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  SessionConnectivityState from = 5;
+  SessionConnectivityState to = 6;
+}
+
+message SessionActivityChanged {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  SessionActivityState from = 5;
+  SessionActivityState to = 6;
+}
+
+message SessionRelabeled {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  string project = 5;
+  string cwd = 6;
+  string name = 7;
+}

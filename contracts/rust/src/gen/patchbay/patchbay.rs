@@ -699,6 +699,113 @@ pub struct ViewRevision {
     #[prost(message, optional, tag = "2")]
     pub revision_lsn: ::core::option::Option<Lsn>,
 }
+/// A durable session-state delta event. One event per mutation kind. The payload
+/// for StoredEventKind::SessionState. The core writes these; the SessionRegistry
+/// projection folds them into in-memory state. Mirrors acceptance's CommandTransition.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionStateEvent {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6")]
+    pub mutation: ::core::option::Option<session_state_event::Mutation>,
+}
+/// Nested message and enum types in `SessionStateEvent`.
+pub mod session_state_event {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Mutation {
+        #[prost(message, tag = "2")]
+        Registered(super::SessionRegistered),
+        #[prost(message, tag = "3")]
+        GenerationBumped(super::SessionGenerationBumped),
+        #[prost(message, tag = "4")]
+        ConnectivityChanged(super::SessionConnectivityChanged),
+        #[prost(message, tag = "5")]
+        ActivityChanged(super::SessionActivityChanged),
+        #[prost(message, tag = "6")]
+        Relabeled(super::SessionRelabeled),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionRegistered {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "5")]
+    pub initial_state: ::core::option::Option<SessionState>,
+    #[prost(string, tag = "6")]
+    pub project: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionGenerationBumped {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub from_generation: ::core::option::Option<Generation>,
+    /// The prior generation is tombstoned at this event's LSN. The tombstone
+    /// fact (generation N existed, superseded at LSN X) is retained indefinitely.
+    #[prost(message, optional, tag = "5")]
+    pub to_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionConnectivityChanged {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
+    pub from: i32,
+    #[prost(enumeration = "SessionConnectivityState", tag = "6")]
+    pub to: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionActivityChanged {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "SessionActivityState", tag = "5")]
+    pub from: i32,
+    #[prost(enumeration = "SessionActivityState", tag = "6")]
+    pub to: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionRelabeled {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(string, tag = "5")]
+    pub project: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub name: ::prost::alloc::string::String,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SessionConnectivityState {

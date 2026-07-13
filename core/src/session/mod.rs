@@ -7,8 +7,12 @@
 
 use patchbay_contracts::patchbay::Generation;
 
+pub mod events;
+pub mod registry;
 pub mod state;
 
+pub use events::SessionStateEvent;
+pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,
     SessionIdentity,

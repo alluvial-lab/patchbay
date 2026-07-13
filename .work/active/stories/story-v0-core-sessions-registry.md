@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-sessions-registry
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine]
@@ -50,3 +50,11 @@ See `feature-v0-core-sessions.md` Unit 2 for exact signatures and the full proto
 - Depends on story 1 (state machine + identity + error type).
 - The proto regeneration is part of this story — the registry cannot compile without the generated `SessionStateEvent` bindings.
 - Do NOT implement the writer (ingest) or replay here — only the event shape and the projection fold.
+
+## Implementation notes
+
+- Files changed: `contracts/proto/patchbay/sessions.proto`, generated Rust/TypeScript contract bindings, `core/src/session/events.rs`, `core/src/session/registry.rs`, and `core/src/session/mod.rs`.
+- Tests added: `core/tests/sessions_registry.rs` covers registration, every mutation fold, generation tombstoning and resolution, full-prefix re-delivery idempotence, invalid connectivity/activity transitions, and unrelated-event filtering.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `cargo build -p patchbay-core`, `cargo test -p patchbay-core`, and strict `cargo clippy -p patchbay-core --tests -- -D warnings` pass with `CARGO_HOME=/tmp/cargo-home`.
