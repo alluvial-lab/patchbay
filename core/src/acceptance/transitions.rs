@@ -2,6 +2,8 @@
 
 use patchbay_contracts::patchbay::{CommandTransition, FailureCode, OperationState};
 
+use crate::storage::StorageError;
+
 use super::{CommandRecord, OperationStateExt};
 
 /// Errors detected while constructing or folding acceptance state.
@@ -14,6 +16,14 @@ pub enum AcceptanceError {
     /// The event sequence violates its encoded state or the protocol adjacency.
     #[error("corrupt command log: {0}")]
     CorruptLog(String),
+
+    /// A target scope cannot be projected to a canonical idempotency key.
+    #[error("invalid target scope: {0}")]
+    InvalidTargetScope(String),
+
+    /// The durable storage boundary failed outside normal dedup reconciliation.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 /// Return whether the protocol permits a command transition from `from` to
