@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-sessions-ingest
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine, story-v0-core-sessions-registry]
@@ -50,3 +50,11 @@ See `feature-v0-core-sessions.md` Unit 3 for exact signatures. Key points:
 - Depends on stories 1 (state machine) and 2 (registry + events).
 - This is the writer pattern (Q4=b). The decisive precedent is `ingest_observation` in `core/src/acceptance/observation.rs` — read it before implementing.
 - `SessionReport` is the sessions analog of `Observation`. The adapter reports raw state; the core derives the transition. This keeps "the core tombstones the prior generation" honest.
+
+## Implementation notes
+
+- Added `core/src/session/ingest.rs` with the report/result types, the static-dispatch `SessionLookup` read port, its `SessionRegistry` implementation, and the validate → lookup → derive → append → return writer flow.
+- Generation supersession appends one `SessionGenerationBumped` event; both result identifiers intentionally name that same committed event. Equal-generation reports emit at most one prioritized axis/metadata delta, and lower generations or invalid transitions append nothing.
+- Mirrored acceptance's actual warm-path boundary: `ingest_observation` does not mutate `CommandIndex`, so session ingestion likewise returns after the durable append. The caller re-reads/observes the committed event to keep `SessionRegistry` warm, preserving durability-first ordering.
+- Added `core/tests/sessions_ingest.rs` covering registration, one-event generation bump plus tombstone folding, connectivity/activity/relabel deltas, idempotent no-change, stale-generation rejection, and pre-write invalid-transition rejection.
+- Verification passed: `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core` and `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core`.

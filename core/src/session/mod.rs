@@ -8,10 +8,12 @@
 use patchbay_contracts::patchbay::Generation;
 
 pub mod events;
+pub mod ingest;
 pub mod registry;
 pub mod state;
 
 pub use events::SessionStateEvent;
+pub use ingest::{ingest_session_report, IngestResult, SessionLookup, SessionReport};
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,
