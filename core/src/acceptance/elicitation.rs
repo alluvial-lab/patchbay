@@ -8,14 +8,33 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AuthorityDomainId, CommandTransition, Elicitation, ElicitationId,
-    ElicitationState, Lsn, OperationState, StoredEventKind, TypedCorrelation,
+    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId,
+    ElicitationState, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
+    TypedCorrelation,
 };
 use prost::Message;
 
 use crate::storage::{RecordedEvent, Storage};
 
-use super::{AcceptanceError, OperationStateExt};
+use super::AcceptanceError;
+
+/// Return whether an `OperationState` is terminal in the command lifecycle
+/// registry (`docs/PROTOCOL.md` § Command lifecycle state). This mirrors
+/// `acceptance::is_terminal` — the terminal-state set is a protocol fact, not
+/// acceptance-owned. The elicitation layer needs it to detect terminal
+/// response-Operation transitions without depending on the acceptance module.
+#[must_use]
+const fn operation_state_is_terminal(state: OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Completed
+            | OperationState::Rejected
+            | OperationState::Failed
+            | OperationState::Expired
+            | OperationState::Cancelled
+            | OperationState::Superseded
+    )
+}
 
 /// The current state of one Elicitation slot.
 ///
@@ -38,6 +57,10 @@ pub struct ElicitationRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ElicitationSlotLayer {
     slots: HashMap<ElicitationId, ElicitationRecord>,
+    /// command_id → OperationKind, built from OPERATION events. Used to confirm
+    /// a correlated terminal transition belongs to a response Operation
+    /// (ApprovalResponse / ElicitationResponse) before terminalizing a slot.
+    command_kinds: HashMap<CommandId, OperationKind>,
 }
 
 impl ElicitationSlotLayer {
@@ -62,9 +85,9 @@ impl ElicitationSlotLayer {
 
         match kind {
             StoredEventKind::Elicitation => self.observe_elicitation(event),
+            StoredEventKind::Operation => self.observe_operation(event),
             StoredEventKind::CommandTransition => self.observe_command_transition(event),
-            StoredEventKind::Operation
-            | StoredEventKind::Observation
+            StoredEventKind::Observation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
@@ -152,6 +175,32 @@ impl ElicitationSlotLayer {
         Ok(())
     }
 
+    /// Fold an OPERATION event: record its command_id → OperationKind so that
+    /// later correlated transitions can be confirmed as response Operations.
+    fn observe_operation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let operation = Operation::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AcceptanceError::CorruptRecord(format!(
+                "cannot decode operation at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        let command_id = operation.command_id.ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "operation at LSN {event_lsn} is missing command_id"
+            ))
+        })?;
+        let kind = OperationKind::try_from(operation.kind).map_err(|_| {
+            AcceptanceError::CorruptRecord(format!(
+                "operation for command {:?} at LSN {event_lsn} has unknown kind {}",
+                command_id, operation.kind
+            ))
+        })?;
+        // First-write-wins: a duplicate OPERATION event (should not happen
+        // with dedup, but the log is authoritative) is idempotent here.
+        self.command_kinds.entry(command_id).or_insert(kind);
+        Ok(())
+    }
+
     fn observe_command_transition(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
         let transition =
@@ -171,16 +220,41 @@ impl ElicitationSlotLayer {
                 transition.to_state
             ))
         })?;
-        if !to_state.is_terminal() {
+        if !operation_state_is_terminal(to_state) {
             return Ok(());
         }
 
-        self.terminalize_slot(&elicitation_id, event_lsn)
+        // Confirm this transition belongs to a response Operation. A regular
+        // command that happens to carry an ElicitationId correlation must NOT
+        // terminalize the slot. Look up the originating Operation's kind.
+        let command_id = transition.command_id.as_ref().ok_or_else(|| {
+            AcceptanceError::CorruptLog(format!(
+                "transition at LSN {event_lsn} correlates to elicitation {:?} but has no command_id",
+                elicitation_id
+            ))
+        })?;
+        let kind = self.command_kinds.get(command_id).copied().ok_or_else(|| {
+            AcceptanceError::CorruptLog(format!(
+                "transition at LSN {event_lsn} correlates to elicitation {:?} but its command {:?} was not seen as an OPERATION event",
+                elicitation_id, command_id
+            ))
+        })?;
+        if !matches!(
+            kind,
+            OperationKind::ApprovalResponse | OperationKind::ElicitationResponse
+        ) {
+            // Not a response Operation — a regular command carrying an
+            // ElicitationId correlation. Do not terminalize the slot.
+            return Ok(());
+        }
+
+        self.terminalize_slot(&elicitation_id, to_state, event_lsn)
     }
 
     fn terminalize_slot(
         &mut self,
         elicitation_id: &ElicitationId,
+        response_state: OperationState,
         event_lsn: u64,
     ) -> Result<(), AcceptanceError> {
         let slot = self.slots.get_mut(elicitation_id).ok_or_else(|| {
@@ -196,11 +270,16 @@ impl ElicitationSlotLayer {
             return Ok(());
         }
 
-        // v0.1.0 maps any successfully terminal response-operation lifecycle to
-        // Answered. Distinguishing explicit denial as Declined belongs to the
-        // response-contract validation layer rather than failure-code guessing.
-        slot.state = ElicitationState::Answered;
-        slot.terminal_lsn = Some(event_lsn);
+        // Only a Completed response terminalizes the slot as Answered. A
+        // Rejected/Failed/Expired/Cancelled/Superseded response means the
+        // response itself failed — the slot stays pending (the protocol allows
+        // another surface to answer). Mapping denial (Rejected) to Declined is
+        // a response-contract validation concern, deferred to v0.x.
+        if response_state == OperationState::Completed {
+            slot.state = ElicitationState::Answered;
+            slot.terminal_lsn = Some(event_lsn);
+        }
+        // Non-Completed terminals leave the slot non-terminal.
         Ok(())
     }
 }

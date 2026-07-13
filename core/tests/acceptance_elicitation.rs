@@ -1,7 +1,7 @@
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId,
-    ElicitationState, FailureCode, Lsn, OperationState, StoredEventKind, StoredEventPayload,
-    TypedCorrelation,
+    ElicitationState, FailureCode, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
+    StoredEventPayload, TypedCorrelation,
 };
 use patchbay_core::acceptance::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlotLayer};
 use patchbay_core::storage::{RecordedEvent, RusqliteStorage, Storage};
@@ -47,6 +47,33 @@ fn transition(command: &str, to_state: OperationState) -> CommandTransition {
     }
 }
 
+/// A response Operation (ElicitationResponse kind) correlated to the test Elicitation.
+fn response_operation(command: &str) -> Operation {
+    Operation {
+        command_id: Some(CommandId {
+            value: command.to_owned(),
+        }),
+        authority_domain_id: Some(authority_domain()),
+        kind: OperationKind::ElicitationResponse as i32,
+        correlations: vec![elicitation_correlation()],
+        ..Operation::default()
+    }
+}
+
+/// A non-response Operation (Instruct kind) that happens to carry an
+/// ElicitationId correlation — must NOT terminalize the slot.
+fn non_response_operation(command: &str) -> Operation {
+    Operation {
+        command_id: Some(CommandId {
+            value: command.to_owned(),
+        }),
+        authority_domain_id: Some(authority_domain()),
+        kind: OperationKind::Instruct as i32,
+        correlations: vec![elicitation_correlation()],
+        ..Operation::default()
+    }
+}
+
 fn event_payload<M: Message>(kind: StoredEventKind, message: &M) -> StoredEventPayload {
     StoredEventPayload {
         kind: kind as i32,
@@ -87,6 +114,29 @@ async fn append_transition(
         .value
 }
 
+async fn append_operation(storage: &RusqliteStorage, operation: &Operation) -> u64 {
+    storage
+        .append(
+            &authority_domain(),
+            event_payload(StoredEventKind::Operation, operation),
+        )
+        .await
+        .unwrap()
+        .lsn
+        .unwrap()
+        .value
+}
+
+/// Append a response OPERATION event + its COMMAND_TRANSITION event.
+async fn append_response_op_and_transition(
+    storage: &RusqliteStorage,
+    command: &str,
+    to_state: OperationState,
+) -> u64 {
+    append_operation(storage, &response_operation(command)).await;
+    append_transition(storage, command, to_state).await
+}
+
 async fn all_events(storage: &RusqliteStorage) -> Vec<RecordedEvent> {
     storage
         .read_after(&authority_domain(), Lsn { value: 0 })
@@ -103,12 +153,13 @@ fn assert_answered(record: &ElicitationRecord, terminal_lsn: u64) {
 #[tokio::test]
 async fn terminal_response_transition_terminalizes_the_correlated_slot() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    assert_eq!(
-        append_elicitation(&storage, ElicitationState::Opened).await,
-        1
-    );
-    let terminal_lsn =
-        append_transition(&storage, "response-command-1", OperationState::Completed).await;
+    append_elicitation(&storage, ElicitationState::Opened).await;
+    let terminal_lsn = append_response_op_and_transition(
+        &storage,
+        "response-command-1",
+        OperationState::Completed,
+    )
+    .await;
 
     let layer = rebuild_slots_from_log(&storage, &authority_domain())
         .await
@@ -124,8 +175,14 @@ async fn terminal_response_transition_terminalizes_the_correlated_slot() {
 async fn first_terminal_response_lsn_wins_and_later_response_is_stale() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     append_elicitation(&storage, ElicitationState::Opened).await;
-    let winning_lsn =
-        append_transition(&storage, "response-command-1", OperationState::Completed).await;
+    let winning_lsn = append_response_op_and_transition(
+        &storage,
+        "response-command-1",
+        OperationState::Completed,
+    )
+    .await;
+    // A second response (different command) for the same Elicitation.
+    append_operation(&storage, &response_operation("response-command-2")).await;
     let stale_lsn = append_transition(&storage, "response-command-2", OperationState::Failed).await;
     assert!(winning_lsn < stale_lsn);
 
@@ -145,6 +202,7 @@ async fn replay_and_live_log_consumer_reconstruct_identical_slot_state() {
     append_elicitation(&storage, ElicitationState::Opened).await;
     // A response operation may advance through non-terminal command states;
     // only its terminal transition closes the Elicitation slot.
+    append_operation(&storage, &response_operation("response-command-1")).await;
     append_transition(&storage, "response-command-1", OperationState::Running).await;
     let terminal_lsn =
         append_transition(&storage, "response-command-1", OperationState::Completed).await;
@@ -168,8 +226,12 @@ async fn replay_and_live_log_consumer_reconstruct_identical_slot_state() {
 async fn reobserving_the_same_events_is_idempotent() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     append_elicitation(&storage, ElicitationState::Opened).await;
-    let terminal_lsn =
-        append_transition(&storage, "response-command-1", OperationState::Completed).await;
+    let terminal_lsn = append_response_op_and_transition(
+        &storage,
+        "response-command-1",
+        OperationState::Completed,
+    )
+    .await;
     let events = all_events(&storage).await;
 
     let mut layer = ElicitationSlotLayer::new();
@@ -190,6 +252,7 @@ async fn reobserving_the_same_events_is_idempotent() {
 async fn non_terminal_response_transition_leaves_the_slot_open() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     append_elicitation(&storage, ElicitationState::Opened).await;
+    append_operation(&storage, &response_operation("response-command-1")).await;
     append_transition(&storage, "response-command-1", OperationState::Running).await;
 
     let layer = rebuild_slots_from_log(&storage, &authority_domain())
@@ -212,5 +275,44 @@ async fn opening_event_uses_the_generated_elicitation_state() {
     let slot = layer.get_slot(&elicitation_id()).unwrap();
 
     assert_eq!(slot.state, ElicitationState::Pending);
+    assert_eq!(slot.terminal_lsn, None);
+}
+
+#[tokio::test]
+async fn non_response_command_does_not_terminalize_the_slot() {
+    // A regular command (Instruct) that happens to carry an ElicitationId
+    // correlation must NOT terminalize the slot. Only response Operations
+    // (ApprovalResponse / ElicitationResponse) do.
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    append_elicitation(&storage, ElicitationState::Opened).await;
+    append_operation(&storage, &non_response_operation("regular-command-1")).await;
+    append_transition(&storage, "regular-command-1", OperationState::Completed).await;
+
+    let layer = rebuild_slots_from_log(&storage, &authority_domain())
+        .await
+        .unwrap();
+    let slot = layer.get_slot(&elicitation_id()).unwrap();
+
+    // The slot stays non-terminal — the Completed transition was for a
+    // non-response command, not a response Operation.
+    assert_eq!(slot.state, ElicitationState::Opened);
+    assert_eq!(slot.terminal_lsn, None);
+}
+
+#[tokio::test]
+async fn failed_response_leaves_the_slot_pending() {
+    // A response Operation that fails (Rejected/Failed) does NOT answer the
+    // Elicitation. The slot stays pending — another surface may answer.
+    // (Mapping denial/Rejected to Declined is a v0.x response-contract concern.)
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    append_elicitation(&storage, ElicitationState::Opened).await;
+    append_response_op_and_transition(&storage, "response-command-1", OperationState::Failed).await;
+
+    let layer = rebuild_slots_from_log(&storage, &authority_domain())
+        .await
+        .unwrap();
+    let slot = layer.get_slot(&elicitation_id()).unwrap();
+
+    assert_eq!(slot.state, ElicitationState::Opened);
     assert_eq!(slot.terminal_lsn, None);
 }
