@@ -1,12 +1,12 @@
 ---
 id: story-v0-core-acceptance-replay
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-acceptance
 depends_on: [story-v0-core-acceptance-state-machine, story-v0-core-acceptance-pipeline]
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-13
 gate_origin: null
 release_binding: null
 ---
@@ -39,3 +39,11 @@ Implement the `CommandIndex` (in-memory command record map, the hot lookup path)
 ## Design reference
 
 See `feature-v0-core-acceptance.md` § "Implementation Units" → "Unit 4".
+
+## Implementation notes
+
+- Files changed: `core/src/acceptance/index.rs`, `core/src/acceptance/replay.rs`, `core/src/acceptance/mod.rs`, `core/tests/acceptance_replay.rs`.
+- Tests added: integration coverage for full operation/transition reconstruction, deterministic replay, primary and secondary hash lookups, unknown-command and `from_state` corruption, duplicate command detection, Observation no-op behavior, and snapshot-prefix plus tail recovery.
+- Discrepancies from design: implemented a private, versioned Protobuf snapshot payload with deterministic command ordering instead of deferring snapshot deserialization. This makes checkpoint recovery genuinely restore the prefix and replay only events after the checkpoint LSN; malformed or unsupported snapshot payloads fail fast.
+- Dispatch: direct-read only; the integration surface was bounded to the named acceptance and storage modules, while the observation unit had independent parallel write ownership.
+- Adjacent issues parked: none.
