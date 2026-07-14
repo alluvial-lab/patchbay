@@ -131,7 +131,7 @@ async fn ingest_and_observe(
     cursor: &mut u64,
     report: SessionReport,
 ) -> Result<IngestResult, SessionError> {
-    let result = ingest_session_report(storage, &*registry, report).await?;
+    let result = ingest_session_report(storage, registry, report).await?;
     if let Some(appended_lsn) = event_lsn(&result) {
         let events = storage
             .read_after(&domain(), Lsn { value: *cursor })

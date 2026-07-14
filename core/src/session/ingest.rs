@@ -11,7 +11,7 @@ use patchbay_contracts::patchbay::{
     SessionGenerationBumped, SessionRegistered, SessionRelabeled, SessionState,
 };
 
-use crate::storage::Storage;
+use crate::storage::{RecordedEvent, Storage};
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition, events, SessionError,
@@ -73,9 +73,9 @@ pub enum IngestResult {
 
 /// Read access to the live session projection used by ingestion.
 ///
-/// The durable event log remains authoritative. This port exposes only the
-/// hot-path state needed to derive the next delta and uses static dispatch,
-/// matching acceptance's `CommandStateLookup`.
+/// The durable event log remains authoritative. This port exposes the hot-path
+/// state needed to derive the next delta and uses static dispatch, matching
+/// acceptance's `CommandStateLookup`.
 pub trait SessionLookup: Send + Sync {
     fn current_session(
         &self,
@@ -83,6 +83,15 @@ pub trait SessionLookup: Send + Sync {
         deployment_scope: &str,
         runtime_session_id: &RuntimeSessionId,
     ) -> impl std::future::Future<Output = Option<SessionRecord>> + Send;
+}
+
+/// A session projection that can fold a committed event before the next delta
+/// is derived.
+///
+/// Multi-delta ingestion requires this write-side capability: a durable prefix
+/// must be reflected in the hot projection even when a later append fails.
+pub trait SessionProjection: SessionLookup {
+    fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError>;
 }
 
 impl SessionLookup for SessionRegistry {
@@ -97,26 +106,35 @@ impl SessionLookup for SessionRegistry {
     }
 }
 
+impl SessionProjection for SessionRegistry {
+    fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
+        SessionRegistry::observe(self, event)
+    }
+}
+
 /// Ingest an adapter-reported session observation.
 ///
 /// The ordering is protocol-significant: validate the boundary, read the live
-/// projection, validate the implied transition, durably append the delta, and
-/// only then return. Callers keep the in-memory registry warm by observing the
-/// committed event after this function succeeds; this writer never mutates the
-/// projection before durability is established.
+/// projection, validate the implied transition, then durably append the delta.
+/// For a multi-delta equal-generation report, every committed delta is folded
+/// into the hot projection before the next delta is derived. This writer never
+/// mutates the projection before durability is established.
 ///
 /// Equal-generation deltas are validated together, then appended in
-/// connectivity, activity, metadata order. Storage has no atomic batch port:
-/// if a later append fails, earlier successful appends remain durable and this
-/// function returns the later error.
+/// connectivity, activity, metadata order. Storage has no atomic batch port,
+/// so every committed prefix of a multi-delta report is immediately folded
+/// into the projection. If a later append fails, a retry derives only the
+/// remaining deltas. If folding a committed event fails, the durable log is
+/// unchanged but the projection must be rebuilt from that log before reuse.
+/// Single-delta outcomes retain the existing caller-managed warm path.
 pub async fn ingest_session_report<S, L>(
     storage: &S,
-    session_lookup: &L,
+    session_lookup: &mut L,
     report: SessionReport,
 ) -> Result<IngestResult, SessionError>
 where
     S: Storage,
-    L: SessionLookup,
+    L: SessionProjection,
 {
     validate_report(&report)?;
     let authority_domain_id = report.authority_domain_id.clone();
@@ -210,15 +228,77 @@ where
                 return Ok(IngestResult::NoChange);
             }
 
-            let mut event_ids = Vec::with_capacity(change_count);
+            if change_count > 1 {
+                let mut event_ids = Vec::with_capacity(change_count);
+                let mut current = current;
+
+                if report.connectivity != current.state.connectivity() {
+                    let event = events::connectivity_changed(
+                        authority_domain_id.clone(),
+                        SessionConnectivityChanged {
+                            adapter_id: Some(report.adapter_id.clone()),
+                            deployment_scope: report.deployment_scope.clone(),
+                            runtime_session_id: Some(report.runtime_session_id.clone()),
+                            session_generation: Some(report.session_generation),
+                            from: current.state.connectivity,
+                            to: report.connectivity as i32,
+                        },
+                    );
+                    event_ids.push(
+                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                            .await?,
+                    );
+                    current = refreshed_current(session_lookup, &report).await?;
+                }
+
+                if report.activity != current.state.activity() {
+                    let event = events::activity_changed(
+                        authority_domain_id.clone(),
+                        SessionActivityChanged {
+                            adapter_id: Some(report.adapter_id.clone()),
+                            deployment_scope: report.deployment_scope.clone(),
+                            runtime_session_id: Some(report.runtime_session_id.clone()),
+                            session_generation: Some(report.session_generation),
+                            from: current.state.activity,
+                            to: report.activity as i32,
+                        },
+                    );
+                    event_ids.push(
+                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                            .await?,
+                    );
+                    current = refreshed_current(session_lookup, &report).await?;
+                }
+
+                if metadata_changed(&current, &report) {
+                    let event = events::relabeled(
+                        authority_domain_id.clone(),
+                        SessionRelabeled {
+                            adapter_id: Some(report.adapter_id),
+                            deployment_scope: report.deployment_scope,
+                            runtime_session_id: Some(report.runtime_session_id),
+                            session_generation: Some(report.session_generation),
+                            project: report.project,
+                            cwd: report.cwd,
+                            name: report.name,
+                        },
+                    );
+                    event_ids.push(
+                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                            .await?,
+                    );
+                }
+
+                return Ok(IngestResult::DeltasApplied { event_ids });
+            }
 
             if connectivity_changed {
                 let event = events::connectivity_changed(
                     authority_domain_id.clone(),
                     SessionConnectivityChanged {
-                        adapter_id: Some(report.adapter_id.clone()),
-                        deployment_scope: report.deployment_scope.clone(),
-                        runtime_session_id: Some(report.runtime_session_id.clone()),
+                        adapter_id: Some(report.adapter_id),
+                        deployment_scope: report.deployment_scope,
+                        runtime_session_id: Some(report.runtime_session_id),
                         session_generation: Some(report.session_generation),
                         from: current_connectivity as i32,
                         to: report.connectivity as i32,
@@ -228,16 +308,20 @@ where
                     .append(&authority_domain_id, events::encode(&event))
                     .await?;
                 validate_event_id(&event_id, &authority_domain_id)?;
-                event_ids.push(event_id);
+                return Ok(IngestResult::ConnectivityChanged {
+                    event_id,
+                    from: current_connectivity,
+                    to: report.connectivity,
+                });
             }
 
             if activity_changed {
                 let event = events::activity_changed(
                     authority_domain_id.clone(),
                     SessionActivityChanged {
-                        adapter_id: Some(report.adapter_id.clone()),
-                        deployment_scope: report.deployment_scope.clone(),
-                        runtime_session_id: Some(report.runtime_session_id.clone()),
+                        adapter_id: Some(report.adapter_id),
+                        deployment_scope: report.deployment_scope,
+                        runtime_session_id: Some(report.runtime_session_id),
                         session_generation: Some(report.session_generation),
                         from: current_activity as i32,
                         to: report.activity as i32,
@@ -247,55 +331,79 @@ where
                     .append(&authority_domain_id, events::encode(&event))
                     .await?;
                 validate_event_id(&event_id, &authority_domain_id)?;
-                event_ids.push(event_id);
-            }
-
-            if relabeled {
-                let event = events::relabeled(
-                    authority_domain_id.clone(),
-                    SessionRelabeled {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
-                        session_generation: Some(report.session_generation),
-                        project: report.project,
-                        cwd: report.cwd,
-                        name: report.name,
-                    },
-                );
-                let event_id = storage
-                    .append(&authority_domain_id, events::encode(&event))
-                    .await?;
-                validate_event_id(&event_id, &authority_domain_id)?;
-                event_ids.push(event_id);
-            }
-
-            if change_count > 1 {
-                return Ok(IngestResult::DeltasApplied { event_ids });
-            }
-
-            let event_id = event_ids.pop().expect("one validated delta was appended");
-            if connectivity_changed {
-                Ok(IngestResult::ConnectivityChanged {
-                    event_id,
-                    from: current_connectivity,
-                    to: report.connectivity,
-                })
-            } else if activity_changed {
-                Ok(IngestResult::ActivityChanged {
+                return Ok(IngestResult::ActivityChanged {
                     event_id,
                     from: current_activity,
                     to: report.activity,
-                })
-            } else {
-                Ok(IngestResult::Relabeled { event_id })
+                });
             }
+
+            let event = events::relabeled(
+                authority_domain_id.clone(),
+                SessionRelabeled {
+                    adapter_id: Some(report.adapter_id),
+                    deployment_scope: report.deployment_scope,
+                    runtime_session_id: Some(report.runtime_session_id),
+                    session_generation: Some(report.session_generation),
+                    project: report.project,
+                    cwd: report.cwd,
+                    name: report.name,
+                },
+            );
+            let event_id = storage
+                .append(&authority_domain_id, events::encode(&event))
+                .await?;
+            validate_event_id(&event_id, &authority_domain_id)?;
+            Ok(IngestResult::Relabeled { event_id })
         }
         std::cmp::Ordering::Less => Err(SessionError::StaleGeneration {
             live: live_generation,
             reported: report.session_generation,
         }),
     }
+}
+
+async fn append_and_warm<S, L>(
+    storage: &S,
+    session_lookup: &mut L,
+    authority_domain_id: &AuthorityDomainId,
+    event: events::SessionStateEvent,
+) -> Result<EventId, SessionError>
+where
+    S: Storage,
+    L: SessionProjection,
+{
+    let payload = events::encode(&event);
+    let event_id = storage.append(authority_domain_id, payload.clone()).await?;
+    validate_event_id(&event_id, authority_domain_id)?;
+
+    // The append is durable before this fold. A fold error therefore leaves a
+    // committed event and an unusable hot projection; propagate the corruption
+    // so callers rebuild from the authoritative log before reusing it.
+    session_lookup.observe(&RecordedEvent {
+        event_id: event_id.clone(),
+        payload,
+    })?;
+    Ok(event_id)
+}
+
+async fn refreshed_current<L: SessionLookup>(
+    session_lookup: &L,
+    report: &SessionReport,
+) -> Result<SessionRecord, SessionError> {
+    session_lookup
+        .current_session(
+            &report.adapter_id,
+            &report.deployment_scope,
+            &report.runtime_session_id,
+        )
+        .await
+        .ok_or_else(|| {
+            SessionError::CorruptLog(
+                "session projection lost the live record after folding a committed delta"
+                    .to_owned(),
+            )
+        })
 }
 
 fn validate_report(report: &SessionReport) -> Result<(), SessionError> {

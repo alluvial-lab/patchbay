@@ -1,13 +1,19 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use patchbay_contracts::patchbay::{
-    session_state_event, AdapterId, AuthorityDomainId, Generation, Lsn, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionStateEvent, StoredEventKind,
+    session_state_event, AdapterId, AuthorityDomainId, EventId, Generation, IdempotencyKey, Lsn,
+    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionStateEvent,
+    StoredEventKind, StoredEventPayload,
 };
 use patchbay_core::{
     session::{
         ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRegistry,
         SessionReport,
     },
-    storage::{RecordedEvent, RusqliteStorage, Storage},
+    storage::{
+        DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
+        TargetKey,
+    },
 };
 use prost::Message;
 
@@ -48,7 +54,7 @@ fn report(generation_value: u64) -> SessionReport {
     }
 }
 
-async fn events(storage: &RusqliteStorage) -> Vec<RecordedEvent> {
+async fn events<S: Storage>(storage: &S) -> Vec<RecordedEvent> {
     storage
         .read_after(&domain(), Lsn { value: 0 })
         .await
@@ -63,12 +69,12 @@ fn decode(event: &RecordedEvent) -> SessionStateEvent {
     SessionStateEvent::decode(event.payload.payload.as_slice()).unwrap()
 }
 
-async fn register(
-    storage: &RusqliteStorage,
+async fn register<S: Storage>(
+    storage: &S,
     registry: &mut SessionRegistry,
     initial_report: SessionReport,
 ) {
-    let result = ingest_session_report(storage, registry, initial_report)
+    let result = ingest_session_report(storage, &mut *registry, initial_report)
         .await
         .unwrap();
     assert!(matches!(result, IngestResult::Registered { .. }));
@@ -76,12 +82,99 @@ async fn register(
     registry.observe(committed.last().unwrap()).unwrap();
 }
 
+/// A storage adapter that fails a configured append before delegating it.
+///
+/// The successful appends remain in the wrapped durable log, reproducing a
+/// transient failure between sequential session deltas.
+struct FailOnNthAppendStorage {
+    inner: RusqliteStorage,
+    append_count: AtomicUsize,
+    fail_on_append: AtomicUsize,
+}
+
+impl FailOnNthAppendStorage {
+    fn new() -> Self {
+        Self {
+            inner: RusqliteStorage::open_in_memory().unwrap(),
+            append_count: AtomicUsize::new(0),
+            fail_on_append: AtomicUsize::new(0),
+        }
+    }
+
+    fn fail_on_append(&self, nth: usize) {
+        self.append_count.store(0, Ordering::SeqCst);
+        self.fail_on_append.store(nth, Ordering::SeqCst);
+    }
+
+    fn recover(&self) {
+        self.fail_on_append.store(0, Ordering::SeqCst);
+    }
+}
+
+impl Storage for FailOnNthAppendStorage {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        let append_number = self.append_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if append_number == self.fail_on_append.load(Ordering::SeqCst) {
+            return Err(StorageError::WriteFailed {
+                message: "injected append failure".to_owned(),
+                retryable: true,
+            });
+        }
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+}
+
 #[tokio::test]
 async fn first_report_writes_registration() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new();
 
-    let result = ingest_session_report(&storage, &registry, report(1))
+    let result = ingest_session_report(&storage, &mut registry, report(1))
         .await
         .unwrap();
 
@@ -126,7 +219,7 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     replacement.project = "new-project".to_owned();
     replacement.cwd = "/work/new".to_owned();
     replacement.name = "new-name".to_owned();
-    let result = ingest_session_report(&storage, &registry, replacement)
+    let result = ingest_session_report(&storage, &mut registry, replacement)
         .await
         .unwrap();
 
@@ -182,7 +275,7 @@ async fn equal_generation_connectivity_change_writes_delta() {
     let mut changed = report(1);
     changed.connectivity = SessionConnectivityState::Live;
 
-    let result = ingest_session_report(&storage, &registry, changed)
+    let result = ingest_session_report(&storage, &mut registry, changed)
         .await
         .unwrap();
 
@@ -210,7 +303,7 @@ async fn equal_generation_activity_change_writes_delta() {
     let mut changed = report(1);
     changed.activity = SessionActivityState::Working;
 
-    let result = ingest_session_report(&storage, &registry, changed)
+    let result = ingest_session_report(&storage, &mut registry, changed)
         .await
         .unwrap();
 
@@ -240,7 +333,7 @@ async fn equal_generation_metadata_change_writes_relabel() {
     changed.cwd = "/work/patchbay-next".to_owned();
     changed.name = "replacement".to_owned();
 
-    let result = ingest_session_report(&storage, &registry, changed)
+    let result = ingest_session_report(&storage, &mut registry, changed)
         .await
         .unwrap();
 
@@ -262,7 +355,7 @@ async fn identical_equal_generation_report_is_idempotent() {
     let mut registry = SessionRegistry::new();
     register(&storage, &mut registry, report(1)).await;
 
-    let result = ingest_session_report(&storage, &registry, report(1))
+    let result = ingest_session_report(&storage, &mut registry, report(1))
         .await
         .unwrap();
 
@@ -276,7 +369,7 @@ async fn lower_generation_is_rejected_without_writing() {
     let mut registry = SessionRegistry::new();
     register(&storage, &mut registry, report(2)).await;
 
-    let error = ingest_session_report(&storage, &registry, report(1))
+    let error = ingest_session_report(&storage, &mut registry, report(1))
         .await
         .unwrap_err();
 
@@ -309,7 +402,7 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
     changed.cwd = "/work/patchbay-next".to_owned();
     changed.name = "replacement".to_owned();
 
-    let result = ingest_session_report(&storage, &registry, changed)
+    let result = ingest_session_report(&storage, &mut registry, changed)
         .await
         .unwrap();
     let IngestResult::DeltasApplied { event_ids } = result else {
@@ -344,9 +437,86 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
 }
 
 #[tokio::test]
+async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
+    let storage = FailOnNthAppendStorage::new();
+    let mut registry = SessionRegistry::new();
+    register(&storage, &mut registry, report(1)).await;
+
+    let mut changed = report(1);
+    changed.connectivity = SessionConnectivityState::Live;
+    changed.activity = SessionActivityState::Working;
+    changed.project = "patchbay-next".to_owned();
+    changed.cwd = "/work/patchbay-next".to_owned();
+    changed.name = "replacement".to_owned();
+
+    storage.fail_on_append(2);
+    let error = ingest_session_report(&storage, &mut registry, changed.clone())
+        .await
+        .expect_err("the injected second append must fail");
+    assert!(matches!(
+        error,
+        SessionError::Storage(StorageError::WriteFailed { .. })
+    ));
+
+    let partially_applied = registry
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .expect("the first committed delta must warm the hot projection");
+    assert_eq!(
+        partially_applied.state.connectivity(),
+        SessionConnectivityState::Live
+    );
+    assert_eq!(
+        partially_applied.state.activity(),
+        SessionActivityState::Unknown,
+        "the failed activity delta must not be projected"
+    );
+    assert_eq!(
+        events(&storage).await.len(),
+        2,
+        "only registration and connectivity persist"
+    );
+
+    storage.recover();
+    let retry = ingest_session_report(&storage, &mut registry, changed)
+        .await
+        .expect("retry must append only the remaining deltas");
+    let IngestResult::DeltasApplied { event_ids } = retry else {
+        panic!("retry must apply the remaining activity and metadata deltas");
+    };
+    assert_eq!(event_ids.len(), 2);
+
+    let committed = events(&storage).await;
+    assert_eq!(committed.len(), 4, "retry must not duplicate connectivity");
+    assert!(matches!(
+        decode(&committed[1]).mutation,
+        Some(session_state_event::Mutation::ConnectivityChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[2]).mutation,
+        Some(session_state_event::Mutation::ActivityChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[3]).mutation,
+        Some(session_state_event::Mutation::Relabeled(_))
+    ));
+
+    let rebuilt = rebuild_from_log(&storage, &domain())
+        .await
+        .expect("the partial-failure retry log must remain replayable");
+    let live = rebuilt
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .expect("replay must restore the live session");
+    assert_eq!(live.state.connectivity(), SessionConnectivityState::Live);
+    assert_eq!(live.state.activity(), SessionActivityState::Working);
+    assert_eq!(live.project, "patchbay-next");
+    assert_eq!(live.cwd, "/work/patchbay-next");
+    assert_eq!(live.name, "replacement");
+}
+
+#[tokio::test]
 async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_replay() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new();
 
     let mut empty_adapter = report(1);
     empty_adapter.adapter_id.value.clear();
@@ -360,7 +530,7 @@ async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_repla
         ("deployment_scope", empty_scope),
         ("runtime_session_id", empty_runtime),
     ] {
-        let error = ingest_session_report(&storage, &registry, invalid)
+        let error = ingest_session_report(&storage, &mut registry, invalid)
             .await
             .unwrap_err();
         assert!(
@@ -370,7 +540,7 @@ async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_repla
         assert!(events(&storage).await.is_empty());
     }
 
-    ingest_session_report(&storage, &registry, report(1))
+    ingest_session_report(&storage, &mut registry, report(1))
         .await
         .expect("a valid report must be accepted");
     let rebuilt = rebuild_from_log(&storage, &domain())
@@ -384,11 +554,11 @@ async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_repla
 #[tokio::test]
 async fn empty_authority_domain_is_rejected_before_lookup_or_write() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new();
     let mut invalid = report(1);
     invalid.authority_domain_id.value.clear();
 
-    let error = ingest_session_report(&storage, &registry, invalid)
+    let error = ingest_session_report(&storage, &mut registry, invalid)
         .await
         .unwrap_err();
 
@@ -408,7 +578,7 @@ async fn disallowed_axis_transition_is_rejected_before_writing() {
     let mut invalid = report(1);
     invalid.connectivity = SessionConnectivityState::Unknown;
 
-    let error = ingest_session_report(&storage, &registry, invalid)
+    let error = ingest_session_report(&storage, &mut registry, invalid)
         .await
         .unwrap_err();
 

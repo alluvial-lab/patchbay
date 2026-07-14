@@ -1,7 +1,7 @@
 ---
 id: story-fix-sessions-multi-delta-atomicity
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-fix-sessions-ingest-correctness]
@@ -61,3 +61,17 @@ B2 added a required `initial_state` field to `SessionGenerationBumped`. Wire-dec
 - The B1-B4 fixes are all confirmed RESOLVED by the same re-review; only this new blocker (B5) remains.
 - Depends on `story-fix-sessions-ingest-correctness` (the B3 fix that introduced this).
 - `CARGO_HOME=/tmp/cargo-home` for all cargo commands.
+
+## Implementation notes
+
+Implemented option **(a1)**. Multi-delta equal-generation ingestion now takes a mutable `SessionProjection`: after each successful durable append, it constructs the matching `RecordedEvent`, folds it into the registry, and re-reads the current record before deriving the next delta. Thus a second-append storage failure returns the storage error while leaving the registry aligned with the durable prefix; retry skips that prefix and appends only remaining deltas. A post-append projection-fold error is propagated as corruption, and callers must rebuild the projection from the authoritative log before reuse.
+
+Added `multi_delta_retry_after_partial_failure_warms_registry_and_replays`, using a second-append fault-injecting `Storage` wrapper. It verifies the first connectivity delta is projected after failure, retry emits only activity plus metadata, and `rebuild_from_log` succeeds without a duplicate delta. This test fails against the prior warm-at-end implementation.
+
+B2's generation-bump `initial_state` requirement is a documented pre-release reset boundary: pre-`06e6251` development logs are disposable and must be deleted, not migrated; a shipped release would require an explicit migration.
+
+Verification passed:
+
+- `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core`
+- `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core` (all tests)
+- `CARGO_HOME=/tmp/cargo-home cargo clippy -p patchbay-core --all-targets`

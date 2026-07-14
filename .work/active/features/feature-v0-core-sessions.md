@@ -892,3 +892,9 @@ Fresh-context cross-model re-review (openai-codex/gpt-5.6-sol) of the fix diff (
 - Pre-fix generation-bump events become unreplayable (B2 made `initial_state` required). Pre-release, no production logs — documented reset boundary, not a migration. Noted in the fix story.
 
 **Notes**: The regression tests for B1-B4 are non-vacuous (verified — each would fail against the old code). The re-review could not run cargo tests (sandbox cache issue) but the code analysis is sound and I verified the B5 reproduction logic directly. Feature bounces to `implementing` until B5 lands.
+
+## B5 implementation note (2026-07-13)
+
+`story-fix-sessions-multi-delta-atomicity` adopts option (a1): each successful append in an equal-generation multi-delta report is immediately folded into `SessionRegistry`, and the next delta is derived from the refreshed projection. A transient later append failure therefore leaves the warm projection equal to the durable log prefix; retry skips the committed delta and appends only the remainder. The writer propagates a fold error after durability, requiring a `rebuild_from_log` before the projection is reused.
+
+B2's `SessionGenerationBumped.initial_state` compatibility change establishes a pre-release reset boundary. v0.1.0 has no production logs; existing development logs written before commit `06e6251` are disposable and must be deleted rather than migrated. A shipped release with such logs would require an explicit migration.

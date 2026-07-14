@@ -77,15 +77,23 @@ async fn rebuild(storage: &RusqliteStorage) -> patchbay_core::session::SessionRe
 async fn replay_reconstructs_a_live_registry() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
 
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(2, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(2, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
     // Rebuild from the log: the live generation must be 2, generation 1 tombstoned.
     let registry = rebuild(&storage).await;
@@ -103,10 +111,14 @@ async fn replay_reconstructs_a_live_registry() {
 #[tokio::test]
 async fn resolve_binds_a_live_session() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1)))
@@ -120,10 +132,14 @@ async fn resolve_binds_a_live_session() {
 #[tokio::test]
 async fn resolve_binds_the_live_generation_when_unspecified() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(7, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(7, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     // No session_generation in the scope: bind the live one.
@@ -136,15 +152,23 @@ async fn resolve_binds_the_live_generation_when_unspecified() {
 #[tokio::test]
 async fn resolve_rejects_a_tombstoned_generation() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Live))
-        .await
-        .unwrap();
-    let registry = rebuild(&storage).await;
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
+    let mut registry = rebuild(&storage).await;
     // Bump to generation 2 — generation 1 is now tombstoned.
-    ingest_session_report(&storage, &registry, report(2, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(2, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     let result = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
@@ -154,10 +178,14 @@ async fn resolve_rejects_a_tombstoned_generation() {
 #[tokio::test]
 async fn resolve_rejects_a_generation_that_is_neither_live_nor_tombstoned() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Live))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     // Generation 99 was never registered and is not tombstoned.
@@ -187,10 +215,14 @@ async fn resolve_allows_an_offline_session() {
     // Q3 load-bearing assertion: connectivity is a delivery concern, not an
     // identity/existence concern. An offline session is still a valid target.
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Offline))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Offline),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
@@ -201,10 +233,14 @@ async fn resolve_allows_an_offline_session() {
 async fn resolve_allows_a_failed_session() {
     // A failed session is likewise a valid (if degraded) delivery target.
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let registry = rebuild(&storage).await;
-    ingest_session_report(&storage, &registry, report(1, SessionConnectivityState::Failed))
-        .await
-        .unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Failed),
+    )
+    .await
+    .unwrap();
 
     let registry = rebuild(&storage).await;
     let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
