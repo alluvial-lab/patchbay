@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-sessions
 kind: feature
-stage: review
+stage: implementing
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -872,3 +872,23 @@ Orchestrator verified the fixes directly against code (not just test-pass):
 Verification: `cargo build` clean, `cargo test -p patchbay-core` 161 tests pass (was 139 pre-fix), `cargo clippy --all-targets` clean. Gen diff additions-only (8 Rust + 22 TS lines, no reformatting drift).
 
 **Verdict**: Approve with comments. All 4 blockers resolved. Important findings remain parked in backlog (authority-domain isolation, test coverage gaps, idempotency/concurrency — all latent in single-domain/single-writer v0.1.0). Feature re-advanced to `stage: review` with 7 child stories (5 original + 2 fix) all at `review`.
+
+## Re-review #2 (2026-07-13, post-fix adversarial)
+
+Fresh-context cross-model re-review (openai-codex/gpt-5.6-sol) of the fix diff (`ad62cd5..06e6251`).
+
+**Verdict**: Request changes — B1-B4 all confirmed RESOLVED, but the B3 fix introduced a new blocker (B5).
+
+**B1-B4 verdicts** (all RESOLVED, verified against code):
+- B1: `validate_report` checks all 4 identity fields before any append. RESOLVED.
+- B2: proto carries `initial_state`+metadata; `observe_generation_bumped` applies reported state (every mutable field overwritten). RESOLVED.
+- B3: success path fixed (no early return; all deltas appended; `DeltasApplied` variant). RESOLVED on success path — but the partial-failure path is unsound (see B5).
+- B4: `SessionTombstoneKey` has all 4 fields; all call sites updated. RESOLVED.
+
+**New blocker** (regression from B3 fix):
+- **B5 — Partial multi-delta failure makes retry produce an unreplayable log.** The sequential appends use `?`; if the 2nd append fails, the 1st is durable but the registry isn't warmed; retry re-appends the 1st delta, which replay rejects as a `from`-mismatch duplicate. -> `story-fix-sessions-multi-delta-atomicity`
+
+**Important** (noted, not blocking):
+- Pre-fix generation-bump events become unreplayable (B2 made `initial_state` required). Pre-release, no production logs — documented reset boundary, not a migration. Noted in the fix story.
+
+**Notes**: The regression tests for B1-B4 are non-vacuous (verified — each would fail against the old code). The re-review could not run cargo tests (sandbox cache issue) but the code analysis is sound and I verified the B5 reproduction logic directly. Feature bounces to `implementing` until B5 lands.
