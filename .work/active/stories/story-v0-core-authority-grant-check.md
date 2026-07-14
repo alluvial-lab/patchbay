@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-grant-check
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry]
@@ -42,3 +42,9 @@ See `feature-v0-core-authority.md` Unit 2 for exact signatures. Key points:
 - Depends on story 1 (registry + `grant_authorizes` + `IssuerRef`).
 - The trait defined here is used by `story-acceptance-issuer-context`. Explicit edge, not co-developed.
 - Add integration tests in `core/tests/authority_grant_check.rs` using a `TestIssuerContext` double.
+
+## Implementation notes
+- Files changed: `core/src/authority/issuer.rs`, `core/src/authority/check.rs`, `core/src/authority/mod.rs`, `core/src/acceptance/ports.rs`, `core/tests/authority_grant_check.rs`.
+- Tests added: verified matching grant, unauthenticated issuer denial, cross-domain denial, revoked-grant denial, and kind/target deny-by-default coverage in `authority_grant_check.rs`.
+- Discrepancies from design: none. The `GrantCheck` port signature moved atomically with the authority adapter; the expected intermediate `cargo build -p patchbay-core` failure is the not-yet-updated acceptance call site owned by `story-acceptance-issuer-context`, the next item in this bundle.
+- Adjacent issues parked: none.

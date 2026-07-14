@@ -4,10 +4,13 @@
 //! deterministic in-memory projection, while matching remains independent of
 //! storage and ingress concerns.
 
+pub mod check;
 pub mod events;
+pub mod issuer;
 pub mod registry;
 pub mod state;
 
+pub use issuer::IssuerContext;
 pub use registry::AuthorityRegistry;
 pub use state::{
     grant_authorizes, target_scope_matches, GrantProvenanceKind, GrantRecord, IssuerRef,

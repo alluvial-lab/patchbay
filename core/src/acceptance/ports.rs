@@ -5,9 +5,10 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, AdapterId, AuthorityDomainId, Generation, GrantId, OperationKind,
-    RuntimeSessionId, TargetScope,
+    AdapterId, AuthorityDomainId, Generation, GrantId, OperationKind, RuntimeSessionId, TargetScope,
 };
+
+use crate::authority::IssuerContext;
 
 /// The authority seam used before an operation can become durable command
 /// state.
@@ -19,7 +20,7 @@ pub trait GrantCheck: Send + Sync {
     fn check(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        actor: &ActorEndpointRef,
+        issuer: &dyn IssuerContext,
         operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send;
@@ -37,7 +38,7 @@ pub trait TargetResolver: Send + Sync {
 /// Evidence that the authority adapter found a matching live grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Authorized {
-    /// `None` represents the v0.1.0 deployment's implicit operator authority.
+    /// The durable grant that authorized the operation, when retained.
     pub grant_id: Option<GrantId>,
 }
 
