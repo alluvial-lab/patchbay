@@ -139,7 +139,7 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
 
     registry.observe(&committed[1]).unwrap();
     let tombstone = registry
-        .get_tombstone(&runtime(), &generation(1))
+        .get_tombstone(&adapter(), "machine-a", &runtime(), &generation(1))
         .expect("the bump event must fold into a tombstone");
     assert_eq!(tombstone.superseded_at_lsn, 2);
     assert_eq!(

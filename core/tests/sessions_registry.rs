@@ -5,6 +5,7 @@ use patchbay_contracts::patchbay::{
     SessionState, StoredEventKind, StoredEventPayload, TargetScope,
 };
 use patchbay_core::{
+    acceptance::TargetResolver,
     session::{events, SessionError, SessionIdentity, SessionRegistry, SessionStateEvent},
     storage::RecordedEvent,
 };
@@ -167,11 +168,11 @@ fn folds_axis_changes_relabel_and_generation_bump() {
     assert_eq!(live.last_authoritative_lsn, Some(5));
 
     let tombstone = registry
-        .get_tombstone(&runtime(), &generation(1))
+        .get_tombstone(&adapter(), "machine-a", &runtime(), &generation(1))
         .expect("the prior generation must remain queryable");
     assert_eq!(tombstone.superseded_generation, generation(1));
     assert_eq!(tombstone.superseded_at_lsn, 5);
-    assert!(registry.is_tombstoned(&runtime(), &generation(1)));
+    assert!(registry.is_tombstoned(&adapter(), "machine-a", &runtime(), &generation(1)));
 
     let stale_target = TargetScope {
         adapter_id: Some(adapter()),
@@ -192,6 +193,60 @@ fn folds_axis_changes_relabel_and_generation_bump() {
         .resolve(&live_target)
         .expect("an unspecified generation binds the live generation");
     assert_eq!(binding.session_generation, generation(2));
+}
+
+#[tokio::test]
+async fn tombstones_are_scoped_to_the_full_session_identity() {
+    let mut registry = SessionRegistry::new();
+    let adapter_b = AdapterId {
+        value: "other-adapter".to_owned(),
+    };
+    let registration_b = events::registered(
+        domain(),
+        SessionRegistered {
+            adapter_id: Some(adapter_b.clone()),
+            deployment_scope: "machine-b".to_owned(),
+            runtime_session_id: Some(runtime()),
+            session_generation: Some(generation(1)),
+            initial_state: Some(state(
+                SessionConnectivityState::Unknown,
+                SessionActivityState::Unknown,
+            )),
+            project: "patchbay".to_owned(),
+            cwd: "/work/patchbay".to_owned(),
+            name: "other".to_owned(),
+        },
+    );
+    let bump_a = events::generation_bumped(
+        domain(),
+        SessionGenerationBumped {
+            adapter_id: Some(adapter()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime()),
+            from_generation: Some(generation(1)),
+            to_generation: Some(generation(2)),
+        },
+    );
+
+    registry.observe(&recorded(1, &registration())).unwrap();
+    registry.observe(&recorded(2, &registration_b)).unwrap();
+    registry.observe(&recorded(3, &bump_a)).unwrap();
+
+    assert!(registry.is_tombstoned(&adapter(), "machine-a", &runtime(), &generation(1)));
+    assert!(!registry.is_tombstoned(&adapter_b, "machine-b", &runtime(), &generation(1)));
+
+    let target_b = TargetScope {
+        adapter_id: Some(adapter_b.clone()),
+        runtime_session_id: Some(runtime()),
+        session_generation: Some(generation(1)),
+        deployment_scope: "machine-b".to_owned(),
+        ..TargetScope::default()
+    };
+    let binding = TargetResolver::resolve(&registry, &domain(), &target_b)
+        .await
+        .expect("a same-runtime session under another adapter must remain resolvable");
+    assert_eq!(binding.adapter_id, adapter_b);
+    assert_eq!(binding.session_generation, generation(1));
 }
 
 #[test]

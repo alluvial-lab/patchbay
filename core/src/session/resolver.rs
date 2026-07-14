@@ -28,7 +28,12 @@ impl TargetResolver for SessionRegistry {
             .ok_or_else(|| not_found(target_scope, "target is missing runtime_session_id"))?;
 
         if let Some(requested_generation) = target_scope.session_generation.as_ref() {
-            if self.is_tombstoned(runtime_session_id, requested_generation) {
+            if self.is_tombstoned(
+                adapter_id,
+                &target_scope.deployment_scope,
+                runtime_session_id,
+                requested_generation,
+            ) {
                 return Err(not_found(
                     target_scope,
                     "requested session generation is tombstoned",

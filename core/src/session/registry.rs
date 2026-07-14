@@ -61,6 +61,8 @@ struct SessionLiveKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionTombstoneKey {
+    adapter_id: AdapterId,
+    deployment_scope: String,
     runtime_session_id: RuntimeSessionId,
     generation: Generation,
 }
@@ -143,7 +145,12 @@ impl SessionRegistry {
         let runtime_session_id = target_scope.runtime_session_id.as_ref()?;
 
         if let Some(generation) = target_scope.session_generation.as_ref() {
-            if self.is_tombstoned(runtime_session_id, generation) {
+            if self.is_tombstoned(
+                adapter_id,
+                &target_scope.deployment_scope,
+                runtime_session_id,
+                generation,
+            ) {
                 return None;
             }
         }
@@ -194,27 +201,34 @@ impl SessionRegistry {
         })
     }
 
-    /// Look up the retained tombstone for one runtime id and generation.
+    /// Look up the retained tombstone for one session identity and generation.
     #[must_use]
     pub fn get_tombstone(
         &self,
+        adapter_id: &AdapterId,
+        deployment_scope: &str,
         runtime_session_id: &RuntimeSessionId,
         generation: &Generation,
     ) -> Option<&SessionTombstone> {
         self.tombstones.get(&SessionTombstoneKey {
+            adapter_id: adapter_id.clone(),
+            deployment_scope: deployment_scope.to_owned(),
             runtime_session_id: runtime_session_id.clone(),
             generation: *generation,
         })
     }
 
-    /// Return whether a generation has been superseded.
+    /// Return whether a session generation has been superseded.
     #[must_use]
     pub fn is_tombstoned(
         &self,
+        adapter_id: &AdapterId,
+        deployment_scope: &str,
         runtime_session_id: &RuntimeSessionId,
         generation: &Generation,
     ) -> bool {
-        self.get_tombstone(runtime_session_id, generation).is_some()
+        self.get_tombstone(adapter_id, deployment_scope, runtime_session_id, generation)
+            .is_some()
     }
 
     fn observe_registered(
@@ -286,6 +300,8 @@ impl SessionRegistry {
         }
 
         if let Some(existing) = self.get_tombstone(
+            &from_identity.adapter_id,
+            &from_identity.deployment_scope,
             &from_identity.runtime_session_id,
             &from_identity.session_generation,
         ) {
@@ -331,6 +347,8 @@ impl SessionRegistry {
 
         self.tombstones.insert(
             SessionTombstoneKey {
+                adapter_id: tombstone.adapter_id.clone(),
+                deployment_scope: tombstone.deployment_scope.clone(),
                 runtime_session_id: tombstone.runtime_session_id.clone(),
                 generation: tombstone.superseded_generation,
             },
@@ -485,9 +503,12 @@ impl SessionRegistry {
         identity: &SessionIdentity,
         event_lsn: u64,
     ) -> Result<bool, SessionError> {
-        let Some(tombstone) =
-            self.get_tombstone(&identity.runtime_session_id, &identity.session_generation)
-        else {
+        let Some(tombstone) = self.get_tombstone(
+            &identity.adapter_id,
+            &identity.deployment_scope,
+            &identity.runtime_session_id,
+            &identity.session_generation,
+        ) else {
             return Ok(false);
         };
         if tombstone.adapter_id != identity.adapter_id

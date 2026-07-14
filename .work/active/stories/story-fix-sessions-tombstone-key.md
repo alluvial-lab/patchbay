@@ -1,7 +1,7 @@
 ---
 id: story-fix-sessions-tombstone-key
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-registry]
@@ -47,3 +47,9 @@ Live sessions are correctly keyed by `(adapter_id, deployment_scope, runtime_ses
 - Correctness bug found at feature review (Phase 2 adversarial, cross-model openai-codex/gpt-5.6-sol).
 - The fix is localized to `registry.rs` (the `SessionTombstoneKey` struct + the three methods that use it) + `resolver.rs` (the `is_tombstoned` call site). No proto change.
 - The `SessionTombstone` struct already carries `adapter_id` and `deployment_scope` fields — only the KEY needs extending.
+
+## Implementation notes
+
+- Keyed tombstones and every lookup by adapter, deployment scope, runtime session ID, and generation.
+- Added a resolver-path regression test proving a bumped session cannot tombstone another adapter/scope's same-runtime session.
+- Verified with `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core`, `cargo test -p patchbay-core`, and `cargo clippy -p patchbay-core --all-targets`.

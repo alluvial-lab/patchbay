@@ -95,7 +95,7 @@ async fn replay_reconstructs_a_live_registry() {
     assert_eq!(live.identity.session_generation, generation(2));
 
     let tomb = registry
-        .get_tombstone(&runtime_session("s-1"), &generation(1))
+        .get_tombstone(&adapter(), "local", &runtime_session("s-1"), &generation(1))
         .expect("prior generation is tombstoned");
     assert_eq!(tomb.superseded_generation, generation(1));
 }

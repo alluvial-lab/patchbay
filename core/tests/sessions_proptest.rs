@@ -319,6 +319,8 @@ proptest! {
             );
             prop_assert_eq!(live_generation(&registry), live_before_late);
             prop_assert!(registry.is_tombstoned(
+                &adapter(),
+                "local",
                 &runtime_session("session-1"),
                 &Generation { value: start },
             ), "bumped generation must have a tombstone");
@@ -391,6 +393,8 @@ proptest! {
             prop_assert_eq!(live_generation(&registry), generations[2]);
             for generation in &generations[..2] {
                 let tombstone = registry.get_tombstone(
+                    &adapter(),
+                    "local",
                     &runtime_session("session-1"),
                     &Generation { value: *generation },
                 ).ok_or_else(|| TestCaseError::fail(format!("missing tombstone for generation {generation}")))?;
