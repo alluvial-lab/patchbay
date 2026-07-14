@@ -41,3 +41,9 @@ See `feature-v0-core-authority.md` Unit 4 for exact signatures. Key points:
 - Depends on stories 1 (registry), 3 (ingest), AND the sessions prerequisite `story-sessions-spawn-origin-field`.
 - Add tests in `core/tests/authority_spawn_tail.rs`. The 6-permutation order test is key (rev2 finding D).
 - No composition layer — this story is the reactor only.
+
+## rev3-review fixes (in-stride, 2026-07-13)
+Design review #3 found 2 blockers in this unit; both are mechanical (protocol/pattern-pinned), resolved here:
+- **Domain isolation (finding 1):** all three maps keyed by `(AuthorityDomainId, CommandId)`, NOT bare `CommandId` — events are domain-scoped; client command IDs aren't globally unique. Conflicting duplicate (same key, different content) = `CorruptLog` (mirrors `SessionRegistry`); exact redelivery = no-op.
+- **Deterministic grant_id in issuance (finding 1):** computed inside a canonical helper `descendant_grant_id(domain, spawn_op)`, included as `DescendantGrantIssuance.descendant_grant_id` — NOT delegated to the caller. Re-observe → same id → no-op.
+- **audit_id (finding 2):** `DescendantGrantIssuance.audit_id: Option<EventId>` = `None` in v0.1.0. The protocol requires a spawn-completion audit link (`DescendantGrant.audit_id` field 14), but the audit producer is deferred (R4). The descendant grant is **component-tested, not protocol-complete**. Documented gap (`backlog-authority-durable-acceptance-metadata`).

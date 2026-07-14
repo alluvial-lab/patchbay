@@ -363,14 +363,24 @@ impl SpawnDescendantTail {
     pub fn new() -> Self { Self::default() }
 
     /// Fold one committed event. Order-independent: after any of {spawn op seen,
-    /// completion seen, registration seen}, call try_issue(command_id).
+    /// completion seen, registration seen}, call try_issue(key).
+    ///
+    /// Domain isolation (rev3-review finding 1): all collections are keyed by
+    /// (AuthorityDomainId, CommandId), NOT bare CommandId — events are
+    /// authority-domain scoped and client-generated command IDs are not
+    /// globally unique. A single tail instance serves one domain; events
+    /// from another domain are rejected as CorruptLog.
+    ///
+    /// Duplicate handling (rev3-review finding 1): exact redelivery (same
+    /// event at the same LSN) is a no-op; a conflicting duplicate (same key,
+    /// different content) is CorruptLog (Fail Fast — mirrors SessionRegistry).
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        // Track Spawn OPERATION events -> spawn_ops.
+        // Track Spawn OPERATION events -> spawn_ops (key = (domain, command_id)).
         // Track COMMAND_TRANSITION to Completed for spawn commands -> completed.
-        // Track SessionRegistered with spawn_origin -> registrations (keyed by spawn_origin command_id).
-        // After any insertion, try_issue for that command_id:
-        //   if spawn_ops.has(cid) && completed.has(cid) && registrations.has(cid) && !issued.has(cid):
-        //     issued.insert(cid); return Some(issuance).
+        // Track SessionRegistered with spawn_origin -> registrations (key = (domain, spawn_origin)).
+        // After any insertion, try_issue for that (domain, command_id):
+        //   if spawn_ops.has(k) && completed.has(k) && registrations.has(k) && !issued.has(k):
+        //     issued.insert(k); return Some(issuance with deterministic grant_id).
         // The issuance carries spawned_session_scope from the registration (NOT the spawn op's fleet target).
     }
 }
@@ -382,6 +392,23 @@ pub struct DescendantGrantIssuance {
     pub subject_actor_id: ActorId,
     pub authority_domain_id: AuthorityDomainId,
     pub allowed_operation_kinds: Vec<OperationKind>,  // DESCENDANT_GRANT_ALLOWED_KINDS
+    /// Deterministic grant id derived from (authority_domain_id, spawn_operation_id)
+    /// (rev3-review finding 1): computed inside a canonical helper, NOT delegated
+    /// to the caller. Durable idempotency: re-observe -> same id -> no-op dup.
+    pub descendant_grant_id: GrantId,
+    /// audit_id: NOT populated in v0.1.0 (rev3-review finding 2). The protocol
+    /// requires a spawn-completion audit link (DescendantGrant.audit_id field 14),
+    /// but the audit producer is deferred (R4). The issuance carries None here;
+    /// the descendant grant created from this issuance has audit_id = None until
+    /// the audit producer lands. Documented gap (backlog). The descendant grant
+    /// is component-tested, not protocol-complete.
+    pub audit_id: Option<EventId>,
+}
+
+/// Canonical deterministic descendant grant id (rev3-review finding 1).
+/// Namespaced to avoid collision with operator grants.
+fn descendant_grant_id(domain: &AuthorityDomainId, spawn_op: &CommandId) -> GrantId {
+    GrantId { value: format!("desc:{}:{}", domain.value, spawn_op.value) }
 }
 ```
 
@@ -443,13 +470,23 @@ Property tests for the 8 stated-normative obligations. 7 are executable oracles;
 proptest! {
     /// 1. NoCommandWithoutGrant: deny-by-default.
     #[test] fn no_command_without_grant(/* ... */) { ... }
-    /// 2. CompoundIssuer: accepted commands use verified IssuerContext identity, not self-asserted payload.
+    /// 2. CompoundIssuer: accepted commands use verified IssuerContext identity,
+    ///    not self-asserted payload actor. (rev3-review finding 4: this is an
+    ///    ACCEPTANCE-AUTHORITY integration property — GrantCheck no longer
+    ///    receives Operation.sender, so the mutation must be acceptance
+    ///    constructing issuer identity from Operation.sender. The proptest
+    ///    story's depends_on includes story-acceptance-issuer-context.)
     #[test] fn compound_issuer(/* ... */) { ... }
     /// 3. GrantAuthorityIsCommandKinds: grant checks constrain by canonical OperationKinds.
     #[test] fn grant_authority_is_command_kinds(/* ... */) { ... }
     /// 4. RevocationPreventsFuture: revoked grant denies subsequent checks.
     #[test] fn revocation_prevents_future(/* ... */) { ... }
-    /// 5. FleetAuthorityForSpawn: spawn requires a live fleet-scope spawn grant.
+    /// 5. FleetAuthorityForSpawn: a fleet-scope spawn grant authorizes spawn
+    ///    across any adapter; an adapter-scope grant authorizes spawn on that
+    ///    adapter only; a runtime-session grant cannot authorize creating a
+    ///    not-yet-existing session. (PROTOCOL line 173: adapter-level spawn
+    ///    grants are expressible — fleet is the default, not the only option.
+    ///    rev3-review finding 3: the prior oracle contradicted the protocol.)
     #[test] fn fleet_authority_for_spawn(/* ... */) { ... }
     /// 6. SpawnCreatesDescendantGrant: successful spawn produces a descendant grant.
     #[test] fn spawn_creates_descendant_grant(/* ... */) { ... }
@@ -531,3 +568,31 @@ Stories 1 is the foundation. 2 and 3 parallel after 1. 4 depends on 1, 3, and pr
 - **Revision 1** (Q1-Q5): implicit operator authority + log-tail reactor + full protocol model. Design review #1 found 10 blockers. Bounced.
 - **Revision 2** (R1a-R5a): vertical live slice — durable bootstrap operator grants + verified IssuerContext + descendant-grant reactor + composition layer + 2 prerequisites. Design review #2 found 4 blockers partially-resolved + 8 new defects (7 blocking). Bounced.
 - **Revision 3** (this): component-complete, not live. Dropped bootstrap grant + live composition (R1, R3, E). Pinned domain-equality (B), order-independent reactor (D), full matching matrix (#3), ElicitationResponder narrowed to documented gap (R6/G). Addresses all rev-2 findings: A (bootstrap) dropped, B (domain-eq) pinned, C (provenance) softened + documented, D (ordering) fixed, E (composition) dropped, F (graph) fixed via IssuerRef decoupling, G (responder) narrowed, H (live claim) dropped.
+
+## Design review #3 (revision 3, 2026-07-13)
+
+**Verdict**: Approve with in-stride fixes — re-advanced to `stage: implementing`. NOT bounced: all 5 findings are mechanical (protocol/pattern-pinned), not semantic 50/50s, per the implementation-ambiguity rule (no reasonable implementer would pick a materially different option).
+
+**Reviewer**: cross-model fresh-context (openai-codex/gpt-5.6-sol). Confirmed 14 of 18 prior findings RESOLVED; 4 carried as documented gaps/backlog (compound-issuer endpoint-class, provenance durability, audit_id, responder validation — all already deferred per R2/R4/R6).
+
+### New findings (5) — all resolved in-stride
+
+1. **Spawn-tail not domain-isolated / no deterministic grant_id (blocker → resolved).** Collections were keyed by bare `CommandId`; client command IDs aren't globally unique across domains. **Fix (pinned by `(authority_domain_id, LSN)` key shape, PROTOCOL):** key all maps by `(AuthorityDomainId, CommandId)`; conflicting duplicate = `CorruptLog` (mirrors `SessionRegistry`); deterministic `descendant_grant_id(domain, spawn_op)` computed in a canonical helper, included in the issuance.
+2. **Descendant issuance can't satisfy audit_id (blocker → narrowed).** PROTOCOL line 186/495 requires a spawn-completion audit link (`DescendantGrant.audit_id` field 14); no producer exists (R4 defers audit). **Fix (pinned by R4):** `DescendantGrantIssuance.audit_id = None` in v0.1.0; descendant grant is **component-tested, not protocol-complete**. Filed `backlog-authority-durable-acceptance-metadata`.
+3. **FleetAuthorityForSpawn oracle contradicted protocol (blocker → resolved).** Oracle said "spawn requires fleet grant"; PROTOCOL line 173 says adapter-level spawn grants are expressible (fleet is default, not only). **Fix (pinned by PROTOCOL):** oracle tests fleet=any-adapter, adapter=same-adapter, runtime-session=cannot-authorize-new-session.
+4. **compound_issuer test missing acceptance dep (blocker → resolved).** GrantCheck no longer receives `Operation.sender`, so the mutation must be acceptance constructing issuer from payload sender. **Fix (pinned by the test's own logic):** `story-v0-core-authority-proptests` depends_on now includes `story-acceptance-issuer-context`.
+5. **Untracked follow-ons (important → resolved).** Live composition, durable acceptance metadata, responder validation described as "follow-on" but no backlog items. **Fix (bookkeeping):** filed `backlog-authority-live-composition`, `backlog-authority-durable-acceptance-metadata`, `backlog-elicitation-responder-authority`.
+
+### Why these are mechanical, not a bounce
+Each finding has exactly one defensible answer, pinned by the protocol, the established sessions pattern, or an existing R-decision (R2/R4/R6). The "would a different reasonable implementer pick a materially different option?" test fails for all five — there is no semantic judgment to surface to the operator. Per the project's implementation-ambiguity rule, these resolve in-stride with rationale logged, not a drafting bounce.
+
+## Implementation discovery (rev3-review, 2026-07-13)
+The following were discovered during design review #3 and resolved in-stride (mechanical, protocol/pattern-pinned):
+- Spawn-tail domain isolation: `(AuthorityDomainId, CommandId)` keying (PROTOCOL `(domain, LSN)` key shape).
+- Conflicting-duplicate handling: `CorruptLog` (mirrors `SessionRegistry::observe`).
+- Deterministic descendant grant_id: canonical helper, included in issuance (durable idempotency).
+- `audit_id`/`spawning_grant_id` optionality: documented gaps, filed as backlog (R4 + provenance-durability follow-on).
+- `FleetAuthorityForSpawn` oracle: corrected to match PROTOCOL line 173 (adapter-level spawn grants expressible).
+- `compound_issuer` test dependency: added `story-acceptance-issuer-context` edge (the mutation is acceptance-side).
+
+No semantic 50/50s surfaced. The design is implementer-ready.

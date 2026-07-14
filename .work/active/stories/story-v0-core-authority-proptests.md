@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [security, protocol, verification, foundation]
 parent: feature-v0-core-authority
-depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest, story-v0-core-authority-spawn-tail, story-v0-core-authority-replay]
+depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest, story-v0-core-authority-spawn-tail, story-v0-core-authority-replay, story-acceptance-issuer-context]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
@@ -25,7 +25,7 @@ See `feature-v0-core-authority.md` Unit 6:
 2. `compound_issuer` — accepted commands use verified `IssuerContext` identity, NOT self-asserted payload actor.
 3. `grant_authority_is_command_kinds` — grant checks constrain by canonical OperationKinds.
 4. `revocation_prevents_future` — revoked grant denies subsequent checks.
-5. `fleet_authority_for_spawn` — spawn requires a live fleet-scope spawn grant.
+5. `fleet_authority_for_spawn` — a fleet-scope spawn grant authorizes spawn across any adapter; an adapter-scope grant authorizes spawn on that adapter only; a runtime-session grant cannot authorize creating a not-yet-existing session. (rev3-review finding 3: fleet is the default, not the only option — PROTOCOL line 173.)
 6. `spawn_creates_descendant_grant` — successful spawn produces a descendant grant.
 7. `spawn_revocation_does_not_cascade` — two levers. Mutation-survivable stand-in for the demoted formal property. Test BOTH levers (revoke parent P → P denies + descendant D still authorizes; separately revoke D → D denies).
 8. `elicitation_responder_authority` — **NOT TESTED HERE.** Authority does not enforce response-Operation responder matching (`Elicitation.expected_responder_actor`); that's an acceptance/elicitation concern. Documented untested gap (rev3 R6). The obligation is real; owned by a future acceptance responder-validation feature. Do NOT write a vacuous stand-in.
@@ -46,6 +46,6 @@ Read `core/tests/sessions_proptest.rs` and `core/tests/acceptance_proptest.rs` F
 - [ ] #8 (ElicitationResponderAuthority) documented as an untested gap, NOT a vacuous test
 
 ## Notes
-- Depends on all 5 prior authority stories.
+- Depends on all 5 prior authority stories + `story-acceptance-issuer-context` (rev3-review finding 4: compound_issuer is an acceptance-authority integration property — the mutation must be acceptance constructing issuer identity from Operation.sender, which requires the IssuerContext call-site change).
 - #7 is the highest-value test — executable oracle for a demoted formal property, mutation-survivable by construction.
 - #8 is honestly a gap, not a fake test (rev3 R6).
