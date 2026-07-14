@@ -2,15 +2,19 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, EndpointId, FailureCode,
-    Generation, Lsn, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
-    RuntimeSessionId, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
+    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, DeviceId, EndpointId,
+    FailureCode, Generation, Lsn, Operation, OperationKind, OperationState, PayloadContentType,
+    PayloadEnvelope, RuntimeSessionId, StoredEventKind, SubmissionOutcome, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::acceptance::{
     submit, AcceptanceError, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck,
     GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
 };
-use patchbay_core::storage::{RusqliteStorage, Storage};
+use patchbay_core::{
+    authority::IssuerContext,
+    storage::{RusqliteStorage, Storage},
+};
 use prost::Message;
 
 struct TestGrantCheck {
@@ -31,7 +35,7 @@ impl GrantCheck for TestGrantCheck {
     fn check(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _actor: &ActorEndpointRef,
+        _issuer: &dyn IssuerContext,
         operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
@@ -120,6 +124,58 @@ fn authority_domain() -> AuthorityDomainId {
     }
 }
 
+struct TestIssuer {
+    actor: ActorId,
+    endpoint: EndpointId,
+    device: DeviceId,
+    generation: Generation,
+    domain: AuthorityDomainId,
+}
+
+impl TestIssuer {
+    fn new(domain: AuthorityDomainId) -> Self {
+        Self {
+            actor: ActorId {
+                value: "operator".to_owned(),
+            },
+            endpoint: EndpointId {
+                value: "web-1".to_owned(),
+            },
+            device: DeviceId {
+                value: "device-1".to_owned(),
+            },
+            generation: Generation { value: 3 },
+            domain,
+        }
+    }
+}
+
+impl IssuerContext for TestIssuer {
+    fn verified_actor(&self) -> Option<&ActorId> {
+        Some(&self.actor)
+    }
+
+    fn verified_endpoint(&self) -> Option<&EndpointId> {
+        Some(&self.endpoint)
+    }
+
+    fn verified_device(&self) -> Option<&DeviceId> {
+        Some(&self.device)
+    }
+
+    fn endpoint_generation(&self) -> Option<Generation> {
+        Some(self.generation)
+    }
+
+    fn authority_domain_id(&self) -> &AuthorityDomainId {
+        &self.domain
+    }
+}
+
+fn issuer() -> TestIssuer {
+    TestIssuer::new(authority_domain())
+}
+
 fn operation() -> Operation {
     Operation {
         command_id: Some(CommandId {
@@ -192,9 +248,16 @@ async fn unknown_and_reserved_operation_kinds_reject_before_grant() {
         let mut submitted = operation();
         submitted.kind = raw_kind;
 
-        let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
-            .await
-            .unwrap();
+        let result = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &issuer(),
+            submitted,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
         assert_eq!(failure(&result), FailureCode::ValidationFailed);
@@ -234,9 +297,16 @@ async fn missing_required_fields_reject_before_grant_without_durable_state() {
         let grant = TestGrantCheck::new(true);
         let resolver = TestTargetResolver::new(true);
 
-        let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
-            .await
-            .unwrap();
+        let result = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &issuer(),
+            submitted,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
         assert_eq!(failure(&result), FailureCode::ValidationFailed);
@@ -252,9 +322,16 @@ async fn unauthorized_submission_rejects_without_durable_state() {
     let grant = TestGrantCheck::new(false);
     let resolver = TestTargetResolver::new(true);
 
-    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, operation())
-        .await
-        .unwrap();
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &issuer(),
+        operation(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
     assert_eq!(failure(&result), FailureCode::AuthorizationDenied);
@@ -270,9 +347,16 @@ async fn unknown_target_rejects_without_durable_state() {
     let grant = TestGrantCheck::new(true);
     let resolver = TestTargetResolver::new(false);
 
-    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, operation())
-        .await
-        .unwrap();
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &issuer(),
+        operation(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
     assert_eq!(failure(&result), FailureCode::TargetNotFound);
@@ -294,6 +378,7 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &issuer(),
         submitted.clone(),
     )
     .await
@@ -328,13 +413,21 @@ async fn identical_retry_returns_existing_acceptance_without_double_append() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &issuer(),
         submitted.clone(),
     )
     .await
     .unwrap();
-    let retry = submit(&storage, &grant, &resolver, &AlwaysAccepted, submitted)
-        .await
-        .unwrap();
+    let retry = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &issuer(),
+        submitted,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
     assert_eq!(state(&retry), OperationState::Accepted);
@@ -356,6 +449,7 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &issuer(),
         original.clone(),
     )
     .await
@@ -363,9 +457,16 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
 
     let mut conflicting = original;
     conflicting.payload.as_mut().unwrap().payload = b"different instruction".to_vec();
-    let result = submit(&storage, &grant, &resolver, &AlwaysAccepted, conflicting)
-        .await
-        .unwrap();
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &issuer(),
+        conflicting,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
     assert_eq!(failure(&result), FailureCode::ValidationFailed);
@@ -404,6 +505,7 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &issuer(),
         submitted.clone(),
     )
     .await
@@ -412,9 +514,16 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
 
     // The command has since reached Completed (via observation transitions).
     // The retry must return Completed, not Accepted.
-    let retry = submit(&storage, &grant, &resolver, &CompletedLookup, submitted)
-        .await
-        .unwrap();
+    let retry = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &CompletedLookup,
+        &issuer(),
+        submitted,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
     assert_eq!(
@@ -444,6 +553,7 @@ async fn retry_with_missing_index_entry_fails_fast() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &issuer(),
         submitted.clone(),
     )
     .await
@@ -451,7 +561,15 @@ async fn retry_with_missing_index_entry_fails_fast() {
     assert_eq!(state(&first), OperationState::Accepted);
 
     // Retry with a lookup that returns None (command not in index).
-    let result = submit(&storage, &grant, &resolver, &NotFoundLookup, submitted).await;
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &NotFoundLookup,
+        &issuer(),
+        submitted,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AcceptanceError::CorruptRecord(_))),

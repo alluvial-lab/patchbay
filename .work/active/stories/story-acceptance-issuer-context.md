@@ -1,7 +1,7 @@
 ---
 id: story-acceptance-issuer-context
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-acceptance
 depends_on: []
@@ -41,3 +41,10 @@ Also (blocker #4 follow-on): the descendant-grant reactor needs `spawning_grant_
 - The `IssuerContext` trait is defined in the authority module (`core/src/authority/issuer.rs`, story `story-v0-core-authority-grant-check`). **Sequence:** if authority story 2 hasn't landed the trait yet, this story can define a minimal version and authority refines it. Coordinate via the depends_on chain: this story and `story-v0-core-authority-grant-check` are co-developed.
 - `CARGO_HOME=/tmp/cargo-home` for all cargo commands.
 - Demanded by authority design review blockers #2 (compound issuer) and #4 (provenance).
+
+## Implementation notes
+- Files changed: `core/src/acceptance/pipeline.rs`, `core/src/acceptance/state.rs`, `core/tests/acceptance_pipeline.rs`, `core/tests/acceptance_proptest.rs` (with the `GrantCheck` port signature committed atomically in `story-v0-core-authority-grant-check`).
+- Tests added: updated all acceptance pipeline and property-test grant doubles/call sites to supply a configurable verified `TestIssuer`; the authority grant-check integration suite also passes through the new seam.
+- Discrepancies from design: `CommandRecord.grant_id` is present and initializes to `None`, but no durable population path was added. `submit` writes only the generated `Operation` event and does not construct the `CommandIndex`; the Operation/snapshot contracts carry no authorizing-grant field. This is the feature's R3 provenance-durability deferral, not a fabricated value.
+- Verification: `cargo build -p patchbay-core` passed; focused `authority_grant_check`, `acceptance_pipeline`, and `acceptance_proptest` suites passed (24 tests).
+- Adjacent issues parked: none.

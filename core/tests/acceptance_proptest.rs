@@ -16,17 +16,21 @@ use std::future::ready;
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, CommandTransition,
-    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, Operation, OperationKind,
-    OperationState, PayloadContentType, PayloadEnvelope, RuntimeSessionId, StoredEventKind,
-    StoredEventPayload, SubmissionOutcome, TargetScope, TargetScopeKind,
+    DeviceId, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, Operation,
+    OperationKind, OperationState, PayloadContentType, PayloadEnvelope, RuntimeSessionId,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::{
     apply_transition, is_terminal, rebuild_from_log, submit, AcceptanceError, Authorized,
     CommandRecord, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied, TargetBinding,
     TargetNotFound, TargetResolver,
 };
-use patchbay_core::storage::{
-    DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+use patchbay_core::{
+    authority::IssuerContext,
+    storage::{
+        DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
+        TargetKey,
+    },
 };
 use proptest::prelude::*;
 use prost::Message;
@@ -187,13 +191,61 @@ async fn append_transition<S: Storage>(storage: &S, transition: &CommandTransiti
         .value
 }
 
+struct TestIssuer {
+    actor: ActorId,
+    endpoint: EndpointId,
+    device: DeviceId,
+    generation: Generation,
+    domain: AuthorityDomainId,
+}
+
+impl TestIssuer {
+    fn new(domain: AuthorityDomainId) -> Self {
+        Self {
+            actor: ActorId {
+                value: "operator".to_owned(),
+            },
+            endpoint: EndpointId {
+                value: "web-proptest".to_owned(),
+            },
+            device: DeviceId {
+                value: "device-proptest".to_owned(),
+            },
+            generation: Generation { value: 1 },
+            domain,
+        }
+    }
+}
+
+impl IssuerContext for TestIssuer {
+    fn verified_actor(&self) -> Option<&ActorId> {
+        Some(&self.actor)
+    }
+
+    fn verified_endpoint(&self) -> Option<&EndpointId> {
+        Some(&self.endpoint)
+    }
+
+    fn verified_device(&self) -> Option<&DeviceId> {
+        Some(&self.device)
+    }
+
+    fn endpoint_generation(&self) -> Option<Generation> {
+        Some(self.generation)
+    }
+
+    fn authority_domain_id(&self) -> &AuthorityDomainId {
+        &self.domain
+    }
+}
+
 struct AlwaysAuthorized;
 
 impl GrantCheck for AlwaysAuthorized {
     fn check(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _actor: &ActorEndpointRef,
+        _issuer: &dyn IssuerContext,
         _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
@@ -267,11 +319,13 @@ async fn run_boundary_dedup_check<S: Storage>(
     storage: &S,
     submitted: Operation,
 ) -> Result<(), String> {
+    let issuer = TestIssuer::new(authority_domain());
     let first = submit(
         storage,
         &AlwaysAuthorized,
         &AlwaysResolved,
         &AlwaysAccepted,
+        &issuer,
         submitted.clone(),
     )
     .await
@@ -281,6 +335,7 @@ async fn run_boundary_dedup_check<S: Storage>(
         &AlwaysAuthorized,
         &AlwaysResolved,
         &AlwaysAccepted,
+        &issuer,
         submitted.clone(),
     )
     .await

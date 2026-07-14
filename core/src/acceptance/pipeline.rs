@@ -7,7 +7,10 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 
-use crate::storage::{DedupOutcome, Storage, StorageError, TargetKey};
+use crate::{
+    authority::IssuerContext,
+    storage::{DedupOutcome, Storage, StorageError, TargetKey},
+};
 
 use super::{AcceptanceError, CommandStateLookup, GrantCheck, TargetResolver};
 
@@ -30,6 +33,8 @@ const ACCEPTED_OPERATION_KINDS: [OperationKind; 10] = [
 struct ValidatedOperation<'a> {
     command_id: &'a CommandId,
     authority_domain_id: &'a AuthorityDomainId,
+    /// Retained as validated audit data; authority uses `IssuerContext`.
+    #[allow(dead_code)]
     sender: &'a ActorEndpointRef,
     operation_kind: OperationKind,
     target_scope: &'a TargetScope,
@@ -47,6 +52,7 @@ pub async fn submit<S, G, R, L>(
     grant_check: &G,
     target_resolver: &R,
     state_lookup: &L,
+    issuer: &dyn IssuerContext,
     operation: Operation,
 ) -> Result<SubmissionResult, AcceptanceError>
 where
@@ -66,22 +72,24 @@ where
         }
     };
 
-    if grant_check
+    let _authorization = match grant_check
         .check(
             validated.authority_domain_id,
-            validated.sender,
+            issuer,
             validated.operation_kind,
             validated.target_scope,
         )
         .await
-        .is_err()
     {
-        return Ok(rejected_result(
-            Some(validated.command_id.clone()),
-            FailureCode::AuthorizationDenied,
-            "operation is not authorized for this actor and target".to_owned(),
-        ));
-    }
+        Ok(authorized) => authorized,
+        Err(_) => {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::AuthorizationDenied,
+                "operation is not authorized for this verified issuer and target".to_owned(),
+            ));
+        }
+    };
 
     if target_resolver
         .resolve(validated.authority_domain_id, validated.target_scope)

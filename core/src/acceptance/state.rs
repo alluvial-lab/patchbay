@@ -1,6 +1,6 @@
 //! In-memory command state derived from the durable event log.
 
-use patchbay_contracts::patchbay::{CommandId, FailureCode, Operation, OperationState};
+use patchbay_contracts::patchbay::{CommandId, FailureCode, GrantId, Operation, OperationState};
 
 use super::AcceptanceError;
 
@@ -13,6 +13,9 @@ pub struct CommandRecord {
     pub command_id: CommandId,
     pub operation: Operation,
     pub state: OperationState,
+    /// Authorizing-grant provenance. Durable population is deferred until the
+    /// accepted Operation event carries acceptance metadata.
+    pub grant_id: Option<GrantId>,
     /// The LSN of the transition into a terminal state, if one has committed.
     pub terminal_lsn: Option<u64>,
     pub failure_code: Option<FailureCode>,
@@ -35,6 +38,7 @@ impl CommandRecord {
             command_id,
             operation,
             state: OperationState::Accepted,
+            grant_id: None,
             terminal_lsn: None,
             failure_code: None,
         })
