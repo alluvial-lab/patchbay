@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-sessions
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -817,3 +817,19 @@ Stories 1-2 are sequential (the registry needs the state machine). Story 3 depen
 - **Committed v0.1.0**: session identity tuple `(adapter_id, deployment_scope, runtime_session_id, session_generation)`; `SessionConnectivityState` and `SessionActivityState` registries and transition tables; generation monotonicity (strict-supersession action guard); tombstone-on-replacement; `TargetResolver` port (existence + tombstone-only validation); `SessionState` delta events; replay-from-LSN-0 recovery.
 - **Reserved seam**: snapshot checkpointing with projection discriminator (deferred; cross-cutting storage concern); time-driven staleness/heartbeat policy (the protocol's "timeout/staleness policy" driver); log compaction reclaiming per-generation detail (keeps the tombstone fact); `SessionSnapshot` materialization (the proto exists; core does not serve snapshots in v0.1.0 beyond the in-memory registry).
 - **Explicitly rejected**: deriving session state purely from the Observation stream without dedicated `SessionState` events (the tombstone is core-owned authoritative state, not a derived view); making acceptance write `SessionState` events (leaks session semantics into the acceptance pipeline — Ports & Adapters violation); checking connectivity in `TargetResolver` (conflates delivery with existence — offline sessions may be legitimately targeted for queued commands).
+
+## Implementation summary (implement-orchestrator, 2026-07-13)
+
+All 5 child stories implemented and advanced to `stage: review`:
+1. `story-v0-core-sessions-state-machine` (commit `e874bf2`) — identity tuple, state axes, transition tables, `SessionError`
+2. `story-v0-core-sessions-registry` (commit `ba63380`) — `SessionStateEvent` proto + `SessionRegistry` projection (fold, tombstones, idempotent observe)
+3. `story-v0-core-sessions-ingest` (commit `c68a48b`) — `ingest_session_report` writer (mirrors `ingest_observation`), `SessionLookup` port, strict-supersession action guard
+4. `story-v0-core-sessions-replay-resolver` (commit `3a624d6`) — `rebuild_from_log` + `impl TargetResolver for SessionRegistry` (existence + tombstone-only, Q3)
+5. `story-v0-core-sessions-proptests` (commit `b65d7b5`) — `GenerationMonotonic` + stated-normative properties + non-vacuous mutation test
+
+Cross-cutting notes:
+- The `SessionStateEvent` proto was added to `sessions.proto` and regenerated (Rust via `cargo build`/prost-build, TS via `buf generate`). The known `buf generate` formatting drift on Rust gen was handled by regenerating Rust via `cargo build` after `buf generate`.
+- Wave 4 subagent was interrupted mid-work; orchestrator finished the story inline (test file + commit + stage advance).
+- The `TargetResolver` port (declared in `core/src/acceptance/ports.rs` by the acceptance feature) is now implemented by `SessionRegistry` — the sessions↔acceptance seam is connected.
+
+Verification: `cargo build` clean, `cargo test -p patchbay-core` 152 tests pass, `cargo clippy --all-targets` clean.
