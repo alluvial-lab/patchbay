@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-sessions-proptests
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine, story-v0-core-sessions-registry, story-v0-core-sessions-ingest, story-v0-core-sessions-replay-resolver]
@@ -51,3 +51,9 @@ See `feature-v0-core-sessions.md` Unit 5 for the property list. Key points:
 - Depends on all four prior stories (needs the full implementation).
 - The mutation tests are essential for non-vacuity — the acceptance proptests established this discipline. A property that cannot fail against a buggy implementation is worthless.
 - `GenerationMonotonic` is the only PROMOTED property; the others are stated-normative obligations tested as properties but not backed by checked formulas.
+
+## Implementation notes
+
+- Added `core/tests/sessions_proptest.rs` with bounded report/state strategies and durable writer → hot-registry → replay property oracles for generation monotonicity, strict supersession, late-generation inertness, relabel identity, tombstone retention, and replay equivalence.
+- Added a `DecreasingGenerationRegistry` mutation whose lower-generation overwrite is rejected by the shared monotonic-generation oracle, proving the promoted property is non-vacuous.
+- Verified with `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core`, `cargo test -p patchbay-core --test sessions_proptest`, and the complete `cargo test -p patchbay-core` suite.
