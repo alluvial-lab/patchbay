@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-sessions-replay-resolver
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine, story-v0-core-sessions-registry, story-v0-core-sessions-ingest]
@@ -52,3 +52,13 @@ See `feature-v0-core-sessions.md` Unit 4 for exact signatures. Key points:
 - Depends on stories 1, 2, and 3 (needs the full registry, events, and writer).
 - Read `core/src/acceptance/ports.rs` for the exact `TargetResolver` / `TargetBinding` / `TargetNotFound` shapes — they already exist; this story implements them.
 - Read `core/src/acceptance/elicitation.rs` `rebuild_slots_from_log` for the replay template.
+
+## Implementation notes
+
+- `core/src/session/replay.rs` — `rebuild_from_log` mirrors `rebuild_slots_from_log` (elicitation): read from LSN 0, fold via `observe`, validate LSN monotonicity + domain match. Local `event_identity` helper (duplicated from elicitation; small, keeps the module self-contained).
+- `core/src/session/resolver.rs` — `impl TargetResolver for SessionRegistry`. Validation depth = existence + tombstone-only (Q3): tombstoned generation → `TargetNotFound` (stale target); unknown session → `TargetNotFound`; generation neither live nor tombstoned → `TargetNotFound`. Connectivity is NOT checked (offline/failed sessions resolve — they're delivery concerns, not identity).
+- `core/src/session/mod.rs` — added `pub mod replay; pub mod resolver;` + `rebuild_from_log` re-export.
+- Method-name collision: `SessionRegistry` has both an inherent `resolve(target_scope) -> Option<TargetBinding>` (from story 2) and the `TargetResolver::resolve` trait method (Result-returning). The trait method is fully qualified in tests as `TargetResolver::resolve(&registry, ...)`.
+- `core/tests/sessions_replay_resolver.rs` — 8 integration tests covering: replay determinism (live gen 2 after bump, gen 1 tombstoned), live session binds, live-generation binds when unspecified, tombstoned generation rejected, unknown generation rejected, unknown session rejected, offline session resolves (Q3), failed session resolves (Q3).
+- Verification: `cargo build`, `cargo test -p patchbay-core` (139 tests, all pass), `cargo clippy --all-targets` (clean).
+- Note: the wave-4 subagent was interrupted mid-work (wrote replay.rs/resolver.rs + mod.rs, built clean, but did not write tests or commit). Orchestrator finished the story inline: wrote the test file, verified, advanced to review.
