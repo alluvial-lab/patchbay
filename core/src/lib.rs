@@ -8,5 +8,6 @@
 //! in `docs/ARCHITECTURE.md` § "v0.1.0 component slice".
 
 pub mod acceptance;
+pub mod authority;
 pub mod session;
 pub mod storage;

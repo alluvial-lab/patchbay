@@ -8,6 +8,7 @@ patchbay-contracts = { path = "../contracts/rust" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 prost = "0.14"
+prost-types = "0.14"
 thiserror = "2"
 tracing = "0.1"
 tempfile = "3"

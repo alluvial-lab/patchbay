@@ -296,6 +296,7 @@ dependencies = [
  "patchbay-contracts",
  "proptest",
  "prost",
+ "prost-types",
  "rusqlite",
  "tempfile",
  "thiserror",

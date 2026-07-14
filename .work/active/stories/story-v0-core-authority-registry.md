@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-registry
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []
@@ -45,3 +45,15 @@ See `feature-v0-core-authority.md` Unit 1 for exact signatures. Key points (addr
 - No deps. Foundation for stories 2-6.
 - `AuthorityError` enum in `mod.rs`: `CorruptRecord`, `CorruptLog`, `InvalidGrant`, `GrantNotFound`, `Storage(#[from])`.
 - Do NOT implement GrantCheck, ingest, spawn-tail, or replay here.
+
+## Implementation notes
+- Files changed: `core/src/authority/{mod,events,state,registry}.rs`, `core/src/lib.rs`, `core/Cargo.toml`, `Cargo.lock`, and `core/tests/authority_registry.rs`.
+- Module structure: added schema-backed Grant/DescendantGrant/Revocation envelope helpers, the in-memory `GrantRecord` and provenance shapes, deny-by-default matching predicates, and an independent `AuthorityRegistry` log projection.
+- Matching matrix: implemented the pinned seven-kind containment rules plus fail-closed Unspecified/unknown handling; descendant grants validate against the exact eight-kind canonical set.
+- Fold behavior: validates event/message domain identity and grant shape, preserves revoked grants, rejects conflicting grant/revocation duplicates, and retains source creation records so replaying a full grant→revocation prefix remains idempotent.
+- Mechanical decisions: added a direct `prost-types` dependency for the public timestamp fields; required non-empty mandatory IDs, concrete target kinds/policies, non-empty normal-grant kind sets, and provenance at the projection boundary under the story's Fail Fast requirement.
+- Tests added: 10 behavior tests in `core/tests/authority_registry.rs`, covering all acceptance criteria, full-prefix replay idempotence, conflict detection, malformed records, and non-authority event filtering.
+- Verification: `cargo build -p patchbay-core`, full `cargo test -p patchbay-core`, and `cargo clippy --all-targets -- -D warnings` pass with `CARGO_HOME=/tmp/cargo-home`.
+- Dispatch: direct-read implementation only; the user-pinned semantics and existing session/elicitation templates left no unresolved integration unknowns.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
