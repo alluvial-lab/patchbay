@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-sessions
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -856,3 +856,19 @@ Verification: `cargo build` clean, `cargo test -p patchbay-core` 152 tests pass,
 - `effective_connectivity` takes `SessionState` (the proto) but only uses connectivity; could take `SessionConnectivityState` directly. Minor, leave.
 
 **Notes**: The implementation correctly mirrors acceptance's established patterns (writer + pure-tail projection, RPITIT ports, typed thiserror enums) and the state-axis transition tables are exactly right. The blockers are genuine correctness bugs in the sessions-specific logic (state inheritance on bump, multi-field truncation, tombstone key completeness, write/replay validation parity) — exactly the kind of issue the two-phase deep review exists to catch. Both reviewers independently flagged B2/B3/B4, raising confidence. The feature bounces to `implementing` until the two fix stories land.
+
+## Re-review (2026-07-13, post-fix)
+
+Both blocker fix stories landed and are at `stage: review`:
+- `story-fix-sessions-tombstone-key` (B4, commit `da64160`) — tombstone key extended to full identity `(adapter_id, deployment_scope, runtime_session_id, generation)`; cross-adapter collision regression test added.
+- `story-fix-sessions-ingest-correctness` (B1+B2+B3, commit `06e6251`) — B1: `validate_report` checks all identity fields before append; B2: `SessionGenerationBumped` proto carries `initial_state`+metadata, `observe_generation_bumped` applies reported state (not clone); B3: equal-gen branch appends all deltas (new `DeltasApplied` variant). Regression tests for all three.
+
+Orchestrator verified the fixes directly against code (not just test-pass):
+- B1: `validate_report` at ingest.rs:121, checks all four fields.
+- B2: proto fields 6-9 added; registry applies `next.state = initial_state` + reported metadata (line 74-77), no longer blindly clones.
+- B3: early returns removed; `DeltasApplied { event_ids }` combined variant.
+- B4: `SessionTombstoneKey` includes `adapter_id` + `deployment_scope`.
+
+Verification: `cargo build` clean, `cargo test -p patchbay-core` 161 tests pass (was 139 pre-fix), `cargo clippy --all-targets` clean. Gen diff additions-only (8 Rust + 22 TS lines, no reformatting drift).
+
+**Verdict**: Approve with comments. All 4 blockers resolved. Important findings remain parked in backlog (authority-domain isolation, test coverage gaps, idempotency/concurrency — all latent in single-domain/single-writer v0.1.0). Feature re-advanced to `stage: review` with 7 child stories (5 original + 2 fix) all at `review`.
