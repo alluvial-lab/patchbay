@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: implementing
+stage: drafting
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -590,3 +590,43 @@ Stories 1 is the foundation. 2 and 3 can proceed in parallel after 1 lands (Gran
 - **Committed v0.1.0 behavior**: deny-by-default grant evaluation; the `GrantCheck` port (existence + matching, with implicit operator authority); durable Grant/DescendantGrant/Revocation events; revocation marks-not-deletes (audit retention); the descendant-grant allowed-kind set (8 existing-session kinds, spawn+attach excluded); two-lever non-cascade revocation (structural — no cascade mechanism); descendant-grant-on-spawn via log-tail; the `AuthorityDomainId` key shape (federation seam).
 - **Reserved seam**: multi-operator authority domains + durable operator grants (replaces the implicit operator authority — a reversal, not a gap-fill); delegation lineage (`parent_grant_id` — explicitly absent per PROTOCOL.md); per-spawn-variant authority; tighter endpoint-class narrowing; expiration enforcement (needs a clock — deferred with time-driven staleness); cascade-revocation as a query (future, no schema change).
 - **Explicitly rejected**: trusting self-asserted actor identity (SECURITY.md "compound issuer" — sender identity is verified, never self-asserted); adapter capability declarations as grant authority (capability ≠ authority); making acceptance write descendant grants (Ports & Adapters violation — authority owns the reaction); cascading revocation as v0.1.0 behavior (two-lever is the v0.1.0 rule).
+
+## Design review (2026-07-13, pre-implementation)
+
+**Verdict**: Request changes — bounce to `stage: drafting`. The design has security-critical and completeness blockers that must be resolved before the orchestrator runs.
+
+**Reviewer**: cross-model fresh-context (openai-codex/gpt-5.6-sol, different class from the umans orchestrator).
+
+**Blockers** (10 found — design soundness, not code bugs):
+
+1. **Implicit operator authority (Q1) nullifies the descendant-grant + revocation machinery.** `GrantCheck` returns `Authorized { grant_id: None }` whenever `actor_id == "operator"`. But descendant grants have the spawner/operator as their subject — so the operator's descendant grant is never consulted, revoking it can't deny future operations, and revoking a spawn grant can't prevent future operator spawns (implicit authority still authorizes). The two-lever non-cascade, which the feature claims to make real and testable, is rendered inert on the production path. Conflicts with `FleetAuthorityForSpawn` (requires a live fleet spawn grant) and the `spawning_grant_id` provenance requirement.
+
+2. **`is_operator` trusts a self-asserted payload identity — violates compound issuer.** The acceptance pipeline extracts `sender` directly from `Operation.sender` and passes it to `GrantCheck`; the proposed `is_operator` compares that payload value to `"operator"`. No verified connection/operator-session/transport-principal evidence reaches the check. Violates SECURITY.md "compound issuer" + "sender identity is never self-asserted." Any caller that can submit an Operation can claim the operator actor. Also internally contradictory ("configured at deployment" vs hard-coded constant).
+
+3. **`grant_authorizes` omits committed security dimensions.** Endpoint-id narrowing is a comment not code; endpoint-class matching is impossible (ActorEndpointRef carries no class); `target_scope_matches` is referenced but never specified; `authority_domain_id` is ignored; `is_live()` ignores `expires_at`; `TargetScopeKind`-specific matching rules undefined. Scope matching is a semantic 50/50 (exact equality vs fleet containment vs adapter containment vs project membership).
+
+4. **The spawn-tail cannot derive the spawned session from its declared input events.** A spawn Operation targets fleet/supervisor scope BEFORE the child exists; its `Operation.target_scope` cannot later become the spawned session. `CommandTransition` carries no spawned-session identity. The design's claim that the child target comes "from the spawn operation's target, now that the session exists" is false for the current contract. Need a spawn-result contract (e.g. correlate a completion Observation/SessionState registration carrying the new session identity).
+
+5. **The side-effecting reactor is neither wired nor reliably idempotent.** `ElicitationSlotLayer` is a pure projection; this tail must cause a second durable write. `issued: HashSet<CommandId>` marks in-memory output, not durable commit. Failure cases (mark-before-append-fails, duplicate observation races, replay-before-descendant-event) unresolved. No story owns the live consumer loop or the issuance-to-writer call. The feature could finish with no descendant grant ever written.
+
+6. **Existing target resolution rejects fleet-scoped spawn operations.** After grant check, acceptance always calls `TargetResolver`; `SessionRegistry` requires `adapter_id` + `runtime_session_id`, so a fleet spawn target (session doesn't exist yet) returns `TargetNotFound`. Authority can authorize a fleet spawn and acceptance still rejects it. Need OperationKind-aware target resolution (fleet path for spawn, existing-session path for the rest).
+
+7. **Ingestion signatures cannot perform warm-after-write.** All authority ingest functions receive `lookup: &L` (read-only `GrantLookup`), but the design requires each successful append to warm the registry. No mutation method, no `&mut` argument. Inconsistent with sessions (which uses `SessionProjection::observe(&mut self, ...)` + `&mut L`). An implementer would need interior mutability or an API change.
+
+8. **"Audit" is in the brief but has no implementation unit.** Descendant grants require an audit id linking to spawn completion; no unit designs an audit event/record, failed-authorization audit, audit-id creation/correlation, or replay/query. Grant state events don't satisfy SECURITY.md's distinct-audit-record requirement.
+
+9. **The non-cascade mutation test is underspecified.** Could pass without proving the actual two-lever relationship (must create parent spawn grant P, descendant D with provenance linking to P, revoke P, prove P denies + D still authorizes, separately revoke D, prove denial). Must show both levers, not just absence of cascade.
+
+10. **Formal-model inventory is wrong (8 properties, not 7) and property-test mapping is incomplete.** `authority.qnt` enumerates 8: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`, `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`. Unit 6 omits 4 of them. `replay_matches_live` is valuable but not one of the 8 property ids.
+
+## Revision direction (to address before re-advancing)
+
+The blockers cluster into three revision themes:
+
+**A. Operator identity + authority model (blockers 1, 2, 3).** The hybrid (Q1) as written is unsound: implicit operator authority bypasses the durable machinery, and operator identity is self-asserted. Revise toward durable bootstrap/operator grants (including a fleet spawn grant) so the production path exercises real grant evaluation, OR define explicit-grant precedence + negative revocation so a revoked descendant grant can't fall through to universal authority. Replace the payload-only `ActorEndpointRef` with a verified `IssuerContext` (claimed sender + verified operator actor + verified transport endpoint + endpoint class) supplied by the authenticated ingress boundary — this is the compound-issuer requirement. Specify the full grant-matching matrix (domain equality, verified actor, endpoint narrowing, per-TargetScopeKind containment rules, OperationKind membership, expiry via injected clock, revocation by both representations).
+
+**B. Spawn lifecycle + reactor wiring (blockers 4, 5, 6).** Define a spawn-result contract so the descendant-grant reactor can identify the spawned session (correlate a completion Observation/SessionState registration carrying the new session identity, not just the Completed transition). Make the reactor durably idempotent (deterministic descendant grant identity from authority domain + spawn command; idempotent append/dedup at storage; catch-up replay with side-effects disabled). OWN the wiring — the feature must not finish with descendant grants unwritten. Add OperationKind-aware target resolution so fleet spawn targets don't require an existing runtime session.
+
+**C. API/contract completeness + formal honesty (blockers 7, 8, 9, 10).** Define `GrantProjection: GrantLookup` with `observe(&mut self, ...)` and accept `&mut L` (match sessions' warm-after-write). Add an audit unit (or explicit dependency binding). Tighten the non-cascade oracle to prove both levers with provenance. Correct the formal inventory to 8 properties and map each to: an executable test owned here, a named dependency-owned test, or a documented untested gap.
+
+The stories are NOT re-spawned yet — they'll be revised when the design lands. The 6 existing story files stay on disk but their acceptance criteria will change; do not implement against the current versions.
