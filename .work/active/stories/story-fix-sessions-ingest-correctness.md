@@ -1,7 +1,7 @@
 ---
 id: story-fix-sessions-ingest-correctness
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-ingest, story-v0-core-sessions-registry]
@@ -59,3 +59,11 @@ In the equal-generation branch, `ingest_session_report` checks connectivity → 
 - These are correctness bugs found at feature review, not new features. The 5 original sessions stories stay at `stage: review`; this story is a new child that must land before the feature can advance to `done`.
 - B2 involves a proto change — follow the regen steps: edit `sessions.proto` → `cargo build -p patchbay-contracts` (Rust) → `buf generate` from `contracts/` (TS) → `git checkout contracts/rust/src/gen` → `cargo build` to restore committed Rust format. `CARGO_HOME=/tmp/cargo-home` for all cargo commands.
 - Found by deep review Phase 1 (completeness) + Phase 2 (adversarial), cross-model (openai-codex/gpt-5.6-sol).
+
+## Implementation notes
+
+- B1: added top-of-ingest validation for every replay-required identity field (`authority_domain_id`, `adapter_id`, `deployment_scope`, `runtime_session_id`) before projection lookup or durable append. Tests cover each newly guarded empty field, unchanged storage, and successful replay after an accepted report.
+- B2: extended the schema-owned `SessionGenerationBumped` payload with the replacement generation's initial state and metadata, regenerated canonical Rust and TypeScript contracts, populated the fields from the report, and made replay validate/apply them rather than inherit prior-generation values. Added replay coverage for `Offline/Working` old state versus `Live/Idle` replacement state and new labels, plus corruption coverage for a missing bump state.
+- B3: chose ordered sequential appends (connectivity, activity, metadata) after validating all implied axis transitions up front. A multi-delta report returns `IngestResult::DeltasApplied` with all committed event IDs; single-delta reports retain their existing result variants. Because the storage port has no atomic batch operation, a later storage failure returns that error while earlier successful appends remain durable. Replay coverage verifies all three deltas from one report.
+- Contract regeneration followed both generation paths. After restoring the committed Rust file, Cargo's freshness check did not rerun `build.rs`; cleaning only `patchbay-contracts` before the prescribed rebuild mechanically forced canonical prost-build output without changing semantics.
+- Verification passed: `cargo build -p patchbay-core`, `cargo test -p patchbay-core` (all tests), and `cargo clippy -p patchbay-core --all-targets`, all with `CARGO_HOME=/tmp/cargo-home`.

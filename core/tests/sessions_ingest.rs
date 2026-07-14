@@ -3,7 +3,10 @@ use patchbay_contracts::patchbay::{
     SessionActivityState, SessionConnectivityState, SessionStateEvent, StoredEventKind,
 };
 use patchbay_core::{
-    session::{ingest_session_report, IngestResult, SessionError, SessionRegistry, SessionReport},
+    session::{
+        ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRegistry,
+        SessionReport,
+    },
     storage::{RecordedEvent, RusqliteStorage, Storage},
 };
 use prost::Message;
@@ -109,9 +112,21 @@ async fn first_report_writes_registration() {
 async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = SessionRegistry::new();
-    register(&storage, &mut registry, report(1)).await;
+    let mut initial = report(1);
+    initial.connectivity = SessionConnectivityState::Offline;
+    initial.activity = SessionActivityState::Working;
+    initial.project = "old-project".to_owned();
+    initial.cwd = "/work/old".to_owned();
+    initial.name = "old-name".to_owned();
+    register(&storage, &mut registry, initial).await;
 
-    let result = ingest_session_report(&storage, &registry, report(2))
+    let mut replacement = report(2);
+    replacement.connectivity = SessionConnectivityState::Live;
+    replacement.activity = SessionActivityState::Idle;
+    replacement.project = "new-project".to_owned();
+    replacement.cwd = "/work/new".to_owned();
+    replacement.name = "new-name".to_owned();
+    let result = ingest_session_report(&storage, &registry, replacement)
         .await
         .unwrap();
 
@@ -136,20 +151,27 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     };
     assert_eq!(bump.from_generation, Some(generation(1)));
     assert_eq!(bump.to_generation, Some(generation(2)));
+    let bumped_state = bump.initial_state.expect("bump must carry the new state");
+    assert_eq!(bumped_state.connectivity(), SessionConnectivityState::Live);
+    assert_eq!(bumped_state.activity(), SessionActivityState::Idle);
+    assert_eq!(bump.project, "new-project");
+    assert_eq!(bump.cwd, "/work/new");
+    assert_eq!(bump.name, "new-name");
 
-    registry.observe(&committed[1]).unwrap();
-    let tombstone = registry
+    let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
+    let tombstone = rebuilt
         .get_tombstone(&adapter(), "machine-a", &runtime(), &generation(1))
         .expect("the bump event must fold into a tombstone");
     assert_eq!(tombstone.superseded_at_lsn, 2);
-    assert_eq!(
-        registry
-            .get_live_session(&adapter(), "machine-a", &runtime())
-            .unwrap()
-            .identity
-            .session_generation,
-        generation(2)
-    );
+    let live = rebuilt
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .expect("the replacement generation must be live");
+    assert_eq!(live.identity.session_generation, generation(2));
+    assert_eq!(live.state.connectivity(), SessionConnectivityState::Live);
+    assert_eq!(live.state.activity(), SessionActivityState::Idle);
+    assert_eq!(live.project, "new-project");
+    assert_eq!(live.cwd, "/work/new");
+    assert_eq!(live.name, "new-name");
 }
 
 #[tokio::test]
@@ -272,6 +294,91 @@ async fn lower_generation_is_rejected_without_writing() {
             .session_generation,
         generation(2)
     );
+}
+
+#[tokio::test]
+async fn one_report_persists_every_changed_axis_and_metadata() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = SessionRegistry::new();
+    register(&storage, &mut registry, report(1)).await;
+
+    let mut changed = report(1);
+    changed.connectivity = SessionConnectivityState::Live;
+    changed.activity = SessionActivityState::Working;
+    changed.project = "patchbay-next".to_owned();
+    changed.cwd = "/work/patchbay-next".to_owned();
+    changed.name = "replacement".to_owned();
+
+    let result = ingest_session_report(&storage, &registry, changed)
+        .await
+        .unwrap();
+    let IngestResult::DeltasApplied { event_ids } = result else {
+        panic!("a multi-field report must return the combined result");
+    };
+    assert_eq!(event_ids.len(), 3);
+
+    let committed = events(&storage).await;
+    assert_eq!(committed.len(), 4);
+    assert!(matches!(
+        decode(&committed[1]).mutation,
+        Some(session_state_event::Mutation::ConnectivityChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[2]).mutation,
+        Some(session_state_event::Mutation::ActivityChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[3]).mutation,
+        Some(session_state_event::Mutation::Relabeled(_))
+    ));
+
+    let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
+    let live = rebuilt
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .unwrap();
+    assert_eq!(live.state.connectivity(), SessionConnectivityState::Live);
+    assert_eq!(live.state.activity(), SessionActivityState::Working);
+    assert_eq!(live.project, "patchbay-next");
+    assert_eq!(live.cwd, "/work/patchbay-next");
+    assert_eq!(live.name, "replacement");
+}
+
+#[tokio::test]
+async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_replay() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let registry = SessionRegistry::new();
+
+    let mut empty_adapter = report(1);
+    empty_adapter.adapter_id.value.clear();
+    let mut empty_scope = report(1);
+    empty_scope.deployment_scope.clear();
+    let mut empty_runtime = report(1);
+    empty_runtime.runtime_session_id.value.clear();
+
+    for (field, invalid) in [
+        ("adapter_id", empty_adapter),
+        ("deployment_scope", empty_scope),
+        ("runtime_session_id", empty_runtime),
+    ] {
+        let error = ingest_session_report(&storage, &registry, invalid)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, SessionError::CorruptRecord(message) if message.contains(field)),
+            "expected an empty {field} error"
+        );
+        assert!(events(&storage).await.is_empty());
+    }
+
+    ingest_session_report(&storage, &registry, report(1))
+        .await
+        .expect("a valid report must be accepted");
+    let rebuilt = rebuild_from_log(&storage, &domain())
+        .await
+        .expect("every accepted report must produce a replayable log");
+    assert!(rebuilt
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .is_some());
 }
 
 #[tokio::test]

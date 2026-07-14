@@ -86,9 +86,13 @@ message SessionGenerationBumped {
   string deployment_scope = 2;
   RuntimeSessionId runtime_session_id = 3;
   Generation from_generation = 4;
-  Generation to_generation = 5;
   // The prior generation is tombstoned at this event's LSN. The tombstone
   // fact (generation N existed, superseded at LSN X) is retained indefinitely.
+  Generation to_generation = 5;
+  SessionState initial_state = 6;
+  string project = 7;
+  string cwd = 8;
+  string name = 9;
 }
 
 message SessionConnectivityChanged {

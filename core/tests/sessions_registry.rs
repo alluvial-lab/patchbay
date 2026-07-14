@@ -152,6 +152,13 @@ fn folds_axis_changes_relabel_and_generation_bump() {
             runtime_session_id: Some(runtime()),
             from_generation: Some(generation(1)),
             to_generation: Some(generation(2)),
+            initial_state: Some(state(
+                SessionConnectivityState::Live,
+                SessionActivityState::Working,
+            )),
+            project: "patchbay-next".to_owned(),
+            cwd: "/work/patchbay-next".to_owned(),
+            name: "replacement".to_owned(),
         },
     );
     registry.observe(&recorded(5, &bump)).unwrap();
@@ -195,6 +202,32 @@ fn folds_axis_changes_relabel_and_generation_bump() {
     assert_eq!(binding.session_generation, generation(2));
 }
 
+#[test]
+fn generation_bump_without_initial_state_is_corrupt_record() {
+    let mut registry = SessionRegistry::new();
+    registry.observe(&recorded(1, &registration())).unwrap();
+    let bump = events::generation_bumped(
+        domain(),
+        SessionGenerationBumped {
+            adapter_id: Some(adapter()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime()),
+            from_generation: Some(generation(1)),
+            to_generation: Some(generation(2)),
+            initial_state: None,
+            project: "new-project".to_owned(),
+            cwd: "/work/new".to_owned(),
+            name: "new-name".to_owned(),
+        },
+    );
+
+    assert!(matches!(
+        registry.observe(&recorded(2, &bump)),
+        Err(SessionError::CorruptRecord(message)) if message.contains("missing initial_state")
+    ));
+    assert!(!registry.is_tombstoned(&adapter(), "machine-a", &runtime(), &generation(1)));
+}
+
 #[tokio::test]
 async fn tombstones_are_scoped_to_the_full_session_identity() {
     let mut registry = SessionRegistry::new();
@@ -225,6 +258,13 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             runtime_session_id: Some(runtime()),
             from_generation: Some(generation(1)),
             to_generation: Some(generation(2)),
+            initial_state: Some(state(
+                SessionConnectivityState::Unknown,
+                SessionActivityState::Unknown,
+            )),
+            project: "patchbay".to_owned(),
+            cwd: "/work/patchbay".to_owned(),
+            name: "main".to_owned(),
         },
     );
 
@@ -282,6 +322,13 @@ fn reobserving_a_committed_prefix_is_idempotent() {
             runtime_session_id: Some(runtime()),
             from_generation: Some(generation(1)),
             to_generation: Some(generation(2)),
+            initial_state: Some(state(
+                SessionConnectivityState::Live,
+                SessionActivityState::Unknown,
+            )),
+            project: "renamed".to_owned(),
+            cwd: "/work/renamed".to_owned(),
+            name: "renamed".to_owned(),
         },
     );
     let activity = events::activity_changed(

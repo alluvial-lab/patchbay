@@ -298,6 +298,12 @@ impl SessionRegistry {
                 from_identity.session_generation.value, to_generation.value
             )));
         }
+        let initial_state = mutation.initial_state.ok_or_else(|| {
+            SessionError::CorruptRecord(format!(
+                "session generation bump at LSN {event_lsn} is missing initial_state"
+            ))
+        })?;
+        validate_state(&initial_state, "session generation bump", event_lsn)?;
 
         if let Some(existing) = self.get_tombstone(
             &from_identity.adapter_id,
@@ -341,6 +347,10 @@ impl SessionRegistry {
         };
         let mut next = current.clone();
         next.identity.session_generation = to_generation;
+        next.state = initial_state;
+        next.project.clone_from(&mutation.project);
+        next.cwd.clone_from(&mutation.cwd);
+        next.name.clone_from(&mutation.name);
         next.last_authoritative_lsn = Some(event_lsn);
         next.tombstoned = false;
         next.superseded_at_lsn = None;

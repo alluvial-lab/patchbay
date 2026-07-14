@@ -2,8 +2,8 @@
 //!
 //! A report describes the adapter's current view of one session. The durable
 //! event log remains authoritative: this writer compares the report with the
-//! hot session projection, validates the implied mutation, and appends exactly
-//! one schema-owned session delta when state changed.
+//! hot session projection, validates the implied mutations, and appends every
+//! schema-owned session delta needed to represent the report.
 
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityChanged,
@@ -65,6 +65,8 @@ pub enum IngestResult {
     },
     /// Session metadata changed without changing session identity.
     Relabeled { event_id: EventId },
+    /// More than one equal-generation delta was durably appended.
+    DeltasApplied { event_ids: Vec<EventId> },
     /// The report exactly matched the current projection.
     NoChange,
 }
@@ -102,6 +104,11 @@ impl SessionLookup for SessionRegistry {
 /// only then return. Callers keep the in-memory registry warm by observing the
 /// committed event after this function succeeds; this writer never mutates the
 /// projection before durability is established.
+///
+/// Equal-generation deltas are validated together, then appended in
+/// connectivity, activity, metadata order. Storage has no atomic batch port:
+/// if a later append fails, earlier successful appends remain durable and this
+/// function returns the later error.
 pub async fn ingest_session_report<S, L>(
     storage: &S,
     session_lookup: &L,
@@ -111,7 +118,7 @@ where
     S: Storage,
     L: SessionLookup,
 {
-    validate_authority_domain(&report)?;
+    validate_report(&report)?;
     let authority_domain_id = report.authority_domain_id.clone();
     let live = session_lookup
         .current_session(
@@ -156,6 +163,13 @@ where
                     runtime_session_id: Some(report.runtime_session_id),
                     from_generation: Some(live_generation),
                     to_generation: Some(report.session_generation),
+                    initial_state: Some(SessionState {
+                        connectivity: report.connectivity as i32,
+                        activity: report.activity as i32,
+                    }),
+                    project: report.project,
+                    cwd: report.cwd,
+                    name: report.name,
                 },
             );
             let event_id = storage
@@ -172,19 +186,39 @@ where
         }
         std::cmp::Ordering::Equal => {
             let current_connectivity = current.state.connectivity();
-            if report.connectivity != current_connectivity {
-                if !allowed_connectivity_transition(current_connectivity, report.connectivity) {
-                    return Err(invalid_transition(
-                        current_connectivity,
-                        report.connectivity,
-                    ));
-                }
+            let connectivity_changed = report.connectivity != current_connectivity;
+            if connectivity_changed
+                && !allowed_connectivity_transition(current_connectivity, report.connectivity)
+            {
+                return Err(invalid_transition(
+                    current_connectivity,
+                    report.connectivity,
+                ));
+            }
+
+            let current_activity = current.state.activity();
+            let activity_changed = report.activity != current_activity;
+            if activity_changed && !allowed_activity_transition(current_activity, report.activity) {
+                return Err(invalid_transition(current_activity, report.activity));
+            }
+
+            let relabeled = metadata_changed(&current, &report);
+            let change_count = usize::from(connectivity_changed)
+                + usize::from(activity_changed)
+                + usize::from(relabeled);
+            if change_count == 0 {
+                return Ok(IngestResult::NoChange);
+            }
+
+            let mut event_ids = Vec::with_capacity(change_count);
+
+            if connectivity_changed {
                 let event = events::connectivity_changed(
                     authority_domain_id.clone(),
                     SessionConnectivityChanged {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
+                        adapter_id: Some(report.adapter_id.clone()),
+                        deployment_scope: report.deployment_scope.clone(),
+                        runtime_session_id: Some(report.runtime_session_id.clone()),
                         session_generation: Some(report.session_generation),
                         from: current_connectivity as i32,
                         to: report.connectivity as i32,
@@ -194,24 +228,16 @@ where
                     .append(&authority_domain_id, events::encode(&event))
                     .await?;
                 validate_event_id(&event_id, &authority_domain_id)?;
-                return Ok(IngestResult::ConnectivityChanged {
-                    event_id,
-                    from: current_connectivity,
-                    to: report.connectivity,
-                });
+                event_ids.push(event_id);
             }
 
-            let current_activity = current.state.activity();
-            if report.activity != current_activity {
-                if !allowed_activity_transition(current_activity, report.activity) {
-                    return Err(invalid_transition(current_activity, report.activity));
-                }
+            if activity_changed {
                 let event = events::activity_changed(
                     authority_domain_id.clone(),
                     SessionActivityChanged {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
+                        adapter_id: Some(report.adapter_id.clone()),
+                        deployment_scope: report.deployment_scope.clone(),
+                        runtime_session_id: Some(report.runtime_session_id.clone()),
                         session_generation: Some(report.session_generation),
                         from: current_activity as i32,
                         to: report.activity as i32,
@@ -221,14 +247,10 @@ where
                     .append(&authority_domain_id, events::encode(&event))
                     .await?;
                 validate_event_id(&event_id, &authority_domain_id)?;
-                return Ok(IngestResult::ActivityChanged {
-                    event_id,
-                    from: current_activity,
-                    to: report.activity,
-                });
+                event_ids.push(event_id);
             }
 
-            if metadata_changed(&current, &report) {
+            if relabeled {
                 let event = events::relabeled(
                     authority_domain_id.clone(),
                     SessionRelabeled {
@@ -245,10 +267,29 @@ where
                     .append(&authority_domain_id, events::encode(&event))
                     .await?;
                 validate_event_id(&event_id, &authority_domain_id)?;
-                return Ok(IngestResult::Relabeled { event_id });
+                event_ids.push(event_id);
             }
 
-            Ok(IngestResult::NoChange)
+            if change_count > 1 {
+                return Ok(IngestResult::DeltasApplied { event_ids });
+            }
+
+            let event_id = event_ids.pop().expect("one validated delta was appended");
+            if connectivity_changed {
+                Ok(IngestResult::ConnectivityChanged {
+                    event_id,
+                    from: current_connectivity,
+                    to: report.connectivity,
+                })
+            } else if activity_changed {
+                Ok(IngestResult::ActivityChanged {
+                    event_id,
+                    from: current_activity,
+                    to: report.activity,
+                })
+            } else {
+                Ok(IngestResult::Relabeled { event_id })
+            }
         }
         std::cmp::Ordering::Less => Err(SessionError::StaleGeneration {
             live: live_generation,
@@ -257,11 +298,23 @@ where
     }
 }
 
-fn validate_authority_domain(report: &SessionReport) -> Result<(), SessionError> {
-    if report.authority_domain_id.value.is_empty() {
-        return Err(SessionError::CorruptRecord(
-            "session report authority_domain_id is empty".to_owned(),
-        ));
+fn validate_report(report: &SessionReport) -> Result<(), SessionError> {
+    let empty_field = if report.authority_domain_id.value.is_empty() {
+        Some("authority_domain_id")
+    } else if report.adapter_id.value.is_empty() {
+        Some("adapter_id")
+    } else if report.deployment_scope.is_empty() {
+        Some("deployment_scope")
+    } else if report.runtime_session_id.value.is_empty() {
+        Some("runtime_session_id")
+    } else {
+        None
+    };
+
+    if let Some(field) = empty_field {
+        return Err(SessionError::CorruptRecord(format!(
+            "session report {field} is empty"
+        )));
     }
     Ok(())
 }

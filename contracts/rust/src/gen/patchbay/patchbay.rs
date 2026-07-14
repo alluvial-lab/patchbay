@@ -758,6 +758,14 @@ pub struct SessionGenerationBumped {
     /// fact (generation N existed, superseded at LSN X) is retained indefinitely.
     #[prost(message, optional, tag = "5")]
     pub to_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "6")]
+    pub initial_state: ::core::option::Option<SessionState>,
+    #[prost(string, tag = "7")]
+    pub project: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag = "9")]
+    pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionConnectivityChanged {

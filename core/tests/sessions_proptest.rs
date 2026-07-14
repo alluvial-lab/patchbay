@@ -111,6 +111,12 @@ fn event_lsn(result: &IngestResult) -> Option<u64> {
             new_generation_event_id,
             ..
         } => new_generation_event_id,
+        IngestResult::DeltasApplied { event_ids } => {
+            return event_ids
+                .last()
+                .and_then(|event_id| event_id.lsn.as_ref())
+                .map(|lsn| lsn.value);
+        }
         IngestResult::NoChange => return None,
     };
     event_id.lsn.as_ref().map(|lsn| lsn.value)
