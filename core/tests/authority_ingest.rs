@@ -1,0 +1,236 @@
+use patchbay_contracts::patchbay::{
+    ActorId, AdapterId, AuthorityDomainId, DescendantGrant, DescendantGrantProvenance, Generation,
+    Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn, OperationKind, Revocation,
+    RuntimeSessionId, StoredEventKind, TargetScope, TargetScopeKind,
+};
+use patchbay_core::{
+    authority::{
+        ingest_descendant_grant, ingest_grant, ingest_revocation, AuthorityError,
+        AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
+    },
+    storage::{RecordedEvent, RusqliteStorage, Storage},
+};
+
+fn domain() -> AuthorityDomainId {
+    AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    }
+}
+
+fn actor() -> ActorId {
+    ActorId {
+        value: "operator".to_owned(),
+    }
+}
+
+fn grant_id(value: &str) -> GrantId {
+    GrantId {
+        value: value.to_owned(),
+    }
+}
+
+fn fleet_scope() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::FleetSupervisor as i32,
+        ..TargetScope::default()
+    }
+}
+
+fn session_scope() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        runtime_session_id: Some(RuntimeSessionId {
+            value: "session-1".to_owned(),
+        }),
+        session_generation: Some(Generation { value: 1 }),
+        deployment_scope: "machine-a".to_owned(),
+        ..TargetScope::default()
+    }
+}
+
+fn grant(id: &str) -> Grant {
+    Grant {
+        grant_id: Some(grant_id(id)),
+        authority_domain_id: Some(domain()),
+        subject_actor_id: Some(actor()),
+        subject_endpoint_class: "web".to_owned(),
+        target_scope: Some(fleet_scope()),
+        allowed_operation_kinds: vec![OperationKind::Spawn as i32],
+        provenance: Some(GrantProvenance {
+            reason: "test fixture".to_owned(),
+            ..GrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    }
+}
+
+fn descendant_grant(id: &str, spawning_grant_id: &str) -> DescendantGrant {
+    DescendantGrant {
+        grant_id: Some(grant_id(id)),
+        authority_domain_id: Some(domain()),
+        subject_actor_id: Some(actor()),
+        subject_endpoint_class: "web".to_owned(),
+        target_scope: Some(session_scope()),
+        allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
+            .iter()
+            .map(|kind| *kind as i32)
+            .collect(),
+        provenance: Some(DescendantGrantProvenance {
+            spawning_grant_id: Some(grant_id(spawning_grant_id)),
+            ..DescendantGrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..DescendantGrant::default()
+    }
+}
+
+fn revocation(id: &str) -> Revocation {
+    Revocation {
+        authority_domain_id: Some(domain()),
+        grant_id: Some(grant_id(id)),
+        revocation_generation: Some(Generation { value: 1 }),
+        accepted_operation_policy: GrantRevocationPolicy::Cancel as i32,
+        reason: "test revocation".to_owned(),
+        ..Revocation::default()
+    }
+}
+
+async fn events(storage: &RusqliteStorage) -> Vec<RecordedEvent> {
+    storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("the in-memory authority log remains readable")
+}
+
+#[tokio::test]
+async fn ingest_grant_writes_event_and_warms_registry() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+
+    let event_id = ingest_grant(&storage, &mut registry, &domain(), grant("parent"))
+        .await
+        .expect("the valid grant must be ingested");
+
+    assert_eq!(event_id.authority_domain_id, Some(domain()));
+    assert_eq!(event_id.lsn, Some(Lsn { value: 1 }));
+    let record = registry
+        .get_grant(&grant_id("parent"))
+        .expect("ingestion must warm the grant projection");
+    assert!(record.is_live());
+    assert_eq!(record.allowed_operation_kinds, [OperationKind::Spawn]);
+
+    let committed = events(&storage).await;
+    assert_eq!(committed.len(), 1);
+    assert_eq!(
+        StoredEventKind::try_from(committed[0].payload.kind).unwrap(),
+        StoredEventKind::Grant
+    );
+}
+
+#[tokio::test]
+async fn descendant_with_wrong_allowed_kinds_fails_before_write() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    let mut invalid = descendant_grant("descendant", "parent");
+    invalid.allowed_operation_kinds.pop();
+
+    let error = ingest_descendant_grant(&storage, &mut registry, &domain(), invalid)
+        .await
+        .expect_err("a partial descendant kind set must fail fast");
+
+    assert!(
+        matches!(error, AuthorityError::InvalidGrant(message) if message.contains("exactly the canonical"))
+    );
+    assert!(events(&storage).await.is_empty());
+    assert!(registry.get_grant(&grant_id("descendant")).is_none());
+}
+
+#[tokio::test]
+async fn descendant_with_canonical_kind_set_succeeds() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+
+    let event_id = ingest_descendant_grant(
+        &storage,
+        &mut registry,
+        &domain(),
+        descendant_grant("descendant", "parent"),
+    )
+    .await
+    .expect("the canonical descendant grant must be ingested");
+
+    assert_eq!(event_id.lsn, Some(Lsn { value: 1 }));
+    let record = registry
+        .get_grant(&grant_id("descendant"))
+        .expect("ingestion must warm the descendant projection");
+    assert!(record.is_descendant);
+    assert_eq!(
+        record.allowed_operation_kinds,
+        DESCENDANT_GRANT_ALLOWED_KINDS
+    );
+}
+
+#[tokio::test]
+async fn revoking_parent_does_not_cascade_to_descendant() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    ingest_grant(&storage, &mut registry, &domain(), grant("parent"))
+        .await
+        .unwrap();
+    ingest_descendant_grant(
+        &storage,
+        &mut registry,
+        &domain(),
+        descendant_grant("descendant", "parent"),
+    )
+    .await
+    .unwrap();
+
+    ingest_revocation(&storage, &mut registry, &domain(), revocation("parent"))
+        .await
+        .expect("the existing parent grant must be revocable");
+
+    assert!(registry
+        .get_grant(&grant_id("parent"))
+        .expect("revocation retains the parent record")
+        .is_revoked());
+    assert!(registry
+        .get_grant(&grant_id("descendant"))
+        .expect("non-cascade retains the descendant record")
+        .is_live());
+    assert_eq!(events(&storage).await.len(), 3);
+}
+
+#[tokio::test]
+async fn revoking_nonexistent_grant_fails_before_write() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+
+    let error = ingest_revocation(&storage, &mut registry, &domain(), revocation("missing"))
+        .await
+        .expect_err("unknown grants must fail fast");
+
+    assert!(matches!(error, AuthorityError::GrantNotFound(message) if message.contains("missing")));
+    assert!(events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn committed_event_redelivery_is_consistent_after_warm() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    ingest_grant(&storage, &mut registry, &domain(), grant("parent"))
+        .await
+        .expect("the valid grant must be ingested and warmed");
+    let after_warm = registry.clone();
+    let committed = events(&storage).await;
+
+    registry
+        .observe(&committed[0])
+        .expect("redelivering the committed event must be idempotent");
+
+    assert_eq!(registry, after_warm);
+}

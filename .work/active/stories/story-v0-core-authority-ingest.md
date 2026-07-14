@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-ingest
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry]
@@ -40,3 +40,10 @@ See `feature-v0-core-authority.md` Unit 3 for exact signatures. Key points:
 ## Notes
 - Depends on story 1 (registry + `DESCENDANT_GRANT_ALLOWED_KINDS`).
 - Add integration tests in `core/tests/authority_ingest.rs`. The non-cascade test is key.
+
+## Implementation notes
+- Files changed: `core/src/authority/projection.rs`, `core/src/authority/ingest.rs`, `core/src/authority/mod.rs`, `core/tests/authority_ingest.rs`.
+- Tests added: grant append+warm, descendant exact-kind rejection and success, named-grant-only revocation, nonexistent-grant rejection, and committed-event redelivery consistency (6 tests).
+- Discrepancies from design: none. Creation payloads are preflight-folded through a scratch `AuthorityRegistry` before append so registry shape validation remains the single implementation path; ingestion also validates caller-supplied domain/id/scope before event helpers normalize the wire message.
+- Verification: `cargo build -p patchbay-core` and the focused `authority_ingest` suite passed.
+- Adjacent issues parked: none.
