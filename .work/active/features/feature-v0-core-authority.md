@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: drafting
+stage: implementing
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -34,32 +34,45 @@ This feature has the weakest formal backing: all `authority.qnt` properties are 
 ## Foundation references
 
 - `docs/PROTOCOL.md` — Authority grants; Spawn authority; Security and trust boundary
-- `docs/SECURITY.md` — threat model, grants, revocation, audit, descendant grants, v0.1.0 authority domain
+- `docs/SECURITY.md` — threat model, grants, revocation, audit, descendant grants, v0.1.0 authority domain, compound issuer
 - `docs/ARCHITECTURE.md` — Authority and identity plane
-- `docs/VERIFICATION.md` — stated-normative authority obligations
+- `docs/VERIFICATION.md` — stated-normative authority obligations (8 properties)
 - `contracts/proto/patchbay/authority.proto` — `Grant`, `GrantProvenance`, `GrantRevocationPolicy`, `DescendantGrant`, `Revocation`
-- `contracts/proto/patchbay/common.proto` — `ActorId`, `EndpointId`, `AuthorityDomainId`, `GrantId`, `TargetScope`, `ActorEndpointRef`, `StoredEventKind` (`GRANT=4`, `DESCENDANT_GRANT=5`, `REVOCATION=6`)
-- `specs/seed/authority.qnt` — stated-normative authority obligations (7 properties, all draft)
+- `contracts/proto/patchbay/common.proto` — `ActorId`, `EndpointId`, `AuthorityDomainId`, `GrantId`, `TargetScope`, `ActorEndpointRef`, `TypedCorrelation`, `StoredEventKind` (`GRANT=4`, `DESCENDANT_GRANT=5`, `REVOCATION=6`)
+- `specs/seed/authority.qnt` — stated-normative authority obligations (8 properties, all draft)
 
-## Design decisions (feature-design, 2026-07-13)
+## Design decisions (feature-design, revision 2, 2026-07-13)
 
-Resolved interactively with the operator after unpacking each option's trade-offs. These answers came AFTER a deliberate decision NOT to do a formal-backing pass first: `authority.qnt` has zero promoted properties (4 actively demoted for trace-fidelity / non-mutation-survivable defects), and the verification-claim-correction epic settled that the real formal uplift belongs to the v1 formal gate (`epic-public-product-contract-executable-release-assurance`), not v0.1.0. The design therefore treats the 7 stated-normative semantics as binding obligations the implementation must satisfy + property-testable oracles (mirroring how sessions shipped with one promoted property and the rest stated-normative), without over-claiming verification status.
+Resolved interactively with the operator after a pre-implementation design review (cross-model openai-codex/gpt-5.6-sol) found 10 blockers in revision 1. This revision supersedes revision 1's Q1-Q5. The original decisions NOT changed by the review (durable event-sourcing, log-tail reactor shape, full-protocol allowed-kinds, deny-by-default) are retained; the operator-identity + spawn-machinery cluster is revised.
 
-- **Q1 — v0.1.0 grant population: hybrid (implicit operator authority + durable descendant grants).** Chosen over pure implicit (leaves descendant-grant + revocation logic untested — exactly the demoted formal properties' subject matter) and full durable grant set (more than single-operator v0.1.0 needs — the operator is the only actor). `GrantCheck` returns `Authorized { grant_id: None }` for the operator actor (the `None` grant_id is already reserved for exactly this per `ports.rs`). Descendant grants from spawn are durably recorded so the spawn→descendant-grant seam, revocation, and non-cascade are real, tested, and audited, while the operator's own authority is implicit. This makes the safety-relevant parts testable without ceremony.
-- **Q2 — Grant storage: durable event-sourced.** Chosen over in-memory only (loses audit + crash-recovery; PROTOCOL.md says grants are durable; SECURITY.md requires the audit record). Grants/revocations are `StoredEventKind::Grant`/`DescendantGrant`/`Revocation` events (the discriminators already exist in common.proto); an `AuthorityRegistry` projection folds them, mirroring `SessionRegistry`/`CommandIndex`/`ElicitationSlotLayer`. Replay on startup from LSN 0 (same snapshot-discriminator gap as the other projections — deferred per the sessions feature's Q2).
-- **Q3 — Descendant grant issuance: authority tails the log.** Chosen over acceptance-calls-authority-hook (couples acceptance→authority — Ports & Adapters violation) and authority-owns-spawn-ingress (spawn lifecycle is acceptance's; authority shouldn't own it). The descendant grant is a *reaction* to spawn completion — authority watches for `OPERATION` events of kind `Spawn` reaching terminal `Completed` (via `COMMAND_TRANSITION` events), and reacts by writing the descendant `DescendantGrant` event. This is exactly the elicitation-slot pattern (tail the log, react to command transitions). Keeps acceptance ignorant of descendant grants. The descendant grant event is written by authority in response to seeing a Completed spawn, with provenance linking back to the spawn operation + spawning grant.
-- **Q4 — Scope: full feature with child stories.** Chosen over splitting (the descendant-grant and revocation are the security-critical parts — the demoted formal properties are about these; they should be in-scope and tested, not deferred). Implement everything: grant/revocation event model + `AuthorityRegistry` projection, `GrantCheck` impl, descendant-grant-on-spawn log-tail, revocation (non-cascade two-lever), proptests. ~5-6 child stories.
-- **Q5 — Spawn authority modeling depth: full protocol model.** Chosen over minimal (the explicitly-enumerated descendant allowed-kind set is in PROTOCOL.md + the proto comment; non-cascade is a stated-normative obligation worth a property test — it's one of the demoted formal properties; we can't formally check it but we can property-test it). Model: fleet spawn grants, descendant grants with the explicitly-enumerated allowed-kind set (instruct/cancel/interrupt/query/approval-response/elicitation-response/reconfigure/session-management; spawn+attach excluded), two-lever non-cascade revocation, provenance. This is the security-critical surface; minimal would ship unverified safety logic.
+The review's central finding: revision 1's implicit operator authority (`is_operator(actor) == "operator"` against a payload field) was self-defeating — it bypassed the durable descendant-grant/revocation machinery the feature exists to exercise, AND it trusted a self-asserted payload identity (violating SECURITY.md's compound-issuer rule). This revision goes vertical: durable operator grants + a real descendant-grant reactor, so the machinery is exercised end-to-end on live paths.
+
+- **R1 — Operator authority model: durable bootstrap/operator grants (was: implicit).** Chosen over implicit operator authority (revision-1 Q1) — the review proved implicit authority nullifies the descendant-grant + revocation machinery (the operator's descendant grants are never consulted; revoking them can't deny future operations; the two-lever non-cascade is inert on the production path). A bootstrap operator grant (incl. a fleet-scope spawn grant) is created at init and durably recorded; `GrantCheck` evaluates against it. This satisfies `FleetAuthorityForSpawn` (requires a live fleet spawn grant), the `spawning_grant_id` provenance requirement, and makes revocation real. Chosen over (b) verified-implicit (ships ceremonial always-match operator grants with no payoff) and (c) defer-to-ingress (ships too little). The cost is real but bounded: a bootstrap grant is a single durable record created at first-start.
+- **R2 — Verified `IssuerContext` port (was: self-asserted payload sender).** Chosen over trusting the payload `Operation.sender` (revision-1) — the review proved this violates the compound-issuer rule (SECURITY.md: "sender identity comes from the verified connection/session context, not from self-asserted payload fields"). Define an `IssuerContext` port carrying verified operator actor + verified transport endpoint + operator-session evidence, supplied by the authenticated ingress. v0.1.0 tests supply a test double; the real impl lands with `feature-v0-protocol-seam`/`feature-v0-web-server` (both at `drafting`). This is the Ports & Adapters move acceptance already made (`GrantCheck`/`TargetResolver` are ports implemented later). **Acceptance integration:** the `submit` pipeline signature changes to take an `&IssuerContext` (or the pipeline resolves one from an injected port) instead of reading `Operation.sender` for the grant check. The `Operation.sender` field remains for audit/recording but is NOT authority. This is a small acceptance change, filed as a dependency story.
+- **R3 — Descendant-grant reactor: vertical slice (was: defer).** Chosen over deferring the reactor (revision-1 Q3 option b) — the review proved deferral ships ceremonial durable grants with no live trigger. The vertical slice exercises the full model end-to-end: operator spawn authority (fleet grant) → descendant grant on spawn completion → revocation (both levers) → non-cascade. **The spawn-result contract gap** (the reactor can't identify the spawned session from a `Completed` transition alone) is closed by one additive proto field: `SessionRegistered.spawn_origin: TypedCorrelation` (optional, references the spawn `CommandId`). This is a sessions-feature change, **sequenced first** as a prerequisite story — sessions owns its proto shape; authority's reactor story depends on it. The reactor then tails for `Spawn → Completed` AND a `SessionRegistered` carrying `spawn_origin` correlating to that spawn command, and issues the descendant grant. Chosen over (a) core-assigned spawn result in the Operation payload (bakes a protocol decision into the wrong layer) and (c) defer (ships too little).
+- **R4 — Audit: minimal (grant/revocation events ARE the grant-lifecycle audit; distinct failed-authorization audit deferred).** Chosen over adding a full audit unit (expands scope into a cross-cutting concern that touches acceptance's rejection path too) and over a separate audit-feature dependency (premature). The durable `Grant`/`DescendantGrant`/`Revocation` events with `GrantProvenance`/`DescendantGrantProvenance` satisfy the grant-lifecycle audit need. The distinct failed-authorization audit record (SECURITY.md "audit records are distinct from durable command/session state") is a real requirement but a separate concern — deferred, filed as a backlog item. The feature does NOT claim to deliver full audit; it delivers grant-lifecycle provenance.
+- **R5 — Fleet target resolution: out of scope (filed as backlog; acceptance/sessions concern).** The review correctly flagged that the existing `SessionRegistry`-backed `TargetResolver` rejects fleet spawn targets (no session exists yet). This is an acceptance/sessions gap (OperationKind-aware target resolution), not authority's. Authority's design flags it as a cross-cutting dependency and files a backlog item; it does not absorb the scope. (Note: until fleet-target resolution lands, spawn Operations would fail target resolution after passing the grant check. This is a known integration gap; the authority feature's GrantCheck impl + grant model are still valuable and testable independently. The spawn end-to-end path requires the fleet-resolution backlog item to land.)
+
+### Retained from revision 1 (unchanged by the review)
+
+- **Durable event-sourced storage** (rev1 Q2): Grant/DescendantGrant/Revocation events under the existing `StoredEventKind` discriminators; `AuthorityRegistry` projection folds them, mirroring `SessionRegistry`/`ElicitationSlotLayer`. Replay from LSN 0 (snapshot discriminator gap deferred, matches the other projections).
+- **Full protocol model** (rev1 Q5): fleet spawn grants, descendant grants with the explicitly-enumerated allowed-kind set (8 kinds, spawn+attach excluded), two-lever non-cascade revocation, provenance. Deny-by-default.
+- **Full feature with child stories** (rev1 Q4): the vertical slice is implemented as child stories with declared depends_on, including the sequenced sessions prerequisite.
 
 ## Architectural choice
 
-A hybrid authority layer mirroring the sessions feature's established shape: the event log (owned by `feature-v0-core-persistence`) is the single source of truth for grant/revocation state. Authority writes `Grant`/`DescendantGrant`/`Revocation` events through the `Storage::append` port. An in-memory `AuthorityRegistry` is the hot lookup path, rebuilt from replay on startup. Snapshot checkpointing is deferred (replay from LSN 0), matching acceptance, elicitation, and sessions.
+A durable, event-sourced authority layer that exercises the full grant model end-to-end on live paths. The event log (owned by `feature-v0-core-persistence`) is the single source of truth for grant/revocation state. Authority writes `Grant`/`DescendantGrant`/`Revocation` events through the `Storage::append` port. An in-memory `AuthorityRegistry` is the hot lookup path, rebuilt from replay on startup (replay from LSN 0, matching the other projections). A bootstrap operator grant (incl. fleet spawn grant) is created at init.
 
-The authority feature owns its event kinds end-to-end (writer pattern, like sessions' `ingest_session_report`), EXCEPT for descendant-grant issuance which is a pure log-tail (like the elicitation-slot layer) — because descendant grants are a *reaction* to spawn completion events that acceptance owns. This split mirrors the codebase's established rule: if a feature owns its own state transitions, it writes them; if it reacts to another feature's events, it tails.
+The authority feature owns its event kinds end-to-end (writer pattern, like sessions' `ingest_session_report`), EXCEPT for descendant-grant issuance which is a pure log-tail (like the elicitation-slot layer) — because descendant grants are a *reaction* to spawn completion events that acceptance owns. The tail correlates a `Spawn → Completed` transition with a `SessionRegistered` event carrying `spawn_origin` (the sequenced sessions prerequisite), then issues the descendant grant.
 
-The `GrantCheck` port (already declared in `core/src/acceptance/ports.rs`) is implemented by the `AuthorityRegistry`. v0.1.0 `GrantCheck` is a hybrid: the operator actor resolves to implicit authority (`Authorized { grant_id: None }` — deny-by-default with the single operator as the universal subject), while non-operator subjects are evaluated against the durable grant set (descendant grants). Revocation is durable and enforced (a revoked descendant grant denies future authority); non-cascade is structural (revoking a spawn grant does NOT revoke already-issued descendant grants — two independent levers).
+The `GrantCheck` port (already declared in `core/src/acceptance/ports.rs`) is implemented by the `AuthorityRegistry`. It evaluates against the durable grant set using a verified `IssuerContext` (R2) — never a self-asserted payload field. The operator is identified by the verified `IssuerContext`, not by trusting `Operation.sender`. v0.1.0 `GrantCheck` evaluates the operator against the bootstrap operator grant; non-operator subjects against descendant grants. Revocation is durable and enforced; non-cascade is structural (no cascade mechanism — revoking a grant marks only that grant; descendant grants have separate grant_ids).
 
-This shape honors Ports & Adapters (authority depends on `Storage` and implements `GrantCheck`; acceptance depends on the `GrantCheck` trait, not on authority), Single Source of Truth (the event log is the only source of grant state; the in-memory registry is a pure fold), Generated Contracts (`Grant`, `DescendantGrant`, `Revocation` are generated proto messages; `StoredEventKind::Grant`/`DescendantGrant`/`Revocation` are schema-owned discriminators), and Fail Fast (invalid grants, unknown grant kinds, and log corruption are rejected at the boundary).
+This shape honors Ports & Adapters (authority depends on `Storage` and implements `GrantCheck`; acceptance depends on the `GrantCheck` trait + an `IssuerContext` port, not on authority; the ingress implements `IssuerContext` later), Single Source of Truth (the event log is the only source of grant state; the in-memory registry is a pure fold), Generated Contracts (`Grant`/`DescendantGrant`/`Revocation` are generated proto messages; `StoredEventKind` discriminators are schema-owned; `SessionRegistered.spawn_origin` is an additive field), and Fail Fast (invalid grants, unknown grant kinds, unverified identity, and log corruption are rejected at the boundary).
+
+## Cross-feature dependencies (sequenced)
+
+1. **`story-sessions-spawn-origin-field`** (prerequisite, sessions feature) — add `spawn_origin: TypedCorrelation` (optional) to the `SessionRegistered` proto message; populate it from adapter spawn reports (the adapter correlates a session registration to the spawn command that created it). Regenerate contracts. This unblocks the authority descendant-grant reactor. **Must land before `story-v0-core-authority-spawn-tail`.**
+2. **`story-acceptance-issuer-context`** (prerequisite, acceptance feature) — change `submit` to take an `&IssuerContext` (resolved from an injected port or passed by the caller) instead of reading `Operation.sender` for the grant check. `Operation.sender` stays for audit. The `IssuerContext` port is defined in the authority module (R2); acceptance depends on the trait. **Must land before `story-v0-core-authority-grant-check` can be integrated/tested end-to-end** (though the GrantCheck impl can be developed against a test double in parallel).
 
 ## Implementation Units
 
@@ -69,16 +82,16 @@ This shape honors Ports & Adapters (authority depends on `Storage` and implement
 
 **Story**: `story-v0-core-authority-registry`
 
-The durable event shape (already-defined proto messages — `Grant`, `DescendantGrant`, `Revocation` — encoded under the existing `StoredEventKind` discriminators) and the in-memory projection that folds them. Mirrors `SessionRegistry`/`ElicitationSlotLayer`.
+The durable event shape (already-defined proto messages — `Grant`, `DescendantGrant`, `Revocation`) and the in-memory projection that folds them. Mirrors `SessionRegistry`/`ElicitationSlotLayer`.
 
 ```rust
 // core/src/authority/state.rs
 use patchbay_contracts::patchbay::{
     ActorId, EndpointId, AuthorityDomainId, GrantId, TargetScope, OperationKind, Generation,
+    GrantRevocationPolicy,
 };
 
 /// The in-memory grant record, derived from the event log.
-/// Mirrors SessionRecord: a pure fold of Grant/DescendantGrant/Revocation events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantRecord {
     pub grant_id: GrantId,
@@ -88,51 +101,73 @@ pub struct GrantRecord {
     pub subject_endpoint_class: String,
     pub target_scope: TargetScope,
     pub allowed_operation_kinds: Vec<OperationKind>,
+    pub created_at: Option<::prost_types::Timestamp>,
+    pub expires_at: Option<::prost_types::Timestamp>,
     pub revocation_generation: Option<Generation>,
     pub revoked_at: Option<::prost_types::Timestamp>,
-    pub is_descendant: bool,  // distinguishes Grant vs DescendantGrant events
-    pub provenance: GrantProvenance,  // created_by + audit_id (or descendant spawn_operation_id + spawning_grant_id)
+    pub revocation_policy: GrantRevocationPolicy,
+    pub is_descendant: bool,
+    pub provenance: GrantProvenanceKind,  // CreatedBy{actor, op_id, audit_id} | Descendant{spawn_op_id, spawning_grant_id}
 }
 
+/// A grant is live if not revoked. (Expiration needs a clock — deferred with
+/// the time-driven staleness work; the field is stored but not enforced in
+/// v0.1.0. This is a documented gap, filed as backlog.)
 impl GrantRecord {
-    /// A grant is live if not revoked and not expired.
-    /// (Expiration enforcement is a stated-normative obligation; v0.1.0
-    /// checks revocation durably. Expiry needs a clock — deferred with the
-    /// time-driven staleness work, same as sessions.)
-    pub fn is_live(&self) -> bool { self.revocation_generation.is_none() }
+    pub fn is_revoked(&self) -> bool { self.revocation_generation.is_some() }
+    pub fn is_live(&self) -> bool { !self.is_revoked() }
 }
 
 /// The canonical descendant-grant allowed-kind set from docs/PROTOCOL.md
-/// "Spawn payload and authority commitments". Single source of truth — the
-/// explicitly-enumerated existing-session OperationKinds (spawn + attach
-/// excluded). This is a protocol fact, not invented.
+/// "Spawn payload and authority commitments". SSOT — 8 existing-session kinds
+/// (spawn + attach excluded).
 pub const DESCENDANT_GRANT_ALLOWED_KINDS: &[OperationKind] = &[
-    OperationKind::Instruct,
-    OperationKind::Cancel,
-    OperationKind::Interrupt,
-    OperationKind::Query,
-    OperationKind::ApprovalResponse,
-    OperationKind::ElicitationResponse,
-    OperationKind::Reconfigure,
-    OperationKind::SessionManagement,
+    OperationKind::Instruct, OperationKind::Cancel, OperationKind::Interrupt,
+    OperationKind::Query, OperationKind::ApprovalResponse, OperationKind::ElicitationResponse,
+    OperationKind::Reconfigure, OperationKind::SessionManagement,
 ];
 
-/// Does `grant` authorize `kind` against `target_scope`? The grant-matching
-/// predicate (deny-by-default). Mirrors authority.qnt's `actionGrantAuthorizes*`
-/// but as an independent oracle over grant state, not action-recorded state.
+/// Does `grant` authorize `(issuer, kind, target)`? Deny-by-default.
+/// Full matching matrix (addresses review blocker #3):
+/// 1. grant is live (not revoked)
+/// 2. authority_domain_id matches the grant's domain
+/// 3. verified actor (from IssuerContext) matches grant subject_actor_id
+/// 4. endpoint narrowing: if grant has subject_endpoint_id, the issuer's
+///    verified endpoint must match (operator grants are endpoint-unscoped)
+/// 5. operation_kind is in grant.allowed_operation_kinds
+/// 6. target_scope_matches(grant.target_scope, requested_target_scope)
+///
+/// `target_scope_matches` is the scope-containment predicate (review blocker #3):
+/// fleet scope matches any target; adapter scope matches same adapter; runtime-session
+/// scope matches same session; project-group matches containment. Specified in Unit 1.
 #[must_use]
 pub fn grant_authorizes(
     grant: &GrantRecord,
-    actor: &ActorEndpointRef,
+    issuer: &IssuerContext,
     operation_kind: OperationKind,
     target_scope: &TargetScope,
+    authority_domain_id: &AuthorityDomainId,
 ) -> bool {
     grant.is_live()
-        && grant.subject_actor_id == actor.actor_id  // subject matches
-        && grant.allowed_operation_kinds.contains(&operation_kind)  // kind allowed
-        && target_scope_matches(&grant.target_scope, target_scope)  // target in scope
-    // endpoint narrowing: if grant has subject_endpoint_id, the actor's
-    // endpoint must match (v0.1.0: operator grants are endpoint-unscoped)
+        && &grant.authority_domain_id == authority_domain_id
+        && grant_authorized_actor(grant, issuer)
+        && grant.allowed_operation_kinds.contains(&operation_kind)
+        && target_scope_matches(&grant.target_scope, target_scope)
+}
+
+/// Scope-containment predicate. The grant's target_scope defines what it
+/// authorizes; the requested target_scope must fall within it.
+/// - FleetSupervisor scope grant authorizes any target.
+/// - Adapter scope grant authorizes targets on the same adapter.
+/// - RuntimeSession scope grant authorizes that exact session.
+/// - ProjectSessionGroup scope grant authorizes sessions in that group.
+/// - Exact-equality fallback for other kinds.
+/// This is the semantic 50/50 the review flagged — pinned here, not left to
+/// the implementer.
+#[must_use]
+pub fn target_scope_matches(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
+    // match on TargetScopeKind; fleet = wildcard; adapter = same adapter_id;
+    // runtime-session = same identity tuple; project-group = containment.
 }
 ```
 
@@ -142,8 +177,6 @@ use std::collections::HashMap;
 use patchbay_contracts::patchbay::{AuthorityDomainId, GrantId, StoredEventKind};
 use crate::storage::{RecordedEvent, Storage};
 
-/// The in-memory authority projection. Rebuilt from replay on startup.
-/// Mirrors SessionRegistry / ElicitationSlotLayer: HashMap-backed, observe(event) fold.
 #[derive(Debug, Clone, Default)]
 pub struct AuthorityRegistry {
     grants: HashMap<GrantId, GrantRecord>,
@@ -152,481 +185,417 @@ pub struct AuthorityRegistry {
 impl AuthorityRegistry {
     pub fn new() -> Self { Self::default() }
 
-    /// Fold one committed event into the authority projection.
-    /// Consumes Grant / DescendantGrant / Revocation events; ignores others.
-    /// Idempotent for re-delivered events. Validates grant shape (Fail Fast).
-    pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
-        let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
-            AuthorityError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
-        })?;
-        match kind {
-            StoredEventKind::Grant => self.observe_grant(event),
-            StoredEventKind::DescendantGrant => self.observe_descendant_grant(event),
-            StoredEventKind::Revocation => self.observe_revocation(event),
-            _ => Ok(()),  // ignore non-authority events
-        }
-    }
+    /// Fold one committed event. Consumes Grant/DescendantGrant/Revocation;
+    /// ignores others. Idempotent. Validates grant shape (Fail Fast).
+    pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> { ... }
 
-    /// Look up a grant by id.
     pub fn get_grant(&self, grant_id: &GrantId) -> Option<&GrantRecord> { ... }
 
-    /// Iterate live grants (for GrantCheck evaluation / tests).
+    /// Live grants for GrantCheck evaluation / tests.
     pub fn live_grants(&self) -> impl Iterator<Item = &GrantRecord> { ... }
 }
 ```
 
 **Implementation Notes**:
-- `GrantRecord` is the in-memory projection of BOTH `Grant` and `DescendantGrant` proto messages (the `is_descendant` flag distinguishes them; descendant grants carry spawn provenance, regular grants carry created_by provenance). Mirrors how `SessionRecord` projects `SessionState` events.
-- `DESCENDANT_GRANT_ALLOWED_KINDS` is the SSOT for the descendant allowed-kind set, copied verbatim from PROTOCOL.md "Spawn payload and authority commitments". The proto comment on `DescendantGrant.allowed_operation_kinds` already documents it; this constant is the Rust-side authority.
-- `grant_authorizes` is the grant-matching predicate — deny-by-default (SECURITY.md: "Authorization is deny-by-default"). It checks: live, subject matches, kind allowed, target in scope. Endpoint narrowing is conditional (operator grants are endpoint-unscoped in v0.1.0).
-- `observe` validates grant shape (non-empty grant_id, subject, target_scope; valid OperationKinds; descendant grants must have exactly the allowed-kind set) and returns `CorruptRecord`/`CorruptLog` on violation (Fail Fast, mirroring `SessionRegistry::observe`).
-- `observe_revocation` marks the matching grant revoked (sets `revocation_generation`, `revoked_at`) — does NOT delete it (audit retention). A revocation for an unknown grant_id is `CorruptLog`. Idempotent for re-delivered revocations.
-- First-write-wins on duplicate `Grant`/`DescendantGrant` events (idempotent replay, mirroring `observe_registered`).
+- `GrantRecord` projects BOTH `Grant` and `DescendantGrant` proto messages (`is_descendant` + `provenance` distinguishes). Stores `expires_at` + `revocation_policy` (review blocker #3) — though expiry enforcement is deferred (clock, backlog).
+- `grant_authorizes` takes the verified `IssuerContext` (not a payload `ActorEndpointRef`) — review blocker #2. The actor comes from the verified context.
+- `target_scope_matches` is specified here (review blocker #3) — the semantic 50/50 is pinned, not left to the implementer.
+- `observe` validates grant shape (non-empty grant_id, subject, target_scope; valid OperationKinds; descendant grants must have exactly `DESCENDANT_GRANT_ALLOWED_KINDS`) — Fail Fast. `observe_revocation` marks revoked (not delete) — audit retention. Idempotent.
 
 **Acceptance Criteria**:
-- [ ] `AuthorityRegistry::observe` folds Grant, DescendantGrant, and Revocation events correctly
-- [ ] A revocation marks the grant revoked (not deleted); subsequent `is_live()` returns false
-- [ ] `grant_authorizes` returns true only when live + subject matches + kind allowed + target in scope
+- [ ] `observe` folds Grant, DescendantGrant, Revocation events correctly
+- [ ] Revocation marks the grant revoked (not deleted); `is_live()` returns false after
+- [ ] `grant_authorizes` returns true only when: live + domain matches + verified actor matches + (endpoint narrows if present) + kind allowed + target in scope
+- [ ] `target_scope_matches` implements the scope-containment matrix (fleet=any, adapter=same adapter, runtime-session=exact, project-group=containment)
 - [ ] `DESCENDANT_GRANT_ALLOWED_KINDS` matches PROTOCOL.md exactly (8 kinds, spawn+attach excluded)
-- [ ] `observe` rejects malformed grants (empty grant_id, unknown OperationKind, descendant with wrong allowed-kinds) as `CorruptRecord`
-- [ ] `observe` is idempotent for re-delivered events
+- [ ] `observe` rejects malformed grants as `CorruptRecord`; idempotent for re-delivered events
 
 ---
 
-### Unit 2: `GrantCheck` impl (the acceptance seam)
+### Unit 2: `IssuerContext` port + `GrantCheck` impl (the acceptance seam)
 
-**File**: `core/src/authority/check.rs`, `core/src/authority/resolver.rs`
+**File**: `core/src/authority/issuer.rs`, `core/src/authority/check.rs`
 
 **Story**: `story-v0-core-authority-grant-check`
 
-Implements the `GrantCheck` port (declared in `core/src/acceptance/ports.rs`) on the `AuthorityRegistry`. v0.1.0 hybrid: operator actor → implicit authority; non-operator → durable grant evaluation.
+Defines the verified-identity port (R2) and implements `GrantCheck` against the durable grant set (R1). Depends on the acceptance `IssuerContext` integration (cross-feature dependency #2) for end-to-end testing.
+
+```rust
+// core/src/authority/issuer.rs
+use patchbay_contracts::patchbay::{ActorId, EndpointId, DeviceId, AuthorityDomainId, Generation};
+
+/// Verified issuer identity, supplied by the authenticated ingress boundary.
+/// NOT self-asserted: the operator actor and transport endpoint come from
+/// verified connection/session evidence (SECURITY.md "compound issuer").
+/// The real impl lands with feature-v0-protocol-seam / feature-v0-web-server
+/// (both at drafting); v0.1.0 tests supply a test double.
+pub trait IssuerContext: Send + Sync {
+    /// The verified operator actor. None if unauthenticated.
+    fn verified_actor(&self) -> Option<&ActorId>;
+
+    /// The verified transport endpoint (the web server, CLI endpoint, etc.).
+    fn verified_endpoint(&self) -> Option<&EndpointId>;
+
+    /// The verified device.
+    fn verified_device(&self) -> Option<&DeviceId>;
+
+    /// The endpoint generation (for staleness/revocation checks).
+    fn endpoint_generation(&self) -> Option<Generation>;
+
+    /// The authority domain this issuer was verified within.
+    fn authority_domain_id(&self) -> &AuthorityDomainId;
+}
+```
 
 ```rust
 // core/src/authority/check.rs
-use patchbay_contracts::patchbay::{AuthorityDomainId, ActorEndpointRef, OperationKind, TargetScope, ActorId};
+use patchbay_contracts::patchbay::{AuthorityDomainId, OperationKind, TargetScope, GrantId};
 use crate::acceptance::ports::{GrantCheck, Authorized, GrantDenied};
+use super::issuer::IssuerContext;
 use super::registry::AuthorityRegistry;
-use super::state::grant_authorizes;
+use super::state::{grant_authorizes, GrantRecord};
 
-/// The v0.1.0 operator actor id. Single-operator deployment: this actor
-/// has implicit authority (Authorized { grant_id: None }). The `None`
-/// grant_id is reserved for exactly this (ports.rs Authorized.grant_id doc).
-/// TODO(v1): replace with durable operator grants when multi-operator lands.
-const OPERATOR_ACTOR_ID: &str = "operator";  // configured at deployment
-
+/// impl GrantCheck for AuthorityRegistry. Evaluates the verified issuer
+/// against the durable grant set. Deny-by-default.
 impl GrantCheck for AuthorityRegistry {
     async fn check(
         &self,
-        _authority_domain_id: &AuthorityDomainId,
-        actor: &ActorEndpointRef,
+        authority_domain_id: &AuthorityDomainId,
+        issuer: &dyn IssuerContext,  // R2: verified, not self-asserted
         operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<Authorized, GrantDenied> {
-        // Q1 hybrid: operator actor → implicit authority.
-        if is_operator(actor) {
-            return Ok(Authorized { grant_id: None });
-        }
-        // Non-operator: evaluate against durable grants (descendant grants).
-        // Deny-by-default: any live grant that authorizes this (actor, kind, target).
+        let Some(actor) = issuer.verified_actor() else {
+            return Err(GrantDenied::NoGrant { /* unauthenticated */ });
+        };
+        // Evaluate against durable grants (incl. bootstrap operator grant).
+        // Deny-by-default: first live grant that authorizes wins.
         for grant in self.live_grants() {
-            if grant_authorizes(grant, actor, operation_kind, target_scope) {
+            if grant_authorizes(grant, issuer, operation_kind, target_scope, authority_domain_id) {
                 return Ok(Authorized { grant_id: Some(grant.grant_id.clone()) });
             }
         }
-        Err(GrantDenied::NoGrant {
-            actor: format!("{:?}", actor.actor_id),
-            kind: operation_kind,
-            target: format!("{:?}", target_scope),
-        })
+        Err(GrantDenied::NoGrant { actor: format!("{:?}", actor), kind: operation_kind, target: format!("{:?}", target_scope) })
     }
-}
-
-fn is_operator(actor: &ActorEndpointRef) -> bool {
-    actor.actor_id.as_ref().is_some_and(|a| a.value == OPERATOR_ACTOR_ID)
 }
 ```
 
 **Implementation Notes**:
-- The `GrantCheck` port signature already exists in `ports.rs` — this story implements it, exactly mirroring how sessions implemented `TargetResolver`.
-- v0.1.0 hybrid: the operator actor resolves to `Authorized { grant_id: None }` (implicit). The `OPERATOR_ACTOR_ID` constant is the single-operator assumption made explicit — a v0.1.0 deployment value, not a protocol constant. (Future multi-operator: this becomes a durable operator grant.)
-- Non-operator subjects (e.g. a spawned session acting as a subject — future agent-to-agent) are evaluated against the durable grant set. In v0.1.0 the only non-operator grants are descendant grants from spawn.
-- Deny-by-default: if no live grant authorizes, return `GrantDenied::NoGrant`. This is the SECURITY.md invariant.
-- The acceptance pipeline currently calls `grant_check.check(...).await.is_err()` — it uses the authorization decision but discards the `Authorized` evidence. This story doesn't change that; it just provides a real impl (the existing `TestGrantCheck` in `core/tests/acceptance_pipeline.rs` can be replaced by a real `AuthorityRegistry` in integration tests).
+- The `GrantCheck` port signature ALREADY EXISTS in `ports.rs` but takes `&ActorEndpointRef`. **This is a port signature change** — `GrantCheck::check` takes `&dyn IssuerContext` instead of `&ActorEndpointRef`. This is the acceptance integration (cross-feature dependency #2): the `submit` pipeline passes the verified `IssuerContext` instead of `validated.sender`. File the acceptance change as a prerequisite story.
+- Deny-by-default: no verified actor → denied; no matching live grant → denied.
+- The bootstrap operator grant (R1) is a durable `Grant` event created at init (Unit 3's `ingest_grant`); the registry folds it on replay. `GrantCheck` evaluates the operator against it like any other grant — no special-casing, no implicit bypass.
+- v0.1.0 tests supply a `TestIssuerContext` double; the real impl lands with the ingress features.
 
 **Acceptance Criteria**:
-- [ ] `GrantCheck::check` returns `Authorized { grant_id: None }` for the operator actor
-- [ ] `GrantCheck::check` returns `Authorized { grant_id: Some(...) }` for a non-operator with a live matching grant
-- [ ] `GrantCheck::check` returns `GrantDenied::NoGrant` for a non-operator with no matching grant (deny-by-default)
-- [ ] `GrantCheck::check` returns `GrantDenied` for a revoked grant (revocation prevents future authority)
-- [ ] `GrantCheck::check` returns `GrantDenied` for a kind not in the grant's allowed set
+- [ ] `check` returns `Authorized { grant_id: Some(...) }` for a verified operator with the bootstrap grant
+- [ ] `check` returns `Authorized` for a non-operator with a live matching descendant grant
+- [ ] `check` returns `GrantDenied` for an unauthenticated issuer (no verified actor)
+- [ ] `check` returns `GrantDenied` for a revoked grant (revocation prevents future)
+- [ ] `check` returns `GrantDenied` for a kind/target not covered by any live grant (deny-by-default)
+- [ ] `GrantCheck` port signature changed to take `&dyn IssuerContext`; acceptance `submit` passes the verified context (cross-feature dependency #2 landed)
 
 ---
 
-### Unit 3: Grant + revocation ingestion (the writer)
+### Unit 3: Grant + revocation ingestion (the writer) + bootstrap
 
 **File**: `core/src/authority/ingest.rs`
 
 **Story**: `story-v0-core-authority-ingest`
 
-The direct ingestion writer for grants and revocations — the analog of sessions' `ingest_session_report` / acceptance's `ingest_observation`. Owns its event kinds end-to-end (writer pattern, Q2).
+The direct ingestion writer for grants, descendant grants, and revocations — the analog of sessions' `ingest_session_report`. Owns its event kinds end-to-end (writer pattern). Also: bootstrap operator grant creation at init.
 
 ```rust
 // core/src/authority/ingest.rs
-use patchbay_contracts::patchbay::{
-    AuthorityDomainId, Grant, DescendantGrant, Revocation, GrantId, EventId,
-    StoredEventKind, StoredEventPayload,
-};
-use prost::Message;
+use patchbay_contracts::patchbay::{AuthorityDomainId, Grant, DescendantGrant, Revocation, GrantId, EventId};
 use crate::storage::Storage;
-use super::registry::AuthorityRegistry;
-use super::AuthorityError;
+use super::projection::GrantProjection;  // GrantLookup + observe(&mut self, ...)
 
-/// Read access to the live grant projection (mirrors SessionLookup).
-pub trait GrantLookup: Send + Sync {
-    fn current_grant(
-        &self,
-        grant_id: &GrantId,
-    ) -> impl std::future::Future<Output = Option<super::state::GrantRecord>> + Send;
+/// Read + warm port (mirrors sessions' SessionProjection post-B5 fix).
+/// The writer takes &mut L so it can warm after each append (retry-safe).
+pub trait GrantProjection: Send + Sync {
+    fn current_grant(&self, grant_id: &GrantId) -> impl std::future::Future<Output = Option<GrantRecord>> + Send;
+    fn observe(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError>;
 }
 
-/// Durably record a grant. Writes a Grant event.
-pub async fn ingest_grant<S, L>(
-    storage: &S,
-    lookup: &L,
-    grant: Grant,
-) -> Result<EventId, AuthorityError>
-where S: Storage, L: GrantLookup, { ... }
+pub async fn ingest_grant<S, L>(storage: &S, projection: &mut L, grant: Grant) -> Result<EventId, AuthorityError>
+where S: Storage, L: GrantProjection { ... }
 
-/// Durably record a descendant grant (from spawn completion).
-/// Writes a DescendantGrant event. Validates the allowed-kind set matches
+/// Descendant grant (from spawn completion). Validates allowed-kinds match
 /// DESCENDANT_GRANT_ALLOWED_KINDS exactly (Fail Fast).
-pub async fn ingest_descendant_grant<S, L>(
-    storage: &S,
-    lookup: &L,
-    grant: DescendantGrant,
-) -> Result<EventId, AuthorityError>
-where S: Storage, L: GrantLookup, { ... }
+pub async fn ingest_descendant_grant<S, L>(storage: &S, projection: &mut L, grant: DescendantGrant) -> Result<EventId, AuthorityError>
+where S: Storage, L: GrantProjection { ... }
 
-/// Durably record a revocation. Writes a Revocation event.
-/// Two-lever non-cascade: revoking grant G marks G revoked; it does NOT
-/// revoke descendant grants issued under G (they have their own grant_ids
-/// and must be revoked separately). The registry fold enforces this.
-pub async fn ingest_revocation<S, L>(
-    storage: &S,
-    lookup: &L,
-    revocation: Revocation,
-) -> Result<EventId, AuthorityError>
-where S: Storage, L: GrantLookup, { ... }
+/// Revocation. Two-lever non-cascade: revokes ONLY the named grant.
+/// The projection fold marks that one grant revoked; no other.
+pub async fn ingest_revocation<S, L>(storage: &S, projection: &mut L, revocation: Revocation) -> Result<EventId, AuthorityError>
+where S: Storage, L: GrantProjection { ... }
+
+/// Create the bootstrap operator grant at first-start (fleet spawn grant +
+/// universal existing-session grant). Idempotent: no-op if it already exists.
+pub async fn ensure_bootstrap_operator_grant<S, L>(
+    storage: &S, projection: &mut L, authority_domain_id: &AuthorityDomainId, operator_actor_id: &ActorId,
+) -> Result<GrantId, AuthorityError> where S: Storage, L: GrantProjection { ... }
 ```
 
 **Implementation Notes**:
-- Writer pattern mirroring `ingest_session_report` / `ingest_observation`: validate → read current (for revocation, confirm the grant exists) → write the delta event → warm the registry → return.
-- `ingest_descendant_grant` validates the allowed-kind set matches `DESCENDANT_GRANT_ALLOWED_KINDS` exactly (reject if it includes spawn/attach or omits a required kind — Fail Fast, Q5).
-- `ingest_revocation` is the two-lever non-cascade enforcement point: it revokes ONLY the named grant. The registry fold (`observe_revocation`) marks that one grant revoked and touches no other. There is no cascade code path. (The non-cascade is structural: there's simply no mechanism to cascade.)
-- Warm-after-write mirrors sessions' pattern (post-B5 fix: warm after each successful append so retry is idempotent).
-- Encoding: `grant.encode_to_vec()` under `StoredEventPayload { kind: StoredEventKind::Grant as i32, payload }`.
+- `GrantProjection` takes `&mut L` with `observe(&mut self, ...)` — review blocker #7 (warm-after-write). Mirrors sessions' post-B5 `SessionProjection`. Warm after each successful append so retry is idempotent.
+- `ingest_descendant_grant` validates the allowed-kind set matches `DESCENDANT_GRANT_ALLOWED_KINDS` exactly (Fail Fast, review blocker #3).
+- `ingest_revocation` is the two-lever non-cascade enforcement: revokes ONLY the named grant. No cascade code path (structural). Revoking a non-existent grant → error (Fail Fast).
+- `ensure_bootstrap_operator_grant` (R1) creates the durable operator grant at init: a fleet-scope spawn grant + universal existing-session grant, subject = operator actor. Idempotent (checks if it exists first). This is what makes `GrantCheck` evaluate the operator against a real grant instead of implicit bypass.
 
 **Acceptance Criteria**:
-- [ ] `ingest_grant` writes a Grant event and the registry reflects it
-- [ ] `ingest_descendant_grant` rejects a descendant with the wrong allowed-kind set (spawn included, or a required kind missing)
-- [ ] `ingest_revocation` writes a Revocation event and marks ONLY the named grant revoked
-- [ ] `ingest_revocation` does NOT revoke descendant grants issued under the revoked grant (non-cascade, two-lever)
-- [ ] Revoking a non-existent grant returns an error (Fail Fast)
-- [ ] Warm-after-write keeps the registry consistent (retry-safe, per the sessions B5 fix pattern)
+- [ ] `ingest_grant` writes a Grant event; projection reflects it
+- [ ] `ingest_descendant_grant` rejects a descendant with the wrong allowed-kind set
+- [ ] `ingest_revocation` marks ONLY the named grant revoked (non-cascade, two-lever)
+- [ ] `ingest_revocation` does NOT revoke descendant grants under the revoked grant
+- [ ] Revoking a non-existent grant returns an error
+- [ ] Warm-after-write keeps the projection consistent (retry-safe)
+- [ ] `ensure_bootstrap_operator_grant` creates the operator grant; idempotent on re-call
 
 ---
 
-### Unit 4: Descendant-grant-on-spawn log-tail (the reactor)
+### Unit 4: Descendant-grant-on-spawn log-tail reactor (vertical slice)
 
 **File**: `core/src/authority/spawn_tail.rs`
 
-**Story**: `story-v0-core-authority-spawn-tail`
+**Story**: `story-v0-core-authority-spawn-tail` (depends on `story-sessions-spawn-origin-field`)
 
-The pure log-tail that reacts to spawn completion by issuing the descendant grant. Exactly the elicitation-slot pattern (tail the log, react to command transitions).
+The pure log-tail that reacts to spawn completion by issuing the descendant grant. Vertical slice (R3a): correlates `Spawn → Completed` with a `SessionRegistered` carrying `spawn_origin`.
 
 ```rust
 // core/src/authority/spawn_tail.rs
-use patchbay_contracts::patchbay::{AuthorityDomainId, CommandId, OperationKind, OperationState, StoredEventKind};
+use std::collections::{HashMap, HashSet};
+use patchbay_contracts::patchbay::{CommandId, OperationKind, OperationState, StoredEventKind, TypedCorrelation, TargetScope, ActorId, GrantId};
 use crate::storage::{RecordedEvent, Storage};
-use super::registry::AuthorityRegistry;
 use super::state::DESCENDANT_GRANT_ALLOWED_KINDS;
 use super::AuthorityError;
 
-/// An independent event-log consumer that issues descendant grants when
-/// spawn Operations reach terminal Completed.
+/// Reactor: tails the log for completed spawns and produces descendant-grant
+/// issuances. Mirrors ElicitationSlotLayer (read-only over the command log),
+/// but produces a side-effect (the issuance) the composition layer writes via
+/// ingest_descendant_grant.
 ///
-/// Mirrors ElicitationSlotLayer: owns no storage writes of its own for the
-/// *trigger* (it reads COMMAND_TRANSITION events acceptance wrote), but it
-/// DOES write the descendant grant event in reaction. The tail is read-only
-/// over the command log; the reaction is a writer call (Unit 3's
-/// ingest_descendant_grant).
-///
-/// Because the authority-domain log is delivered in LSN order, the first
-/// Completed transition for a spawn operation structurally wins (no duplicate
-/// descendant grants on replay).
+/// Correlation (R3a): a descendant grant is issued when:
+/// 1. a Spawn OPERATION event is seen (track command_id)
+/// 2. a COMMAND_TRANSITION to Completed for that command_id is seen
+/// 3. a SessionRegistered event carrying spawn_origin = that command_id is seen
+/// All three correlate; the SessionRegistered provides the spawned session identity.
 #[derive(Debug, Clone, Default)]
 pub struct SpawnDescendantTail {
-    /// command_id -> (spawn operation kind confirmed) for Spawn OPERATION events seen.
-    /// Used to confirm a COMMAND_TRANSITION to Completed belongs to a spawn.
-    spawn_commands: HashMap<CommandId, ()>,
-    /// command_ids whose descendant grant has been issued (idempotent on replay).
-    issued: HashSet<CommandId>,
+    spawn_commands: HashMap<CommandId, SpawnInfo>,  // command_id -> spawn op info
+    completed: HashSet<CommandId>,                   // spawns that reached Completed
+    issued: HashSet<CommandId>,                      // idempotent: already produced issuance
+}
+
+struct SpawnInfo {
+    spawning_grant_id: Option<GrantId>,  // from the spawn's authorization (if retained)
+    spawner_actor: ActorId,
 }
 
 impl SpawnDescendantTail {
     pub fn new() -> Self { Self::default() }
 
-    /// Fold one committed event. On a Completed transition for a Spawn
-    /// operation not yet issued, produce a `DescendantGrantIssuance`
-    /// describing the descendant grant to write.
+    /// Fold one committed event. On a completed spawn with a correlated
+    /// SessionRegistered, produce a DescendantGrantIssuance.
     pub fn observe(
         &mut self,
         event: &RecordedEvent,
     ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        // Track Spawn OPERATION events (command_id -> ()).
-        // On COMMAND_TRANSITION to Completed for a tracked spawn command,
-        // and not yet issued, return Some(issuance) with provenance
-        // (spawn_operation_id, spawning_grant_id) + the target scope from
-        // the spawn operation + the canonical allowed-kind set.
-        // The caller (composition layer) then calls ingest_descendant_grant.
+        // Track Spawn OPERATION events (record command_id + spawner).
+        // Track COMMAND_TRANSITION to Completed for spawn commands.
+        // Track SessionRegistered with spawn_origin = a tracked spawn command_id:
+        //   when that spawn is also Completed and not yet issued, produce the issuance.
+        //   The SessionRegistered provides the spawned session identity (adapter/deployment/runtime/gen).
     }
 }
 
-/// Describes the descendant grant to issue for a completed spawn.
 pub struct DescendantGrantIssuance {
     pub spawn_operation_id: CommandId,
-    pub spawning_grant_id: Option<GrantId>,  // from the spawn operation's authorization
-    pub target_scope: TargetScope,  // the spawned session
-    pub subject_actor_id: ActorId,  // the spawner (operator in v0.1.0)
+    pub spawning_grant_id: Option<GrantId>,
+    pub spawned_session_scope: TargetScope,  // from the SessionRegistered event
+    pub subject_actor_id: ActorId,           // the spawner
     pub allowed_operation_kinds: Vec<OperationKind>,  // DESCENDANT_GRANT_ALLOWED_KINDS
+    pub authority_domain_id: AuthorityDomainId,
 }
 ```
 
 **Implementation Notes**:
-- This is the pure-tail pattern (like `ElicitationSlotLayer`): reads `OPERATION` + `COMMAND_TRANSITION` events acceptance wrote, reacts to `Spawn → Completed`. The tail itself writes nothing; it produces an `Issuance` that the composition layer feeds to `ingest_descendant_grant` (Unit 3's writer).
-- `spawn_commands` tracks which command_ids are spawn operations (from `OPERATION` events where `OperationKind::Spawn`). `issued` tracks which have already produced a descendant grant (idempotent on replay — first-Completed-wins, mirroring elicitation's first-answer-wins).
-- The descendant grant's target_scope is the spawned session (from the spawn operation's target, now that the session exists). The subject is the spawner (operator in v0.1.0). The allowed-kinds are `DESCENDANT_GRANT_ALLOWED_KINDS`. Provenance links `spawn_operation_id` + `spawning_grant_id`.
-- `spawning_grant_id` comes from the spawn operation's authorization evidence — but the acceptance pipeline currently discards `Authorized.grant_id`. This is a known gap: to populate provenance, either (a) the composition layer that drives the tail must correlate the spawn's authorization (requires the pipeline to retain it), or (b) the tail infers it from the grant set. **Flag this as an integration detail to resolve in the story** — it may require acceptance to retain the `Authorized` evidence on the command record (a small acceptance change), or the descendant grant provenance's `spawning_grant_id` is `None` in v0.1.0 (operator's implicit authority has no grant_id). Prefer (b) for v0.1.0: `spawning_grant_id: None` when the spawn was authorized by implicit operator authority. Document this.
+- This is the vertical slice (R3a). It depends on `story-sessions-spawn-origin-field` (the `SessionRegistered.spawn_origin` field) — sequenced first.
+- The reactor correlates THREE events: the Spawn `OPERATION`, its `COMMAND_TRANSITION` to `Completed`, and the `SessionRegistered` carrying `spawn_origin = that command_id`. The `SessionRegistered` provides the spawned session identity (adapter/deployment/runtime/generation) — review blocker #4.
+- `issued` is in-memory idempotency for the live tail; durable idempotency comes from the composition layer using a deterministic grant_id derived from `(authority_domain_id, spawn_command_id)` (so replay doesn't duplicate). Review blocker #5: the reactor is read-only over the log; the composition layer owns the write + durable dedup. The feature owns the wiring story (Unit 5/composition) — it does not leave the reactor unwired.
+- `spawning_grant_id`: retained from the spawn's authorization IF the pipeline retains it. The acceptance `submit` currently discards `Authorized.grant_id`. **Integration note:** to populate provenance fully, acceptance must retain the `Authorized.grant_id` on the command record (small acceptance change). If not retained, `spawning_grant_id` is `None` for operator-authorized spawns (the bootstrap operator grant has a grant_id, so this IS populatable if acceptance retains it). File the acceptance change as part of cross-feature dependency #2 or a follow-on.
 
 **Acceptance Criteria**:
-- [ ] A spawn `OPERATION` followed by a `COMMAND_TRANSITION` to `Completed` produces exactly one `DescendantGrantIssuance`
-- [ ] A spawn that reaches a non-Completed terminal (Rejected/Failed/etc.) produces NO issuance
-- [ ] Replay (re-observing the same events) does not produce duplicate issuances (idempotent)
+- [ ] A Spawn OPERATION + Completed transition + SessionRegistered(spawn_origin=that command) produces exactly one `DescendantGrantIssuance`
+- [ ] A spawn reaching a non-Completed terminal produces NO issuance
+- [ ] A SessionRegistered without `spawn_origin` does NOT trigger an issuance
+- [ ] Replay (re-observing events) does not produce duplicate issuances (idempotent via `issued` + deterministic grant_id in the composition layer)
 - [ ] The issuance's allowed-kinds match `DESCENDANT_GRANT_ALLOWED_KINDS` exactly
-- [ ] The issuance's provenance links the spawn_operation_id; `spawning_grant_id` is `None` for operator-authorized spawns (v0.1.0)
+- [ ] The issuance's `spawned_session_scope` comes from the `SessionRegistered` event (not the spawn Operation's fleet target)
 
 ---
 
-### Unit 5: Replay and module wiring
+### Unit 5: Replay, composition/wiring, and module wiring
 
-**File**: `core/src/authority/replay.rs`, `core/src/authority/mod.rs`, `core/src/lib.rs`
+**File**: `core/src/authority/replay.rs`, `core/src/authority/composition.rs`, `core/src/authority/mod.rs`, `core/src/lib.rs`
 
 **Story**: `story-v0-core-authority-replay`
 
-Rebuild the registry from the log (mirroring `rebuild_from_log` in sessions/elicitation) and wire the module into the crate.
+Rebuild the registry from the log; wire the reactor's output to the writer (the composition layer the review demanded — blocker #5); export the module.
 
 ```rust
 // core/src/authority/replay.rs
-use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn};
-use crate::storage::Storage;
-use super::registry::AuthorityRegistry;
-use super::AuthorityError;
-
-/// Rebuild an authority registry by replaying one authority domain.
-/// v0.1.0 replays from LSN 0 (snapshot discriminator gap — deferred, matches
-/// acceptance/elicitation/sessions).
 pub async fn rebuild_from_log<S: Storage>(
-    storage: &S,
-    authority_domain_id: &AuthorityDomainId,
+    storage: &S, authority_domain_id: &AuthorityDomainId,
 ) -> Result<AuthorityRegistry, AuthorityError> {
-    // Near-exact copy of session::rebuild_from_log / elicitation::rebuild_slots_from_log:
-    // read_after(domain, Lsn{0}), fold via observe, validate LSN monotonicity + domain match.
+    // Near-exact copy of session::rebuild_from_log: read_after(Lsn{0}), fold via observe,
+    // validate LSN monotonicity + domain match.
 }
 ```
 
 ```rust
-// core/src/authority/mod.rs
-pub mod state;
-pub mod events;
-pub mod registry;
-pub mod check;
-pub mod ingest;
-pub mod spawn_tail;
-pub mod replay;
+// core/src/authority/composition.rs
+/// The composition layer: owns the live reactor loop + durable dedup.
+/// On a completed-spawn issuance, derives a deterministic grant_id from
+/// (authority_domain_id, spawn_command_id) and calls ingest_descendant_grant.
+/// Deterministic grant_id = durable idempotency (replay doesn't duplicate).
+pub struct AuthorityComposition {
+    registry: AuthorityRegistry,
+    spawn_tail: SpawnDescendantTail,
+}
 
-pub use state::{GrantRecord, grant_authorizes, DESCENDANT_GRANT_ALLOWED_KINDS};
-pub use registry::AuthorityRegistry;
-pub use check::GrantCheckImpl;  // or the impl is on AuthorityRegistry directly
-pub use ingest::{ingest_grant, ingest_descendant_grant, ingest_revocation, GrantLookup};
-pub use spawn_tail::{SpawnDescendantTail, DescendantGrantIssuance};
-pub use replay::rebuild_from_log;
-
-#[derive(Debug, thiserror::Error)]
-pub enum AuthorityError {
-    #[error("corrupt authority record: {0}")]
-    CorruptRecord(String),
-    #[error("corrupt authority log: {0}")]
-    CorruptLog(String),
-    #[error("invalid grant shape: {0}")]
-    InvalidGrant(String),
-    #[error("grant not found: {0}")]
-    GrantNotFound(String),
-    #[error(transparent)]
-    Storage(#[from] crate::storage::StorageError),
+impl AuthorityComposition {
+    /// Observe a committed event: fold into the registry AND the spawn tail.
+    /// If the tail produces an issuance, write the descendant grant durably.
+    /// Deterministic grant_id makes this idempotent across replay/crash.
+    pub async fn observe<S: Storage>(
+        &mut self, storage: &S, event: &RecordedEvent,
+    ) -> Result<(), AuthorityError> { ... }
 }
 ```
 
-```rust
-// core/src/lib.rs — add alongside acceptance, session, storage
-pub mod acceptance;
-pub mod authority;  // NEW
-pub mod session;
-pub mod storage;
-```
+**Implementation Notes**:
+- `rebuild_from_log` mirrors `session::rebuild_from_log` / `elicitation::rebuild_slots_from_log`.
+- `AuthorityComposition` (review blocker #5) owns the wiring: it folds each event into BOTH the registry (for grant state) AND the spawn tail (for descendant-grant issuance). When the tail produces an issuance, the composition layer writes the descendant grant via `ingest_descendant_grant` with a **deterministic grant_id** derived from `(authority_domain_id, spawn_command_id)` — this makes issuance idempotent across replay/crash (a re-observed completed spawn produces the same grant_id, so the write is a no-op duplicate). This is the durable idempotency the review demanded.
+- The composition layer is the live consumer loop; replay uses `rebuild_from_log` (registry-only) + re-runs the composition's tail over the log to catch any issuances missed before a crash (catch-up). Review blocker #5's recovery-safe protocol.
+- Module wiring: `core/src/authority/` alongside `acceptance/`, `session/`, `storage/`; `lib.rs` exports it.
 
 **Acceptance Criteria**:
-- [ ] `rebuild_from_log` reconstructs the registry identically to a live registry that observed the same events
+- [ ] `rebuild_from_log` reconstructs the registry identically to a live registry
 - [ ] `rebuild_from_log` rejects out-of-order LSNs and cross-domain events as `CorruptLog`
+- [ ] `AuthorityComposition::observe` folds events into the registry AND issues descendant grants on completed spawns
+- [ ] A crashed-then-restarted composition does NOT issue duplicate descendant grants (deterministic grant_id)
 - [ ] `core/src/authority/` module compiles and is exported from `core/src/lib.rs`
-- [ ] The existing `TestGrantCheck` in `core/tests/acceptance_pipeline.rs` can be replaced by a real `AuthorityRegistry` in an integration test
 
 ---
 
-### Unit 6: Property tests for authority invariants
+### Unit 6: Property tests for authority invariants (8 properties)
 
 **File**: `core/tests/authority_proptest.rs`
 
 **Story**: `story-v0-core-authority-proptests`
 
-Property tests for the stated-normative obligations. None are formally checked (all `authority.qnt` properties are draft), but each is testable as an executable oracle — mirroring how sessions tested stated-normative obligations as properties.
+Property tests for the 8 stated-normative obligations (review blocker #10: corrected count). None are formally checked, but each is testable as an executable oracle.
 
 ```rust
-// core/tests/authority_proptest.rs
 proptest! {
-    /// NoCommandWithoutGrant (stated-normative): a non-operator command that
-    /// reaches accepted state does so only with a live matching grant.
-    /// Deny-by-default: no grant -> denied.
-    #[test]
-    fn no_command_without_grant(/* ... */) { ... }
+    /// 1. NoCommandWithoutGrant: a command that reaches accepted does so only
+    ///    with a live matching grant. Deny-by-default.
+    #[test] fn no_command_without_grant(/* ... */) { ... }
 
-    /// RevocationPreventsFuture (stated-normative): after a grant is revoked,
-    /// subsequent check() for that grant's subject/kind/target is denied.
-    #[test]
-    fn revocation_prevents_future(/* ... */) { ... }
+    /// 2. CompoundIssuer: accepted commands use verified issuer identity (from
+    ///    IssuerContext), not self-asserted payload actor.
+    #[test] fn compound_issuer(/* ... */) { ... }
 
-    /// SpawnRevocationDoesNotCascade (stated-normative — one of the demoted
-    /// formal properties): revoking a spawn grant does NOT revoke descendant
-    /// grants issued under it. Two independent levers.
-    #[test]
-    fn spawn_revocation_does_not_cascade(/* ... */) { ... }
+    /// 3. GrantAuthorityIsCommandKinds: grant checks constrain authority by
+    ///    canonical OperationKinds, not adapter capability.
+    #[test] fn grant_authority_is_command_kinds(/* ... */) { ... }
 
-    /// DescendantGrantAllowedKindsExact (stated-normative): a descendant grant
-    /// issued on spawn completion has EXACTLY the canonical allowed-kind set
-    /// (spawn + attach excluded).
-    #[test]
-    fn descendant_grant_allowed_kinds_exact(/* ... */) { ... }
+    /// 4. RevocationPreventsFuture: after a grant is revoked, subsequent
+    ///    checks for that grant's subject/kind/target are denied.
+    #[test] fn revocation_prevents_future(/* ... */) { ... }
 
-    /// Replay determinism.
-    #[test]
-    fn replay_matches_live(/* ... */) { ... }
+    /// 5. FleetAuthorityForSpawn: spawn acceptance requires a live fleet-scope
+    ///    spawn grant; per-session grants alone cannot authorize spawning.
+    #[test] fn fleet_authority_for_spawn(/* ... */) { ... }
+
+    /// 6. SpawnCreatesDescendantGrant: successful spawn produces a descendant
+    ///    grant for the spawned session with non-spawn OperationKinds.
+    #[test] fn spawn_creates_descendant_grant(/* ... */) { ... }
+
+    /// 7. SpawnRevocationDoesNotCascade: revoking a spawn grant does NOT revoke
+    ///    descendant grants issued under it. Two independent levers. (Executable
+    ///    stand-in for the demoted formal property — mutation-survivable.)
+    #[test] fn spawn_revocation_does_not_cascade(/* ... */) { ... }
+
+    /// 8. ElicitationResponderAuthority: response Operations are accepted only
+    ///    when the verified issuer maps to the expected responder actor.
+    #[test] fn elicitation_responder_authority(/* ... */) { ... }
 }
-
-// Mutation tests (non-vacuity): a buggy registry that cascades revocation
-// MUST fail spawn_revocation_does_not_cascade. Mirrors acceptance/sessions
-// mutation-test discipline.
+// Mutation tests: a buggy registry that cascades revocation MUST fail #7;
+// a buggy GrantCheck that trusts payload actor MUST fail #2.
 ```
 
 **Implementation Notes**:
-- All properties are stated-normative (no promoted formulas). They document + enforce the intended behavior as executable oracles, the same way sessions tested `LateGenerationInert` and `LabelsCannotOverrideIdentity`.
-- `spawn_revocation_does_not_cascade` is the most valuable: it's one of the actively-demoted formal properties (demoted because the formula wasn't mutation-survivable). The property test here IS mutation-survivable by construction — a buggy registry that cascades will fail it. This is the executable stand-in for the demoted formal property.
-- Mutation tests are essential (non-vacuity discipline established by acceptance/sessions proptests).
+- 8 properties (review blocker #10: was miscounted as 7). All stated-normative (draft) — executable oracles, not formally checked.
+- `spawn_revocation_does_not_cascade` (#7) is the executable stand-in for the demoted formal property. Must be mutation-survivable: create parent spawn grant P, descendant D with provenance linking to P, revoke P, prove P denies + D still authorizes, separately revoke D, prove denial (review blocker #9 — both levers).
+- `compound_issuer` (#2) tests that a self-asserted payload actor is NOT trusted — the `IssuerContext` is the authority, not `Operation.sender`.
+- Mutation tests essential (non-vacuity): cascade-revocation mutation fails #7; payload-actor-trust mutation fails #2.
 
 **Acceptance Criteria**:
-- [ ] `no_command_without_grant` passes (deny-by-default)
-- [ ] `revocation_prevents_future` passes
-- [ ] `spawn_revocation_does_not_cascade` passes AND FAILS against a mutation that cascades (non-vacuous — this is the executable stand-in for the demoted formal property)
-- [ ] `descendant_grant_allowed_kinds_exact` passes
-- [ ] `replay_matches_live` passes
+- [ ] All 8 properties pass against the real implementation
+- [ ] #7 fails against a cascade mutation (non-vacuous)
+- [ ] #2 fails against a payload-actor-trust mutation (non-vacuous)
+- [ ] `replay_matches_live` passes (replay determinism — supplementary, not one of the 8)
 
 ---
 
 ## Implementation Order
 
-1. `story-v0-core-authority-registry` — grant/revocation event model + `AuthorityRegistry` projection (no deps; the SSOT for grant state + `grant_authorizes` predicate)
-2. `story-v0-core-authority-grant-check` — `impl GrantCheck for AuthorityRegistry` (depends on 1)
-3. `story-v0-core-authority-ingest` — grant/revocation/descendant-grant writer (depends on 1)
-4. `story-v0-core-authority-spawn-tail` — descendant-grant-on-spawn log-tail reactor (depends on 1, 3)
-5. `story-v0-core-authority-replay` — `rebuild_from_log` + module wiring (depends on 1, 2, 3)
-6. `story-v0-core-authority-proptests` — property tests for stated-normative obligations (depends on 1-5)
+0. **`story-sessions-spawn-origin-field`** (prerequisite, sessions feature) — add `SessionRegistered.spawn_origin`. **Must land before story 4.**
+0b. **`story-acceptance-issuer-context`** (prerequisite, acceptance feature) — `submit` takes `&IssuerContext`; retain `Authorized.grant_id` on the command record. **Must land before story 2 integrates end-to-end.**
+1. `story-v0-core-authority-registry` — grant/revocation event model + `AuthorityRegistry` projection (no deps; SSOT for grant state + `grant_authorizes` + `target_scope_matches`)
+2. `story-v0-core-authority-grant-check` — `IssuerContext` port + `impl GrantCheck` (depends on 1; end-to-end test depends on 0b)
+3. `story-v0-core-authority-ingest` — grant/revocation writer + bootstrap (depends on 1)
+4. `story-v0-core-authority-spawn-tail` — descendant-grant reactor (depends on 1, 3, AND prerequisite 0)
+5. `story-v0-core-authority-replay` — `rebuild_from_log` + composition/wiring (depends on 1, 2, 3, 4)
+6. `story-v0-core-authority-proptests` — 8 property oracles + mutation tests (depends on 1-5)
 
-Stories 1 is the foundation. 2 and 3 can proceed in parallel after 1 lands (GrantCheck impl and the writer both depend on the registry but not each other). 4 depends on 1 + 3 (the tail produces issuances the writer consumes). 5 depends on 1-3. 6 depends on all.
+Stories 1 is the foundation. 2 and 3 can proceed in parallel after 1 lands (both depend on the registry, not each other). 4 depends on 1, 3, and the sessions prerequisite (0). 5 depends on 1-4. 6 depends on all. The two prerequisites (0, 0b) can proceed in parallel with story 1.
 
 ## Testing
 
 ### Unit Tests: `core/tests/authority_*.rs`
-- `authority_registry.rs` — fold correctness, revocation marks-not-deletes, idempotent observe, malformed-grant rejection
-- `authority_grant_check.rs` — operator implicit, non-operator grant match, deny-by-default, revoked grant denied, kind-mismatch denied
-- `authority_ingest.rs` — grant/descendant/revocation ingestion, descendant allowed-kind validation, non-cascade revocation
-- `authority_spawn_tail.rs` — spawn-Completed produces issuance, non-Completed terminal produces none, idempotent replay
-- `authority_replay.rs` — replay determinism, LSN monotonicity, cross-domain rejection
-- `authority_proptest.rs` — property oracles + mutation tests
+- `authority_registry.rs` — fold correctness, revocation marks-not-deletes, idempotent observe, malformed-grant rejection, `target_scope_matches` matrix
+- `authority_grant_check.rs` — operator-with-bootstrap-grant, non-operator descendant grant, unauthenticated denied, revoked denied, kind/target mismatch denied, payload-actor-NOT-trusted
+- `authority_ingest.rs` — grant/descendant/revocation ingestion, descendant allowed-kind validation, non-cascade revocation, bootstrap idempotency
+- `authority_spawn_tail.rs` — completed-spawn-produces-issuance, non-Completed no issuance, no-spawn_origin no issuance, idempotent replay
+- `authority_replay.rs` — replay determinism, LSN monotonicity, cross-domain rejection, composition catch-up after crash
+- `authority_proptest.rs` — 8 property oracles + mutation tests
 
 ### Integration Points
-- **Acceptance ↔ Authority**: acceptance calls `GrantCheck::check` (implemented by `AuthorityRegistry`) before accepting an operation. The existing `TestGrantCheck` is replaced by a real `AuthorityRegistry` in integration tests.
-- **Authority ↔ Sessions**: no direct coupling. Authority's `target_scope` matching uses the `TargetScope` type (sessions owns session identity; authority matches grant target scope against it).
-- **Authority ↔ Storage**: authority writes Grant/DescendantGrant/Revocation events via `Storage::append` and reads via `Storage::read_after` for replay. Same `Storage` port.
-- **Authority ↔ Elicitation**: no direct coupling. Both are independent log consumers (the spawn-tail reads command transitions like the elicitation-slot layer does).
+- **Acceptance ↔ Authority**: acceptance calls `GrantCheck::check` with a verified `IssuerContext` (not `Operation.sender`). Cross-feature dependency #2.
+- **Authority ↔ Sessions**: the spawn-tail consumes `SessionRegistered` events with `spawn_origin`. Cross-feature dependency #1.
+- **Authority ↔ Storage**: writes Grant/DescendantGrant/Revocation via `Storage::append`; reads via `Storage::read_after` for replay.
+- **Authority ↔ Elicitation**: no direct coupling. Both are independent log consumers.
 
 ## Risks
 
-- **Weakest formal backing.** All `authority.qnt` properties are stated-normative; four were actively demoted (trace-fidelity + non-mutation-survivable). The property tests (Unit 6) are executable oracles, NOT formally checked properties. The design must not over-claim verification status. The v1 formal gate owns the real authority properties (independent attempted-evidence state for the trace-fidelity defects; mutation-survivable non-cascade oracle). This is documented in the feature body and the `@promotion` blocks.
-- **Implicit operator authority is a v0.1.0 simplification.** `GrantCheck` returns `Authorized { grant_id: None }` for the operator actor. This is a documented v0.1.0 assumption (single operator), not a protocol constant. Future multi-operator work replaces it with durable operator grants — a reversal, not a gap-fill. The `OPERATOR_ACTOR_ID` constant makes the assumption explicit and locatable.
-- **Descendant grant provenance `spawning_grant_id`.** For operator-authorized spawns, `spawning_grant_id` is `None` (implicit authority has no grant_id). This means descendant-grant provenance is partially populated in v0.1.0. The protocol allows this (the descendant grant is still an explicit record); the provenance seam is preserved for future durable operator grants. Documented in Unit 4.
-- **Snapshot checkpointing deferred.** Same as sessions/acceptance/elicitation — replay from LSN 0. The projection-discriminator gap is a cross-cutting storage concern, tracked separately.
-- **Spawn-tail reaction ordering.** The tail produces a `DescendantGrantIssuance` on observing a Completed spawn; the composition layer must call `ingest_descendant_grant` to make it durable. If the composition layer crashes between observing and writing, the descendant grant is lost — but replay re-observes the Completed transition and re-issues. This is the same idempotent-replay property the elicitation layer relies on. The composition layer (not in this feature's scope) owns the wiring.
+- **Weakest formal backing.** All 8 `authority.qnt` properties are stated-normative; four actively demoted. The property tests (Unit 6) are executable oracles, NOT formally checked. The v1 formal gate owns the real authority properties. Documented; not over-claimed.
+- **Two cross-feature prerequisites.** The vertical slice depends on (0) sessions adding `SessionRegistered.spawn_origin` and (0b) acceptance taking `&IssuerContext` + retaining `Authorized.grant_id`. Both are small, additive changes owned by their features. The depends_on chain makes the sequencing explicit.
+- **Bootstrap operator grant is a v0.1.0 construct.** Created at init, durable. The operator actor id is a deployment value. Future multi-operator work adds operator provisioning — a reversal, not a gap-fill. Made explicit.
+- **Expiry enforcement deferred.** `expires_at` is stored but not enforced (needs a clock — deferred with time-driven staleness, same as sessions). Filed as backlog.
+- **Fleet target resolution gap (R5).** Until OperationKind-aware target resolution lands (backlog), spawn Operations fail target resolution after passing the grant check. The authority feature is still valuable and testable independently; the spawn end-to-end path requires the backlog item. Filed.
+- **Distinct failed-authorization audit deferred (R4).** Grant-lifecycle provenance is delivered; the distinct SECURITY.md audit record for denied attempts is a separate concern. Filed as backlog.
+- **Snapshot checkpointing deferred.** Same as the other projections — replay from LSN 0.
 
 ## Extension pressure classification
 
-- **Committed v0.1.0 behavior**: deny-by-default grant evaluation; the `GrantCheck` port (existence + matching, with implicit operator authority); durable Grant/DescendantGrant/Revocation events; revocation marks-not-deletes (audit retention); the descendant-grant allowed-kind set (8 existing-session kinds, spawn+attach excluded); two-lever non-cascade revocation (structural — no cascade mechanism); descendant-grant-on-spawn via log-tail; the `AuthorityDomainId` key shape (federation seam).
-- **Reserved seam**: multi-operator authority domains + durable operator grants (replaces the implicit operator authority — a reversal, not a gap-fill); delegation lineage (`parent_grant_id` — explicitly absent per PROTOCOL.md); per-spawn-variant authority; tighter endpoint-class narrowing; expiration enforcement (needs a clock — deferred with time-driven staleness); cascade-revocation as a query (future, no schema change).
-- **Explicitly rejected**: trusting self-asserted actor identity (SECURITY.md "compound issuer" — sender identity is verified, never self-asserted); adapter capability declarations as grant authority (capability ≠ authority); making acceptance write descendant grants (Ports & Adapters violation — authority owns the reaction); cascading revocation as v0.1.0 behavior (two-lever is the v0.1.0 rule).
+- **Committed v0.1.0 behavior**: deny-by-default grant evaluation against durable grants; the `GrantCheck` port with verified `IssuerContext` (not self-asserted); durable Grant/DescendantGrant/Revocation events with provenance; bootstrap operator grant; revocation marks-not-deletes (audit retention); the descendant-grant allowed-kind set (8 existing-session kinds, spawn+attach excluded); two-lever non-cascade revocation (structural); descendant-grant-on-spawn via log-tail correlating `spawn_origin`; the `AuthorityDomainId` key shape (federation seam).
+- **Reserved seam**: multi-operator authority domains + operator provisioning (replaces the bootstrap grant — a reversal); delegation lineage (`parent_grant_id` — explicitly absent); per-spawn-variant authority; tighter endpoint-class narrowing; expiration enforcement (needs a clock — deferred); distinct failed-authorization audit records (deferred, R4); cascade-revocation as a query (future, no schema change); fleet target resolution for spawn (R5 backlog — acceptance/sessions concern).
+- **Explicitly rejected**: trusting self-asserted actor identity (compound-issuer rule — `IssuerContext` is authority, never `Operation.sender`); adapter capability declarations as grant authority; making acceptance write descendant grants (Ports & Adapters violation — authority owns the reaction); cascading revocation as v0.1.0 behavior (two-lever is the rule).
 
-## Design review (2026-07-13, pre-implementation)
+## Prior review history
 
-**Verdict**: Request changes — bounce to `stage: drafting`. The design has security-critical and completeness blockers that must be resolved before the orchestrator runs.
-
-**Reviewer**: cross-model fresh-context (openai-codex/gpt-5.6-sol, different class from the umans orchestrator).
-
-**Blockers** (10 found — design soundness, not code bugs):
-
-1. **Implicit operator authority (Q1) nullifies the descendant-grant + revocation machinery.** `GrantCheck` returns `Authorized { grant_id: None }` whenever `actor_id == "operator"`. But descendant grants have the spawner/operator as their subject — so the operator's descendant grant is never consulted, revoking it can't deny future operations, and revoking a spawn grant can't prevent future operator spawns (implicit authority still authorizes). The two-lever non-cascade, which the feature claims to make real and testable, is rendered inert on the production path. Conflicts with `FleetAuthorityForSpawn` (requires a live fleet spawn grant) and the `spawning_grant_id` provenance requirement.
-
-2. **`is_operator` trusts a self-asserted payload identity — violates compound issuer.** The acceptance pipeline extracts `sender` directly from `Operation.sender` and passes it to `GrantCheck`; the proposed `is_operator` compares that payload value to `"operator"`. No verified connection/operator-session/transport-principal evidence reaches the check. Violates SECURITY.md "compound issuer" + "sender identity is never self-asserted." Any caller that can submit an Operation can claim the operator actor. Also internally contradictory ("configured at deployment" vs hard-coded constant).
-
-3. **`grant_authorizes` omits committed security dimensions.** Endpoint-id narrowing is a comment not code; endpoint-class matching is impossible (ActorEndpointRef carries no class); `target_scope_matches` is referenced but never specified; `authority_domain_id` is ignored; `is_live()` ignores `expires_at`; `TargetScopeKind`-specific matching rules undefined. Scope matching is a semantic 50/50 (exact equality vs fleet containment vs adapter containment vs project membership).
-
-4. **The spawn-tail cannot derive the spawned session from its declared input events.** A spawn Operation targets fleet/supervisor scope BEFORE the child exists; its `Operation.target_scope` cannot later become the spawned session. `CommandTransition` carries no spawned-session identity. The design's claim that the child target comes "from the spawn operation's target, now that the session exists" is false for the current contract. Need a spawn-result contract (e.g. correlate a completion Observation/SessionState registration carrying the new session identity).
-
-5. **The side-effecting reactor is neither wired nor reliably idempotent.** `ElicitationSlotLayer` is a pure projection; this tail must cause a second durable write. `issued: HashSet<CommandId>` marks in-memory output, not durable commit. Failure cases (mark-before-append-fails, duplicate observation races, replay-before-descendant-event) unresolved. No story owns the live consumer loop or the issuance-to-writer call. The feature could finish with no descendant grant ever written.
-
-6. **Existing target resolution rejects fleet-scoped spawn operations.** After grant check, acceptance always calls `TargetResolver`; `SessionRegistry` requires `adapter_id` + `runtime_session_id`, so a fleet spawn target (session doesn't exist yet) returns `TargetNotFound`. Authority can authorize a fleet spawn and acceptance still rejects it. Need OperationKind-aware target resolution (fleet path for spawn, existing-session path for the rest).
-
-7. **Ingestion signatures cannot perform warm-after-write.** All authority ingest functions receive `lookup: &L` (read-only `GrantLookup`), but the design requires each successful append to warm the registry. No mutation method, no `&mut` argument. Inconsistent with sessions (which uses `SessionProjection::observe(&mut self, ...)` + `&mut L`). An implementer would need interior mutability or an API change.
-
-8. **"Audit" is in the brief but has no implementation unit.** Descendant grants require an audit id linking to spawn completion; no unit designs an audit event/record, failed-authorization audit, audit-id creation/correlation, or replay/query. Grant state events don't satisfy SECURITY.md's distinct-audit-record requirement.
-
-9. **The non-cascade mutation test is underspecified.** Could pass without proving the actual two-lever relationship (must create parent spawn grant P, descendant D with provenance linking to P, revoke P, prove P denies + D still authorizes, separately revoke D, prove denial). Must show both levers, not just absence of cascade.
-
-10. **Formal-model inventory is wrong (8 properties, not 7) and property-test mapping is incomplete.** `authority.qnt` enumerates 8: `NoCommandWithoutGrant`, `CompoundIssuer`, `GrantAuthorityIsCommandKinds`, `RevocationPreventsFuture`, `FleetAuthorityForSpawn`, `SpawnCreatesDescendantGrant`, `SpawnRevocationDoesNotCascade`, `ElicitationResponderAuthority`. Unit 6 omits 4 of them. `replay_matches_live` is valuable but not one of the 8 property ids.
-
-## Revision direction (to address before re-advancing)
-
-The blockers cluster into three revision themes:
-
-**A. Operator identity + authority model (blockers 1, 2, 3).** The hybrid (Q1) as written is unsound: implicit operator authority bypasses the durable machinery, and operator identity is self-asserted. Revise toward durable bootstrap/operator grants (including a fleet spawn grant) so the production path exercises real grant evaluation, OR define explicit-grant precedence + negative revocation so a revoked descendant grant can't fall through to universal authority. Replace the payload-only `ActorEndpointRef` with a verified `IssuerContext` (claimed sender + verified operator actor + verified transport endpoint + endpoint class) supplied by the authenticated ingress boundary — this is the compound-issuer requirement. Specify the full grant-matching matrix (domain equality, verified actor, endpoint narrowing, per-TargetScopeKind containment rules, OperationKind membership, expiry via injected clock, revocation by both representations).
-
-**B. Spawn lifecycle + reactor wiring (blockers 4, 5, 6).** Define a spawn-result contract so the descendant-grant reactor can identify the spawned session (correlate a completion Observation/SessionState registration carrying the new session identity, not just the Completed transition). Make the reactor durably idempotent (deterministic descendant grant identity from authority domain + spawn command; idempotent append/dedup at storage; catch-up replay with side-effects disabled). OWN the wiring — the feature must not finish with descendant grants unwritten. Add OperationKind-aware target resolution so fleet spawn targets don't require an existing runtime session.
-
-**C. API/contract completeness + formal honesty (blockers 7, 8, 9, 10).** Define `GrantProjection: GrantLookup` with `observe(&mut self, ...)` and accept `&mut L` (match sessions' warm-after-write). Add an audit unit (or explicit dependency binding). Tighten the non-cascade oracle to prove both levers with provenance. Correct the formal inventory to 8 properties and map each to: an executable test owned here, a named dependency-owned test, or a documented untested gap.
-
-The stories are NOT re-spawned yet — they'll be revised when the design lands. The 6 existing story files stay on disk but their acceptance criteria will change; do not implement against the current versions.
+- **Revision 1** (Q1-Q5, 2026-07-13): implicit operator authority + log-tail reactor + full protocol model. Pre-implementation design review (cross-model gpt-5.6-sol) found 10 blockers. Bounced to drafting.
+- **Revision 2** (R1-R5, this): vertical slice — durable bootstrap operator grants (R1a), verified `IssuerContext` port (R2a), descendant-grant reactor with `spawn_origin` correlation (R3a), minimal audit (R4c), fleet resolution out-of-scope (R5a). Addresses all 10 blockers.

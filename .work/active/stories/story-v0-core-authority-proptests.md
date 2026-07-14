@@ -11,36 +11,40 @@ created: 2026-07-13
 updated: 2026-07-14
 ---
 
-# Story: Property tests for authority invariants
+# Story: Property tests for authority invariants (8 properties)
 
 ## Scope
-Implement Unit 6 of `feature-v0-core-authority`: property tests for the stated-normative obligations. None are formally checked (all `authority.qnt` properties are draft), but each is testable as an executable oracle — mirroring how sessions tested stated-normative obligations as properties.
+Implement Unit 6 of `feature-v0-core-authority` (revision 2): property tests for the **8** stated-normative obligations (review blocker #10: corrected count). None are formally checked, but each is testable as an executable oracle.
 
 ## Units
-- `core/tests/authority_proptest.rs` — proptest strategies, property oracles, mutation tests
+- `core/tests/authority_proptest.rs` — proptest strategies, 8 property oracles, mutation tests
 
-## Properties
+## Properties (8 — matches authority.qnt exactly)
 See `feature-v0-core-authority.md` Unit 6 for the full list:
-- `no_command_without_grant` — stated-normative (`NoCommandWithoutGrant`): deny-by-default.
-- `revocation_prevents_future` — stated-normative (`RevocationPreventsFuture`): revoked grant denies subsequent checks.
-- `spawn_revocation_does_not_cascade` — stated-normative (`SpawnRevocationDoesNotCascade`, one of the DEMOTED formal properties): revoking a spawn grant does NOT revoke descendant grants. **This is the executable stand-in for the demoted formal property — it MUST be mutation-survivable.**
-- `descendant_grant_allowed_kinds_exact` — descendant grants have exactly the canonical allowed-kind set.
-- `replay_matches_live` — replay determinism.
+1. `no_command_without_grant` — deny-by-default.
+2. `compound_issuer` — accepted commands use verified `IssuerContext` identity, NOT self-asserted payload actor.
+3. `grant_authority_is_command_kinds` — grant checks constrain by canonical OperationKinds, not adapter capability.
+4. `revocation_prevents_future` — revoked grant denies subsequent checks.
+5. `fleet_authority_for_spawn` — spawn requires a live fleet-scope spawn grant; per-session grants can't authorize spawn.
+6. `spawn_creates_descendant_grant` — successful spawn produces a descendant grant with non-spawn OperationKinds.
+7. `spawn_revocation_does_not_cascade` — revoking a spawn grant does NOT revoke descendant grants. Two levers. **Executable stand-in for the demoted formal property — MUST be mutation-survivable.** Test BOTH levers (revoke parent P → P denies + descendant D still authorizes; separately revoke D → D denies).
+8. `elicitation_responder_authority` — response Operations accepted only when verified issuer maps to expected responder.
 
 ## Mutation tests (NON-VACUITY)
-A buggy registry that CASCADES revocation MUST fail `spawn_revocation_does_not_cascade`. Mirror the mutation-test discipline from `acceptance_proptest.rs` / `sessions_proptest.rs`.
+- A buggy registry that CASCADES revocation MUST fail #7.
+- A buggy GrantCheck that trusts payload `Operation.sender` MUST fail #2.
+Mirror the mutation-test discipline from `acceptance_proptest.rs` / `sessions_proptest.rs`.
 
 ## Implementation
-Read `core/tests/sessions_proptest.rs` and `core/tests/acceptance_proptest.rs` FIRST — they're the templates for proptest strategies + non-vacuous mutation tests. Use `RusqliteStorage::open_in_memory()` for full write→replay round-trips.
+Read `core/tests/sessions_proptest.rs` and `core/tests/acceptance_proptest.rs` FIRST. Use `RusqliteStorage::open_in_memory()` for full write→replay round-trips. `CARGO_HOME=/tmp/cargo-home` for cargo.
 
 ## Acceptance Criteria
-- [ ] `no_command_without_grant` passes (deny-by-default)
-- [ ] `revocation_prevents_future` passes
-- [ ] `spawn_revocation_does_not_cascade` passes AND FAILS against a cascade mutation (non-vacuous — executable stand-in for the demoted formal property)
-- [ ] `descendant_grant_allowed_kinds_exact` passes
-- [ ] `replay_matches_live` passes
+- [ ] All 8 properties pass against the real implementation
+- [ ] #7 fails against a cascade mutation (non-vacuous — executable stand-in for the demoted formal property)
+- [ ] #2 fails against a payload-actor-trust mutation (non-vacuous)
+- [ ] `replay_matches_live` passes (supplementary — replay determinism)
 
 ## Notes
-- Depends on all 5 prior stories.
-- `spawn_revocation_does_not_cascade` is the highest-value test — it's the executable oracle for a formal property that was demoted (not mutation-survivable in `authority.qnt`). The property test here IS mutation-survivable by construction.
-- All properties are stated-normative (no promoted formulas). They document + enforce intended behavior as executable oracles.
+- Depends on all 5 prior authority stories.
+- #7 is the highest-value test — executable oracle for a demoted formal property, mutation-survivable by construction.
+- All 8 are stated-normative (no promoted formulas). They document + enforce intended behavior as executable oracles.

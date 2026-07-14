@@ -4,40 +4,39 @@ kind: story
 stage: implementing
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
-depends_on: [story-v0-core-authority-registry, story-v0-core-authority-ingest]
+depends_on: [story-v0-core-authority-registry, story-v0-core-authority-ingest, story-sessions-spawn-origin-field]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
 updated: 2026-07-14
 ---
 
-# Story: Descendant-grant-on-spawn log-tail (the reactor)
+# Story: Descendant-grant-on-spawn log-tail reactor (vertical slice)
 
 ## Scope
-Implement Unit 4 of `feature-v0-core-authority`: a pure log-tail that reacts to spawn completion by producing a descendant-grant issuance. Exactly the elicitation-slot pattern (tail the log, react to command transitions).
+Implement Unit 4 of `feature-v0-core-authority` (revision 2): a pure log-tail that reacts to spawn completion by producing a descendant-grant issuance. Vertical slice (R3a): correlates `Spawn → Completed` with a `SessionRegistered` carrying `spawn_origin`. Addresses review blockers #4 (spawn-result identity) and #5 (reactor shape).
 
 ## Units
 - `core/src/authority/spawn_tail.rs` — `SpawnDescendantTail`, `DescendantGrantIssuance`
 
 ## Implementation
-See `feature-v0-core-authority.md` Unit 4 for exact signatures. The tail reads `OPERATION` + `COMMAND_TRANSITION` events acceptance wrote, reacts to `Spawn → Completed`.
-
-Key points:
-- `spawn_commands` tracks which command_ids are spawn operations (from `OPERATION` events where `OperationKind::Spawn`).
-- `issued` tracks command_ids that already produced a descendant grant (idempotent on replay — first-Completed-wins, mirroring elicitation's first-answer-wins).
-- On `COMMAND_TRANSITION` to `Completed` for a tracked spawn not yet issued: return `Some(DescendantGrantIssuance)`. Non-Completed terminals produce NO issuance.
-- The issuance carries: `spawn_operation_id`, `spawning_grant_id` (`None` for operator-authorized spawns in v0.1.0 — implicit authority has no grant_id), `target_scope` (the spawned session), `subject_actor_id` (the spawner/operator), `allowed_operation_kinds` (`DESCENDANT_GRANT_ALLOWED_KINDS`).
-- The tail writes NOTHING — it produces an `Issuance` that the composition layer feeds to `ingest_descendant_grant` (story 3's writer).
-- Read `core/src/acceptance/elicitation.rs` FIRST — `ElicitationSlotLayer` is the direct template (a read-only log consumer that reacts to command transitions).
+See `feature-v0-core-authority.md` Unit 4 for exact signatures. Key points:
+- **Depends on `story-sessions-spawn-origin-field`** (the `SessionRegistered.spawn_origin` field) — sequenced first.
+- The reactor correlates THREE events: (1) a Spawn `OPERATION` event (track command_id + spawner + spawning_grant_id), (2) its `COMMAND_TRANSITION` to `Completed`, (3) a `SessionRegistered` carrying `spawn_origin = that command_id`. The `SessionRegistered` provides the spawned session identity (adapter/deployment/runtime/generation) — review blocker #4.
+- `issued: HashSet<CommandId>` = in-memory idempotency for the live tail. Durable idempotency = deterministic grant_id derived from `(authority_domain_id, spawn_command_id)` in the composition layer (story 5).
+- The tail writes NOTHING — it produces an `Issuance` that the composition layer (story 5) feeds to `ingest_descendant_grant`.
+- `spawning_grant_id`: from the spawn's `Authorized.grant_id` IF acceptance retains it (`story-acceptance-issuer-context`). If not retained, `None` — document.
+- Read `core/src/acceptance/elicitation.rs` FIRST — `ElicitationSlotLayer` is the direct template (read-only log consumer reacting to command transitions).
 
 ## Acceptance Criteria
-- [ ] A spawn OPERATION + COMMAND_TRANSITION to Completed produces exactly one `DescendantGrantIssuance`
+- [ ] A Spawn OPERATION + Completed transition + SessionRegistered(spawn_origin=that command) produces exactly one `DescendantGrantIssuance`
 - [ ] A spawn reaching a non-Completed terminal produces NO issuance
-- [ ] Replay (re-observing the same events) does not produce duplicate issuances (idempotent)
+- [ ] A SessionRegistered without `spawn_origin` does NOT trigger an issuance
+- [ ] Replay (re-observing events) does not produce duplicate issuances (idempotent via `issued`)
 - [ ] The issuance's allowed-kinds match `DESCENDANT_GRANT_ALLOWED_KINDS` exactly
-- [ ] The issuance's provenance links the spawn_operation_id; `spawning_grant_id` is `None` for operator-authorized spawns
+- [ ] The issuance's `spawned_session_scope` comes from the `SessionRegistered` event (not the spawn Operation's fleet target)
 
 ## Notes
-- Depends on stories 1 (registry, `DESCENDANT_GRANT_ALLOWED_KINDS`) and 3 (the writer that consumes the issuance).
+- Depends on stories 1 (registry), 3 (ingest, for the writer the composition layer calls), AND the sessions prerequisite `story-sessions-spawn-origin-origin-field`.
 - Add tests in `core/tests/authority_spawn_tail.rs`.
-- The composition layer (wiring the tail's output to the writer) is NOT in this story's scope — it's integration work for the replay/wiring story or a follow-on.
+- The composition layer (wiring the tail's output to the writer) is story 5 — this story is the reactor only.
