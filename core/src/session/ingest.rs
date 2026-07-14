@@ -8,7 +8,7 @@
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionRegistered, SessionRelabeled, SessionState,
+    SessionGenerationBumped, SessionRegistered, SessionRelabeled, SessionState, TypedCorrelation,
 };
 
 use crate::storage::{RecordedEvent, Storage};
@@ -34,6 +34,7 @@ pub struct SessionReport {
     pub project: String,
     pub cwd: String,
     pub name: String,
+    pub spawn_origin: Option<TypedCorrelation>,
 }
 
 /// The durable outcome of ingesting one session report.
@@ -161,6 +162,7 @@ where
                 project: report.project,
                 cwd: report.cwd,
                 name: report.name,
+                spawn_origin: report.spawn_origin,
             },
         );
         let event_id = storage

@@ -1,7 +1,7 @@
 ---
 id: story-sessions-spawn-origin-field
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: feature-v0-core-sessions
 depends_on: []
@@ -41,3 +41,13 @@ The authority feature's descendant-grant reactor tails the log for completed spa
 - This is a sessions-feature story (sessions owns its proto shape) but exists to unblock authority. Filed under `feature-v0-core-sessions` (re-opens its review surface per the substrate rule — re-review the parent when this lands).
 - `CARGO_HOME=/tmp/cargo-home` for all cargo commands. `buf` at `$HOME/.npm-global/bin/buf`.
 - Demanded by authority design review blocker #4 (spawn-tail can't derive the spawned session).
+
+## Implementation notes
+- Added `SessionRegistered.spawn_origin` as field 9 in the Protobuf source of truth and regenerated both Rust and TypeScript contracts. Regeneration followed the required sequence: `buf generate`, restore `contracts/rust/src/gen`, then `cargo build -p patchbay-contracts` so prost-build emitted the committed Rust format.
+- Added `SessionReport.spawn_origin: Option<TypedCorrelation>` and carried it into the durable `SessionRegistered` mutation. Existing non-spawn report and registration fixtures explicitly use `None`.
+- Full `buf generate` also repaired pre-existing TypeScript drift for the already-present `CommandTransition` message and `StoredEventKind::CommandTransition`; these generated changes are source-derived and additive rather than formatting churn.
+- Files changed: `contracts/proto/patchbay/sessions.proto`, generated Rust/TypeScript contracts, `core/src/session/ingest.rs`, and session test fixtures.
+- Tests added: none, per the story's test-integrity guidance; existing session tests remain the regression guard.
+- Verification: `cargo build -p patchbay-contracts`, `cargo build -p patchbay-core`, `cargo test -p patchbay-core`, and `cargo clippy --all-targets -- -D warnings` pass with `CARGO_HOME=/tmp/cargo-home`. `buf lint` (from `contracts/proto`) and the TypeScript contract build also pass.
+- Discrepancies from design: two direct `SessionRegistered` test fixtures also required `spawn_origin: None` after regeneration, in addition to the four named `SessionReport` fixtures.
+- Adjacent issues parked: none.

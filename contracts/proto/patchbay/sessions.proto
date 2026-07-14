@@ -79,6 +79,10 @@ message SessionRegistered {
   string project = 6;
   string cwd = 7;
   string name = 8;
+  // Optional: the spawn Operation that created this session. Set when the
+  // adapter reports a session resulting from a spawn. Lets the authority
+  // descendant-grant reactor correlate the session to its spawn command.
+  TypedCorrelation spawn_origin = 9;
 }
 
 message SessionGenerationBumped {

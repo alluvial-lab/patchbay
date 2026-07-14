@@ -64,6 +64,7 @@ fn registration() -> SessionStateEvent {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "main".to_owned(),
+            spawn_origin: None,
         },
     )
 }
@@ -248,6 +249,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "other".to_owned(),
+            spawn_origin: None,
         },
     );
     let bump_a = events::generation_bumped(

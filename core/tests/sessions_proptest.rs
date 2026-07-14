@@ -87,6 +87,7 @@ fn any_session_report(
                 project,
                 cwd,
                 name,
+                spawn_origin: None,
             },
         )
 }
@@ -161,6 +162,7 @@ fn report_at(
         project: "project-a".to_owned(),
         cwd: "/work/a".to_owned(),
         name: "session-a".to_owned(),
+        spawn_origin: None,
     }
 }
 

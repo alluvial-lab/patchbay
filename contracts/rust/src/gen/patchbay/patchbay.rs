@@ -743,6 +743,11 @@ pub struct SessionRegistered {
     pub cwd: ::prost::alloc::string::String,
     #[prost(string, tag = "8")]
     pub name: ::prost::alloc::string::String,
+    /// Optional: the spawn Operation that created this session. Set when the
+    /// adapter reports a session resulting from a spawn. Lets the authority
+    /// descendant-grant reactor correlate the session to its spawn command.
+    #[prost(message, optional, tag = "9")]
+    pub spawn_origin: ::core::option::Option<TypedCorrelation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionGenerationBumped {

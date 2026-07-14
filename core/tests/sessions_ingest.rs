@@ -51,6 +51,7 @@ fn report(generation_value: u64) -> SessionReport {
         project: "patchbay".to_owned(),
         cwd: "/work/patchbay".to_owned(),
         name: "main".to_owned(),
+        spawn_origin: None,
     }
 }
 
