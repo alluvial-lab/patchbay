@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-sessions
 kind: feature
-stage: review
+stage: implementing
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -833,3 +833,26 @@ Cross-cutting notes:
 - The `TargetResolver` port (declared in `core/src/acceptance/ports.rs` by the acceptance feature) is now implemented by `SessionRegistry` — the sessions↔acceptance seam is connected.
 
 Verification: `cargo build` clean, `cargo test -p patchbay-core` 152 tests pass, `cargo clippy --all-targets` clean.
+
+## Review (2026-07-13)
+
+**Verdict**: Request changes (bounce to implementing)
+
+**Depth**: Deep lane, two-phase (completeness → adversarial), cross-model fresh-context. Orchestrator (umans) is a different model class from the reviewers (openai-codex/gpt-5.6-sol), satisfying the cross-model advisory-review requirement. Both reviewers ran convergence loops.
+
+**Blockers** (4 correctness bugs, verified against code):
+- **B1 — Ingestion writes events that replay cannot rebuild** (`ingest.rs`): `ingest_session_report` validates only `authority_domain_id`; empty `adapter_id`/`deployment_scope`/`runtime_session_id` are accepted at write but rejected at replay (`mutation_identity`). Unreplayable log. -> `story-fix-sessions-ingest-correctness`
+- **B2 — Generation bump discards new generation's state/metadata** (`ingest.rs` + `sessions.proto` + `registry.rs`): `SessionGenerationBumped` carries only `from`/`to_generation`; `observe_generation_bumped` clones the prior generation's stale state/metadata into the new generation. A session replacement (e.g. `session_new`) reports the new generation's state, which is silently lost. -> `story-fix-sessions-ingest-correctness`
+- **B3 — Multi-field report truncated** (`ingest.rs`): the equal-generation branch returns after the first changed delta (connectivity→activity→metadata), dropping simultaneous changes to the other fields. -> `story-fix-sessions-ingest-correctness`
+- **B4 — Tombstone keys omit adapter_id + deployment_scope** (`registry.rs`): `SessionTombstoneKey` is `(runtime_session_id, generation)` only; runtime session IDs are adapter-reported and not globally unique. Cross-adapter collision falsely rejects an unrelated live session as stale. -> `story-fix-sessions-tombstone-key`
+
+**Important** (parked in backlog):
+- Authority-domain isolation absent from lookup/resolution (`SessionLookup` takes no domain, `resolve` ignores `_authority_domain_id`). Latent in single-domain v0.1.0. -> `backlog-sessions-authority-domain-isolation`
+- Test coverage gaps: replay corruption cases untested, acceptance↔sessions integration test missing, malformed-event replay tests missing, resolver boundary under-tested, proptest identity isolation absent. -> `backlog-sessions-test-coverage-gaps`
+- Idempotency guards infer redelivery from key-existence/LSN not payload equality; read-decide-append warm-path can create unreplayable logs under concurrency. Established pattern (acceptance's `ingest_observation` is identical) — latent in single-writer v0.1.0. -> `backlog-sessions-idempotency-and-concurrency`
+
+**Nits** (not filed):
+- Resolver `not_found` helper stringifies the whole `TargetScope` in the error; acceptable for v0.1.0 diagnostics.
+- `effective_connectivity` takes `SessionState` (the proto) but only uses connectivity; could take `SessionConnectivityState` directly. Minor, leave.
+
+**Notes**: The implementation correctly mirrors acceptance's established patterns (writer + pure-tail projection, RPITIT ports, typed thiserror enums) and the state-axis transition tables are exactly right. The blockers are genuine correctness bugs in the sessions-specific logic (state inheritance on bump, multi-field truncation, tombstone key completeness, write/replay validation parity) — exactly the kind of issue the two-phase deep review exists to catch. Both reviewers independently flagged B2/B3/B4, raising confidence. The feature bounces to `implementing` until the two fix stories land.
