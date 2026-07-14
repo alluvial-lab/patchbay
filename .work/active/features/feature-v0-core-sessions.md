@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-sessions
 kind: feature
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -898,3 +898,30 @@ Fresh-context cross-model re-review (openai-codex/gpt-5.6-sol) of the fix diff (
 `story-fix-sessions-multi-delta-atomicity` adopts option (a1): each successful append in an equal-generation multi-delta report is immediately folded into `SessionRegistry`, and the next delta is derived from the refreshed projection. A transient later append failure therefore leaves the warm projection equal to the durable log prefix; retry skips the committed delta and appends only the remainder. The writer propagates a fold error after durability, requiring a `rebuild_from_log` before the projection is reused.
 
 B2's `SessionGenerationBumped.initial_state` compatibility change establishes a pre-release reset boundary. v0.1.0 has no production logs; existing development logs written before commit `06e6251` are disposable and must be deleted rather than migrated. A shipped release with such logs would require an explicit migration.
+
+## Final review (2026-07-13)
+
+**Verdict**: Approve — advance to `stage: done`.
+
+B5 fix (`story-fix-sessions-multi-delta-atomicity`, commit `d3b0db1`) reviewed and confirmed RESOLVED (cross-model openai-codex/gpt-5.6-sol, fresh context). All 5 blockers (B1-B5) resolved across the fix arc:
+
+| Blocker | Fix story | Commit | Re-review verdict |
+|---|---|---|---|
+| B1 (empty identity fields → unreplayable log) | story-fix-sessions-ingest-correctness | `06e6251` | RESOLVED |
+| B2 (generation bump discards new state) | story-fix-sessions-ingest-correctness | `06e6251` | RESOLVED |
+| B3 (multi-field report truncated) | story-fix-sessions-ingest-correctness | `06e6251` | RESOLVED (success path; B5 was the partial-failure regression) |
+| B4 (tombstone key omits adapter/scope) | story-fix-sessions-tombstone-key | `da64160` | RESOLVED |
+| B5 (partial multi-delta failure → unreplayable retry, regression from B3 fix) | story-fix-sessions-multi-delta-atomicity | `d3b0db1` | RESOLVED |
+
+The fix arc: deep review found B1-B4 → fixes landed → re-review confirmed B1-B4 resolved but found B5 (a regression from B3) → B5 fix landed → re-review confirmed B5 resolved. This is exactly the convergence the two-phase deep review loop is designed for — the B5 catch validates running the re-review rather than rubber-stamping the fixes.
+
+**Important findings parked in backlog** (latent in single-domain/single-writer v0.1.0, not blocking):
+- `backlog-sessions-authority-domain-isolation` — registry not bound to a domain; `resolve` ignores `authority_domain_id`. Latent v0.1.0 (single domain); fix before federation.
+- `backlog-sessions-test-coverage-gaps` — replay corruption tests, acceptance↔sessions integration test, malformed-event tests, resolver boundary, proptest identity isolation.
+- `backlog-sessions-idempotency-and-concurrency` — redelivery inferred from key/LSN not payload equality; read-decide-append warm-path (same pattern as acceptance's `ingest_observation`, already `done`). Latent single-writer.
+
+**Verification**: `cargo build` clean, `cargo test -p patchbay-core` 151 tests pass, `cargo clippy --all-targets` clean. Gen diff additions-only (no reformatting drift). Regression tests for all 5 blockers are non-vacuous.
+
+**Reset boundary note**: B2 made `initial_state` required on `SessionGenerationBumped` events. Pre-fix dev logs (written before commit `06e6251`) would be rejected on replay. Patchbay is pre-release with no production logs — this is a documented reset boundary, not a migration. Delete any local `.db` files; do not migrate.
+
+The `TargetResolver` port (declared in `core/src/acceptance/ports.rs`) is now implemented by `SessionRegistry` — the sessions↔acceptance seam is connected. The sessions feature is complete for v0.1.0 scope.
