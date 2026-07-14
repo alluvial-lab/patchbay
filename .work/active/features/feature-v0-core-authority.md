@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: implementing
+stage: drafting
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -599,3 +599,56 @@ Stories 1 is the foundation. 2 and 3 can proceed in parallel after 1 lands (both
 
 - **Revision 1** (Q1-Q5, 2026-07-13): implicit operator authority + log-tail reactor + full protocol model. Pre-implementation design review (cross-model gpt-5.6-sol) found 10 blockers. Bounced to drafting.
 - **Revision 2** (R1-R5, this): vertical slice — durable bootstrap operator grants (R1a), verified `IssuerContext` port (R2a), descendant-grant reactor with `spawn_origin` correlation (R3a), minimal audit (R4c), fleet resolution out-of-scope (R5a). Addresses all 10 blockers.
+
+## Design review #2 (revision 2, 2026-07-13)
+
+**Verdict**: Request changes — bounce to `stage: drafting` again. Revision 2 resolved 6 of the 10 revision-1 blockers (4, 6, 7, 8, 9, 10), but 4 are only *partially* resolved and the new vertical-slice scope (reactor, composition, bootstrap) introduced new defects.
+
+**Reviewer**: cross-model fresh-context (openai-codex/gpt-5.6-sol). Orchestrator verified the sharpest claims directly against design text + code (claims A, C, D confirmed accurate).
+
+### Blocker resolution status (re-verified)
+
+| # | Rev-1 blocker | Rev-2 status |
+|---|---|---|
+| 1 | implicit operator authority nullifies machinery | **NOT fully resolved** — bootstrap is ambiguous (one GrantId vs two grants; no deterministic ID/startup caller) |
+| 2 | is_operator trusts self-asserted payload | **NOT fully resolved** — IssuerContext exposes IDs labelled "verified" but no operator-session evidence/verifier; domain-mismatch hole (context auth'd in domain A evaluated against payload domain B) |
+| 3 | grant_authorizes omits security dimensions | **NOT fully resolved** — expiry unenforced, endpoint-class omitted, domain equality not checked, project-group containment unsafe from two raw TargetScopes |
+| 4 | spawn-tail can't derive spawned session | **RESOLVED** — spawn_origin field + declared dependency |
+| 5 | reactor neither wired nor durably idempotent | **NOT fully resolved** — composition.observe specified but no committed-event source/live-tail cursor/delivery loop; deterministic-ID encoding unspecified; append has no atomic grant-ID uniqueness |
+| 6 | fleet target resolution rejects spawn | **RESOLVED as scope disposition** — filed as backlog, out of authority scope |
+| 7 | ingest signatures can't warm-after-write | **RESOLVED** — &mut L + observe(&mut self) |
+| 8 | audit promised but no unit | **RESOLVED as narrowed scope** — grant-lifecycle provenance delivered; distinct failed-auth audit deferred |
+| 9 | non-cascade test underspecified | **RESOLVED** — both-levers test specified |
+| 10 | 8 properties not 7 | **RESOLVED** — all 8 listed, mapping complete |
+
+### New findings in revision 2's vertical-slice scope
+
+**A. Bootstrap authority is a semantic 50/50 (blocker).** The design alternates between one bootstrap grant and two (fleet-spawn + universal existing-session). That choice changes revocation semantics. The target scopes, allowed-kind sets (incl. `attach`), grant IDs, startup invocation, and the composition-root caller are undefined. Idempotency needs a stable known ID but only `current_grant(grant_id)` is designed. **Fix**: specify either (1) two deterministic namespace-separated grants (fleet scope + spawn-only; existing-session scope + the other 9 kinds) or (2) one fleet wildcard grant with all 10 kinds accepting global revocation. Define the configured operator-ID source, deterministic bootstrap IDs, validation, first-start/restart sequence, and the composition-root call.
+
+**B. IssuerContext doesn't implement compound-issuer (blocker).** The trait exposes IDs labelled "verified" but no operator-session evidence or verifier boundary. "Passed by caller" vs "resolved from injected port" is left open. `GrantCheck` receives both the payload authority domain AND `issuer.authority_domain_id()`; `grant_authorizes` checks only the former → a context auth'd in domain A could be evaluated against a payload-selected domain B. **Fix**: pin one architecture — acceptance receives untrusted issuer evidence, resolves it through a core-owned verifier into an opaque `VerifiedIssuer` (only the verifier can construct), OR receives such an opaque type. Require issuer-domain equality + verified current endpoint/generation before grant evaluation.
+
+**C. Descendant issuance reintroduces payload trust + provenance not durable (blocker).** The log contains the raw client `Operation`; `CommandRecord` is rebuilt from it on replay (`index.rs:158`: `CommandRecord::new(operation, event_lsn)`). Adding `Authorized.grant_id` to the in-memory record won't survive replay without a durable schema change. The tail would be forced to derive `spawner_actor` from untrusted `Operation.sender`. `spawning_grant_id = None` contradicts the normative descendant provenance. **Fix**: durably record server-attested acceptance metadata (verified actor, endpoint, domain, authorizing `GrantId`) in a generated contract, OR derive descendant subject/endpoint from a mandatory referenced spawning grant while recording that grant ID. Missing provenance must fail fast, not silently `None`.
+
+**D. Three-event reactor is order-dependent + write-failure-unsafe (blocker).** `SpawnDescendantTail` stores `spawn_commands` + `completed` + `issued` but NOT a registration keyed by `spawn_origin`. If `SessionRegistered` arrives before `Completed` (a natural adapter ordering), the registration is forgotten → no grant issued. `issued` appears set when an issuance is produced; if the subsequent append fails, retry is suppressed until restart. **Fix**: order-independent join — retain operation/completion/registration facts separately, run `try_issue(command_id)` after observing any of them. Mark issuance complete only AFTER durable append succeeds. Define fail-closed behavior for a completion whose registration never arrives. Test all 6 event permutations + append-failure retry.
+
+**E. AuthorityComposition not connected to the log (blocker).** Exporting `observe` isn't a live consumer loop. Storage exposes `append` + `read_after` (snapshot-style), no subscription; no story modifies writers or introduces a dispatcher. Durable dedup rests on an unspecified deterministic-ID encoding while grant writes use ordinary `append` (no atomic grant-ID uniqueness). **Fix**: specify a concrete composition root + consumption protocol (startup rebuild → bootstrap → catch-up from cursor → continuous committed-event delivery). Add atomic "append grant if ID absent" semantics or a storage uniqueness constraint. Pin a canonical namespace-separated ID derivation + collision handling. Test crash-before-append, after-append/before-warm, after-warm.
+
+**F. Prerequisite graph not executable as declared (blocker).** The registry story has no deps but needs `IssuerContext` defined by authority story 2. The acceptance prerequisite has no dep but imports the same trait from story 2. "Co-developed" is not a dependency edge → orchestrator ordering/file-ownership ambiguous. **Fix**: split out a foundational issuer-verification port story (under acceptance or a neutral identity module), then explicit edges: issuer port → registry + acceptance integration; registry → authority GrantCheck impl; both → end-to-end integration.
+
+**G. ElicitationResponderAuthority has a test name but no enforcement design (blocker).** Property #8 requires comparing the verified issuer with `expected_responder_actor`, but neither `GrantCheck` nor acceptance receives the referenced Elicitation or expected responder. The existing elicitation projection checks response kind + correlation only. The promised property test has no implementation path → risks vacuous. **Fix**: add an Elicitation lookup/validation port to response-operation acceptance + require verified issuer actor equality with `expected_responder_actor`, then test mismatch. Or narrow the claimed property + leave the obligation explicitly unimplemented.
+
+**H. "Live vertical slice" claim premature (important).** Fleet spawn still fails target resolution (backlog), so the reactor can't be exercised through the real acceptance path. The feature can't claim end-to-end live vertical slice while R5 blocks it. **Fix**: either promote fleet target resolution to an active prerequisite, OR describe this as a component-complete authority slice whose live spawn integration remains blocked.
+
+## Revision direction (revision 3)
+
+The blockers cluster into four revision themes. The design is close — the resolved blockers (4, 6, 7, 8, 9, 10) hold — but the vertical-slice additions need sharpening, not abandonment:
+
+**I. Pin the bootstrap grant shape (A).** Decide: two deterministic grants (fleet-spawn + existing-session) or one wildcard. Specify IDs, scopes, allowed-kinds (resolve the `attach` question), operator-ID source, startup sequence, composition-root caller. This is a real 50/50 — surface to the operator.
+
+**II. Make IssuerContext a real verified-identity port (B, C).** The port must be an opaque `VerifiedIssuer` (only a core-owned verifier constructs it), carrying operator-session evidence + verified actor/endpoint/domain/generation. Pin domain-equality. This closes the compound-issuer hole. C (provenance durability) follows: the verified acceptance metadata (actor, endpoint, domain, authorizing GrantId) must be durably recorded in a generated contract so it survives replay — not just retained in-memory.
+
+**III. Make the reactor order-independent + the composition a real consumer (D, E).** Order-independent join (retain all three facts; `try_issue` after any). Mark issued only after durable append. Specify the composition root: startup rebuild → bootstrap → cursor catch-up → continuous delivery. Add atomic grant-ID uniqueness (storage constraint or "append if absent"). Pin the deterministic-ID encoding.
+
+**IV. Fix the prerequisite graph + narrow the vertical-slice claim (F, G, H).** Split the issuer-verification port into its own foundational story with explicit edges (no "co-developed"). Either add the Elicitation-responder port to acceptance (closing G) or narrow the property claim + document the gap. Either promote fleet-target-resolution to a prerequisite (closing H's live-slice gap) or re-label the feature as component-complete (not end-to-end-live).
+
+Stories NOT re-spawned yet — they'll be revised when revision 3 lands. The 8 existing story files stay on disk but their acceptance criteria will change.
