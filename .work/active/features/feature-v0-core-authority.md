@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -685,3 +685,28 @@ Fresh-context cross-model re-review (`openai-codex/gpt-5.6-sol` xhigh) of the 3-
 **Convergence**: the loop caught an incomplete fix (blocker 2's first pass) and it was closed in-stride. Findings have stabilized at nits. All 3 deep-review findings genuinely closed. Feature re-advanced to `stage: review`.
 
 **Verification**: 174 tests green, clippy clean. The 4 backlog items (payload-actor trust, grant-selection determinism, ingest pre-append conflict check, replay gap detection) remain tracked for the live-path follow-on — unchanged, latent in single-writer v0.1.0.
+
+## Final review (2026-07-14)
+
+**Verdict**: Approve — advance to `stage: done`.
+
+All 3 deep-review findings genuinely closed (blocker 1 deployment_scope, blocker 2 conflicting-revocation complete fingerprint, gap 3 compound_issuer submit integration). The adversarial convergence loop caught an incomplete blocker-2 fix (compared only policy+timestamp, not actor/reason/audit_id) and it was closed in-stride — the same B3→B5-style incomplete-fix catch the two-phase deep review exists for. Findings stabilized at nits.
+
+### Stage ledger
+- 6 authority stories: `done` (registry, grant-check, ingest, spawn-tail, replay, proptests)
+- 3 fix stories: `done` (runtime-session-deployment-scope, conflicting-revocation-detection, compound-issuer-integration-test)
+- 2 cross-feature prerequisites: `done` (sessions-spawn-origin-field, acceptance-issuer-context) — re-reviewed their parents (sessions + acceptance), both remain `done`.
+- Feature: `done`
+
+### Backlog items (latent, live-path follow-on — NOT blocking v0.1.0 component-complete)
+- `backlog-authority-payload-actor-in-descendant-issuance` — descendant subject derived from self-asserted Operation.sender; resolve with durable acceptance metadata. Couples with `backlog-authority-durable-acceptance-metadata` + `backlog-authority-live-composition`.
+- `backlog-authority-grant-selection-determinism` — overlapping matching grants return nondeterministic grant_id (HashMap iteration). Latent single-operator.
+- `backlog-authority-ingest-pre-append-conflict-check` — ingest appends before conflict check (poisons log on conflict); no durable retry idempotency. Latent single-writer; blocking for live path.
+- `backlog-authority-replay-gap-detection` — replay accepts gapped LSNs + ignores Unspecified-kind. Defense-in-depth; rusqlite is gap-free.
+- (Pre-existing) `backlog-authority-durable-acceptance-metadata`, `backlog-authority-live-composition`, `backlog-authority-failed-authorization-audit`, `backlog-grant-expiration-enforcement`, `backlog-fleet-target-resolution`, `backlog-elicitation-responder-authority`.
+
+### Verification
+189 tests green across `patchbay-core` (33 authority tests: 11 registry + 5 grant-check + 6 ingest + 6 spawn-tail + 2 replay + 11 proptest incl. 2 mutation + 1 integration), clippy clean (`-D warnings`), `cargo fmt --all --check` clean. The two mutation tests (cascade + payload-actor-trust) and the compound-issuer integration test are genuinely non-vacuous (verified by adversarial re-review).
+
+### What v0.1.0 authority delivers
+A component-complete, tested authority layer: deny-by-default grant evaluation against durable grants; the `GrantCheck` port with verified `IssuerContext` (not self-asserted) + domain equality; durable Grant/DescendantGrant/Revocation events with provenance; revocation marks-not-deletes (audit retention) with complete conflicting-duplicate detection; the descendant-grant allowed-kind set (8 kinds, spawn+attach excluded); two-lever non-cascade revocation (structural); descendant-grant-on-spawn via order-independent log-tail correlating `spawn_origin`; the `AuthorityDomainId` key shape (federation seam); 7 property oracles + 2 mutation tests + 1 documented gap (#8 ElicitationResponderAuthority). NOT live-wired (per rev3 design — the live operator-issuing path is follow-on).

@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-spawn-tail
 kind: story
-stage: review
+stage: done
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-ingest, story-sessions-spawn-origin-field]

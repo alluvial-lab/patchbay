@@ -17,3 +17,6 @@ cc 67b15e029f68de401781aeddf2d425fb89789ae26c4ac1a120399e5c370b4033 # shrinks to
 cc 008d94f836297a75005bc2795491918b3b9a91d7c5102b412843d2d91ca0f50b # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
 cc ed2bf32e9c18e91f79eb3e383f8626a1cab92a7a754e6b917bd17f42dcc74bb5 # shrinks to ops = [("a", "a")]
 cc 2d1f74183877a94d91e50d86d6017bd192c315f6f304a8b9ec4aaa9bab3b2555 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc 41c23a4fd5860d29b9bb31dc3af5c8be392119ed413823e2563252f7ebffc12b # shrinks to n_events = 1
+cc 1d2429242461bbc6ec8d500bef80b5f8dff7fe280b9281879fe7057dc24b04bf # shrinks to n_events = 2, snap_lsn = 1
+cc 7a54d2dfa85010018f07a624a9d33b7dc04fcf6727f2fa11997c2e94f1a5acc1 # shrinks to n_events = 1, offset = 1
