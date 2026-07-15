@@ -1,12 +1,12 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: drafting
+stage: implementing
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-14
 gate_origin: null
 release_binding: null
 ---
@@ -76,3 +76,17 @@ Six child features, one per architectural layer. The coordination core is the la
 - `feature-v0-web-server` — TS web server: HTTP termination, operator sessions, CSRF, speaks Connect to core — depends on: `[feature-v0-protocol-seam]`
 - `feature-v0-web-cockpit` — responsive web cockpit: session list, composer, delivery states, reconnect — depends on: `[feature-v0-web-server]`
 - `feature-v0-cli` — CLI: setup, admin, debug, scripted access — depends on: `[feature-v0-protocol-seam]`
+
+## Stage correction (2026-07-14)
+
+Advanced `drafting → implementing`. The decomposition was settled (complete child list + critical-path diagram + depends_on graph) but the `epic-design` Phase 8 stage advance was never applied — a stale stage, not a deliberate hold. Per the `epic-design` skill, an epic advances to `implementing` once its decomposition is done, not once all children are done.
+
+### Child status
+- `epic-v0-core` — **done** (root of the critical path; completed this session)
+- `feature-v0-protocol-seam` — drafting (next on the critical path; unblocked now that core is done)
+- `feature-v0-pi-adapter` — drafting (parallel branch off core)
+- `feature-v0-web-server` — drafting (depends on protocol-seam)
+- `feature-v0-web-cockpit` — drafting (depends on web-server)
+- `feature-v0-cli` — drafting (depends on protocol-seam)
+
+The epic is ~1/6 built by layer. Root child done; the seam + adapter layers can now start.
