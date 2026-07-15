@@ -1,14 +1,14 @@
 ---
 id: epic-v0-core
 kind: epic
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-14
 ---
 
 # Epic: Rust coordination core
@@ -66,3 +66,26 @@ Split by capability, not by layer. The four sub-arcs are independent enough to p
 - `contracts/proto/patchbay/*.proto` — generated contract source (operations, sessions, observations, authority, elicitations, common, adapter)
 - `contracts/rust/` — generated Rust bindings (the starting contract for the core's types)
 - Formal models in `contracts/` — `command_lifecycle.qnt`, `session_generation.qnt`, `csrf_browser.qnt`, `elicitation_lifecycle.qnt`, `authority.qnt`
+
+## Epic review (2026-07-14)
+
+**Verdict**: Approve — advance to `stage: done`.
+
+All four child features are at `stage: done`:
+- `feature-v0-core-persistence` — done
+- `feature-v0-core-acceptance` — done
+- `feature-v0-core-authority` — done (this session: implemented, deep-reviewed, 3 findings closed via convergence loop)
+- `feature-v0-core-sessions` — done (B1-B5 fix arc closed earlier; spawn_origin prerequisite re-reviewed)
+
+### Aggregate alignment (epic-lens, not per-line)
+- **Decomposition matches brief**: four capability-split features (persistence → acceptance/authority/sessions in parallel), each with its own design gate and formal-model evaluation. The Ports & Adapters seams the decomposition promised are realized: `authority::AuthorityRegistry` impls `acceptance::GrantCheck`; `session::SessionRegistry` impls `acceptance::TargetResolver`; all three siblings depend on the `storage::Storage` port, not on rusqlite. No adapter leak into the domain (rusqlite confined to `storage/rusqlite.rs` + tests).
+- **Cross-cutting formal properties** (the epic flagged these as "verified at the epic boundary"): confirmed covered at the feature boundaries with mutation evidence — `BoundaryDedup` + `NoAcceptedToCompleted` in `acceptance_proptest.rs` (each with a `_catches_injected_*` mutation test); `GenerationMonotonic` in `sessions_proptest.rs` (`generation_monotonic_catches_injected_decrease`). The CSRF/browser properties are correctly out of scope (belong to `feature-v0-web-server`).
+- **Capability completeness**: the v0.1.0 core delivers the durable event log, operation acceptance with idempotency/retry/terminal-races, authority (deny-by-default grants, verified issuer, non-cascade revocation, descendant-grant-on-spawn), and sessions (identity, state axes, generation monotonicity, replacement). The epic's "root of the critical path" position is met — the protocol seam, Pi adapter, web server, and CLI can now build against it.
+- **Authority's weakest-formal-backing caveat** (epic decomposition risk): honored. All `authority.qnt` properties are stated-normative; the authority feature ships 7 property oracles + 2 mutation tests + 1 documented gap (#8), honestly scoped as component-complete-not-live. The v1 formal gate owns the real authority properties.
+
+### Verification
+189 tests green across `patchbay-core` (persistence + acceptance + authority + sessions + storage), clippy clean (`-D warnings`), `cargo fmt --all --check` clean. (Mid-review hit a transient `/tmp` disk-full from accumulated SQLite tempfiles — environment, not code; cleaned and re-verified green.)
+
+### Notes
+- The authority feature's deep-review convergence loop (2 blockers + 1 verification gap found, fixed, re-reviewed, one incomplete-fix caught and closed) is the strongest evidence in this epic that the two-phase deep-review discipline works — it caught a real incomplete fix that green tests blessed.
+- Backlog items track the live-path follow-on (authority durable acceptance metadata, live composition, payload-actor trust, grant-selection determinism, ingest pre-append conflict check, replay gap detection, fleet target resolution, expiry enforcement, elicitation responder authority, failed-auth audit). None block v0.1.0 component-complete; several become blocking when the live path lands.
