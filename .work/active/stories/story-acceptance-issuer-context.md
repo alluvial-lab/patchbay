@@ -1,7 +1,7 @@
 ---
 id: story-acceptance-issuer-context
 kind: story
-stage: review
+stage: done
 tags: [security, protocol, foundation]
 parent: feature-v0-core-acceptance
 depends_on: []
@@ -48,3 +48,6 @@ Also (blocker #4 follow-on): the descendant-grant reactor needs `spawning_grant_
 - Discrepancies from design: `CommandRecord.grant_id` is present and initializes to `None`, but no durable population path was added. `submit` writes only the generated `Operation` event and does not construct the `CommandIndex`; the Operation/snapshot contracts carry no authorizing-grant field. This is the feature's R3 provenance-durability deferral, not a fabricated value.
 - Verification: `cargo build -p patchbay-core` passed; focused `authority_grant_check`, `acceptance_pipeline`, and `acceptance_proptest` suites passed (24 tests).
 - Adjacent issues parked: none.
+
+## Review (fast lane, 2026-07-14)
+Verdict: Approve with comments - story verified by implement; fast-lane advance. Independently confirmed green: 171 tests, clippy clean. Atomic GrantCheck/submit signature change correct; `Operation.sender` retained for audit. Comment: acceptance criterion #3 (`Authorized.grant_id` retained on command record) is nominally unmet — the check result is discarded (`_authorization`) and `CommandRecord.grant_id` is always `None`. This is the feature's explicit R3 provenance-durability deferral (submit doesn't own the CommandIndex; durable encoding needs an Operation-proto change, out of scope), tracked in `backlog-authority-durable-acceptance-metadata`. Field present as a seam. Nit: `ValidatedOperation.sender` is now dead code (`#[allow(dead_code)]`); audit value lives on `operation.sender`. Re-opens `feature-v0-core-acceptance` review surface.

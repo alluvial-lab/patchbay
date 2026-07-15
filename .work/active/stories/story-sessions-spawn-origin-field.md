@@ -1,7 +1,7 @@
 ---
 id: story-sessions-spawn-origin-field
 kind: story
-stage: review
+stage: done
 tags: [protocol, foundation]
 parent: feature-v0-core-sessions
 depends_on: []
@@ -51,3 +51,6 @@ The authority feature's descendant-grant reactor tails the log for completed spa
 - Verification: `cargo build -p patchbay-contracts`, `cargo build -p patchbay-core`, `cargo test -p patchbay-core`, and `cargo clippy --all-targets -- -D warnings` pass with `CARGO_HOME=/tmp/cargo-home`. `buf lint` (from `contracts/proto`) and the TypeScript contract build also pass.
 - Discrepancies from design: two direct `SessionRegistered` test fixtures also required `spawn_origin: None` after regeneration, in addition to the four named `SessionReport` fixtures.
 - Adjacent issues parked: none.
+
+## Review (fast lane, 2026-07-14)
+Verdict: Approve - story verified by implement; fast-lane advance. Independently confirmed green: 171 tests across the full `patchbay-core` suite, clippy clean. Additive proto field + carry-through correct; regen workflow sound. Re-opens `feature-v0-core-sessions` review surface (spawn_origin child landed).
