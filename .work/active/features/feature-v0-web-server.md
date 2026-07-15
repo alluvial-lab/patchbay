@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-server
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam]
@@ -275,3 +275,14 @@ A `GET /csrf-token` route (auth-required, not CSRF-required — it *issues* the 
 - **Pre-scrypt enforcement and audit**: `/login` checks the limiter before password verification, returns `429 login_throttled` with bounded `Retry-After`, and emits structured secret-free `interactive_login` audit lines for success and failure (including configured operator actor id and direct socket address). Production Fastify logging is enabled by default.
 - **Regression coverage**: added HTTP-boundary tests proving account throttling across addresses, network throttling for one address, successful legitimate login after window decay, and zero password-verifier/scrypt calls for a throttled request. Suite is now 19/19 passing.
 - **Re-verification**: `cd web-server && npm run build && npm test` passes; `CARGO_HOME=/home/agent/projects/patchbay/.cargo-home PATH="/home/agent/.cargo/bin:$PATH" cargo build -p patchbay-core-server` passes from the repository root.
+
+## Review outcome
+
+Standard-weight feature review (fresh-context, same-model `gpt-5.6-sol` — same harness, NOT cross-model). One independent pass found 1 material current-cycle blocker; fixed in-stride and re-verified green; no re-review per standard contract.
+
+- Blocker (unthrottled login, violating SECURITY.md:85): fixed with a bounded in-memory account + network-dimension limiter, checked before scrypt, with decay (no permanent lockout) and concurrent-verification cap. 4 regression tests added (account throttle, network throttle, decay/recovery, pre-scrypt rejection).
+- Important finding (no durable audit path for auth events) correctly PARKED as a follow-up: it crosses the web↔core seam (no audit-ingress RPC exists yet); web-server-local durable storage was deliberately NOT introduced. Tracked for a future typed audit sink into the core-owned durable audit log.
+
+Final verification: 19 web-server tests pass (incl. 4 csrf_browser.qnt property tests + 4 throttle tests + streaming bridge); `cargo build -p patchbay-core-server` clean; `core/`/`server/`/`contracts/` unmodified by the web-server work. Reviewer confirmed all 4 safety properties genuine and the compound-issuer headers match the seam exactly.
+
+Advanced `review → done`.
