@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-spawn-tail
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-ingest, story-sessions-spawn-origin-field]
@@ -41,6 +41,15 @@ See `feature-v0-core-authority.md` Unit 4 for exact signatures. Key points:
 - Depends on stories 1 (registry), 3 (ingest), AND the sessions prerequisite `story-sessions-spawn-origin-field`.
 - Add tests in `core/tests/authority_spawn_tail.rs`. The 6-permutation order test is key (rev2 finding D).
 - No composition layer — this story is the reactor only.
+
+## Implementation notes
+- Files changed: `core/src/authority/spawn_tail.rs`, `core/src/authority/mod.rs`, `core/tests/authority_spawn_tail.rs`.
+- Tests added: six real arrival-order permutations; non-Completed terminals; absent `spawn_origin`; replay idempotency; conflicting duplicate rejection; event/message/tail domain isolation.
+- Verification: `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core`; `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core --test authority_spawn_tail` (6 passed).
+- Delivery mode: direct-read only; the integration surface and templates were explicit, and both bundled items intentionally share `authority/mod.rs` ownership.
+- Discrepancies from design: generated `CommandTransition` has no `authority_domain_id`, so its decoded-domain equality cannot be checked; the fold validates its event-envelope domain and the tail's single-domain binding instead. Missing spawn sender actors are retained as designed, then fail fast if the three facts would otherwise issue a grant because `DescendantGrantIssuance.subject_actor_id` is required.
+- Documented v0.1.0 gaps: `spawning_grant_id` and `audit_id` remain `None`; no live consumer/composition layer was added.
+- Adjacent issues parked: none.
 
 ## rev3-review fixes (in-stride, 2026-07-13)
 Design review #3 found 2 blockers in this unit; both are mechanical (protocol/pattern-pinned), resolved here:

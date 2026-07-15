@@ -10,12 +10,14 @@ pub mod ingest;
 pub mod issuer;
 pub mod projection;
 pub mod registry;
+pub mod spawn_tail;
 pub mod state;
 
 pub use ingest::{ingest_descendant_grant, ingest_grant, ingest_revocation};
 pub use issuer::IssuerContext;
 pub use projection::{GrantLookup, GrantProjection};
 pub use registry::AuthorityRegistry;
+pub use spawn_tail::{DescendantGrantIssuance, SpawnDescendantTail};
 pub use state::{
     grant_authorizes, target_scope_matches, GrantProvenanceKind, GrantRecord, IssuerRef,
     DESCENDANT_GRANT_ALLOWED_KINDS,
