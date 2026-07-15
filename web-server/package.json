@@ -17,6 +17,7 @@
     "fastify": "5.10.0"
   },
   "devDependencies": {
+    "@connectrpc/connect-web": "2.1.2",
     "@types/node": "24.10.1",
     "typescript": "5.9.3"
   },

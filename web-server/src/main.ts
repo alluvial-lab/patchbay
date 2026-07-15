@@ -4,7 +4,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { makeCoreClient, type CoreClient } from "./core-client.js";
+import { registerCsrfTokenRoute } from "./routes/csrf-token.js";
 import { registerSessionRoutes } from "./routes/login.js";
+import { registerRpcRoutes } from "./routes/rpc.js";
 import { assertPasswordHash, SessionStore } from "./sessions.js";
 
 const DEFAULT_CORE_ADDR = "http://127.0.0.1:50051";
@@ -77,6 +79,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
     actorId: options.config.operatorId,
     passwordHash: options.config.operatorPasswordHash,
   });
+  registerCsrfTokenRoute(app);
+  registerRpcRoutes(app, options.config.coreSecret);
 
   app.get("/healthz", async () => ({ status: "ok" }));
   return app;

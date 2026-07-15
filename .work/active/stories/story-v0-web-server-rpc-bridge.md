@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-server-rpc-bridge
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: feature-v0-web-server
 depends_on: [story-v0-web-server-sessions]
@@ -76,3 +76,13 @@ The verification-grade tests — these are the implementation evidence for the 4
 - **Highest risk (flagged in the feature Risks section)**: streaming gRPC events back to the browser as gRPC-Web frames requires manual frame encoding (`reply.hijack()` + gRPC-Web framing in Fastify). The v0-stack-tooling research noted Fastify lacks a first-party SSE helper and Connect-Web server-side fit was a deferred question. If gRPC-Web framing in Fastify proves too costly, fall back to SSE for the event stream (still server-streaming, still typed via Connect-Web for the unary RPCs). This is the one place Q2a (Connect-Web end-to-end) could realistically force a hybrid (Q2c). Spike the streaming-bridge shape early in this story.
 - The `x-patchbay-csrf` header is checked by the guard (sessions story) BEFORE this handler runs; the RPC bridge only does metadata forwarding + transport translation.
 - `LoadSnapshot` (read) requires auth but NOT CSRF (per SECURITY.md:112).
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; the same feature-owning worker retained the transport and safety context. Direct-read only; no delegation.
+- Review weight: `standard` (caller).
+- Files changed: `web-server/package.json`; `web-server/package-lock.json`; `web-server/src/main.ts`; `web-server/src/routes/rpc.ts`; `web-server/src/routes/csrf-token.ts`; `web-server/tests/integration.test.ts`.
+- Tests added/removed: six HTTP/actual-Connect-Web integration tests cover each of the four promoted CSRF properties, unary framing, metadata forwarding, sender re-stamping, CSRF-token issuance, auth-only snapshot reads, server-streaming frames, and cursor-based reconnect. Rejection tests assert zero core calls; revoked records remain present.
+- Simplification: the generated `ControlService` schemas are the only DTO source; the bridge contains one small binary gRPC-Web frame codec and directly proxies the generated messages. No second browser contract or buffering/event state was introduced.
+- Discrepancies from design: the early streaming spike succeeded with Fastify `reply.hijack()` and standards-shaped binary data/trailer frames, verified through the real `@connectrpc/connect-web` client, so the documented SSE fallback was not needed. `Subscribe` is treated as an authenticated read/subscription establishment and therefore does not require CSRF; `Submit` remains CSRF-protected. Submit also replaces the payload sender actor with the server-record actor before forwarding, in addition to authoritative metadata forwarding.
+- Adjacent issues parked: none.
+- Verification: `npm install`, `npm run build`, 15 tests, the real-core authenticated LoadSnapshot smoke, `npm audit` (0 vulnerabilities), and `cargo build -p patchbay-core-server` all pass.
