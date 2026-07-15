@@ -1,8 +1,11 @@
+import cookie from "@fastify/cookie";
 import Fastify, { type FastifyInstance } from "fastify";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { makeCoreClient, type CoreClient } from "./core-client.js";
+import { registerSessionRoutes } from "./routes/login.js";
+import { assertPasswordHash, SessionStore } from "./sessions.js";
 
 const DEFAULT_CORE_ADDR = "http://127.0.0.1:50051";
 const DEFAULT_WEB_BIND_ADDR = "127.0.0.1:3000";
@@ -13,17 +16,24 @@ export interface WebServerConfig {
   bindHost: string;
   bindPort: number;
   operatorId: string;
+  operatorPasswordHash: string;
   tls?: { cert: Buffer; key: Buffer };
 }
 
 export interface AppOptions {
   config: WebServerConfig;
   coreClient?: CoreClient;
+  sessions?: SessionStore;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfig {
   const coreSecret = requireNonEmpty(env.PATCHBAY_CORE_SECRET, "PATCHBAY_CORE_SECRET");
   const operatorId = requireNonEmpty(env.PATCHBAY_OPERATOR_ID, "PATCHBAY_OPERATOR_ID");
+  const operatorPasswordHash = requireNonEmpty(
+    env.PATCHBAY_OPERATOR_PASSWORD_HASH,
+    "PATCHBAY_OPERATOR_PASSWORD_HASH",
+  );
+  assertPasswordHash(operatorPasswordHash);
   const { host: bindHost, port: bindPort } = parseBindAddress(
     env.PATCHBAY_WEB_BIND_ADDR ?? DEFAULT_WEB_BIND_ADDR,
   );
@@ -40,6 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfi
     bindHost,
     bindPort,
     operatorId,
+    operatorPasswordHash,
     tls:
       certPath !== undefined && keyPath !== undefined
         ? { cert: readFileSync(certPath), key: readFileSync(keyPath) }
@@ -57,6 +68,15 @@ export function buildApp(options: AppOptions): FastifyInstance {
   const coreClient =
     options.coreClient ?? makeCoreClient(options.config.coreAddr, options.config.coreSecret);
   app.decorate("coreClient", coreClient);
+
+  assertPasswordHash(options.config.operatorPasswordHash);
+  const sessions = options.sessions ?? new SessionStore();
+  app.decorate("sessions", sessions);
+  app.register(cookie);
+  registerSessionRoutes(app, sessions, {
+    actorId: options.config.operatorId,
+    passwordHash: options.config.operatorPasswordHash,
+  });
 
   app.get("/healthz", async () => ({ status: "ok" }));
   return app;
@@ -97,5 +117,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 declare module "fastify" {
   interface FastifyInstance {
     coreClient: CoreClient;
+    sessions: SessionStore;
   }
 }

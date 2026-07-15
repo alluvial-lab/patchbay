@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-server-sessions
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: feature-v0-web-server
 depends_on: [story-v0-web-server-scaffold]
@@ -79,3 +79,12 @@ Reads (`LoadSnapshot`, `GET /csrf-token`) require steps 1-2 (auth) but NOT step 
 - The operator password hash must be available to the web server (from the configured operator record — Q4). For v0.1.0 testing, a test fixture operator record is acceptable; the real bootstrap is `feature-v0-cli`'s job.
 - The CSRF token is returned to the browser at login (and via `GET /csrf-token`) so SPAs can bootstrap it; it is NOT in a cookie-readable form (HttpOnly session cookie holds the session id, not the CSRF token).
 - Timing-safe comparison for the CSRF check (avoid timing oracles).
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; retained by the feature-owning worker because session records and the guard form one safety boundary. Direct-read only; no delegation.
+- Review weight: `standard` (caller).
+- Files changed: `web-server/package.json`; `web-server/package-lock.json`; `web-server/src/main.ts`; `web-server/src/sessions.ts`; `web-server/src/middleware/csrf-auth.ts`; `web-server/src/routes/login.ts`; `web-server/tests/scaffold.test.ts`; `web-server/tests/sessions.test.ts`.
+- Tests added/removed: session lifecycle tests preserve revoked/expired records and exercise CSPRNG token size; HTTP tests cover password login, exact cookie security attributes, invalid login non-creation, non-loopback HTTP rejection, logout revocation, auth-only reads, and every guard branch including server-record identity. No low-value per-wrapper tests were added.
+- Simplification: built-in Node scrypt and timing-safe comparison avoid a native authentication dependency; one in-memory `SessionStore` owns all status transitions; one parameterized guard handles mutation and auth-only read routes.
+- Discrepancies from design: added required `PATCHBAY_OPERATOR_PASSWORD_HASH` in `scrypt$<salt>$<hash>` form because a configured operator actor id alone is not a verifiable operator record. The localhost exception is decided from the direct socket's loopback address (never Host or forwarded headers), and cookies remain `Secure` even on localhost. Fetch Metadata `cross-site` requests are rejected when the browser supplies that signal.
+- Adjacent issues parked: none.
