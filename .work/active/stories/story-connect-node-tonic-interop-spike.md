@@ -1,7 +1,7 @@
 ---
 id: story-connect-node-tonic-interop-spike
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, adapter, foundation]
 parent: null
 depends_on: []
