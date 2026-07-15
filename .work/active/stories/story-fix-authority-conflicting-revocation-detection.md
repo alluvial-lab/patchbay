@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-conflicting-revocation-detection
 kind: story
-stage: drafting
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []
@@ -36,3 +36,10 @@ The accepted-operation policy (`Continue`/`Cancel`/`RequireReauthorization`) is 
 ## Notes
 - Mirrors the `insert_consistent` discipline already used by the spawn-tail (`core/src/authority/spawn_tail.rs`).
 - Small, localized fix in `observe_revocation` + a test.
+
+## Implementation notes
+- Files changed: `core/src/authority/registry.rs`, `core/tests/authority_registry.rs`.
+- Tests added: same-generation exact revocation redelivery remains idempotent, while a same-generation revocation with a different retained policy returns `CorruptLog` and leaves the original projection unchanged.
+- Discrepancies from design: comparison is limited to the retained revocation fingerprint (`revoked_at` + `revocation_policy`), per the pinned minimal Option A; `GrantRecord` does not retain actor/reason/audit fields.
+- Adjacent issues parked: none.
+- Verification: `cargo build -p patchbay-core` and `cargo test -p patchbay-core --test authority_registry` pass (11 tests).

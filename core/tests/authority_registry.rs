@@ -218,6 +218,37 @@ fn revocation_marks_the_grant_revoked_without_deleting_it() {
 }
 
 #[test]
+fn same_generation_revocations_require_identical_retained_content() {
+    let mut registry = AuthorityRegistry::new();
+    registry
+        .observe(&recorded(1, StoredEventKind::Grant, &operator_grant()))
+        .unwrap();
+
+    let mut initial_revocation = revocation("grant-1", 3);
+    initial_revocation.accepted_operation_policy = GrantRevocationPolicy::Continue as i32;
+    let initial_event = recorded(2, StoredEventKind::Revocation, &initial_revocation);
+    registry.observe(&initial_event).unwrap();
+
+    // Exact redelivery is idempotent.
+    registry.observe(&initial_event).unwrap();
+
+    // The same generation with a different retained policy is log corruption.
+    let conflicting_event = recorded(3, StoredEventKind::Revocation, &revocation("grant-1", 3));
+    assert!(matches!(
+        registry.observe(&conflicting_event),
+        Err(AuthorityError::CorruptLog(message))
+            if message.contains("same generation, different content")
+    ));
+    assert_eq!(
+        registry
+            .get_grant(&grant_id("grant-1"))
+            .unwrap()
+            .revocation_policy,
+        GrantRevocationPolicy::Continue
+    );
+}
+
+#[test]
 fn descendant_grants_require_the_exact_canonical_kind_set() {
     let mut registry = AuthorityRegistry::new();
     registry

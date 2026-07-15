@@ -132,7 +132,17 @@ impl AuthorityRegistry {
 
         if let Some(existing_generation) = record.revocation_generation {
             if existing_generation == revocation_generation {
-                return Ok(());
+                // Compare the retained revocation fingerprint. This can be
+                // strengthened if GrantRecord retains more revocation fields.
+                if record.revoked_at == revocation.revoked_at
+                    && record.revocation_policy == revocation_policy
+                {
+                    return Ok(());
+                }
+                return Err(AuthorityError::CorruptLog(format!(
+                    "grant {:?} has a conflicting revocation at generation {} (same generation, different content) at LSN {event_lsn}",
+                    grant_id, revocation_generation.value
+                )));
             }
             return Err(AuthorityError::CorruptLog(format!(
                 "grant {:?} has conflicting revocation generations {} and {} at LSN {event_lsn}",
