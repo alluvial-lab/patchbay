@@ -1,7 +1,7 @@
 ---
 id: feature-v0-protocol-seam
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, adapter, security]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
@@ -312,3 +312,16 @@ A Rust integration test that spins up the tonic server in-process (or a `#[tokio
 - **Projection concurrency (highest risk)**: the core's in-memory projections were authored single-threaded. The `Arc<Mutex<>>` wrapper is the riskiest assumption; if lock ordering proves wrong under concurrent load, the concurrency test catches it. Fallback: promote to an actor inside the server crate (no core change).
 - **Cursor/polling liveness**: v0.1.0's `Subscribe` returns the prefix and completes; the web server polls. If polling latency proves too high for operator UX, a blocking/live-tail `Subscribe` is a follow-on (still server-streaming). Not a v0.1.0 blocker — the operator can reconnect/re-subscribe.
 - **Auth metadata shape**: the `OperatorSessionId`-in-metadata shape is the v0.1.0 commitment; if operator-session evidence needs to carry more (device, generation) before split-deploy, that's an additive metadata field — non-breaking.
+
+## Integrated verification summary
+
+- Child checkpoints: `story-v0-protocol-seam-proto-services` and `story-v0-protocol-seam-grpc-server` are both `done` in dependency order.
+- Execution capability: `openai-codex/gpt-5.6-sol` at `high` effort; review weight `standard` (caller/default). The caller requested stop-at-review, so this feature is left for the independent review lane.
+- Contract: `ControlService` and all request/stream/snapshot messages generate for Rust and TypeScript from one `patchbay` proto package; existing `Operation`, `SubmissionResult`, authority-domain/cursor/event, and stored-payload types are reused.
+- Server: the new `patchbay-core-server` workspace binary exposes h2c tonic RPCs, fails before storage/listener setup when `PATCHBAY_CORE_SECRET` is absent, authenticates every RPC with a shared-secret interceptor, derives the compound issuer from `x-patchbay-operator-session-id`, replays projections at startup, and maps retryable storage unavailability with richer `RetryInfo` details.
+- Concurrency: server-local `Arc<tokio::sync::Mutex<_>>` projection wrappers preserve the documented `storage → grant_check → target_resolver → state_lookup` order without editing `patchbay-core`; a submission gate keeps append and projection catch-up coherent. The 16-way parallel gRPC Submit test completes under a 10-second deadlock guard.
+- Interface coverage: the real-core tonic smoke proves unauthorized rejection, accepted Submit, cursor-zero replay, strict `LSN > cursor` completion, no-snapshot response, latest-snapshot response, structured storage-error mappings, and actual binary refusal without the trust-root environment variable.
+- Green commands: `cargo build -p patchbay-contracts`; `npm run build` in `contracts/ts`; generated Rust/TS working-tree drift check; `cargo build -p patchbay-core-server`; `cargo test -p patchbay-core-server` (4 integration tests); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; and `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core`.
+- Discrepancy retained for review visibility: Buf STANDARD naming lint rejects the operator-confirmed reused `SubmissionResult` response and `SubscribeEvent` stream item names. The required build/generation checks pass, and changing those wire names would contradict the settled exact contract; no lint-policy exception was added outside the allowed scope.
+- Core isolation: no file under `core/` changed.
+- Adjacent issues parked: none.
