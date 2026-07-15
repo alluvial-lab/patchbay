@@ -6,7 +6,7 @@ tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
 created: 2026-07-11
-updated: 2026-07-14
+updated: 2026-07-15
 gate_origin: null
 release_binding: null
 ---
@@ -83,10 +83,10 @@ Advanced `drafting → implementing`. The decomposition was settled (complete ch
 
 ### Child status
 - `epic-v0-core` — **done** (root of the critical path; completed this session)
-- `feature-v0-protocol-seam` — drafting (next on the critical path; unblocked now that core is done)
+- `feature-v0-protocol-seam` — **done** (the web↔core gRPC seam; transport caveat retired by interop spike, then designed + implemented + reviewed this arc)
 - `feature-v0-pi-adapter` — drafting (parallel branch off core)
-- `feature-v0-web-server` — drafting (depends on protocol-seam)
+- `feature-v0-web-server` — drafting (now unblocked: depends on the done seam)
 - `feature-v0-web-cockpit` — drafting (depends on web-server)
-- `feature-v0-cli` — drafting (depends on protocol-seam)
+- `feature-v0-cli` — drafting (now unblocked: depends on the done seam)
 
-The epic is ~1/6 built by layer. Root child done; the seam + adapter layers can now start.
+The epic is ~2/6 built by layer (core + seam). The web-server (root of the remaining phone-usable path) and the CLI are both now unblocked; the pi-adapter remains the parallel branch.
