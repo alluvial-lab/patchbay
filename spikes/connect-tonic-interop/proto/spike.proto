@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+// Throwaway spike contract for the @connectrpc/connect-node <-> tonic interop
+// validation (story-connect-node-tonic-interop-spike). NOT part of the
+// Patchbay protocol contract surface; the real service definitions are owned
+// by feature-v0-protocol-seam. This proto exists only to give both sides a
+// minimal shared schema whose shapes mirror what the seam will exercise:
+//   - unary submit returning a result (command-submission shape)
+//   - server-streaming subscribe with a cursor (CoreEvent stream shape)
+//   - an error-detail message for the error-mapping condition
+package patchbay.spike;
+
+service SpikeControl {
+  // Unary. Mirrors the command-submission RPC the seam will expose.
+  // Server returns a tonic Status with ErrorDetails when request.trigger_error
+  // is set (error-mapping condition).
+  rpc Submit(SubmitRequest) returns (SubmitResult);
+
+  // Server-streaming. Mirrors Subscribe(cursor) returns (stream Event).
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeEvent);
+}
+
+message SubmitRequest {
+  string command_id = 1;
+  string payload = 2;
+  // When set, the server returns an error with structured details.
+  bool trigger_error = 3;
+}
+
+message SubmitResult {
+  string command_id = 1;
+  bool accepted = 2;
+  uint64 accepted_lsn = 3;
+  string diagnostic = 4;
+}
+
+message SubscribeRequest {
+  uint64 cursor = 1;
+  uint32 event_count = 2;
+}
+
+message SubscribeEvent {
+  uint64 lsn = 1;
+  string payload = 2;
+}
+
+// Carried as tonic error details (google.rpc.Status payload) for the
+// error-mapping condition. The TS client must surface it as a structured
+// Connect error detail, not an opaque transport failure.
+message SubmissionFailureDetail {
+  string command_id = 1;
+  string failure_code = 2;  // mirrors patchbay.FailureCode name
+  string reason = 3;
+}

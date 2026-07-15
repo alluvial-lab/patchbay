@@ -16,3 +16,16 @@ states/
 core/target/
 
 target/
+
+# spike cargo home (throwaway)
+.cargo-home/
+.npm-cache/
+
+# throwaway interop spike artifacts
+spikes/connect-tonic-interop/rust/target/
+spikes/connect-tonic-interop/ts/node_modules/
+spikes/connect-tonic-interop/ts/dist/
+spikes/connect-tonic-interop/ts/src/gen/
+spikes/connect-tonic-interop/rust/src/gen/
+# throwaway self-signed TLS cert/key (regenerated with openssl)
+spikes/connect-tonic-interop/tls/

@@ -1,12 +1,12 @@
 ---
 id: story-connect-node-tonic-interop-spike
 kind: story
-stage: drafting
+stage: review
 tags: [protocol, verification, adapter, foundation]
 parent: null
 depends_on: []
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-07-15
 gate_origin: null
 release_binding: null
 research_origin: v0-stack-tooling
@@ -52,13 +52,14 @@ Build a minimal, throwaway interop harness proving the Connect-ES-Node-client �
 
 ## Acceptance criteria
 
-- [ ] Unary RPC round-trips: client `createGrpcTransport()` + `createClient()` calls a tonic unary method, receives the generated response.
-- [ ] Server-streaming works: `Subscribe`-style streaming RPC delivers an async iterable of events to the Node client over HTTP/2.
-- [ ] Error mapping confirmed: tonic errors with details surface as structured Connect errors on the client side (document the shape).
-- [ ] Metadata propagation confirmed: client-set metadata arrives at the tonic handler (document what survives).
-- [ ] TLS interop confirmed (or, if not feasible in the spike, an explicit documented gap + revisit trigger).
-- [ ] Spike report committed to `.research/notes/` (or `.research/precis/`) recording: library versions used, what worked, any interop gap found, and an explicit verdict on whether the synthesis's revisit-trigger is **retired** or **fired**.
+- [x] Unary RPC round-trips: client `createGrpcTransport()` + `createClient()` calls a tonic unary method, receives the generated response.
+- [x] Server-streaming works: `Subscribe`-style streaming RPC delivers an async iterable of events to the Node client over HTTP/2.
+- [x] Error mapping confirmed: tonic errors with details surface as structured Connect errors on the client side (document the shape).
+- [x] Metadata propagation confirmed: client-set metadata arrives at the tonic handler (document what survives).
+- [x] TLS interop confirmed (or, if not feasible in the spike, an explicit documented gap + revisit trigger).
+- [x] Spike report committed to `.research/notes/` (or `.research/precis/`) recording: library versions used, what worked, any interop gap found, and an explicit verdict on whether the synthesis's revisit-trigger is **retired** or **fired**.
 - [ ] If fired: file the follow-up (the synthesis's revisit condition becomes a live design problem for `feature-web-core-protocol-seam`).
+  — N/A: verdict is RETIRED, not fired. No follow-up filed.
 
 ## Relationship to the research engagement
 
@@ -71,3 +72,29 @@ Build a minimal, throwaway interop harness proving the Connect-ES-Node-client �
 This is a `story` (behavior-validating spike), not a `[research]` engagement — it does not re-enter the research-orchestrator. It routes through `implement` (small, self-contained, ~50-150 LoC throwaway harness) when picked up. No design gate needed; the acceptance criteria are the spec.
 
 Pick up when `feature-web-core-protocol-seam` moves from backlog to active design (it should run *before* or *early in* that feature's implementation, since the topology commitment depends on its outcome). It can also run earlier as a standalone spike if the operator wants the caveat retired now.
+
+## Implementation notes
+
+- Execution capability: inline host session (throwaway validation spike; one cohesive deliverable, no fan-out warranted). `~50-150 LoC` estimate in the brief was accurate — the harness is ~180 LoC Rust + ~170 LoC TS.
+- Review weight: standalone-story lane (bounded inline review; no independent/cross-model reviewer per the implement skill's standalone-story rule).
+- Files changed:
+  - `spikes/connect-tonic-interop/proto/spike.proto` (minimal spike service: Submit unary, Subscribe server-streaming, SubmissionFailureDetail for error-detail condition)
+  - `spikes/connect-tonic-interop/rust/` (Cargo.toml, build.rs, src/main.rs — tonic server, plain + tls modes)
+  - `spikes/connect-tonic-interop/ts/` (package.json, tsconfig.json, buf.gen.yaml, src/run.ts — connect-node client harness)
+  - `spikes/connect-tonic-interop/tls/{cert,key}.pem` (self-signed, for the TLS condition)
+  - `.research/notes/2026-07-15-connect-node-tonic-interop-spike.md` (the spike report)
+  - `.gitignore` (added throwaway spike build artifacts + writable cargo home)
+- Tests added: none in the repo's test suite (this is a throwaway spike, not production code). The harness IS the test: it exits 0 only if all 5 conditions pass. Verified green in both h2c and TLS modes.
+- Discrepancies from design: none. The acceptance criteria were the spec; all met.
+- Adjacent issues parked: none. The one non-obvious finding (prost structs don't derive `prost::Name`, so `type_url()` was unavailable for the custom error detail — used a manual `type.googleapis.com/...` string instead) is recorded in the spike report as an implementation-ergonomics note for `feature-v0-protocol-seam`, not a backlog item. It is not an interop failure.
+
+### Environment notes (for the next spike / the seam implementation)
+
+- The prior session note's `CARGO_HOME=/tmp/cargo-home` is **stale**: that cache is now on a read-only layer (EROFS on write). It holds the 86 core-deps vendored, but cannot accept new crates. A project-local writable cargo home (`.cargo-home/`, gitignored) is required for any build that fetches new crates (tonic, tonic-prost, tonic-types, hyper, etc. were all fetched fresh here). `/tmp` is also read-only.
+- npm similarly needs `--cache <project-local-dir>` because `~/.npm/_cacache` is read-only.
+- Network is open: crates.io (200 with a UA), registry.npmjs.org (200), static.crates.io (200). Fetching works once the cache is writable.
+- Only `/home/agent/projects/patchbay` is writable in this sandbox; `/tmp`, `/home/agent`, and `~/.cargo` are read-only layers.
+
+### Library-version note for the seam
+
+The spike confirmed `tonic-prost` (runtime codec) and `tonic-types` are real runtime deps the Rust core will need, not just `tonic-prost-build` for codegen. The seam/web-server implementation should declare `tonic-prost` and `tonic-types` explicitly.

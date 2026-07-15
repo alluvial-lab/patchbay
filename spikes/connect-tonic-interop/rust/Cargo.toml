@@ -1,0 +1,29 @@
+[package]
+name = "spike-interop-server"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# tonic transport + server + TLS (ring backend). The TLS feature gates
+# tonic::transport::{Identity, ServerTlsConfig} and Server::tls_config.
+tonic = { version = "0.14", features = ["server", "transport", "tls-ring"] }
+tonic-prost = "0.14"
+tonic-types = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tokio-stream = "0.1"
+tower = "0.5"
+http = "1"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
+
+# Standalone: keep this throwaway spike out of the root patchbay workspace.
+[workspace]
+
+[[bin]]
+name = "spike-server"
+path = "src/main.rs"
