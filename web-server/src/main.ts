@@ -4,8 +4,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { makeCoreClient, type CoreClient } from "./core-client.js";
+import { LoginLimiter } from "./login-limiter.js";
 import { registerCsrfTokenRoute } from "./routes/csrf-token.js";
-import { registerSessionRoutes } from "./routes/login.js";
+import {
+  type PasswordVerifier,
+  registerSessionRoutes,
+} from "./routes/login.js";
 import { registerRpcRoutes } from "./routes/rpc.js";
 import { assertPasswordHash, SessionStore } from "./sessions.js";
 
@@ -26,6 +30,9 @@ export interface AppOptions {
   config: WebServerConfig;
   coreClient?: CoreClient;
   sessions?: SessionStore;
+  loginLimiter?: LoginLimiter;
+  passwordVerifier?: PasswordVerifier;
+  logger?: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfig {
@@ -61,9 +68,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfi
 }
 
 export function buildApp(options: AppOptions): FastifyInstance {
+  const logger = options.logger ?? true;
   const app = (options.config.tls
-    ? Fastify({ https: options.config.tls })
-    : Fastify()) as FastifyInstance;
+    ? Fastify({ https: options.config.tls, logger })
+    : Fastify({ logger })) as FastifyInstance;
 
   // Constructing the client at composition time validates the trust root and
   // keeps the web process ready to translate protocol calls.
@@ -75,10 +83,18 @@ export function buildApp(options: AppOptions): FastifyInstance {
   const sessions = options.sessions ?? new SessionStore();
   app.decorate("sessions", sessions);
   app.register(cookie);
-  registerSessionRoutes(app, sessions, {
-    actorId: options.config.operatorId,
-    passwordHash: options.config.operatorPasswordHash,
-  });
+  registerSessionRoutes(
+    app,
+    sessions,
+    {
+      actorId: options.config.operatorId,
+      passwordHash: options.config.operatorPasswordHash,
+    },
+    {
+      loginLimiter: options.loginLimiter,
+      passwordVerifier: options.passwordVerifier,
+    },
+  );
   registerCsrfTokenRoute(app);
   registerRpcRoutes(app, options.config.coreSecret);
 

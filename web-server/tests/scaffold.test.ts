@@ -28,7 +28,7 @@ test("startup fails closed without the core trust root or operator record", () =
 });
 
 test("health check is unauthenticated", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient });
+  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
   const response = await app.inject({ method: "GET", url: "/healthz" });
 
   assert.equal(response.statusCode, 200);

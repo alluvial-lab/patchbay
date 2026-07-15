@@ -44,7 +44,7 @@ test("session ids and CSRF secrets are independent 256-bit CSPRNG tokens", () =>
 });
 
 test("login verifies the operator record and sets the hardened host cookie", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient });
+  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
 
   const invalid = await app.inject({ method: "POST", url: "/login", payload: { password: "bad" } });
   assert.equal(invalid.statusCode, 401);
@@ -64,7 +64,7 @@ test("login verifies the operator record and sets the hardened host cookie", asy
 });
 
 test("insecure non-loopback requests cannot establish browser sessions", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient });
+  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
   const response = await app.inject({
     method: "POST",
     url: "/login",
@@ -77,7 +77,7 @@ test("insecure non-loopback requests cannot establish browser sessions", async (
 });
 
 test("state-changing guard enforces auth, live status, and timing-safe CSRF proof", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient });
+  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
   app.post(
     "/guarded",
     { preHandler: requireOperatorSession(app.sessions) },
@@ -136,7 +136,7 @@ test("state-changing guard enforces auth, live status, and timing-safe CSRF proo
 });
 
 test("logout requires CSRF and retains the revoked server record", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient });
+  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
   const session = app.sessions.create("operator-from-record");
   const response = await app.inject({
     method: "POST",

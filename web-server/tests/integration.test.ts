@@ -213,7 +213,11 @@ function makeFixture(): {
     },
   };
   const sessions = new SessionStore();
-  return { app: buildApp({ config, coreClient, sessions }), sessions, calls };
+  return {
+    app: buildApp({ config, coreClient, sessions, logger: false }),
+    sessions,
+    calls,
+  };
 }
 
 function callHeaders(options: CallOptions | undefined): Headers {

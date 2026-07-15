@@ -268,3 +268,10 @@ A `GET /csrf-token` route (auth-required, not CSRF-required — it *issues* the 
 - Discrepancies from design: a real operator record requires `PATCHBAY_OPERATOR_PASSWORD_HASH` in addition to `PATCHBAY_OPERATOR_ID`; the format is `scrypt$<base64url-salt>$<base64url-hash>`. `Subscribe` is auth-required but CSRF-exempt as a read/subscription establishment. No contracts, core, or server source was changed.
 - Simplification: the server remains a thin translator with no durable write, authority decision, reconnect state machine, duplicate DTO, or second protocol contract.
 - Adjacent issues parked: none.
+
+## Review response
+
+- **Blocker addressed — interactive login throttling (`docs/SECURITY.md:85`)**: added a bounded process-local limiter for the configured operator-account dimension and the direct socket-address dimension. Failed-attempt windows decay after a fixed interval; successful authentication resets the applicable windows; no permanent account lockout or durable web-server-local state was introduced. The limiter also caps concurrent password verifications so a burst cannot queue unbounded scrypt work before failed results are recorded.
+- **Pre-scrypt enforcement and audit**: `/login` checks the limiter before password verification, returns `429 login_throttled` with bounded `Retry-After`, and emits structured secret-free `interactive_login` audit lines for success and failure (including configured operator actor id and direct socket address). Production Fastify logging is enabled by default.
+- **Regression coverage**: added HTTP-boundary tests proving account throttling across addresses, network throttling for one address, successful legitimate login after window decay, and zero password-verifier/scrypt calls for a throttled request. Suite is now 19/19 passing.
+- **Re-verification**: `cd web-server && npm run build && npm test` passes; `CARGO_HOME=/home/agent/projects/patchbay/.cargo-home PATH="/home/agent/.cargo/bin:$PATH" cargo build -p patchbay-core-server` passes from the repository root.
