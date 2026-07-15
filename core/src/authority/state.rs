@@ -136,6 +136,7 @@ fn same_adapter(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
 
 fn same_session(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
     same_adapter(grant_scope, requested)
+        && same_deployment(grant_scope, requested)
         && matches!(
             (
                 &grant_scope.runtime_session_id,
@@ -150,6 +151,12 @@ fn same_session(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
                 Some(requested_generation),
             ) if grant_runtime == requested_runtime && grant_generation == requested_generation
         )
+}
+
+fn same_deployment(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
+    !grant_scope.deployment_scope.is_empty()
+        && !requested.deployment_scope.is_empty()
+        && grant_scope.deployment_scope == requested.deployment_scope
 }
 
 fn same_project_group(grant_scope: &TargetScope, requested: &TargetScope) -> bool {

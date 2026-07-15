@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-runtime-session-deployment-scope
 kind: story
-stage: drafting
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []
@@ -37,3 +37,10 @@ A grant for `(pi, machine-a, session-1, gen-7)` would authorize a request target
 ## Notes
 - This is a code bug contradicting a pinned design decision, not a deferral.
 - The fix is small and localized to `same_session` + its tests.
+
+## Implementation notes
+- Files changed: `core/src/authority/state.rs`, `core/tests/authority_registry.rs`.
+- Tests added: the scope-containment matrix now rejects cross-deployment RuntimeSession requests and grants with empty deployment scope.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `cargo build -p patchbay-core` and `cargo test -p patchbay-core --test authority_registry` pass (10 tests).

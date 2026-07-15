@@ -350,6 +350,7 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
         adapter_id: Some(adapter("pi")),
         runtime_session_id: Some(runtime("session-1")),
         session_generation: Some(generation(7)),
+        deployment_scope: "machine-a".to_owned(),
         project_or_group: "patchbay".to_owned(),
         resource_id: "resource-1".to_owned(),
         ..TargetScope::default()
@@ -386,6 +387,24 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
     ] {
         assert!(!target_scope_matches(&non_matching, &requested_session));
     }
+
+    let cross_deployment_request = TargetScope {
+        deployment_scope: "machine-b".to_owned(),
+        ..requested_session.clone()
+    };
+    assert!(!target_scope_matches(
+        &exact_session,
+        &cross_deployment_request
+    ));
+
+    let empty_deployment_grant = TargetScope {
+        deployment_scope: String::new(),
+        ..exact_session
+    };
+    assert!(!target_scope_matches(
+        &empty_deployment_grant,
+        &requested_session
+    ));
 
     let project = TargetScope {
         kind: TargetScopeKind::ProjectSessionGroup as i32,
