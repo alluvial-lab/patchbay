@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-runtime-session-deployment-scope
 kind: story
-stage: review
+stage: done
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []
@@ -44,3 +44,6 @@ A grant for `(pi, machine-a, session-1, gen-7)` would authorize a request target
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
 - Verification: `cargo build -p patchbay-core` and `cargo test -p patchbay-core --test authority_registry` pass (10 tests).
+
+## Re-review (fast lane, 2026-07-14)
+Verdict: Approve - blocker closed. `same_session` now compares non-empty `deployment_scope` (state.rs:157-159). Cross-deployment negative test (`machine-b`, asserts `!match`) and empty-deployment rejection both present. The matrix test's `requested_session` updated to `deployment_scope: "machine-a"` so the positive case stays green. 174 tests, clippy clean. Blocker 1 from the feature deep review RESOLVED.

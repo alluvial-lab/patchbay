@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, DescendantGrant, DescendantGrantProvenance, EndpointId,
-    EventId, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
-    OperationKind, Revocation, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind,
+    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, DescendantGrant,
+    DescendantGrantProvenance, EndpointId, EventId, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, Lsn, OperationKind, Revocation, RuntimeSessionId, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     authority::{
@@ -246,6 +246,30 @@ fn same_generation_revocations_require_identical_retained_content() {
             .revocation_policy,
         GrantRevocationPolicy::Continue
     );
+
+    // A same-generation revocation that differs only in actor, reason, or
+    // audit link is likewise corruption, not a silent redelivery.
+    let base = revocation("grant-1", 3);
+    let differing_actor = Revocation {
+        revoked_by: Some(ActorEndpointRef {
+            actor_id: Some(actor("different-revoker")),
+            ..ActorEndpointRef::default()
+        }),
+        ..base.clone()
+    };
+    assert!(matches!(
+        registry.observe(&recorded(4, StoredEventKind::Revocation, &differing_actor)),
+        Err(AuthorityError::CorruptLog(_))
+    ));
+
+    let differing_reason = Revocation {
+        reason: "a different rationale".to_owned(),
+        ..base.clone()
+    };
+    assert!(matches!(
+        registry.observe(&recorded(5, StoredEventKind::Revocation, &differing_reason)),
+        Err(AuthorityError::CorruptLog(_))
+    ));
 }
 
 #[test]

@@ -132,10 +132,16 @@ impl AuthorityRegistry {
 
         if let Some(existing_generation) = record.revocation_generation {
             if existing_generation == revocation_generation {
-                // Compare the retained revocation fingerprint. This can be
-                // strengthened if GrantRecord retains more revocation fields.
+                // Exact-redelivery check (rev3 finding 1): a same-generation
+                // revocation must carry identical content — actor, timestamp,
+                // policy, reason, and audit link — else it is a conflicting
+                // duplicate and the log is corrupt. Comparing the full
+                // retained revocation fingerprint, not just generation+policy.
                 if record.revoked_at == revocation.revoked_at
                     && record.revocation_policy == revocation_policy
+                    && record.revoked_by == revocation.revoked_by
+                    && record.revocation_reason == revocation.reason
+                    && record.revocation_audit_id == revocation.audit_id
                 {
                     return Ok(());
                 }
@@ -153,6 +159,9 @@ impl AuthorityRegistry {
         record.revocation_generation = Some(revocation_generation);
         record.revoked_at = revocation.revoked_at;
         record.revocation_policy = revocation_policy;
+        record.revoked_by = revocation.revoked_by;
+        record.revocation_reason = revocation.reason;
+        record.revocation_audit_id = revocation.audit_id;
         Ok(())
     }
 
@@ -225,6 +234,9 @@ fn operator_grant_record(
         revocation_generation: grant.revocation_generation,
         revoked_at: grant.revoked_at,
         revocation_policy: policy,
+        revoked_by: None,
+        revocation_reason: String::new(),
+        revocation_audit_id: None,
         is_descendant: false,
         provenance: GrantProvenanceKind::Operator {
             created_by: provenance.created_by,
@@ -285,6 +297,9 @@ fn descendant_grant_record(
         revocation_generation: grant.revocation_generation,
         revoked_at: grant.revoked_at,
         revocation_policy: policy,
+        revoked_by: None,
+        revocation_reason: String::new(),
+        revocation_audit_id: None,
         is_descendant: true,
         provenance: GrantProvenanceKind::Descendant {
             spawn_operation_id: provenance.spawn_operation_id,

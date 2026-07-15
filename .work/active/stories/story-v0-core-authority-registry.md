@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-registry
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []

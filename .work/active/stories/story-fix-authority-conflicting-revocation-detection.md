@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-conflicting-revocation-detection
 kind: story
-stage: review
+stage: done
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: []
@@ -43,3 +43,11 @@ The accepted-operation policy (`Continue`/`Cancel`/`RequireReauthorization`) is 
 - Discrepancies from design: comparison is limited to the retained revocation fingerprint (`revoked_at` + `revocation_policy`), per the pinned minimal Option A; `GrantRecord` does not retain actor/reason/audit fields.
 - Adjacent issues parked: none.
 - Verification: `cargo build -p patchbay-core` and `cargo test -p patchbay-core --test authority_registry` pass (11 tests).
+
+## Re-review (fast lane, 2026-07-14)
+Verdict: Approve - blocker closed. `observe_revocation` now compares retained `revoked_at` + `revocation_policy` on same-generation revocations (registry.rs); identical → Ok, differing → CorruptLog. Test `same_generation_revocations_require_identical_retained_content` covers both conflict and exact-redelivery. Mirrors `insert_consistent` discipline. 174 tests, clippy clean. Blocker 2 from the feature deep review RESOLVED.
+
+## Re-review #2 (adversarial, 2026-07-14)
+Fresh-context re-review found the first fix INCOMPLETE: `observe_revocation` compared only `revoked_at` + `revocation_policy`, but `Revocation` also carries `revoked_by`, `reason`, `audit_id` — so two same-generation revocations differing only in actor/reason/audit still silently collapsed. GrantRecord retained none of those fields.
+
+**Completed fix**: added `revoked_by: Option<ActorEndpointRef>`, `revocation_reason: String`, `revocation_audit_id: Option<EventId>` to `GrantRecord` (state.rs); populated in `observe_revocation`; same-generation redelivery now compares the COMPLETE fingerprint (generation + timestamp + policy + actor + reason + audit_id) — identical → Ok, any difference → CorruptLog. Both grant-construction sites initialize the new fields to None/empty. Test extended to cover differing-actor and differing-reason conflicts (in addition to the policy conflict + exact-redelivery cases). 174 tests green, clippy clean. Blocker 2 now GENUINELY closed.

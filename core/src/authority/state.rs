@@ -21,6 +21,14 @@ pub struct GrantRecord {
     pub revocation_generation: Option<Generation>,
     pub revoked_at: Option<prost_types::Timestamp>,
     pub revocation_policy: GrantRevocationPolicy,
+    /// The actor that revoked the grant. Retained so a conflicting
+    /// same-generation revocation (different actor) is detected as corruption
+    /// rather than silently collapsed as an exact redelivery.
+    pub revoked_by: Option<ActorEndpointRef>,
+    /// The revocation reason. Retained for the same conflicting-duplicate check.
+    pub revocation_reason: String,
+    /// The revocation audit id. Retained for the same conflicting-duplicate check.
+    pub revocation_audit_id: Option<EventId>,
     pub is_descendant: bool,
     pub provenance: GrantProvenanceKind,
 }

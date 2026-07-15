@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-compound-issuer-integration-test
 kind: story
-stage: review
+stage: done
 tags: [verification, security, protocol]
 parent: feature-v0-core-authority
 depends_on: []
@@ -51,3 +51,6 @@ This requires the `submit` signature (which takes `issuer: &dyn IssuerContext`) 
 - Discrepancy from the brief: the literal phrase "grant for verified actor A" cannot produce both the required A-denial and B-acceptance mutation. The fixture follows the existing `compound_issuer` oracle and the required mutation behavior by granting payload actor B while verified actor A has no matching grant.
 - Verification: package build, focused authority property test (11 passed), full `patchbay-core` suite, and Clippy with warnings denied all pass.
 - Adjacent issues parked: none.
+
+## Re-review (fast lane, 2026-07-14)
+Verdict: Approve - gap closed. The new `compound_issuer_integration_denies_payload_actor_mismatch_through_submit` test drives real `acceptance::submit` (not `GrantCheck::check` directly) with issuer=A vs payload sender B (asserts Rejected+AuthorizationDenied), and demonstrates the payload-derived issuer B would be Accepted (non-vacuity). Closes the rev3-review finding 4 integration boundary the original oracle missed. 174 tests, clippy clean. No production code change (test-only). `[verification]`-tagged but the convergence loop confirms the gap is closed; deep-lane re-review of the whole feature follows.
