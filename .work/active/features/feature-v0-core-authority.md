@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -596,3 +596,29 @@ The following were discovered during design review #3 and resolved in-stride (me
 - `compound_issuer` test dependency: added `story-acceptance-issuer-context` edge (the mutation is acceptance-side).
 
 No semantic 50/50s surfaced. The design is implementer-ready.
+
+## Implementation summary (implement-orchestrator, 2026-07-14)
+
+All 6 child stories + 2 cross-feature prerequisites implemented across 5 waves and advanced to `stage: review`. The authority layer is component-complete and tested; it is NOT live-wired (per rev3 design — the live operator-issuing path is follow-on).
+
+### Stories advanced to review
+- `story-sessions-spawn-origin-field` (sessions prereq) — additive `SessionRegistered.spawn_origin` proto field 9; Rust+TS regen.
+- `story-acceptance-issuer-context` (acceptance prereq) — atomic `GrantCheck::check`/`submit` signature change to `&dyn IssuerContext`; `CommandRecord.grant_id` seam added (unpopulated in v0.1.0, documented gap per R3 provenance-durability deferral).
+- `story-v0-core-authority-registry` — `GrantRecord`, `grant_authorizes` (full matching matrix), `target_scope_matches` (7-kind containment), `DESCENDANT_GRANT_ALLOWED_KINDS`, `AuthorityRegistry` projection (marks-not-deletes, idempotent, Fail Fast).
+- `story-v0-core-authority-grant-check` — `IssuerContext` trait (verified identity port) + `impl GrantCheck for AuthorityRegistry` (deny-by-default, domain-equality pinned).
+- `story-v0-core-authority-ingest` — grant/descendant/revocation writer (warm-after-write, retry-safe); non-cascade revocation structural.
+- `story-v0-core-authority-spawn-tail` — order-independent reactor (all 6 arrival permutations tested), domain-isolated `(domain, command_id)` keying, deterministic `descendant_grant_id`, conflicting-duplicate rejection.
+- `story-v0-core-authority-replay` — `rebuild_from_log` mirroring session/elicitation replay; cross-domain rejection tested.
+- `story-v0-core-authority-proptests` — 7 property oracles (100 cases each), 2 non-vacuous mutation tests (cascade + payload-actor-trust), `replay_matches_live`, #8 ElicitationResponderAuthority documented as untested gap (not vacuous).
+
+### Cross-cutting deviations
+- `CommandRecord.grant_id` field added but not durably populated in v0.1.0 — wiring would require storing it on the `Operation` proto (out of scope). Matches feature R3 provenance-durability deferral; `spawning_grant_id` may be `None` in v0.1.0 tests. Backlog: `backlog-authority-durable-acceptance-metadata`.
+- Contract regen (Wave 1) brought TS gen into sync for `CommandTransition`/`COMMAND_TRANSITION=8` (pre-existing TS-gen staleness from the acceptance feature) as a side effect — benign, additions-only.
+
+### Verification status
+Build clean; full `patchbay-core` suite green (171 tests, 31 new authority tests across registry/grant-check/ingest/spawn-tail/replay/proptests); `cargo clippy --all-targets -- -D warnings` clean. Existing acceptance + sessions tests updated to the new `submit`/`GrantCheck` signature and remain green.
+
+### Orchestrator notes
+- Wave shape was mostly serial (inherent: the authority module is one coherent safety-critical unit with an atomic cross-module signature change and a shared `mod.rs`). One multi-item bundle (B1: S2+P0b+S3) collapsed the atomic signature change + writer into one green-build stride; one multi-item bundle (B2: S4+S5) kept `mod.rs` coherent across two log-consumer folds.
+- One subagent misread the intra-run dep-readiness rule (refused to start because S1 was at `review` not `done`); corrected by re-dispatch with explicit guidance that intra-run `review`-stage deps are buildable by the wave-plan design.
+- All work ran on `openai-codex/gpt-5.6-sol` (per routing rule: never `umans/*` subagents). Highest tier (xhigh) for the atomic signature-change bundle; high for the rest.
