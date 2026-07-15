@@ -1627,3 +1627,38 @@ impl AdapterSnapshotSupport {
         }
     }
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SubmitRequest {
+    #[prost(message, optional, tag = "1")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SubscribeRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub cursor: ::core::option::Option<Lsn>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SubscribeEvent {
+    #[prost(message, optional, tag = "1")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag = "2")]
+    pub payload: ::core::option::Option<StoredEventPayload>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LoadSnapshotRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub at_or_before: ::core::option::Option<Lsn>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LoadSnapshotResponse {
+    #[prost(bool, tag = "1")]
+    pub present: bool,
+    #[prost(message, optional, tag = "2")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub snapshot_payload: ::prost::alloc::vec::Vec<u8>,
+}

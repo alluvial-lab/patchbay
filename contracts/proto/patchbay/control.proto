@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "patchbay/common.proto";
+import "patchbay/operations.proto";
+
+// The internal control-plane service the TS web server speaks to the Rust
+// core over gRPC/HTTP2. Browser-facing surfaces are a subset reachable
+// through the web server; control-surface methods are principal-gated.
+service ControlService {
+  rpc Submit(SubmitRequest) returns (SubmissionResult);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeEvent);
+  rpc LoadSnapshot(LoadSnapshotRequest) returns (LoadSnapshotResponse);
+}
+
+message SubmitRequest {
+  patchbay.Operation operation = 1;
+}
+
+message SubscribeRequest {
+  patchbay.AuthorityDomainId authority_domain_id = 1;
+  patchbay.Lsn cursor = 2;
+}
+
+message SubscribeEvent {
+  patchbay.EventId event_id = 1;
+  patchbay.StoredEventPayload payload = 2;
+}
+
+message LoadSnapshotRequest {
+  patchbay.AuthorityDomainId authority_domain_id = 1;
+  optional patchbay.Lsn at_or_before = 2;
+}
+
+message LoadSnapshotResponse {
+  bool present = 1;
+  patchbay.EventId event_id = 2;
+  bytes snapshot_payload = 3;
+}

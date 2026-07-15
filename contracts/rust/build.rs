@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "../proto/patchbay/sessions.proto",
         "../proto/patchbay/authority.proto",
         "../proto/patchbay/adapter.proto",
+        "../proto/patchbay/control.proto",
     ];
 
     prost_build::Config::new()
