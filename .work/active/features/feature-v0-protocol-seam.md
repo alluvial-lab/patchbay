@@ -1,7 +1,7 @@
 ---
 id: feature-v0-protocol-seam
 kind: feature
-stage: review
+stage: done
 tags: [protocol, adapter, security]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
@@ -342,3 +342,14 @@ Verification after the fixes:
 - `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core` — pass (the current repository reports 192 tests; no `core/` files changed).
 
 The feature remains at `stage: review` for orchestrator adjudication.
+
+## Review outcome
+
+Standard-weight feature review (fresh-context, same-model `gpt-5.6-sol` — same harness, NOT cross-model). One independent pass found 2 material current-cycle blockers; both fixed in-stride, re-verified green, no re-review per standard contract.
+
+- Blocker 1 (actor/session-id conflation): fixed + regression test `grant_subject_uses_verified_actor_not_operator_session`.
+- Blocker 2 (catch-up-after-append retry wedge): fixed + regression test `retry_reconciles_a_commit_after_post_append_catch_up_failure` (fault-injects a read failure post-commit, proves retry reconciles).
+
+Final verification: 6 server integration tests pass; clippy `-D warnings` clean; fmt clean; 192 core tests pass; `core/` unmodified. Reviewer positive findings: proto contract matches design; fail-closed startup genuine; streaming cursor semantics correct; locking server-local + deadlock-safe; replay rebuilds all projection types; error mapping sensible with structured retry info.
+
+Advanced `review → done`.
