@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-replay
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest]
@@ -36,3 +36,12 @@ Read `core/src/session/replay.rs` and `core/src/acceptance/elicitation.rs` (`reb
 ## Notes
 - Depends on stories 1 (registry), 2 (GrantCheck), 3 (ingest).
 - Add tests in `core/tests/authority_replay.rs`.
+
+## Implementation notes
+- Files changed: `core/src/authority/replay.rs`, `core/src/authority/mod.rs`, `core/tests/authority_replay.rs`.
+- Tests added: live-vs-replayed registry equivalence across two grants and a revocation; cross-domain event rejection using a deliberately faulty storage adapter.
+- Verification: `CARGO_HOME=/tmp/cargo-home cargo build -p patchbay-core`; `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core --test authority_replay` (2 passed).
+- Discrepancies from design: a real `RusqliteStorage` correctly partitions reads by requested authority domain, so it cannot return domain-A events for a domain-B read. The corruption-path test wraps it with a faulty `Storage` adapter that intentionally violates that contract, allowing the replay guard to be exercised without weakening the real adapter.
+- Module wiring: `authority::rebuild_from_log` is re-exported; the existing `core/src/lib.rs` `pub mod authority;` remains unchanged.
+- No `AuthorityComposition`, live consumer loop, or cursor catch-up was added; those remain follow-on work.
+- Adjacent issues parked: none.
