@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: review
+stage: implementing
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -622,3 +622,49 @@ Build clean; full `patchbay-core` suite green (171 tests, 31 new authority tests
 - Wave shape was mostly serial (inherent: the authority module is one coherent safety-critical unit with an atomic cross-module signature change and a shared `mod.rs`). One multi-item bundle (B1: S2+P0b+S3) collapsed the atomic signature change + writer into one green-build stride; one multi-item bundle (B2: S4+S5) kept `mod.rs` coherent across two log-consumer folds.
 - One subagent misread the intra-run dep-readiness rule (refused to start because S1 was at `review` not `done`); corrected by re-dispatch with explicit guidance that intra-run `review`-stage deps are buildable by the wave-plan design.
 - All work ran on `openai-codex/gpt-5.6-sol` (per routing rule: never `umans/*` subagents). Highest tier (xhigh) for the atomic signature-change bundle; high for the rest.
+
+## Deep review (feature-level, 2026-07-14)
+
+**Verdict**: Request changes — bounce to `stage: implementing`. 2 blockers (genuine, unanticipated by design) + 1 verification-coverage gap + 4 backlog items. The architecture and pinned invariants are sound; the blockers are localized code defects contradicting pinned design decisions.
+
+**Depth**: Deep lane, two-phase (completeness → adversarial), cross-model fresh-context. Both phases ran `openai-codex/gpt-5.6-sol` (xhigh) — a different model class from the umans orchestrator, satisfying the cross-model advisory-review requirement. Both reviewers converged independently on the same top findings, raising confidence.
+
+### Blockers (filed as fix stories)
+
+1. **RuntimeSession scope match omits `deployment_scope`** (`core/src/authority/state.rs`, `same_session`) — `-> story-fix-authority-runtime-session-deployment-scope`. The exact-tuple match compares adapter+runtime+generation but NOT deployment_scope, contradicting the pinned design (Unit 1: "adapter+deployment+runtime+generation") and the committed v0.1.0 full-matching-matrix claim. The existing matrix test blesses the omission (both scopes use empty deployment_scope). A grant for `(pi, machine-a, session-1, gen-7)` would authorize `(pi, machine-b, session-1, gen-7)`. Both reviewers flagged this. This is a code bug contradicting a pinned decision, not a deferral.
+
+2. **Conflicting same-generation revocations silently accepted** (`core/src/authority/registry.rs:133-145`) — `-> story-fix-authority-conflicting-revocation-detection`. `observe_revocation` treats a second revocation with the same `revocation_generation` as an exact redelivery (`Ok(())`) WITHOUT comparing policy/timestamp/actor/reason. This contradicts the rev3-review finding 1 guarantee ("conflicting duplicate = CorruptLog"). The spawn-tail's `insert_consistent` helper compares content correctly; the registry's revocation path does not — an internal inconsistency. The accepted-operation policy (`Continue`/`Cancel`/`RequireReauthorization`) is security-relevant.
+
+### Important (filed as fix story / backlog)
+
+3. **CompoundIssuer proptest doesn't drive `acceptance::submit`** (`core/tests/authority_proptest.rs`) — `-> story-fix-authority-compound-issuer-integration-test`. The #2 oracle calls `GrantCheck::check` directly, not `submit`. It proves `AuthorityRegistry` rejects a mismatched verified actor, but does NOT prove the `submit` call site passes a verified issuer (not the payload sender). rev3-review finding 4 intended this as an acceptance-authority integration property. The `submit` call site IS correct (verified in re-review), but no test *proves* it stays correct — a regression where `submit` derives the issuer from `Operation.sender` would not be caught. `[verification]`-tagged coverage gap.
+
+4. **Descendant-grant issuance trusts `Operation.sender` for the subject actor** (`core/src/authority/spawn_tail.rs`) — `-> backlog-authority-payload-actor-in-descendant-issuance`. The spawn itself is authorized against the verified `IssuerContext`, but the descendant grant's *subject* is derived from the self-asserted payload. This is the same compound-issuer concern R2 resolved for `GrantCheck`, not yet extended to the spawn-tail (no durable acceptance metadata exists). Not blocking v0.1.0 (no live path; tests inject), but MUST resolve before the live spawn path. Couples with `backlog-authority-durable-acceptance-metadata`.
+
+5. **Overlapping matching grants produce nondeterministic `grant_id`** (`core/src/authority/check.rs`) — `-> backlog-authority-grant-selection-determinism`. `live_grants()` iterates a `HashMap`; two matching grants return an arbitrary `grant_id` (affects provenance + revocation policy). Rev3 does not pin a selection rule. Latent in single-operator v0.1.0.
+
+6. **Ingest checks for conflicts AFTER appending, not before** (`core/src/authority/ingest.rs`) — `-> backlog-authority-ingest-pre-append-conflict-check`. A conflicting grant is appended to the durable log FIRST, then `observe` rejects it — poisoning the log. Identical retries append a second event. Contradicts the "retry-safe" claim. The `authority_ingest.rs` warm-after-write test re-observes an event to the projection, not retries the writer — false confidence. Latent (single-writer, test-injected); blocking for the live path.
+
+7. **Replay accepts gapped LSNs + silently ignores Unspecified-kind events** (`core/src/authority/replay.rs`, `registry.rs`) — `-> backlog-authority-replay-gap-detection`. `>` not `== prev+1`; Unspecified kind is a no-op, not `CorruptLog`. Defense-in-depth against a misbehaving storage adapter; latent (rusqlite is gap-free). Cross-cutting with sessions/acceptance replay.
+
+### Findings evaluated and ACCEPTED as documented deferrals (not blockers)
+
+These were flagged by reviewers but are EXPLICITLY deferred by the rev3 design + backed by backlog items — accepting the design's scoping, not re-litigating it:
+- **Expiry not enforced** — R3/design line 553 + `backlog-grant-expiration-enforcement`. Stored, not enforced (no clock). Documented gap, not a defect.
+- **`audit_id` = None in descendant issuance** — R4 + `backlog-authority-durable-acceptance-metadata`. Component-tested, not protocol-complete. Documented.
+- **`spawning_grant_id` may be None** — R3 provenance-durability deferral + `backlog-authority-durable-acceptance-metadata`. Documented.
+- **Endpoint-class narrowing not enforced** — reserved seam (design line 563: "tighter endpoint-class narrowing"). The grant stores `subject_endpoint_class` but doesn't match on it; endpoint narrowing by `subject_endpoint_id` IS enforced. Reserved, not committed.
+- **Distinct failed-authorization audit deferred** — R4 + `backlog-authority-failed-authorization-audit`. Documented.
+- **Fleet target resolution** — R5 + `backlog-fleet-target-resolution`. Out of scope.
+- **Retry-after-revocation returns authorization_denied not existing command** — this is an acceptance-pipeline concern (grant check runs before dedup), latent (no live retries), and arguably correct per PROTOCOL (a revoked grant denies future authority; the existing command's state is a separate concern owned by the dedup path). Not an authority-feature blocker; noted for acceptance.
+- **`desc:{domain}:{command}` grant-id namespace is a string convention** — nit-level; collision requires an operator grant literally named with the `desc:` prefix. Worth hardening but not blocking. Noted in the grant-selection-determinism backlog direction.
+
+### Assessment
+
+The pinned invariants are genuinely sound and well-tested: deny-by-default, domain-equality (enforced on both `grant_authorizes` and `check.rs`), non-cascade revocation (structural — no cascade code path, tested with a real two-lever test), order-independence (6 distinct permutations tested), the 8-kind SSOT (used by validation + issuance + oracle), the #8 honest gap (no vacuous test), and the two mutation tests are genuinely two-sided. The architecture honors Ports & Adapters (acceptance depends on the `IssuerContext` trait, not `AuthorityRegistry`; authority depends on `Storage`).
+
+The blockers are localized: `same_session` missing one field, and `observe_revocation` missing a content comparison. Both contradict pinned design decisions and are code bugs, not design gaps. The verification-coverage gap (#3) is the class of issue this program exists to catch. The backlog items (#4-7) are latent risks honestly scoped to the live-path follow-on.
+
+**Verification at review time**: 171 tests green, clippy clean. The blockers are not caught by the existing tests because the tests bless the bugs (the matrix test uses empty deployment_scope; no conflicting-revocation-content test exists). This is exactly why the deep lane runs fresh-context adversarial reviewers rather than trusting green tests.
+
+**Next**: the 2 blocker fix stories + 1 verification-coverage story must land before this feature advances to `done`. The 4 backlog items track the live-path follow-on. Feature bounces to `stage: implementing`.

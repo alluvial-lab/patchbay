@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-proptests
 kind: story
-stage: review
+stage: implementing
 tags: [security, protocol, verification, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest, story-v0-core-authority-spawn-tail, story-v0-core-authority-replay, story-acceptance-issuer-context]

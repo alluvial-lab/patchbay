@@ -1,0 +1,38 @@
+---
+id: story-fix-authority-conflicting-revocation-detection
+kind: story
+stage: drafting
+tags: [security, protocol, foundation]
+parent: feature-v0-core-authority
+depends_on: []
+release_binding: null
+gate_origin: null
+created: 2026-07-14
+updated: 2026-07-14
+---
+
+# Story: Conflicting same-generation revocations must be CorruptLog, not silent no-op
+
+## Source
+Deep review of `feature-v0-core-authority` (Phase 2 adversarial, cross-model `openai-codex/gpt-5.6-sol`). Phase 1 also flagged the broader conflicting-duplicate discipline.
+
+## Finding
+`AuthorityRegistry::observe_revocation` (`core/src/authority/registry.rs:133-145`) treats a second revocation with the SAME `revocation_generation` as an exact redelivery (`Ok(())`) WITHOUT comparing the other fields (revocation_policy, revoked_at, revoked_by, reason, audit_id). Two revocations with the same `(grant_id, generation)` but different policy/timestamp/actor are silently collapsed — whichever arrived first wins.
+
+This contradicts the rev3-review finding 1 guarantee (recorded in `feature-v0-core-authority.md:580`): "conflicting duplicate (same key, different content) = `CorruptLog` (mirrors `SessionRegistry`); exact redelivery = no-op." The spawn-tail's `insert_consistent` helper DOES compare content correctly; the registry's revocation path does not — an internal inconsistency.
+
+## Impact
+The accepted-operation policy (`Continue`/`Cancel`/`RequireReauthorization`) is security-relevant. A conflicting revocation event silently overwriting (or being silently ignored vs.) the first is a Fail-Fast violation in a committed v0.1.0 behavior. Not a direct privilege escalation (you cannot un-revoke), but a corruption-detection gap: a tampered or duplicated-with-different-content revocation is accepted instead of rejected.
+
+## Fix
+1. In `observe_revocation`, when `existing_generation == revocation_generation`, compare the incoming revocation's meaningful fields (policy, revoked_at, revoked_by, reason) against the stored record's. If identical → `Ok(())` (exact redelivery). If different → `Err(AuthorityError::CorruptLog(...))`.
+2. Add a test: revoke a grant at generation 1 with policy `Continue`, then re-observe a revocation at generation 1 with policy `Cancel` → `CorruptLog`. And: re-observe the identical revocation → `Ok(())`.
+
+## Acceptance Criteria
+- [ ] A second revocation with the same generation but different content returns `CorruptLog`
+- [ ] An exact-duplicate revocation (same generation, same content) is a no-op `Ok(())`
+- [ ] Test covers both the conflict and the exact-redelivery cases
+
+## Notes
+- Mirrors the `insert_consistent` discipline already used by the spawn-tail (`core/src/authority/spawn_tail.rs`).
+- Small, localized fix in `observe_revocation` + a test.
