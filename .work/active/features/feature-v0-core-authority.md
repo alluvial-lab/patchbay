@@ -1,7 +1,7 @@
 ---
 id: feature-v0-core-authority
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol, foundation]
 parent: epic-v0-core
 depends_on: [feature-v0-core-persistence]
@@ -668,3 +668,20 @@ The blockers are localized: `same_session` missing one field, and `observe_revoc
 **Verification at review time**: 171 tests green, clippy clean. The blockers are not caught by the existing tests because the tests bless the bugs (the matrix test uses empty deployment_scope; no conflicting-revocation-content test exists). This is exactly why the deep lane runs fresh-context adversarial reviewers rather than trusting green tests.
 
 **Next**: the 2 blocker fix stories + 1 verification-coverage story must land before this feature advances to `done`. The 4 backlog items track the live-path follow-on. Feature bounces to `stage: implementing`.
+
+## Re-review #1 (post-fix adversarial convergence, 2026-07-14)
+
+Fresh-context cross-model re-review (`openai-codex/gpt-5.6-sol` xhigh) of the 3-commit fix arc (`a7fa1e9..17fc421`).
+
+**Blocker-closure verdicts**:
+- Blocker 1 (deployment_scope): **CLOSED**. `same_session` (state.rs:137-159) requires non-empty + equal `deployment_scope` via `same_deployment`; no alternate RuntimeSession path. Non-empty requirement scoped to RuntimeSession only — fleet/adapter/authority-domain arms unaffected. Cross-deployment + empty-deployment tests genuinely fail against old code.
+- Blocker 2 (conflicting revocation): **NOT CLOSED on first pass** — the initial fix compared only `revoked_at` + `revocation_policy`, missing `revoked_by`/`reason`/`audit_id`. The re-review caught this (exactly the B3→B5-style incomplete-fix catch the convergence loop exists for).
+- Gap 3 (compound_issuer submit integration): **CLOSED**. New test drives real `submit` (not `check`); issuer=A/payload-B rejects with AuthorizationDenied; issuer=B accepts (non-vacuity). Doubles don't mask the authority path.
+
+**Fix pass 2** (in-stride, completed): `GrantRecord` now retains `revoked_by`, `revocation_reason`, `revocation_audit_id`; `observe_revocation` compares the COMPLETE fingerprint on same-generation redelivery. Test extended to cover differing-actor + differing-reason conflicts. Re-verified: 174 tests green, clippy clean.
+
+**New regressions**: none. The deployment_scope change doesn't bleed into other scope arms; exact revocation redelivery still compares equal (including `None` timestamps); the compound-issuer doubles don't bypass the real submit→GrantCheck path.
+
+**Convergence**: the loop caught an incomplete fix (blocker 2's first pass) and it was closed in-stride. Findings have stabilized at nits. All 3 deep-review findings genuinely closed. Feature re-advanced to `stage: review`.
+
+**Verification**: 174 tests green, clippy clean. The 4 backlog items (payload-actor trust, grant-selection determinism, ingest pre-append conflict check, replay gap detection) remain tracked for the live-path follow-on — unchanged, latent in single-writer v0.1.0.
