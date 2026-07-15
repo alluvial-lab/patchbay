@@ -7,6 +7,8 @@ contracts/rust/target/
 contracts/ts/node_modules/
 contracts/ts/dist/
 contracts/ts/*.tsbuildinfo
+web-server/node_modules/
+web-server/dist/
 
 # local output: generated artifacts, scratch docs, anything not source
 out/

@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-server-scaffold
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: feature-v0-web-server
 depends_on: []
@@ -52,3 +52,12 @@ export function makeCoreClient(coreAddr: string, coreSecret: string) {
 - Reuses `@patchbay/contracts` (the existing `contracts/ts` package) for the `ControlService` client — no new contract generation.
 - Mirror the spike's `createGrpcTransport` usage exactly (it's verified-correct against tonic).
 - `CARGO_HOME`/npm cache: npm needs `--cache /home/agent/projects/patchbay/.npm-cache` (the `~/.npm` cache is read-only in this sandbox); see the spike's environment notes in `story-connect-node-tonic-interop-spike.md`.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; one feature-owning worker carries all three dependency-ordered checkpoints because the security and transport context is cohesive. Direct-read only; delegation was explicitly excluded.
+- Review weight: `standard` (caller).
+- Files changed: `.gitignore`; `web-server/package.json`; `web-server/package-lock.json`; `web-server/tsconfig.json`; `web-server/src/main.ts`; `web-server/src/core-client.ts`; `web-server/tests/scaffold.test.ts`; `web-server/tests/core-smoke.mjs`.
+- Tests added/removed: startup fail-closed, TLS-pair validation, and unauthenticated health-route tests; an explicit real-`patchbay-core-server` LoadSnapshot smoke proves gRPC/HTTP2 interoperability and all three core metadata requirements without making the smoke part of the default unit suite.
+- Simplification: one composition root and one generated-contract client; no duplicate DTOs, transport abstraction, or domain logic. Fastify was pinned to 5.10.0 after `npm audit` identified fixed high-severity issues in the initially selected version.
+- Discrepancies from design: the real core requires operator actor/session metadata on every call, so the core-secret interceptor supplies only the principal secret and authenticated per-call identity remains the RPC bridge's responsibility; the real-core smoke supplies both identities explicitly. No `httpVersion` option was added, matching the verified spike.
+- Adjacent issues parked: none.

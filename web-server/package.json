@@ -1,0 +1,25 @@
+{
+  "name": "patchbay-web-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/main.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:core-smoke": "npm run build && node tests/core-smoke.mjs"
+  },
+  "dependencies": {
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
+    "@patchbay/contracts": "file:../contracts/ts",
+    "fastify": "5.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
