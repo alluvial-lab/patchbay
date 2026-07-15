@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-server
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam]
@@ -257,3 +257,14 @@ A `GET /csrf-token` route (auth-required, not CSRF-required — it *issues* the 
 - **Connect-Web server-streaming bridge (highest risk)**: streaming gRPC events back to the browser as gRPC-Web frames requires careful frame encoding (`reply.hijack()` + manual gRPC-Web framing in Fastify). The v0-stack-tooling research noted Fastify lacks a first-party SSE helper and Connect-Web server-side fit was a deferred question. Mitigation: spike the streaming-bridge shape first; if gRPC-Web framing in Fastify proves too costly, fall back to SSE for the event stream (still server-streaming, still typed via Connect-Web for the unary RPCs). This is the one place the transport choice (Q2a) could realistically force a hybrid (Q2c).
 - **One-time login secret vs operator password**: `SECURITY.md:79` commits to password/passphrase for v0.1.0 primary auth, but `SECURITY.md:78` mentions a one-time setup secret for bootstrap. The web server's login route needs to know which it's consuming. Resolution: v0.1.0 login consumes a password verified against the operator record (the CLI bootstrap sets the password hash); the one-time setup secret is a CLI-only bootstrap concern, not a web-server login credential. Filed as an implementation note, not a blocker — but worth confirming during implementation.
 - **TLS localhost exception scope creep**: the localhost secure-cookie exception must not generalize to LAN/IP/container. Enforced by checking the request's remote address, not just a config flag.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; one feature-owning worker implemented the three dependency-ordered child checkpoints end to end. Direct-read only and no delegation, per caller.
+- Review weight: `standard` (caller); implementation stops at `review` for the orchestrator's independent feature review.
+- Delivered: a fail-closed Fastify HTTP/HTTPS composition root; generated-contract gRPC client; scrypt-backed configured operator record; in-memory session lifecycle with retained dead records; hardened host cookie; loopback-only HTTP exception; timing-safe synchronizer-token guard; CSRF token issuance; and unary/server-streaming gRPC-Web translation to the core.
+- Safety evidence: the four integration tests named for `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority` exercise the real HTTP boundary. Rejections assert no core call, while the authority test asserts both re-stamped request sender and forwarded operator/session metadata originate in the server record.
+- Streaming spike: manual binary gRPC-Web data/trailer framing worked with `@connectrpc/connect-web`, including server-streaming completion and cursor-based reconnect; SSE fallback was not needed.
+- Integrated verification: `npm install --cache /home/agent/projects/patchbay/.npm-cache`; `npm run build`; `npm test` (15/15); `npm run test:core-smoke` against `patchbay-core-server`; `npm audit` (0 vulnerabilities); and `CARGO_HOME=/home/agent/projects/patchbay/.cargo-home PATH="/home/agent/.cargo/bin:$PATH" cargo build -p patchbay-core-server` all pass.
+- Discrepancies from design: a real operator record requires `PATCHBAY_OPERATOR_PASSWORD_HASH` in addition to `PATCHBAY_OPERATOR_ID`; the format is `scrypt$<base64url-salt>$<base64url-hash>`. `Subscribe` is auth-required but CSRF-exempt as a read/subscription establishment. No contracts, core, or server source was changed.
+- Simplification: the server remains a thin translator with no durable write, authority decision, reconnect state machine, duplicate DTO, or second protocol contract.
+- Adjacent issues parked: none.
