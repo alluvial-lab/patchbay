@@ -5,6 +5,7 @@ use patchbay_core::authority::IssuerContext;
 use tonic::{Request, Status};
 
 pub const OPERATOR_SESSION_HEADER: &str = "x-patchbay-operator-session-id";
+pub const OPERATOR_ID_HEADER: &str = "x-patchbay-operator-id";
 const WEB_SERVER_ENDPOINT_ID: &str = "patchbay-web-server";
 
 /// Compound-issuer evidence extracted after the transport interceptor has
@@ -22,26 +23,15 @@ impl MetadataIssuerContext {
         request: &Request<T>,
         authority_domain_id: AuthorityDomainId,
     ) -> Result<Self, Status> {
-        let value = request
-            .metadata()
-            .get(OPERATOR_SESSION_HEADER)
-            .ok_or_else(|| Status::unauthenticated("missing verified operator session"))?
-            .to_str()
-            .map_err(|_| Status::unauthenticated("invalid verified operator session"))?;
-        if value.is_empty() {
-            return Err(Status::unauthenticated(
-                "verified operator session must not be empty",
-            ));
-        }
-
         let operator_session_id = OperatorSessionId {
-            value: value.to_owned(),
+            value: required_metadata(
+                request,
+                OPERATOR_SESSION_HEADER,
+                "verified operator session",
+            )?,
         };
-        // v0.1.0 has one operator and the authenticated web ingress vouches for
-        // this server-side session id. The actor projection is intentionally
-        // deterministic so grants can use the same stable boundary identity.
         let verified_actor = ActorId {
-            value: operator_session_id.value.clone(),
+            value: required_metadata(request, OPERATOR_ID_HEADER, "verified operator actor")?,
         };
 
         Ok(Self {
@@ -58,6 +48,25 @@ impl MetadataIssuerContext {
     pub fn operator_session_id(&self) -> &OperatorSessionId {
         &self.operator_session_id
     }
+}
+
+fn required_metadata<T>(
+    request: &Request<T>,
+    header: &'static str,
+    description: &str,
+) -> Result<String, Status> {
+    let value = request
+        .metadata()
+        .get(header)
+        .ok_or_else(|| Status::unauthenticated(format!("missing {description}")))?
+        .to_str()
+        .map_err(|_| Status::unauthenticated(format!("invalid {description}")))?;
+    if value.is_empty() {
+        return Err(Status::unauthenticated(format!(
+            "{description} must not be empty"
+        )));
+    }
+    Ok(value.to_owned())
 }
 
 impl IssuerContext for MetadataIssuerContext {

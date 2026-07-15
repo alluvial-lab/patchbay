@@ -1,8 +1,8 @@
 use std::{pin::Pin, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn, SubmissionResult,
-    SubmitRequest, SubscribeEvent, SubscribeRequest,
+    AuthorityDomainId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn, SubmissionOutcome,
+    SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
@@ -111,10 +111,15 @@ where
             Status::invalid_argument("submit request lost its validated operation")
         })?;
 
-        // Keep acceptance and projection catch-up atomic from the server's
-        // perspective. This makes an immediate retry observe the just-appended
-        // command while still allowing all RPC handlers to run concurrently.
+        // Reconcile and submit under one gate. Pre-submit catch-up repairs the
+        // projection after a prior append whose handler did not complete; the
+        // post-append catch-up makes a newly durable command visible before the
+        // next submit acquires the gate.
         let _submit_guard = self.state.submit_guard().await;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
         let result = acceptance::submit(
             &self.storage,
             self.state.grant_check(),
@@ -125,10 +130,12 @@ where
         )
         .await
         .map_err(map_acceptance_error_to_status)?;
-        self.state
-            .catch_up(&self.storage, &authority_domain_id)
-            .await
-            .map_err(|error| Status::internal(format!("projection catch-up failed: {error}")))?;
+        if result.outcome == SubmissionOutcome::Accepted as i32 && !result.deduplicated {
+            self.state
+                .catch_up(&self.storage, &authority_domain_id)
+                .await
+                .map_err(map_storage_error_to_status)?;
+        }
 
         Ok(Response::new(result))
     }

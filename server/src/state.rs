@@ -8,7 +8,7 @@ use patchbay_core::{
     },
     authority::{AuthorityRegistry, IssuerContext},
     session::SessionRegistry,
-    storage::{RecordedEvent, Storage},
+    storage::{RecordedEvent, Storage, StorageError},
 };
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -87,27 +87,27 @@ impl ProjectionState {
         &self,
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
-    ) -> Result<(), String> {
+    ) -> Result<(), StorageError> {
         let mut cursor = self.last_applied_lsn.lock().await;
         let events = storage
             .read_after(authority_domain_id, Lsn { value: *cursor })
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
 
         for event in events {
-            let next_lsn = validate_next_event(&event, authority_domain_id, *cursor)?;
+            let next_lsn = validate_next_event(&event, authority_domain_id, *cursor)
+                .map_err(StorageError::CorruptRecord)?;
             self.grant_check
                 .observe(&event)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.target_resolver
                 .observe(&event)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.state_lookup
                 .apply(&event)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             *cursor = next_lsn;
         }
         Ok(())

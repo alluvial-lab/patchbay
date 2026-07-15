@@ -48,7 +48,7 @@ A designed feature at `stage: implementing` with the seam specified, ready for R
 
 ## Design decisions
 
-- **Compound-issuer wire evidence shape**: (a) forwarded verified session id — the web server verifies the operator session (cookie/CSRF) at its boundary and forwards a verified `OperatorSessionId` (+ derived `ActorId`) in gRPC metadata; the core trusts the web server's verification (the web server is the authenticated ingress) and independently verifies the web-server transport principal. This satisfies the committed `SECURITY.md:143` requirement (core independently verifies both transport principal and operator identity) without front-loading signed-claim crypto. Signed/attested operator claims (option b) are a reserved seam for split-deploy / multi-operator, not a v0.1.0 need. An `OperatorSessionId` message already exists in the generated contracts.
+- **Compound-issuer wire evidence shape**: (a) forwarded verified session record evidence — the web server verifies the operator session (cookie/CSRF) at its boundary and forwards both the opaque `OperatorSessionId` and the separate persistent `ActorId` from the verified server-side session record in gRPC metadata; the core trusts the web server's verification (the web server is the authenticated ingress) and independently verifies the web-server transport principal. This satisfies the committed `SECURITY.md:143` requirement (core independently verifies both transport principal and operator identity) without front-loading signed-claim crypto. Signed/attested operator claims (option b) are a reserved seam for split-deploy / multi-operator, not a v0.1.0 need. An `OperatorSessionId` message already exists in the generated contracts.
 - **Internal contract shape**: (a) one proto package, principal-gated access — internal control-surface methods (`AdapterAttach`, `AdapterDetach`, audit queries) live alongside browser-reachable methods in the single `patchbay` package; the core enforces access control by principal (a browser principal cannot call admin methods). Unifying now and splitting later is easy; merging two packages later is hard. Honors the single-source-of-truth and "speak the generated contract" commitments.
 - **Web-server-to-core trust-root**: (a) configured shared-secret over localhost for v0.1.0 — the web server authenticates to the core via a configured secret carried in gRPC metadata, transport-bound to localhost (or a configured bind address). Fails safe: a split-deploy attempted without configuring the secret will not authenticate. mTLS for the internal channel is a reserved seam for split deployment, not a v0.1.0 requirement (v0.1.0 is explicitly colocated per `docs/ARCHITECTURE.md`).
 - **Event channel shape**: server-streaming only — `Subscribe(AuthorityDomainId, cursor) returns (stream Event)` mirrors the existing `Storage::read_after(domain, cursor)` pull model. The web server submits via unary RPCs and receives via stream; it has no need to push control messages mid-stream. Anything that looks like bidi (narrow scope, cancel subscription) is another unary RPC + re-subscribe with a new cursor. Bidirectional streaming is a reserved seam.
@@ -77,8 +77,8 @@ Defines the gRPC services the seam exposes. These are the *first* proto `service
 // through the web server; control-surface methods are principal-gated.
 service ControlService {
   // Submit an Operation for acceptance. Mirrors acceptance::submit.
-  // The verified operator-session id + web-server principal arrive in
-  // request metadata; the body is the Operation to submit.
+  // The verified operator-session id, separate operator actor id, and
+  // web-server principal arrive in request metadata; the body is the Operation.
   rpc Submit(SubmitRequest) returns (SubmissionResult);
 
   // Reconcile / tail the durable event stream from a cursor.
@@ -163,8 +163,9 @@ impl control_service_server::ControlService for ControlServiceImpl<...> {
         // 1. Auth interceptor already verified the web-server principal
         //    (shared secret) before dispatch.
         // 2. Build IssuerContext from request metadata:
-        //    - verified_actor: derived from x-patchbay-operator-session-id
-        //      (the web server vouches for this; it verified the cookie).
+        //    - verified_actor: read from x-patchbay-operator-id, separately
+        //      from x-patchbay-operator-session-id (the web server vouches for
+        //      both from its verified server-side session record).
         //    - verified_endpoint: the web-server endpoint id (its principal).
         //    - authority_domain_id: from the Operation body.
         let issuer = MetadataIssuerContext::from_request(&req)?;
@@ -311,17 +312,33 @@ A Rust integration test that spins up the tonic server in-process (or a `#[tokio
 
 - **Projection concurrency (highest risk)**: the core's in-memory projections were authored single-threaded. The `Arc<Mutex<>>` wrapper is the riskiest assumption; if lock ordering proves wrong under concurrent load, the concurrency test catches it. Fallback: promote to an actor inside the server crate (no core change).
 - **Cursor/polling liveness**: v0.1.0's `Subscribe` returns the prefix and completes; the web server polls. If polling latency proves too high for operator UX, a blocking/live-tail `Subscribe` is a follow-on (still server-streaming). Not a v0.1.0 blocker — the operator can reconnect/re-subscribe.
-- **Auth metadata shape**: the `OperatorSessionId`-in-metadata shape is the v0.1.0 commitment; if operator-session evidence needs to carry more (device, generation) before split-deploy, that's an additive metadata field — non-breaking.
+- **Auth metadata shape**: separate `OperatorSessionId` and verified operator `ActorId` metadata are the v0.1.0 commitment; if operator-session evidence needs to carry more (device, generation) before split-deploy, that's an additive metadata field — non-breaking.
 
 ## Integrated verification summary
 
 - Child checkpoints: `story-v0-protocol-seam-proto-services` and `story-v0-protocol-seam-grpc-server` are both `done` in dependency order.
 - Execution capability: `openai-codex/gpt-5.6-sol` at `high` effort; review weight `standard` (caller/default). The caller requested stop-at-review, so this feature is left for the independent review lane.
 - Contract: `ControlService` and all request/stream/snapshot messages generate for Rust and TypeScript from one `patchbay` proto package; existing `Operation`, `SubmissionResult`, authority-domain/cursor/event, and stored-payload types are reused.
-- Server: the new `patchbay-core-server` workspace binary exposes h2c tonic RPCs, fails before storage/listener setup when `PATCHBAY_CORE_SECRET` is absent, authenticates every RPC with a shared-secret interceptor, derives the compound issuer from `x-patchbay-operator-session-id`, replays projections at startup, and maps retryable storage unavailability with richer `RetryInfo` details.
+- Server: the new `patchbay-core-server` workspace binary exposes h2c tonic RPCs, fails before storage/listener setup when `PATCHBAY_CORE_SECRET` is absent, authenticates every RPC with a shared-secret interceptor, builds the compound issuer from separate `x-patchbay-operator-session-id` and `x-patchbay-operator-id` metadata, replays projections at startup, and maps retryable storage unavailability with richer `RetryInfo` details.
 - Concurrency: server-local `Arc<tokio::sync::Mutex<_>>` projection wrappers preserve the documented `storage → grant_check → target_resolver → state_lookup` order without editing `patchbay-core`; a submission gate keeps append and projection catch-up coherent. The 16-way parallel gRPC Submit test completes under a 10-second deadlock guard.
 - Interface coverage: the real-core tonic smoke proves unauthorized rejection, accepted Submit, cursor-zero replay, strict `LSN > cursor` completion, no-snapshot response, latest-snapshot response, structured storage-error mappings, and actual binary refusal without the trust-root environment variable.
 - Green commands: `cargo build -p patchbay-contracts`; `npm run build` in `contracts/ts`; generated Rust/TS working-tree drift check; `cargo build -p patchbay-core-server`; `cargo test -p patchbay-core-server` (4 integration tests); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; and `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core`.
 - Discrepancy retained for review visibility: Buf STANDARD naming lint rejects the operator-confirmed reused `SubmissionResult` response and `SubscribeEvent` stream item names. The required build/generation checks pass, and changing those wire names would contradict the settled exact contract; no lint-policy exception was added outside the allowed scope.
 - Core isolation: no file under `core/` changed.
 - Adjacent issues parked: none.
+
+## Review response
+
+The fresh-context standard review found two material current-cycle blockers; both were fixed in the server adapter without changing `core/` or reopening the settled seam design:
+
+- **Operator actor/session conflation:** the web server now forwards both `x-patchbay-operator-session-id` (opaque `OperatorSessionId`, retained for audit/context) and `x-patchbay-operator-id` (verified `ActorId`, used for grant matching). `MetadataIssuerContext` requires both values to be present, valid metadata, and non-empty. The smoke fixtures now use different actor and session values, and `grant_subject_uses_verified_actor_not_operator_session` proves an actor-bound grant authorizes the distinct opaque session. The seam smoke also rejects a missing operator-id header.
+- **Catch-up-after-append retry wedge:** `Submit` now acquires the submit gate, catches projections up to the durable tail before acceptance/dedup lookup, runs acceptance under the same gate, and catches up again only after a newly accepted append. `ProjectionState::catch_up` preserves `StorageError` instead of stringifying it, so retryable reads map to gRPC `Unavailable` with `RetryInfo`. `retry_reconciles_a_commit_after_post_append_catch_up_failure` injects one retryable read failure after a committed append, then proves the same command id/key retry reconciles and returns the existing deduplicated command without a second append.
+
+Verification after the fixes:
+
+- `cargo test -p patchbay-core-server` — pass (6 integration tests).
+- `cargo clippy -p patchbay-core-server --all-targets -- -D warnings` — pass.
+- `cargo fmt --all --check` — pass.
+- `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core` — pass (the current repository reports 192 tests; no `core/` files changed).
+
+The feature remains at `stage: review` for orchestrator adjudication.
