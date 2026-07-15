@@ -571,3 +571,23 @@ Feature-level deep review after all 6 stories reached `done`. Verdict: **Request
 ### Assessment
 
 The pure command lifecycle (state machine, transition adjacency, terminal finality, replay fold, dedup boundary) is a sound foundation. The three promoted properties hold by construction and have mutation-tested evidence. The gaps are at the end-to-end boundary — the port shapes and the authenticated-principal/source-auth concerns that the sibling features (authority, sessions, protocol-seam) are designed to fill. Blocker 1 (retry state) is a real bug fixable now; blocker 5 (correlation flow) is a real design gap fixable now; blockers 2-4 are forward-dependencies on sibling features and are correctly framed as reserved seams. The feature stays at `stage: review` until blockers 1 and 5 are resolved and the forward-dependency seams are documented as reserved.
+
+## Re-review (delta, 2026-07-14)
+
+**Trigger**: child `story-acceptance-issuer-context` landed at `done` (authority prerequisite), re-opening the review surface per the substrate rule. This child also resolves the feature's own deep-review blocker #3.
+
+**Scope**: delta only — commit `9da850f` (plus the atomic port-shape change in `story-v0-core-authority-grant-check` commit `e9339c4`). Not a from-scratch feature deep review; blockers 1+5 were fixed (`c4e0ed9`) and the feature is at `done`.
+
+**Lens walk (delta)**:
+- Correctness: `submit` now takes `issuer: &dyn IssuerContext` and passes it to `GrantCheck::check` instead of `validated.sender`. `Operation.sender` retained for audit (encoded into the Operation event). Deny-by-default preserved (no verified actor → denied).
+- **Blocker #3 resolution**: the 2026-07-12 deep review flagged "Authorization boundary cannot distinguish verified identity from a payload claim — `GrantCheck` receives `operation.sender` directly from the wire." This child *resolves* that blocker: the verified `IssuerContext` port (authority feature) replaces the self-asserted sender. Acceptance now satisfies `docs/SECURITY.md:143` ("the core must not trust a self-asserted operator identity") — before this change it did not. This is a foundation-doc alignment *improvement*, not drift.
+- Breaking changes: `GrantCheck::check` and `submit` signatures changed (`&ActorEndpointRef` → `&dyn IssuerContext`). Atomic across core + tests; all call sites updated.
+- Tests: `TestGrantCheck`/`AlwaysAuthorized` doubles + all `submit` call sites updated; acceptance tests green.
+- Comment (accepted deferral, not a defect): AC #3 "Authorized.grant_id retained on command record" is nominally unmet — the check result is discarded (`_authorization`) and `CommandRecord.grant_id` is always `None`. This is the authority feature's R3 provenance-durability deferral (submit doesn't own the CommandIndex; durable encoding needs an Operation-proto change, out of scope), tracked in `backlog-authority-durable-acceptance-metadata`. Field present as a seam.
+- Nit: `ValidatedOperation.sender` is now dead code (`#[allow(dead_code)]`); audit value lives on `operation.sender`.
+
+**Blocker #3 status**: RESOLVED by this child (was a forward-dependency on the authority feature; the authority `IssuerContext` trait + `impl GrantCheck` now exist). Blockers 1, 5 were already resolved (`c4e0ed9`). Blockers 2, 4 remain as documented forward-dependency seams (target-binding consumption on sessions/delivery; observation source-auth on protocol-seam/pi-adapter) — unchanged by this delta.
+
+**Verdict**: Approve with comments — feature remains at `stage: done`. The child is sound and additionally closes a standing deep-review blocker. The `grant_id`-retention gap is an accepted, tracked deferral consistent with the authority feature's R3 design.
+
+**Verification**: 171 tests green across `patchbay-core`; clippy clean.

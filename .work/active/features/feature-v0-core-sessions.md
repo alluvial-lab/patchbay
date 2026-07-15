@@ -925,3 +925,19 @@ The fix arc: deep review found B1-B4 → fixes landed → re-review confirmed B1
 **Reset boundary note**: B2 made `initial_state` required on `SessionGenerationBumped` events. Pre-fix dev logs (written before commit `06e6251`) would be rejected on replay. Patchbay is pre-release with no production logs — this is a documented reset boundary, not a migration. Delete any local `.db` files; do not migrate.
 
 The `TargetResolver` port (declared in `core/src/acceptance/ports.rs`) is now implemented by `SessionRegistry` — the sessions↔acceptance seam is connected. The sessions feature is complete for v0.1.0 scope.
+
+## Re-review (delta, 2026-07-14)
+
+**Trigger**: child `story-sessions-spawn-origin-field` landed at `done` (authority prerequisite), re-opening the review surface per the substrate rule.
+
+**Scope**: delta only — commit `6f98304`. Not a from-scratch feature deep review; the full fix arc (B1-B5) was already reviewed 2026-07-13 and the feature is at `done`.
+
+**Lens walk (delta)**:
+- Correctness: `SessionRegistered.spawn_origin` (proto field 9, additive Optional) carries through `SessionReport` → `events::registered` → the durable mutation. The session replay fold (`registry.rs`) correctly ignores it — the field is the authority spawn-tail's consumer, not a session-projection field. Replay-safe by construction (Optional, default None).
+- Tests: existing sessions tests (regression guard) updated with `spawn_origin: None` fixtures; green. No new behavior to test in the sessions module (the authority feature exercises the `Some(...)` path).
+- Breaking changes: additive proto field (field 9); wire-compatible. Rust+TS gen regenerated via the correct prost-build dance.
+- Foundation-doc alignment: PROTOCOL.md describes descendant-grant provenance needing spawn↔session correlation; this field is the seam for it. No drift — the field *enables* a foundation commitment.
+
+**Verdict**: Approve — feature remains at `stage: done`. The additive child is sound; no regression to the B1-B5 fix arc. The spawn_origin field is correctly scoped as a consumer-side seam (authority spawn-tail), not a sessions-internal concern.
+
+**Verification**: 171 tests green across `patchbay-core`; clippy clean. Gen diff additions-only.
