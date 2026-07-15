@@ -1,7 +1,7 @@
 ---
 id: story-v0-core-authority-proptests
 kind: story
-stage: implementing
+stage: review
 tags: [security, protocol, verification, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest, story-v0-core-authority-spawn-tail, story-v0-core-authority-replay, story-acceptance-issuer-context]
@@ -49,3 +49,15 @@ Read `core/tests/sessions_proptest.rs` and `core/tests/acceptance_proptest.rs` F
 - Depends on all 5 prior authority stories + `story-acceptance-issuer-context` (rev3-review finding 4: compound_issuer is an acceptance-authority integration property — the mutation must be acceptance constructing issuer identity from Operation.sender, which requires the IssuerContext call-site change).
 - #7 is the highest-value test — executable oracle for a demoted formal property, mutation-survivable by construction.
 - #8 is honestly a gap, not a fake test (rev3 R6).
+
+## Implementation notes
+- Files changed: `core/tests/authority_proptest.rs`.
+- Direct-read implementation: the authority interfaces and existing authority/session/acceptance property-test fixtures fully defined the integration surface; no exploratory fan-out was needed.
+- Added seven 100-case executable property oracles: deny-by-default `NoCommandWithoutGrant`; verified-identity `CompoundIssuer`; canonical kind-membership `GrantAuthorityIsCommandKinds`; post-revocation denial `RevocationPreventsFuture`; fleet/adapter/runtime-session spawn containment `FleetAuthorityForSpawn`; deterministic completed-spawn issuance `SpawnCreatesDescendantGrant`; and the two-lever `SpawnRevocationDoesNotCascade` check.
+- Added non-vacuity tests `payload_actor_trust_catches_injected_bug` and `cascade_revocation_catches_injected_bug`; each proves the production implementation passes the shared oracle and its injected mutant fails it.
+- Added supplementary `replay_matches_live`, covering randomized operator grants, descendant grants, and revocations and comparing full registry equality, live-grant ids, and per-grant records.
+- Documented `ElicitationResponderAuthority` as the rev3 R6 untested gap owned by `.work/backlog/backlog-elicitation-responder-authority.md`; no vacuous stand-in test was added.
+- Mechanical implementation choice: the cascade mutant wraps `AuthorityRegistry`, derives provenance-linked descendants at revocation observation, and suppresses their later grant-check results; the payload-identity mutant retains verified transport context while replacing only the actor with `Operation.sender`.
+- Verification: targeted authority property suite passes (10 tests), full `patchbay-core` suite passes, build passes, and `cargo clippy --all-targets -- -D warnings` is clean.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
