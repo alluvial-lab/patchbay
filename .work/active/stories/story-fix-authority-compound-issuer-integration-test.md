@@ -1,7 +1,7 @@
 ---
 id: story-fix-authority-compound-issuer-integration-test
 kind: story
-stage: drafting
+stage: review
 tags: [verification, security, protocol]
 parent: feature-v0-core-authority
 depends_on: []
@@ -43,3 +43,11 @@ This requires the `submit` signature (which takes `issuer: &dyn IssuerContext`) 
 ## Notes
 - This is a verification-coverage gap, not a code bug. The `submit` call site IS correct (passes `issuer`, not `validated.sender`) — confirmed in re-review of `story-acceptance-issuer-context`. The gap is that no test *proves* it stays correct.
 - `[verification]`-tagged → deep review lane when this story reaches review.
+
+## Implementation notes
+- Files changed: `core/tests/authority_proptest.rs`; `.work/active/stories/story-fix-authority-compound-issuer-integration-test.md`.
+- Tests added: `compound_issuer_integration_denies_payload_actor_mismatch_through_submit` drives the real `acceptance::submit` → `AuthorityRegistry::check` path twice: verified actor A with payload actor B is rejected with `AuthorizationDenied`, while substituting payload actor B as the issuer is accepted.
+- Regression caught: `submit` deriving authority identity from `Operation.sender` instead of the ingress-supplied `IssuerContext` makes the first assertion fail; the accepted payload-derived control call proves the fixture is non-vacuous.
+- Discrepancy from the brief: the literal phrase "grant for verified actor A" cannot produce both the required A-denial and B-acceptance mutation. The fixture follows the existing `compound_issuer` oracle and the required mutation behavior by granting payload actor B while verified actor A has no matching grant.
+- Verification: package build, focused authority property test (11 passed), full `patchbay-core` suite, and Clippy with warnings denied all pass.
+- Adjacent issues parked: none.

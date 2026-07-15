@@ -13,13 +13,16 @@ use std::collections::HashSet;
 use patchbay_contracts::patchbay::{
     session_state_event, typed_correlation, ActorEndpointRef, ActorId, AdapterId,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
-    DeviceId, EndpointId, EventId, Generation, Grant, GrantId, GrantProvenance,
+    DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, Revocation,
     RuntimeSessionId, SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind, TypedCorrelation,
+    SubmissionOutcome, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
-    acceptance::{Authorized, GrantCheck, GrantDenied},
+    acceptance::{
+        submit, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied,
+        TargetBinding, TargetNotFound, TargetResolver,
+    },
     authority::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
         AuthorityRegistry, GrantLookup, GrantProjection, GrantProvenanceKind, GrantRecord,
@@ -339,6 +342,34 @@ impl IssuerContext for TestIssuerContext {
 
     fn authority_domain_id(&self) -> &AuthorityDomainId {
         &self.domain
+    }
+}
+
+struct AlwaysResolvedTarget;
+
+impl TargetResolver for AlwaysResolvedTarget {
+    async fn resolve(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _target_scope: &TargetScope,
+    ) -> Result<TargetBinding, TargetNotFound> {
+        Ok(TargetBinding {
+            runtime_session_id: runtime_session("compound-issuer-session"),
+            session_generation: Generation { value: 1 },
+            adapter_id: adapter("adapter-pi"),
+        })
+    }
+}
+
+struct AlwaysAcceptedCommandState;
+
+impl CommandStateLookup for AlwaysAcceptedCommandState {
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        Some(CommandSnapshot {
+            state: OperationState::Accepted,
+            correlations: vec![],
+            terminal_lsn: None,
+        })
     }
 }
 
@@ -1386,6 +1417,98 @@ fn payload_actor_trust_catches_injected_bug() {
                 .await
                 .is_err(),
             "the CompoundIssuer oracle did not catch payload-actor trust"
+        );
+    });
+}
+
+#[test]
+fn compound_issuer_integration_denies_payload_actor_mismatch_through_submit() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let authority_domain_id = domain("authority-submit-integration");
+        let verified_actor = actor("verified-operator");
+        let payload_actor = actor("self-asserted-payload-operator");
+        let target_scope = adapter_scope("adapter-pi");
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut registry = AuthorityRegistry::new();
+
+        // The only live grant belongs to the self-asserted payload actor. The
+        // independently verified actor has no grant, so trusting the issuer
+        // argument must deny while deriving authority from the payload would
+        // authorize.
+        ingest_live_grant(
+            &storage,
+            &mut registry,
+            &authority_domain_id,
+            "payload-actor-submit-grant",
+            &payload_actor,
+            &[OperationKind::Instruct],
+            target_scope.clone(),
+        )
+        .await
+        .unwrap();
+
+        let operation = Operation {
+            command_id: Some(CommandId {
+                value: "compound-issuer-submit".to_owned(),
+            }),
+            authority_domain_id: Some(authority_domain_id.clone()),
+            sender: Some(ActorEndpointRef {
+                actor_id: Some(payload_actor.clone()),
+                ..ActorEndpointRef::default()
+            }),
+            kind: OperationKind::Instruct as i32,
+            target_scope: Some(target_scope),
+            idempotency_key: "compound-issuer-submit-key".to_owned(),
+            ..Operation::default()
+        };
+
+        let verified_issuer =
+            TestIssuerContext::verified(verified_actor, authority_domain_id.clone());
+        let verified_result = submit(
+            &storage,
+            &registry,
+            &AlwaysResolvedTarget,
+            &AlwaysAcceptedCommandState,
+            &verified_issuer,
+            operation.clone(),
+        )
+        .await
+        .expect("authority denial is a successful submission response");
+
+        assert_eq!(
+            verified_result.outcome,
+            SubmissionOutcome::Rejected as i32,
+            "submit must reject when the verified actor lacks the payload actor's grant"
+        );
+        assert_eq!(
+            verified_result.failure_code,
+            FailureCode::AuthorizationDenied as i32,
+            "the verified-issuer mismatch must fail at the authority boundary"
+        );
+
+        let payload_derived_issuer =
+            TestIssuerContext::verified(payload_actor, authority_domain_id);
+        let payload_derived_result = submit(
+            &storage,
+            &registry,
+            &AlwaysResolvedTarget,
+            &AlwaysAcceptedCommandState,
+            &payload_derived_issuer,
+            operation,
+        )
+        .await
+        .expect("the payload-derived mutation reaches a submission outcome");
+
+        assert_eq!(
+            payload_derived_result.outcome,
+            SubmissionOutcome::Accepted as i32,
+            "deriving issuer identity from Operation.sender would wrongly authorize the payload actor"
+        );
+        assert_eq!(
+            payload_derived_result.failure_code,
+            FailureCode::Unspecified as i32,
+            "the mutation demonstration must pass the real submit authority check"
         );
     });
 }
