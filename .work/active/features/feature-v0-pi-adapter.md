@@ -1,7 +1,7 @@
 ---
 id: feature-v0-pi-adapter
 kind: feature
-stage: review
+stage: implementing
 tags: [adapter, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
@@ -307,3 +307,28 @@ Patchbay references the pre-fork name "remote-pi" / "Remote Pi" throughout (docs
 - Explicit v0.1.0 cuts: full approval-response Elicitation round-trip remains additive; the driver exposes the async gate and defaults to audited auto-proceed, while adapter delivery rejects an unsupported response visibly. `ReceiveDeliveries` uses the design-approved cursor polling fallback rather than a held-open per-adapter queue.
 - Foundation follow-up visible to review: `docs/ARCHITECTURE.md` still says the v0.1.0 topology has “two logical processes” while this settled feature adds the separate Pi-adapter process; foundation docs were outside this worker's allowed write set.
 - Commits: `a489a43` (core surface), `7e083a2` (Pi driver), `7196325` (translation/e2e).
+
+## Review outcome (BOUNCED to implementing)
+
+Standard-weight fresh-context review (same-model `gpt-5.6-sol`, same harness, NOT cross-model) returned a **bounce** verdict: 6 material current-cycle blockers + 1 important note, several requiring design-level correction rather than localized fixes. The reviewer was rigorous and correct — these are real gaps, not pedantry.
+
+### Material blockers (must fix before re-review)
+
+1. **Delivery lifecycle gap**: `ReceiveDeliveries` reads accepted Operations but never records `delivered`; successful commands stay `accepted` indefinitely. The observation API can't trivially express `accepted→delivered` then `→running/completed`. Needs an explicit delivery-acknowledgment path + status/result observations (incl. query return values, currently discarded).
+
+2. **Reconnect replays all history**: the delivery cursor is process-local, starts at 0, and advances before delivery succeeds. After restart, every historical Operation is re-offered (and re-executed). Delivery also doesn't validate target generation, so old-gen prompts can execute against a replacement session. The `partial` snapshot is never reconciled on reconnect either. Needs durable/resumable cursor ownership + generation validation + explicit transcript replay.
+
+3. **Stale attach poisons restart**: `ingest_registration` appends the registration Observation *before* `AdapterRegistry::observe` checks generation. A lower-gen attach is durably written then rejected; on restart `rebuild_from_log` hits the stale event and returns `StaleGeneration`, blocking init. Needs preflight-before-append or replay-safe audit-only stale records.
+
+4. **Session registry doesn't keep `spawn` additive** (the risk I flagged): the registry stores only `PiSession`, but delivery routing separately requires a matching entry in immutable `options.sessions`. A future dynamically-spawned session can be registered in the map but still fails `!configured` during delivery. Needs the registry to own a complete runtime entry (session + deployment scope/project/cwd/name + observation wiring) and route solely through it. Prove with a dynamically-registered-session delivery test.
+
+5. **`session_new` doesn't do Pi's replacement lifecycle**: the implementation mutates the existing session manager + resets the agent, but Pi's actual replacement path disposes the old `AgentSession`, invalidates its extension context, creates a new runtime/session, and rebinds listeners. The adapter bumps generation without creating the replacement it reports; late events from the pre-reset context can be mislabeled with the new generation. Needs dispose+recreate (or Pi's programmatic replacement API) + immutable generation binding for events + late-event inertness test.
+
+6. **Foundation topology assertion now false**: `docs/ARCHITECTURE.md:155-159` says v0.1.0 runs two logical processes (core + web server); this feature adds a third (Pi adapter). Roll the assertion forward to three process roles, preserving deployment-neutral colocation language.
+
+### Important note (non-blocking but fix)
+7. **Capability manifest honesty**: the manifest declares `approval-response`/`elicitation-response` supported while delivery always rejects them (`unsupported_command`). Either match the manifest to current delivery support, or add the payload-level capability distinction. (The documented approval-round-trip scope cut itself is acceptable.)
+
+### Adjudication
+
+All 6 blockers are genuine and in-scope. The bounce is warranted — blockers 1, 2, 5 are design-level delivery-contract corrections, not localized patches. Returned to `implementing` for the fix arc. The minimal-slice scope cut (approval Elicitation round-trip deferred) stands; blockers 1/2/3/4/5/6 are about the *committed* v0.1.0 contract (delivery lifecycle, reconnect, registration safety, spawn-foreclosure, session_new semantics, topology honesty), not the deferred scope.
