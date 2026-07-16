@@ -1,14 +1,14 @@
 ---
 id: feature-v0-pi-adapter
 kind: feature
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-15
+updated: 2026-07-16
 ---
 
 # Feature: Pi adapter
@@ -347,3 +347,13 @@ All 6 blockers are genuine and in-scope. The bounce is warranted — blockers 1,
 - **Simplification:** removed the split routing dependency on immutable startup configuration and made durable command state the delivery-resume source of truth; no adapter-local cursor store or new RPC/proto variant was needed.
 - **Deviations:** no proto or contract regeneration was required. Durable cursor ownership is realized through the existing Observation RPC plus core-owned `delivered` command state rather than a new cursor RPC/store.
 - **Re-verification:** passed `cargo test -p patchbay-core-server`, `cargo clippy -p patchbay-core-server --all-targets -- -D warnings`, `cargo fmt --all --check`, `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core`, `pi-adapter npm run build`, and `pi-adapter npm test` (5 tests). The core-only run emitted a non-failing read-only cache warning for `/tmp/cargo-home` while completing all tests successfully.
+
+## Review outcome (re-review: APPROVED)
+
+Standard-weight re-review (fresh-context, same-model `gpt-5.6-sol`, same harness, NOT cross-model) after the bounce fix arc. All 6 material blockers + the manifest-honesty note confirmed-fixed with genuine regression evidence (the reconnect test asserts `pollOnce()===0` no-redelivery; the session_new test verifies Pi session-id change + old-context-inertness; the stale-attach test rebuilds from the log after rejecting gen 1). No new material blockers. Verdict: **approve**.
+
+One important non-blocking finding applied in-stride: `docs/ADAPTER-PI.md` §4 parity rows for `approval-response`/`elicitation-response` updated to reflect the v0.1.0 manifest exclusion (matching the corrected manifest + the documented approval-round-trip scope cut).
+
+Final verification: 7 Rust server tests + core (all suites) green; clippy `-D warnings` clean; fmt clean; 5 TS adapter tests pass (incl. real-`AgentSession` e2e + reconnect-no-redelivery + session_new replacement + approval gate). `web-server/`/`contracts/` unmodified; `core/` change bounded to `core/src/adapter/mod.rs` + `lib.rs` export.
+
+Advanced `implementing → done`.
