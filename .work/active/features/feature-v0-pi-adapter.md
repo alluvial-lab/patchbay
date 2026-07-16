@@ -1,7 +1,7 @@
 ---
 id: feature-v0-pi-adapter
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
@@ -296,3 +296,14 @@ Units 1 and 2 can run in parallel (independent write sets: `server/`+`contracts/
 ## Parked: naming cleanup
 
 Patchbay references the pre-fork name "remote-pi" / "Remote Pi" throughout (docs/ADAPTER-PI.md, ARCHITECTURE.md, SPEC.md, PROTOCOL.md, UX.md, VISION.md, ~6 work items, session notes, the harvest idea file `idea-harvest-remote-pi-extension-as-adapter.md`). The project is now **outpost_pi** at `/home/agent/projects/outpost_pi/`. This is a docs-naming cleanup, not a design blocker — file as a separate `[prose]` cleanup item (rename references + the harvest idea file) rather than derail this feature. The `research_origin`/attestation handles (`pi-extension`) remain accurate.
+
+## Integrated implementation verification
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort (caller); one feature owner carried all three dependency-ordered checkpoints without delegation.
+- Review weight: `standard` (caller). Feature intentionally stops at `review` for the orchestrator's independent review lane.
+- Delivered: generated `AdapterControlService`; bounded durable/redacted adapter-registration core port; attachment-evidence authentication; session-report and Observation ingestion; cursor-resumable delivery streaming; direct in-process `AgentSession` host with typed approval gate, transcript log/projection, and turn reducer; generated-contract Connect client; pre-provisioned session registry; OperationKind translation; executable adapter process; real core/AgentSession e2e.
+- Integrated acceptance evidence: attach manifest excludes `spawn` and declares `snapshot=partial`; targeted `INSTRUCT` reaches the correct real `AgentSession`; transcript Observations return through the core and are visible on `ControlService.Subscribe`; cancel aborts an in-flight turn; `session_new` produces a core generation-bump/tombstone event; delivered `spawn` produces `unsupported_command`; re-attach uses higher adapter/session generations and reports activity `unknown` when the process-local partial transcript cache was lost.
+- Verification passed: `cargo build -p patchbay-core-server`; `cargo test -p patchbay-core-server`; `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/cargo-home cargo test -p patchbay-core`; `contracts/ts npm run build`; `pi-adapter npm run build`; `pi-adapter npm test` (5 tests, including a real Rust-core + real faux-backed Pi `AgentSession` walking skeleton).
+- Explicit v0.1.0 cuts: full approval-response Elicitation round-trip remains additive; the driver exposes the async gate and defaults to audited auto-proceed, while adapter delivery rejects an unsupported response visibly. `ReceiveDeliveries` uses the design-approved cursor polling fallback rather than a held-open per-adapter queue.
+- Foundation follow-up visible to review: `docs/ARCHITECTURE.md` still says the v0.1.0 topology has “two logical processes” while this settled feature adds the separate Pi-adapter process; foundation docs were outside this worker's allowed write set.
+- Commits: `a489a43` (core surface), `7e083a2` (Pi driver), `7196325` (translation/e2e).
