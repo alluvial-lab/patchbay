@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  AuthStorage,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  createFauxCore,
+  fauxAssistantMessage,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
+import { PiSession } from "../src/pi_session.js";
+import { TranscriptEventLog } from "../src/transcript_event_log.js";
+import { deterministicTranscriptEventId } from "../src/transcript_projection.js";
+import type { TranscriptEvent } from "../src/transcript_event.js";
+
+const cwd = process.cwd();
+
+test("TranscriptEventLog deduplicates stable event ids and replays by session", () => {
+  const log = new TranscriptEventLog();
+  const event: TranscriptEvent = {
+    kind: "assistant_committed",
+    eventId: deterministicTranscriptEventId("session-a", "assistant_committed", "m1"),
+    sessionId: "session-a",
+    ts: 1,
+    messageId: "m1",
+    text: "hello",
+  };
+  assert.equal(log.append(event), true);
+  assert.equal(log.append({ ...event, text: "duplicate" }), false);
+  assert.deepEqual(log.forSession("session-a"), [event]);
+  assert.deepEqual(log.forSession("session-b"), []);
+});
+
+test("real AgentSession prompt emits transcript events and honors the approval gate", async () => {
+  const provider = "patchbay-faux";
+  const faux = createFauxCore({ provider, api: provider, tokensPerSecond: 0 });
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "README.md" }, { id: "tool-1" }), {
+      stopReason: "toolUse",
+      timestamp: 10,
+    }),
+    fauxAssistantMessage("approval was enforced", { timestamp: 11 }),
+  ]);
+
+  const authStorage = AuthStorage.inMemory({
+    [provider]: { type: "api_key", key: "test-key" },
+  });
+  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const model = faux.getModel();
+  modelRegistry.registerProvider(provider, {
+    name: "Patchbay test provider",
+    apiKey: "test-key",
+    baseUrl: "http://localhost:0",
+    api: model.api,
+    streamSimple: faux.streamSimple,
+    models: [
+      {
+        id: model.id,
+        name: model.name,
+        api: model.api,
+        baseUrl: "http://localhost:0",
+        reasoning: model.reasoning,
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+      },
+    ],
+  });
+
+  const pi = await PiSession.create({
+    cwd,
+    runtimeSessionId: "runtime-1",
+    model: `${provider}/${model.id}`,
+    sessionOptions: {
+      modelRegistry,
+      sessionManager: SessionManager.inMemory(cwd),
+      settingsManager: SettingsManager.inMemory(),
+      tools: ["read"],
+    },
+  });
+  const observed: TranscriptEvent[] = [];
+  pi.onTranscript((event) => observed.push(event));
+  let approvals = 0;
+  pi.setApprovalHandler((request) => {
+    approvals += 1;
+    assert.equal(request.toolCallId, "tool-1");
+    assert.equal(request.tool, "read");
+    return false;
+  });
+
+  try {
+    await pi.prompt("exercise the approval gate");
+    assert.equal(approvals, 1);
+    assert.ok(observed.some((event) => event.kind === "user_confirmed"));
+    assert.ok(
+      observed.some(
+        (event) => event.kind === "tool_requested" && event.toolCallId === "tool-1",
+      ),
+    );
+    assert.ok(
+      observed.some(
+        (event) => event.kind === "assistant_committed" && event.text === "approval was enforced",
+      ),
+    );
+    faux.appendResponses([
+      fauxAssistantMessage(
+        fauxToolCall("read", { path: "../docs/VISION.md" }, { id: "tool-2" }),
+        { stopReason: "toolUse", timestamp: 12 },
+      ),
+      fauxAssistantMessage("approved tool completed", { timestamp: 13 }),
+    ]);
+    pi.setApprovalHandler(() => true);
+    await pi.prompt("approve this read");
+    assert.ok(
+      observed.some(
+        (event) => event.kind === "tool_finished" && event.toolCallId === "tool-2" && !event.error,
+      ),
+    );
+
+    assert.equal(pi.getState().idle, true);
+    assert.ok(pi.getEntries().entries.length > 0);
+    assert.ok(pi.getAvailableModels().some((candidate) => candidate.id === model.id));
+
+    await pi.setModel(provider, model.id);
+    await pi.setThinkingLevel("off");
+    assert.equal(await pi.newSession(), 2);
+    assert.equal(pi.getState().generation, 2);
+    await pi.cancel();
+  } finally {
+    pi.dispose();
+  }
+});

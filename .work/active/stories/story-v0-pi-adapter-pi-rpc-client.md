@@ -1,7 +1,7 @@
 ---
 id: story-v0-pi-adapter-pi-rpc-client
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: feature-v0-pi-adapter
 depends_on: []
@@ -54,12 +54,12 @@ export class PiSession {
 
 ## Acceptance criteria
 
-- [ ] `PiSession` creates an `AgentSession` in-process, sends a prompt via `sendUserMessage`, receives the typed event stream.
-- [ ] `beforeToolCall` is wired and can block/approve a tool call.
-- [ ] All §4 actions implemented: prompt, cancel, getState, getEntries, setModel, setThinkingLevel, getAvailableModels, newSession, compact.
-- [ ] `transcript_projection` maps `AgentSessionEvent`s to typed `TranscriptEvent`s with stable dedup ids.
-- [ ] `TranscriptEventLog` dedups by eventId and replays `forSession`.
-- [ ] Smoke test drives a real `AgentSession` end-to-end (prompt → events → transcript → approval gate fires).
+- [x] `PiSession` creates an `AgentSession` in-process, sends a prompt via `sendUserMessage`, receives the typed event stream.
+- [x] `beforeToolCall` is wired and can block/approve a tool call.
+- [x] All §4 actions implemented: prompt, cancel, getState, getEntries, setModel, setThinkingLevel, getAvailableModels, newSession, compact.
+- [x] `transcript_projection` maps `AgentSessionEvent`s to typed `TranscriptEvent`s with stable dedup ids.
+- [x] `TranscriptEventLog` dedups by eventId and replays `forSession`.
+- [x] Smoke test drives a real `AgentSession` end-to-end (prompt → events → transcript → approval gate fires).
 
 ## Notes
 
@@ -67,3 +67,14 @@ export class PiSession {
 - **Harvest fidelity**: the outpost-pi session layer was built as a Pi extension; re-housing as a direct `createAgentSession()` caller is real work, not a copy. The projection logic (event → TranscriptEvent, dedup, replay) harvests; the `ExtensionFactory`/`ExtensionAPI` wiring does not.
 - This story is independent of Unit 1 (different write set: `pi-adapter/` vs `server/`+`contracts/`). They can run in parallel.
 - Requires `@earendil-works/pi-coding-agent` as a dependency (the SDK the adapter hosts).
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; selected by the caller for the SDK lifecycle and approval-boundary risk.
+- Review weight: `standard` (caller).
+- Files changed: `pi-adapter/package.json`, lockfile/TypeScript config, `src/pi_session.ts`, harvested transcript/turn modules, focused tests, and `.gitignore` build-output entries.
+- Tests added/removed: added a real in-process `createAgentSession()` smoke test using Pi's faux provider. It proves prompt/event capture, both blocked and approved tool calls, transcript replay, model/thinking/query surfaces, generation bump, and cancel; added a focused stable-id/dedup replay test. No tests removed.
+- Simplification: harvested only the typed event projection, append-only log, and turn reducer; all `ExtensionFactory`/peer/room transport wiring was discarded. The adapter drives `AgentSession` directly.
+- Discrepancies from design: installed Pi 0.80.7 exposes the tool gate as the public `session.agent.beforeToolCall` hook and events as `session.subscribe(...)`, not `session.beforeToolCall` / `session.on(...)`. Entries are exposed by `session.sessionManager.getEntries()` rather than `session.getEntries()`. The driver wraps those current typed APIs behind the designed `PiSession` surface. Full approval Elicitation round-trip is the explicit minimal-slice cut: the default gate auto-proceeds while recording the request in the transcript; Unit 3 can install an async approval handler, and the smoke test proves both allow and block decisions.
+- Verification: `npm install --cache /home/agent/projects/patchbay/.npm-cache`, `npm run build`, and `npm test` passed under Node with a real `AgentSession`.
+- Adjacent issues parked: none.
