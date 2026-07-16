@@ -1,0 +1,73 @@
+---
+id: feature-v0-presentation-component-layer
+kind: feature
+stage: drafting
+tags: [ux, foundation]
+parent: epic-v0-1-0-implementation
+depends_on: [feature-v0-web-server]
+release_binding: null
+gate_origin: null
+created: 2026-07-16
+updated: 2026-07-16
+---
+
+# Feature: Shared presentation-component layer (v0)
+
+## Brief
+
+Build the **shared presentation-component layer** named as a deferred seam by `feature-ux-v0-acceptance` and `docs/UX.md`: the layer that binds canonical protocol states to skin-able presentable primitives (`StateBadge`, `CommandTimeline`, `Composer`, `ElicitationCard`, `SessionRow`, `FailureBanner`, `RetrySafetyIndicator`). This is the structural enforcement mechanism for the surface-neutral UX conformance floor — it makes the floor machine-checkable (states cannot drift between surfaces) and makes operator-customizable skins possible (a skin is token swaps + composition, not protocol re-binding).
+
+`docs/UX.md` states: *"The first real web cockpit must not proceed without either this component layer or an explicit conformance-test substitute."* This feature builds the layer; the cockpit (`feature-v0-web-cockpit`) consumes it.
+
+The layer's obligations (from `docs/UX.md`):
+1. **Bind canonical protocol states to presentable primitives** — present the registry; never invent divergent state names. Derive from `docs/PROTOCOL.md`'s `CommandState` (9 states), `SessionConnectivityState` (5) × `SessionActivityState` (3), `ElicitationState`, and the failure/outcome vocabulary.
+2. **Be skin-able via design tokens** — an operator can customize the visual language without forking protocol semantics.
+3. **Be composable by any conformant surface** — web, CLI, future Expo.
+
+Implementation of the layer was deferred at the acceptance-criteria tier; this feature is the build.
+
+## Epic context
+
+- Parent epic: `epic-v0-1-0-implementation`
+- Position in epic: prerequisite for `feature-v0-web-cockpit`. The cockpit cannot honestly satisfy the conformance floor without either this layer or a conformance-test substitute; this feature builds the layer.
+- Scope decision (operator-confirmed): built as a separate sibling feature rather than absorbed into the cockpit, because the layer has its own design surface (primitive set, token vocabulary, state-binding contract) and the cockpit is one *consumer* of it.
+
+## Foundation references
+
+- `docs/UX.md` — shared presentation-component layer (named seam); surface-neutral conformance floor; failure-vocabulary retry-safety matrix; the layer's three obligations
+- `docs/ARCHITECTURE.md` — shared TypeScript operator domain (protocol client, delivery/reconnect state machines, presentation model); line 152 names "presentation model" as part of the operator domain
+- `docs/PROTOCOL.md` — `CommandState` registry; `SessionConnectivityState` × `SessionActivityState` axes; `ElicitationState` lifecycle; failure/outcome vocabulary; `OperationKind` registry; `idempotency_strength` × failure-term retry-safety matrix
+- `docs/SPEC.md` — v0.1.0 visual language / design tokens are a reserved seam (operator-customizable skins above the floor)
+- `feature-ux-v0-acceptance` (done) — named this seam and deferred its implementation
+- `contracts/ts/` — generated TS bindings (the canonical state types the layer binds)
+
+## Design decisions (operator-confirmed, 2026-07-16)
+
+Resolved interactively during the `feature-v0-web-cockpit` design kickoff (these decisions apply to both features).
+
+- **Q1 — Component layer scope: separate sibling feature (this one).** Built as `feature-v0-presentation-component-layer` rather than absorbed into the cockpit. The layer is a pre-requisite the operator named; it has its own design surface (primitive set + token vocabulary + state-binding contract), and the cockpit is one consumer. The cockpit's `depends_on` gains this feature.
+- **Q2 — Design-system pipeline depth: palette → components → screens (skip motion).** The component layer is designed via `palette` (tokens) + `components` (primitives). `motion` is skipped for v0 — the cockpit can be statically paced; kinetic language is deferred to a v1 design-system pass. Matches the lean pipeline.
+- **Q4 — Visual direction: operator-console / status-forward.** Scouted Codex desktop, Claude Code desktop redesign, Cursor 3 Agents Window, Google Antigravity — all converged on sidebar-as-control-plane + multi-agent supervision + status-forward chrome. Patchbay's chrome is operator-console; warmth lives only in message rendering. This is the agent-native pattern the field landed on in 2025–2026.
+- **Q5 — Operator-domain execution: browser-only, thin translator.** The web server stays a thin HTTP→protocol translator; the operator domain (protocol client, delivery/reconnect state machines, presentation model) runs in the browser. Server-side operator-domain promotion stays a reserved seam. Multi-device continuity comes from the core being the single source of truth, not from server-held state. (This decision is inherited from `feature-v0-web-server` and confirmed here — it pins where the presentation layer *runs*: in the browser, as part of the operator domain.)
+
+## Design surface (to be designed in the design pass)
+
+The state-binding contract each primitive must encode (the floor, made structural):
+
+- **`SessionConnectivityState` never renders as live when stale/unknown/offline/failed.** Stale/unknown dominates presentation.
+- **Connectivity × activity composes** — `live idle`, `live working`, `stale working`, `offline unknown`, etc. The badge composes both axes; a stale working indicator never looks live.
+- **Liveness ≠ delivery.** `CommandState` (`accepted`/`delivered`/`running`/`completed`/`failed`/`cancelled`/`expired`/`rejected`/`superseded`) is rendered distinctly from session liveness. Accepted ≠ completed; delivered ≠ completed.
+- **Identity-before-intent.** Stable target identity (adapter id, deployment scope, runtime session id, generation) is shown before a command can be submitted. Human-readable labels (project/cwd/name) are metadata, not identity.
+- **Retry safety is derived.** `RetrySafetyIndicator` combines the failure term + the adapter's `idempotency_strength` per the `docs/UX.md` matrix — never from `CommandState` alone. `execution_outcome_unknown` × `none` → "retry may double-execute"; `target_offline` × any → "safe to retry".
+- **Failure vocabulary stays distinct.** `FailureBanner` maps timeout / denial (`authorization_denied`) / unsupported (`unsupported_command`) / revoked / expiration / cancellation / supersession / execution failure to distinct presentations. No generic "failed".
+- **Terminal-race explanation.** `CommandTimeline` explains races ("Completed before cancellation arrived", "Cancelled before completion", "Expired before adapter completion") without adding protocol states — UI labels, not registry members.
+
+## Mockups
+
+(to be populated by the `palette` + `components` pipeline)
+
+## Notes
+
+- The `ux-ui-design:components` skill is the mockup-time analog of this layer (per `docs/UX.md`). The design pass runs `palette` (lock tokens) then `components` (lock primitives + state bindings), producing `.mockups/design-system/tokens.css` and `.mockups/design-system/components.css`.
+- The layer is the structural enforcement that makes the conformance floor machine-checkable. Without it, conformance is a prose checklist each surface re-binds independently (the drift `feature-command-state-ssot` exists to kill).
+- Token vocabulary (colors, type, spacing, radii) is the skin surface; reserved as operator-customizable per `docs/SPEC.md`. The layer consumes tokens; it does not own them.

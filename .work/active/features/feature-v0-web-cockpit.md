@@ -4,11 +4,11 @@ kind: feature
 stage: drafting
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
-depends_on: [feature-v0-web-server]
+depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-16
 ---
 
 # Feature: Responsive web cockpit
@@ -19,7 +19,11 @@ Build the responsive web cockpit — the operator's primary control surface and 
 
 The cockpit runs the shared TypeScript operator domain in the browser (protocol client, delivery/reconnect state machines, presentation model) as a client of the web server. It must meet the surface-neutral UX conformance floor defined in `docs/UX.md`: present every canonical protocol state honestly, separate session liveness from command delivery, show stable target identity before allowing submission, and distinguish denial from unsupported from revoked.
 
-The cockpit is the first conformant instance of the conformance floor. Mockups are deferred to a named follow-on per the UX design decision (mocking inside the criteria feature would silently privilege one visual instance and work against surface-neutrality); this feature's `feature-design` pass should pick up the mockup work.
+The cockpit is the first conformant instance of the conformance floor. Mockups are deferred to a named follow-on per the UX design decision (mocking inside the criteria feature would silently privilege one visual instance and work against surface-neutrality); this feature's `feature-design` pass picks up the mockup work here, inheriting the design-system pipeline (`palette` → `components`) from `feature-v0-presentation-component-layer`.
+
+## Mockups
+
+(to be populated by the `screens` pipeline, inheriting `tokens.css` + `components.css` from the presentation-component layer)
 
 ## Epic context
 
