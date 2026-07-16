@@ -6,7 +6,7 @@ tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
 created: 2026-07-11
-updated: 2026-07-15
+updated: 2026-07-16
 gate_origin: null
 release_binding: null
 ---
@@ -84,9 +84,9 @@ Advanced `drafting → implementing`. The decomposition was settled (complete ch
 ### Child status
 - `epic-v0-core` — **done** (root of the critical path; completed this session)
 - `feature-v0-protocol-seam` — **done** (the web↔core gRPC seam; transport caveat retired by interop spike, then designed + implemented + reviewed this arc)
-- `feature-v0-pi-adapter` — drafting (parallel branch off core)
+- `feature-v0-pi-adapter` — **done** (Pi adapter: in-process `AgentSession` host + harvested session layer + adapter-facing core RPC surface; delivery lifecycle, reconnect w/ partial-snapshot reconcile, session_new replacement, spawn-foreclosure via session registry all verified; `spawn` is the fast-follower)
 - `feature-v0-web-server` — **done** (TS web server: HTTP termination, operator sessions, CSRF synchronizer-token, Connect-Web bridge to core; the 4 csrf_browser.qnt properties verified at the HTTP boundary; login throttled per SECURITY.md:85)
 - `feature-v0-web-cockpit` — drafting (now unblocked: depends on the done web-server; the last phone-usable layer)
 - `feature-v0-cli` — drafting (now unblocked: depends on the done seam)
 
-The epic is ~3/6 built by layer (core + seam + web-server). The web cockpit (last phone-usable layer) and the CLI are both now unblocked; the pi-adapter remains the parallel branch.
+The epic is ~4/6 built by layer (core + seam + web-server + pi-adapter). The agent-control path (core → pi-adapter) is complete. The web cockpit (last phone-usable layer) and the CLI remain unblocked.
