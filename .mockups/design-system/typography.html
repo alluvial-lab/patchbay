@@ -3,107 +3,72 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Typography options — Patchbay</title>
+  <title>Typography — Patchbay (Plex Mono/Sans, locked)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { margin: 0; font: 14px/1.5 'Inter', system-ui, sans-serif; background: #1a1a1a; color: #eee; }
-    nav.toc {
-      position: sticky; top: 0; z-index: 10;
-      padding: 14px 24px; background: #0a0a0a; color: #eee;
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-      border-bottom: 1px solid #333;
-      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px;
+    body { margin: 0; font: 14px/1.5 'IBM Plex Sans', system-ui, sans-serif; background: #0e0d0b; color: #f0e6d2; }
+    .header {
+      padding: 18px 24px; background: #1a1714; border-bottom: 1px solid #3a3429;
+      font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
     }
-    nav.toc strong { font-family: 'Space Grotesk', sans-serif; letter-spacing: 0.02em; }
-    nav.toc a { color: #7ba8f5; text-decoration: none; }
-    section.option {
-      padding: 40px 24px; border-bottom: 1px solid #333;
-      max-width: 900px; margin: 0 auto;
+    .header strong { font-size: 16px; letter-spacing: 0.02em; }
+    .header .locked { color: #5b9a6e; }
+    section { padding: 40px 24px; max-width: 900px; margin: 0 auto; }
+    section h2 {
+      margin: 0 0 6px; font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 600;
     }
-    section.option h2 {
-      margin: 0 0 6px; font-family: 'Space Grotesk', sans-serif;
-      font-size: 26px; font-weight: 600;
-    }
-    section.option h2 .badge {
-      background: #2a2a2a; color: #ccc; padding: 4px 10px; border-radius: 4px;
-      font: 600 11px/1 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em;
-      margin-left: 10px; vertical-align: middle;
-    }
-    section.option p.rationale { margin: 0 0 8px; color: #aaa; font-size: 14px; max-width: 70ch; }
-    section.option .resolution {
-      margin: 0 0 24px; color: #7ba8f5; font-size: 13px;
-      font-family: 'JetBrains Mono', monospace;
+    section .rationale { margin: 0 0 8px; color: #b8a98a; font-size: 14px; max-width: 70ch; }
+    section .resolution {
+      margin: 0 0 24px; color: #ffb454; font-size: 13px;
+      font-family: 'IBM Plex Mono', monospace;
     }
     .stack {
-      background: #0d0d0d; border: 1px solid #222; border-radius: 6px;
-      padding: 14px 16px; margin: 16px 0 24px;
-      font: 12px/1.7 'JetBrains Mono', monospace; color: #ccc; white-space: pre-wrap;
+      background: #1a1714; border: 1px solid #3a3429; border-radius: 6px;
+      padding: 14px 16px; margin: 16px 0 28px;
+      font: 12px/1.7 'IBM Plex Mono', monospace; color: #f0e6d2; white-space: pre-wrap;
     }
-    .scale-item {
-      margin: 10px 0; padding: 8px 0; border-bottom: 1px solid #2a2a2a;
-    }
+    .scale-item { margin: 10px 0; padding: 8px 0; border-bottom: 1px solid #26221d; }
     .scale-item .label {
-      font: 500 11px/1 'JetBrains Mono', monospace; color: #888;
+      font: 500 11px/1 'IBM Plex Mono', monospace; color: #8a7e68;
       text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; display: block;
     }
-    .sample-para {
-      background: #faf6ee; color: #1c1a17; padding: 24px; border-radius: 8px;
-      margin: 16px 0; max-width: 600px;
-    }
-    .sample-para.dark { background: #0e0d0b; color: #f0e6d2; }
-    .sample-para h3 { margin: 0 0 8px; }
-    .sample-para p { margin: 0 0 12px; }
-    .sample-para code {
-      font-family: 'JetBrains Mono', monospace; font-size: 0.88em;
-      background: rgba(128,128,128,0.15); padding: 2px 5px; border-radius: 3px;
-    }
-    .sample-para pre {
-      font-family: 'JetBrains Mono', monospace; font-size: 13px;
-      background: rgba(128,128,128,0.18); padding: 10px 12px; border-radius: 4px;
-      overflow-x: auto; margin: 10px 0;
+    .mobile-label {
+      font: 600 11px/1 'IBM Plex Mono', monospace; color: #8a7e68;
+      text-transform: uppercase; letter-spacing: 0.08em; margin: 24px 0 8px;
     }
     .mobile-frame {
       width: 360px; max-width: 100%; background: #0e0d0b; border-radius: 24px;
-      border: 8px solid #2a2a2a; padding: 16px; margin: 16px 0;
+      border: 8px solid #1a1714; padding: 16px; margin: 16px 0;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
-    .mobile-frame .screen {
-      background: #0e0d0b; color: #f0e6d2; padding: 4px; border-radius: 12px;
-    }
-    .mobile-frame .msg-body {
-      font-size: 14px; line-height: 1.6; padding: 8px 4px;
-    }
-    .mobile-frame h4 { margin: 8px 0 4px; font-size: 15px; }
+    .mobile-frame .msg-body { font-size: 14px; line-height: 1.6; padding: 8px 4px; }
+    .mobile-frame h4 { margin: 8px 0 4px; font-size: 15px; font-weight: 600; }
     .mobile-frame p { margin: 0 0 8px; }
     .mobile-frame ul { margin: 4px 0 8px; padding-left: 18px; }
     .mobile-frame li { margin: 2px 0; }
     .mobile-frame code {
-      font-family: 'JetBrains Mono', monospace; font-size: 0.85em;
+      font-family: 'IBM Plex Mono', monospace; font-size: 0.85em;
       background: #1a1714; padding: 1px 4px; border-radius: 2px; color: #ffb454;
     }
     .mobile-frame pre {
-      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
       background: #1a1714; padding: 8px; border-radius: 4px; overflow-x: auto;
       color: #f0e6d2; margin: 6px 0;
-    }
-    .mobile-label {
-      font: 600 11px/1 'JetBrains Mono', monospace; color: #888;
-      text-transform: uppercase; letter-spacing: 0.08em; margin: 24px 0 8px;
     }
   </style>
 </head>
 <body>
-  <nav class="toc">
-    <strong>PATCHBAY · typography options</strong>
-    <a href="#type-1">1 · Plex Mono/Sans hybrid</a>
-    <a href="#type-2">2 · Grotesk/Newsreader</a>
-  </nav>
+  <div class="header">
+    <strong>PATCHBAY · typography — <span class="locked">LOCKED</span></strong>
+    <span>Option 1 — IBM Plex Mono / IBM Plex Sans hybrid</span>
+    <span>2026-07-16</span>
+  </div>
 
-  <!-- ============ TYPOGRAPHY OPTION 1 ============ -->
-  <section class="option" id="type-1">
-    <h2>Option 1 — IBM Plex Mono / Plex Sans hybrid <span class="badge">instrument</span></h2>
+  <section>
+    <h2>IBM Plex Mono / IBM Plex Sans hybrid</h2>
     <p class="rationale">A retrofuturist mono for chrome and state labels (session rows, CommandState, connectivity×activity badges, code), a readable humanist sans for message bodies and markdown. IBM Plex family shares a design language across mono and sans — they pair coherently. Plex has a technical-instrument character that fits operator-console without being sterile.</p>
     <p class="resolution">RESOLVES the markdown tension: mono chrome + readable sans body. Plex Mono carries the instrument-panel voice; Plex Sans carries long-form reading.</p>
     <div class="stack">--font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
@@ -138,84 +103,22 @@
       <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:400;">runtime_session_id: 01J8K3M2N4P5Q6R7S8T9</div>
     </div>
 
-    <div class="mobile-label">MOBILE MARKDOWN READABILITY — the differentiator</div>
+    <div class="mobile-label">MOBILE MARKDOWN READABILITY — the differentiator (v0.1.0 hard requirement)</div>
     <div class="mobile-frame">
-      <div class="screen">
-        <div class="msg-body" style="font-family:'IBM Plex Sans',sans-serif;">
-          <h4 style="font-family:'IBM Plex Sans',sans-serif; font-weight:600;">Refactor summary</h4>
-          <p>Split the ingestion path into validate → derive → append, mirroring <code>ingest_observation</code>. Generation bumps now carry initial state.</p>
-          <ul>
-            <li><code>validate_report</code> rejects empty identity fields</li>
-            <li>Multi-delta reports append all changes in order</li>
-            <li>Replay is a clean fold over the event log</li>
-          </ul>
-          <pre>let result = ingest_session_report(
+      <div class="msg-body" style="font-family:'IBM Plex Sans',sans-serif; color:#f0e6d2;">
+        <h4 style="font-family:'IBM Plex Sans',sans-serif;">Refactor summary</h4>
+        <p>Split the ingestion path into validate → derive → append, mirroring <code>ingest_observation</code>. Generation bumps now carry initial state.</p>
+        <ul>
+          <li><code>validate_report</code> rejects empty identity fields</li>
+          <li>Multi-delta reports append all changes in order</li>
+          <li>Replay is a clean fold over the event log</li>
+        </ul>
+        <pre>let result = ingest_session_report(
     &amp;mut storage,
     &amp;mut registry,
     report,
 ).await?;</pre>
-          <p>Replay coverage verifies all three deltas from one report. <code>CARGO_HOME=/tmp/cargo-home</code> for all commands.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ TYPOGRAPHY OPTION 2 ============ -->
-  <section class="option" id="type-2">
-    <h2>Option 2 — Space Grotesk / Newsreader / JetBrains Mono <span class="badge">editorial</span></h2>
-    <p class="rationale">A geometric grotesque for chrome and UI, a readable serif (Newsreader) for message bodies and long-form markdown, JetBrains Mono for code and state. The editorial three-stack: grotesque chrome gives the operator-console discipline, the serif body makes markdown reading genuinely beautiful on mobile (serifs aid long-form legibility at small sizes). Most differentiating for the markdown-readable differentiator; pairs naturally with the Swiss/Editorial palette.</p>
-    <p class="resolution">RESOLVES the markdown tension maximally: serif body is the best mobile reading experience. Three faces is more to manage, but the payoff is the differentiator.</p>
-    <div class="stack">--font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, ui-sans-serif, sans-serif;
---font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
---font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;</div>
-
-    <div class="scale-item">
-      <span class="label">3xl / 32px / Space Grotesk 600 — display</span>
-      <div style="font-family:'Space Grotesk',sans-serif; font-size:32px; font-weight:600;">Session registry</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">2xl / 24px / Space Grotesk 600 — heading</span>
-      <div style="font-family:'Space Grotesk',sans-serif; font-size:24px; font-weight:600;">pi@laptop · patchbay-core</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">xl / 20px / Newsreader 600 — section heading</span>
-      <div style="font-family:'Newsreader',serif; font-size:20px; font-weight:600;">Observation: refactor complete</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">lg / 18px / Newsreader 500 — subheading</span>
-      <div style="font-family:'Newsreader',serif; font-size:18px; font-weight:500;">The registry now folds generation bumps correctly</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">base / 16px / Newsreader 400 — body</span>
-      <div style="font-family:'Newsreader',serif; font-size:16px; font-weight:400;">The session replacement event carries the new generation's reported state, so a bumped session holds the adapter's current connectivity and activity rather than inheriting stale values from the prior generation.</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">sm / 14px / JetBrains Mono 500 — state label</span>
-      <div style="font-family:'JetBrains Mono',monospace; font-size:14px; font-weight:500; text-transform:uppercase; letter-spacing:0.05em;">LIVE · IDLE</div>
-    </div>
-    <div class="scale-item">
-      <span class="label">xs / 12px / JetBrains Mono 400 — code/metadata</span>
-      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:400;">runtime_session_id: 01J8K3M2N4P5Q6R7S8T9</div>
-    </div>
-
-    <div class="mobile-label">MOBILE MARKDOWN READABILITY — the differentiator</div>
-    <div class="mobile-frame">
-      <div class="screen">
-        <div class="msg-body" style="font-family:'Newsreader',serif;">
-          <h4 style="font-family:'Newsreader',serif; font-weight:600;">Refactor summary</h4>
-          <p>Split the ingestion path into validate → derive → append, mirroring <code>ingest_observation</code>. Generation bumps now carry initial state.</p>
-          <ul>
-            <li><code>validate_report</code> rejects empty identity fields</li>
-            <li>Multi-delta reports append all changes in order</li>
-            <li>Replay is a clean fold over the event log</li>
-          </ul>
-          <pre>let result = ingest_session_report(
-    &amp;mut storage,
-    &amp;mut registry,
-    report,
-).await?;</pre>
-          <p>Replay coverage verifies all three deltas from one report. <code>CARGO_HOME=/tmp/cargo-home</code> for all commands.</p>
-        </div>
+        <p>Replay coverage verifies all three deltas from one report. <code>CARGO_HOME=/tmp/cargo-home</code> for all commands.</p>
       </div>
     </div>
   </section>

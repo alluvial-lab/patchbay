@@ -3,102 +3,80 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Palette options — Patchbay</title>
+  <title>Palette — Patchbay (Nostromo/LCARS, locked)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { margin: 0; font: 14px/1.5 'Inter', system-ui, sans-serif; background: #1a1a1a; color: #eee; }
-    nav.toc {
-      position: sticky; top: 0; z-index: 10;
-      padding: 14px 24px; background: #0a0a0a; color: #eee;
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-      border-bottom: 1px solid #333;
-      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px;
+    body { margin: 0; font: 14px/1.5 'IBM Plex Sans', system-ui, sans-serif; background: #0e0d0b; color: #f0e6d2; }
+    .header {
+      padding: 18px 24px; background: #1a1714; border-bottom: 1px solid #3a3429;
+      font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
     }
-    nav.toc strong { font-family: 'Space Grotesk', sans-serif; letter-spacing: 0.02em; }
-    nav.toc a { color: #7ba8f5; text-decoration: none; }
-    nav.toc a:hover { color: #a8c8ff; }
-    section.option {
-      padding: 40px 24px; border-bottom: 1px solid #333;
-      max-width: 1100px; margin: 0 auto;
+    .header strong { font-size: 16px; letter-spacing: 0.02em; }
+    .header .locked { color: #5b9a6e; }
+    section.locked { padding: 40px 24px; max-width: 1000px; margin: 0 auto; }
+    section.locked h2 {
+      margin: 0 0 6px; font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 600;
     }
-    section.option h2 {
-      margin: 0 0 6px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-      font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 600;
-    }
-    section.option h2 .badge {
-      background: #2a2a2a; color: #ccc; padding: 4px 10px; border-radius: 4px;
-      font: 600 11px/1 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em;
-    }
-    section.option p.rationale {
-      margin: 0 0 8px; color: #aaa; font-size: 14px; max-width: 70ch;
-    }
-    section.option .worldline {
-      margin: 0 0 20px; color: #888; font-size: 13px; font-style: italic;
-      font-family: 'Newsreader', Georgia, serif;
-    }
+    section.locked .rationale { margin: 0 0 20px; color: #b8a98a; font-size: 14px; max-width: 70ch; }
     .swatches {
       display: grid; gap: 8px;
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      margin: 16px 0 24px;
+      margin: 16px 0 28px;
     }
-    .swatch { border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+    .swatch { border: 1px solid #3a3429; border-radius: 6px; overflow: hidden; }
     .swatch .color { height: 56px; }
-    .swatch .meta { padding: 7px 9px; font: 11px/1.4 'JetBrains Mono', monospace; background: #0d0d0d; }
-    .swatch .meta .name { display: block; color: #ddd; }
-    .swatch .meta .hex { color: #888; }
+    .swatch .meta { padding: 7px 9px; font: 11px/1.4 'IBM Plex Mono', monospace; background: #1a1714; }
+    .swatch .meta .name { display: block; color: #f0e6d2; }
+    .swatch .meta .hex { color: #8a7e68; }
     .demo-label {
-      font: 600 11px/1 'JetBrains Mono', monospace; text-transform: uppercase;
-      letter-spacing: 0.08em; color: #888; margin: 0 0 8px;
+      font: 600 11px/1 'IBM Plex Mono', monospace; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #8a7e68; margin: 0 0 8px;
     }
     .demo {
       display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 8px 0 16px;
     }
-    .demo .pane { padding: 18px; border-radius: 8px; border: 1px solid #333; }
-    .demo .pane.light { border-color: #ddd; }
-    .demo .pane.dark { border-color: #333; }
+    .demo .pane { padding: 18px; border-radius: 8px; border: 1px solid #3a3429; }
+    .demo .pane.light { background: #faf6ee; color: #2a2218; border-color: #d4c4a0; }
+    .demo .pane.dark { background: #0e0d0b; color: #f0e6d2; }
     .demo .pane p { margin: 0 0 10px; }
     .demo button {
       padding: 8px 14px; border: 0; border-radius: 6px; cursor: pointer;
-      font: 500 13px/1 'Space Grotesk', sans-serif;
+      font: 600 13px/1 'IBM Plex Sans', sans-serif;
     }
     .demo .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
     .demo .codeblock {
-      font: 12px/1.5 'JetBrains Mono', monospace; padding: 8px 10px;
+      font: 12px/1.5 'IBM Plex Mono', monospace; padding: 8px 10px;
       border-radius: 4px; margin: 8px 0;
     }
     .demo .statebadge {
-      font: 600 10px/1 'JetBrains Mono', monospace; padding: 3px 7px;
+      font: 600 10px/1 'IBM Plex Mono', monospace; padding: 3px 7px;
       border-radius: 3px; text-transform: uppercase; letter-spacing: 0.05em;
     }
     .contrast {
-      margin-top: 14px; font: 12px/1.7 'JetBrains Mono', monospace;
-      background: #0d0d0d; padding: 12px 14px; border-radius: 6px; border: 1px solid #222;
+      margin-top: 14px; font: 12px/1.7 'IBM Plex Mono', monospace;
+      background: #1a1714; padding: 12px 14px; border-radius: 6px; border: 1px solid #3a3429;
     }
-    .contrast .pass { color: #4ade80; }
-    .contrast .large { color: #fbbf24; }
-    .contrast .fail { color: #f87171; }
-    .contrast .mode-label { color: #888; display: block; margin-top: 6px; }
+    .contrast .pass { color: #5b9a6e; }
+    .contrast .large { color: #e8954a; }
+    .contrast .mode-label { color: #8a7e68; display: block; margin-top: 6px; }
     .contrast .mode-label:first-child { margin-top: 0; }
-    @media (max-width: 720px) {
-      .demo { grid-template-columns: 1fr; }
-    }
+    @media (max-width: 720px) { .demo { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <nav class="toc">
-    <strong>PATCHBAY · palette options</strong>
-    <a href="#option-1">1 · Nostromo/LCARS</a>
-    <a href="#option-2">2 · Soviet cybernetics</a>
-    <a href="#option-3">3 · Swiss/Editorial</a>
-  </nav>
+  <div class="header">
+    <strong>PATCHBAY · palette — <span class="locked">LOCKED</span></strong>
+    <span>Option 1 — Nostromo/LCARS hybrid</span>
+    <span>Typography: IBM Plex Mono/Sans</span>
+    <span>2026-07-16</span>
+  </div>
 
-  <!-- ============ OPTION 1 ============ -->
-  <section class="option" id="option-1">
-    <h2>Option 1 — Nostromo/LCARS hybrid <span class="badge">dark-first · warm</span></h2>
-    <p class="rationale">Amber CRT phosphor and beige instrument-panel warmth, disciplined by LCARS geometric blockwork. The operator-console aesthetic with cinematic seriousness — "self-hosted infrastructure that takes itself seriously." Dark-first; light mode is warm cream/parchment, not white.</p>
-    <p class="worldline">The warmth lives in the amber; the chrome is still hard operator-console. Status reads as phosphor on black, not as decoration.</p>
+  <section class="locked">
+    <h2>Nostromo/LCARS hybrid</h2>
+    <p class="rationale">Amber CRT phosphor and beige instrument-panel warmth, disciplined by LCARS geometric blockwork. The operator-console aesthetic with cinematic seriousness — "self-hosted infrastructure that takes itself seriously." Dark-first; light mode is warm cream/parchment, not white. The warmth lives in the amber; the chrome is still hard operator-console.</p>
     <div class="swatches">
       <div class="swatch"><div class="color" style="background:#faf6ee"></div><div class="meta"><span class="name">bg-primary</span><span class="hex">#faf6ee</span></div></div>
       <div class="swatch"><div class="color" style="background:#f0e6d2"></div><div class="meta"><span class="name">bg-secondary</span><span class="hex">#f0e6d2</span></div></div>
@@ -106,29 +84,31 @@
       <div class="swatch"><div class="color" style="background:#2a2218"></div><div class="meta"><span class="name">bg-inverse</span><span class="hex">#2a2218</span></div></div>
       <div class="swatch"><div class="color" style="background:#2a2218"></div><div class="meta"><span class="name">text-primary</span><span class="hex">#2a2218</span></div></div>
       <div class="swatch"><div class="color" style="background:#6b5d49"></div><div class="meta"><span class="name">text-secondary</span><span class="hex">#6b5d49</span></div></div>
-      <div class="swatch"><div class="color" style="background:#b8651a"></div><div class="meta"><span class="name">accent</span><span class="hex">#b8651a</span></div></div>
+      <div class="swatch"><div class="color" style="background:#b8651a"></div><div class="meta"><span class="name">accent (light)</span><span class="hex">#b8651a</span></div></div>
       <div class="swatch"><div class="color" style="background:#ffb454"></div><div class="meta"><span class="name">accent (dark)</span><span class="hex">#ffb454</span></div></div>
       <div class="swatch"><div class="color" style="background:#4a7c59"></div><div class="meta"><span class="name">success</span><span class="hex">#4a7c59</span></div></div>
       <div class="swatch"><div class="color" style="background:#c8772e"></div><div class="meta"><span class="name">warning</span><span class="hex">#c8772e</span></div></div>
       <div class="swatch"><div class="color" style="background:#a83232"></div><div class="meta"><span class="name">danger</span><span class="hex">#a83232</span></div></div>
+      <div class="swatch"><div class="color" style="background:#355c7a"></div><div class="meta"><span class="name">info</span><span class="hex">#355c7a</span></div></div>
       <div class="swatch"><div class="color" style="background:#0e0d0b"></div><div class="meta"><span class="name">bg-primary (dark)</span><span class="hex">#0e0d0b</span></div></div>
+      <div class="swatch"><div class="color" style="background:#1a1714"></div><div class="meta"><span class="name">bg-secondary (dark)</span><span class="hex">#1a1714</span></div></div>
     </div>
-    <p class="demo-label">mini composition · light / dark</p>
+    <div class="demo-label">mini composition · light / dark</div>
     <div class="demo">
-      <div class="pane light" style="background:#faf6ee; color:#2a2218;">
+      <div class="pane light">
         <p><strong>Session</strong> · pi@laptop</p>
         <div class="row">
           <span class="statebadge" style="background:#4a7c59; color:#f0e6d2">live · idle</span>
-          <span class="statebadge" style="background:#e3d6ba; color:#6b5d49">stale · working</span>
+          <span class="statebadge" style="background:#e3d6ba; color:#6b5d49; border:1px solid #c8772e">stale · working</span>
         </div>
         <button style="background:#b8651a; color:#f0e6d2">Instruct</button>
         <div class="codeblock" style="background:#f0e6d2; color:#2a2218">$ patchbay session list</div>
       </div>
-      <div class="pane dark" style="background:#0e0d0b; color:#f0e6d2;">
+      <div class="pane dark">
         <p><strong>Session</strong> · pi@laptop</p>
         <div class="row">
-          <span class="statebadge" style="background:#4a7c59; color:#f0e6d2">live · idle</span>
-          <span class="statebadge" style="background:#3a3429; color:#ffb454">stale · working</span>
+          <span class="statebadge" style="background:#5b9a6e; color:#0e0d0b">live · idle</span>
+          <span class="statebadge" style="background:#3a3429; color:#ffb454; border:1px solid #e8954a">stale · working</span>
         </div>
         <button style="background:#ffb454; color:#2a2218">Instruct</button>
         <div class="codeblock" style="background:#1a1714; color:#ffb454">$ patchbay session list</div>
@@ -145,114 +125,6 @@
       text-secondary on bg-primary: <span class="pass">8.40:1 AA pass</span><br>
       text-inverse on accent: <span class="pass">8.88:1 AA pass</span><br>
       accent on bg-primary: <span class="pass">11.02:1 AA pass</span>
-    </div>
-  </section>
-
-  <!-- ============ OPTION 2 ============ -->
-  <section class="option" id="option-2">
-    <h2>Option 2 — Soviet cybernetics <span class="badge">system-follow · institutional</span></h2>
-    <p class="rationale">Vermilion red + cream + industrial gray, constructivist geometric type. The aesthetic of Mir control rooms and OGAS — Cold-War serious-machinery with institutional gravity. Less warmth than Nostromo, more institutional weight. Distinctive without being decorative; the red is earned signal, not garnish.</p>
-    <p class="worldline">The control plane for machinery that matters. Red is reserved for terminal/failure and the single accent; it is not scattered across the chrome.</p>
-    <div class="swatches">
-      <div class="swatch"><div class="color" style="background:#f4f1ea"></div><div class="meta"><span class="name">bg-primary</span><span class="hex">#f4f1ea</span></div></div>
-      <div class="swatch"><div class="color" style="background:#ebe5da"></div><div class="meta"><span class="name">bg-secondary</span><span class="hex">#ebe5da</span></div></div>
-      <div class="swatch"><div class="color" style="background:#ddd6c8"></div><div class="meta"><span class="name">bg-tertiary</span><span class="hex">#ddd6c8</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1c1a17"></div><div class="meta"><span class="name">bg-inverse</span><span class="hex">#1c1a17</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1c1a17"></div><div class="meta"><span class="name">text-primary</span><span class="hex">#1c1a17</span></div></div>
-      <div class="swatch"><div class="color" style="background:#5a544a"></div><div class="meta"><span class="name">text-secondary</span><span class="hex">#5a544a</span></div></div>
-      <div class="swatch"><div class="color" style="background:#c8341e"></div><div class="meta"><span class="name">accent</span><span class="hex">#c8341e</span></div></div>
-      <div class="swatch"><div class="color" style="background:#e8472b"></div><div class="meta"><span class="name">accent (dark)</span><span class="hex">#e8472b</span></div></div>
-      <div class="swatch"><div class="color" style="background:#2f6b3f"></div><div class="meta"><span class="name">success</span><span class="hex">#2f6b3f</span></div></div>
-      <div class="swatch"><div class="color" style="background:#c8911e"></div><div class="meta"><span class="name">warning</span><span class="hex">#c8911e</span></div></div>
-      <div class="swatch"><div class="color" style="background:#9a2a1a"></div><div class="meta"><span class="name">danger</span><span class="hex">#9a2a1a</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1a1714"></div><div class="meta"><span class="name">bg-primary (dark)</span><span class="hex">#1a1714</span></div></div>
-    </div>
-    <p class="demo-label">mini composition · light / dark</p>
-    <div class="demo">
-      <div class="pane light" style="background:#f4f1ea; color:#1c1a17;">
-        <p><strong>Session</strong> · pi@laptop</p>
-        <div class="row">
-          <span class="statebadge" style="background:#2f6b3f; color:#f4f1ea">live · idle</span>
-          <span class="statebadge" style="background:#ddd6c8; color:#5a544a">stale · working</span>
-        </div>
-        <button style="background:#c8341e; color:#f4f1ea">Instruct</button>
-        <div class="codeblock" style="background:#ebe5da; color:#1c1a17">$ patchbay session list</div>
-      </div>
-      <div class="pane dark" style="background:#1a1714; color:#ede6d8;">
-        <p><strong>Session</strong> · pi@laptop</p>
-        <div class="row">
-          <span class="statebadge" style="background:#2f6b3f; color:#ede6d8">live · idle</span>
-          <span class="statebadge" style="background:#3a342c; color:#e8472b">stale · working</span>
-        </div>
-        <button style="background:#e8472b; color:#1c1a17">Instruct</button>
-        <div class="codeblock" style="background:#26211d; color:#e8472b">$ patchbay session list</div>
-      </div>
-    </div>
-    <div class="contrast">
-      <span class="mode-label">LIGHT MODE</span>
-      text-primary on bg-primary: <span class="pass">15.39:1 AA pass</span><br>
-      text-secondary on bg-primary: <span class="pass">6.64:1 AA pass</span><br>
-      text-inverse on accent: <span class="pass">4.69:1 AA pass</span><br>
-      accent on bg-primary: <span class="pass">4.69:1 AA pass</span>
-      <span class="mode-label">DARK MODE</span>
-      text-primary on bg-primary: <span class="pass">14.37:1 AA pass</span><br>
-      text-secondary on bg-primary: <span class="pass">8.16:1 AA pass</span><br>
-      text-inverse on accent: <span class="large">4.44:1 AA large-only</span><br>
-      accent on bg-primary: <span class="pass">4.56:1 AA pass</span>
-    </div>
-  </section>
-
-  <!-- ============ OPTION 3 ============ -->
-  <section class="option" id="option-3">
-    <h2>Option 3 — Swiss/Editorial hybrid <span class="badge">light-first · disciplined</span></h2>
-    <p class="rationale">Strict grid, rigorous typographic hierarchy, one accent, generous whitespace. The operator console as a well-set document — status-forward through type weight and position, not color. Light-first; the best pole for mobile markdown readability by default. Could carry a retrofuturist accent (amber state labels on the Swiss grid) if you want to blend.</p>
-    <p class="worldline">Calm instrument, not glowing console. Trust that the operator can read state without color screaming — the typography does the work.</p>
-    <div class="swatches">
-      <div class="swatch"><div class="color" style="background:#ffffff"></div><div class="meta"><span class="name">bg-primary</span><span class="hex">#ffffff</span></div></div>
-      <div class="swatch"><div class="color" style="background:#f7f7f6"></div><div class="meta"><span class="name">bg-secondary</span><span class="hex">#f7f7f6</span></div></div>
-      <div class="swatch"><div class="color" style="background:#eeece9"></div><div class="meta"><span class="name">bg-tertiary</span><span class="hex">#eeece9</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1a1a1a"></div><div class="meta"><span class="name">bg-inverse</span><span class="hex">#1a1a1a</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1a1a1a"></div><div class="meta"><span class="name">text-primary</span><span class="hex">#1a1a1a</span></div></div>
-      <div class="swatch"><div class="color" style="background:#595959"></div><div class="meta"><span class="name">text-secondary</span><span class="hex">#595959</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1e40af"></div><div class="meta"><span class="name">accent</span><span class="hex">#1e40af</span></div></div>
-      <div class="swatch"><div class="color" style="background:#7ba8f5"></div><div class="meta"><span class="name">accent (dark)</span><span class="hex">#7ba8f5</span></div></div>
-      <div class="swatch"><div class="color" style="background:#15803d"></div><div class="meta"><span class="name">success</span><span class="hex">#15803d</span></div></div>
-      <div class="swatch"><div class="color" style="background:#b45309"></div><div class="meta"><span class="name">warning</span><span class="hex">#b45309</span></div></div>
-      <div class="swatch"><div class="color" style="background:#b91c1c"></div><div class="meta"><span class="name">danger</span><span class="hex">#b91c1c</span></div></div>
-      <div class="swatch"><div class="color" style="background:#1a1a1a"></div><div class="meta"><span class="name">bg-primary (dark)</span><span class="hex">#1a1a1a</span></div></div>
-    </div>
-    <p class="demo-label">mini composition · light / dark</p>
-    <div class="demo">
-      <div class="pane light" style="background:#ffffff; color:#1a1a1a;">
-        <p><strong>Session</strong> · pi@laptop</p>
-        <div class="row">
-          <span class="statebadge" style="background:#15803d; color:#ffffff">live · idle</span>
-          <span class="statebadge" style="background:#eeece9; color:#595959">stale · working</span>
-        </div>
-        <button style="background:#1e40af; color:#ffffff">Instruct</button>
-        <div class="codeblock" style="background:#f7f7f6; color:#1a1a1a">$ patchbay session list</div>
-      </div>
-      <div class="pane dark" style="background:#1a1a1a; color:#f0f0ee;">
-        <p><strong>Session</strong> · pi@laptop</p>
-        <div class="row">
-          <span class="statebadge" style="background:#15803d; color:#ffffff">live · idle</span>
-          <span class="statebadge" style="background:#2a2a2a; color:#7ba8f5">stale · working</span>
-        </div>
-        <button style="background:#7ba8f5; color:#1a1a1a">Instruct</button>
-        <div class="codeblock" style="background:#262626; color:#7ba8f5">$ patchbay session list</div>
-      </div>
-    </div>
-    <div class="contrast">
-      <span class="mode-label">LIGHT MODE</span>
-      text-primary on bg-primary: <span class="pass">17.40:1 AA pass</span><br>
-      text-secondary on bg-primary: <span class="pass">7.00:1 AA pass</span><br>
-      text-inverse on accent: <span class="pass">8.72:1 AA pass</span><br>
-      accent on bg-primary: <span class="pass">8.72:1 AA pass</span>
-      <span class="mode-label">DARK MODE</span>
-      text-primary on bg-primary: <span class="pass">15.25:1 AA pass</span><br>
-      text-secondary on bg-primary: <span class="pass">8.76:1 AA pass</span><br>
-      text-inverse on accent: <span class="pass">7.26:1 AA pass</span><br>
-      accent on bg-primary: <span class="pass">7.26:1 AA pass</span>
     </div>
   </section>
 </body>
