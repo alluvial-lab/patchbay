@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Typography 1 across palettes — Patchbay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+      --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, ui-sans-serif, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: var(--font-sans);
+      background: #0a0a0a; color: #ddd; font-size: 15px; line-height: 1.5;
+    }
+    nav.toc {
+      position: sticky; top: 0; z-index: 50;
+      padding: 14px 24px; background: #0a0a0a; color: #eee;
+      display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+      border-bottom: 1px solid #333;
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    nav.toc strong {
+      font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    nav.toc a { color: #7ba8f5; text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    .intro {
+      max-width: 900px; margin: 0 auto; padding: 32px 24px 8px;
+      font-family: var(--font-sans); color: #bbb;
+    }
+    .intro h1 {
+      font-family: var(--font-mono); font-size: 22px; font-weight: 600;
+      color: #f0f0f0; margin: 0 0 8px; letter-spacing: 0.01em;
+    }
+    .intro p { margin: 0 0 6px; font-size: 14px; max-width: 70ch; }
+    .intro .locked { color: #4ade80; font-family: var(--font-mono); font-size: 13px; }
+
+    .variant {
+      max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px;
+    }
+    .variant-head {
+      display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .variant-head h2 {
+      font-family: var(--font-mono); font-size: 18px; font-weight: 600;
+      margin: 0; letter-spacing: 0.01em;
+    }
+    .variant-head .desc { font-family: var(--font-sans); font-size: 13px; color: #888; }
+    .variant-head .contrast-note {
+      font-family: var(--font-mono); font-size: 11px; color: #888;
+      margin-left: auto;
+    }
+
+    /* the cockpit fragment — same markup, themed via CSS vars on .cockpit */
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }
+
+    .cockpit {
+      border-radius: 10px; overflow: hidden; border: 1px solid var(--c-border);
+      font-family: var(--font-sans);
+      background: var(--c-bg-primary); color: var(--c-text-primary);
+      display: flex; flex-direction: column; min-height: 420px;
+    }
+    .cockpit .topbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--c-bg-secondary);
+      border-bottom: 1px solid var(--c-border);
+    }
+    .cockpit .topbar .brand {
+      font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+      color: var(--c-text-primary); letter-spacing: 0.04em;
+    }
+    .cockpit .topbar .attention-dot {
+      width: 9px; height: 9px; border-radius: 50%; background: var(--c-accent);
+      margin-left: auto; box-shadow: 0 0 6px var(--c-accent);
+    }
+    .cockpit .topbar .attention-dot .count {
+      display: inline-block; font-family: var(--font-mono); font-size: 10px;
+      color: var(--c-text-inverse); margin-left: 4px; vertical-align: top;
+    }
+    .cockpit .topbar .mode-label {
+      font-family: var(--font-mono); font-size: 11px; color: var(--c-text-secondary);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    .cockpit .body { display: flex; flex: 1; min-height: 0; }
+    .cockpit .sidebar {
+      width: 200px; flex-shrink: 0; background: var(--c-bg-secondary);
+      border-right: 1px solid var(--c-border); padding: 8px 0;
+    }
+    .cockpit .sidebar .session-row {
+      padding: 9px 12px; border-bottom: 1px solid var(--c-border);
+      cursor: pointer;
+    }
+    .cockpit .sidebar .session-row.active {
+      background: var(--c-accent-muted); border-left: 3px solid var(--c-accent);
+      padding-left: 9px;
+    }
+    .cockpit .sidebar .session-row .s-label {
+      font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+      color: var(--c-text-primary); display: block;
+    }
+    .cockpit .sidebar .session-row .s-context {
+      font-family: var(--font-mono); font-size: 10px; color: var(--c-text-secondary);
+      display: block; margin-top: 1px;
+    }
+    .cockpit .sidebar .session-row .badges { display: flex; gap: 4px; margin-top: 4px; }
+
+    .cockpit .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .cockpit .main .session-head {
+      padding: 10px 14px; border-bottom: 1px solid var(--c-border);
+      background: var(--c-bg-secondary);
+    }
+    .cockpit .main .session-head .identity {
+      font-family: var(--font-mono); font-size: 11px; color: var(--c-text-secondary);
+      margin-bottom: 3px;
+    }
+    .cockpit .main .session-head .title {
+      font-family: var(--font-sans); font-size: 15px; font-weight: 600;
+    }
+    .cockpit .main .timeline {
+      flex: 1; padding: 12px 14px; overflow-y: auto; min-height: 0;
+    }
+    .cockpit .main .msg {
+      margin-bottom: 14px; font-family: var(--font-sans); font-size: 13.5px; line-height: 1.55;
+    }
+    .cockpit .main .msg .who {
+      font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+      color: var(--c-text-secondary); margin-bottom: 3px; display: block;
+    }
+    .cockpit .main .msg p { margin: 0 0 8px; }
+    .cockpit .main .msg code {
+      font-family: var(--font-mono); font-size: 0.86em;
+      background: var(--c-bg-tertiary); padding: 1px 5px; border-radius: 3px;
+    }
+    .cockpit .main .msg pre {
+      font-family: var(--font-mono); font-size: 12px;
+      background: var(--c-bg-tertiary); padding: 8px 10px; border-radius: 5px;
+      overflow-x: auto; margin: 8px 0;
+    }
+    .cockpit .main .msg ul { margin: 4px 0 8px; padding-left: 18px; }
+    .cockpit .main .msg li { margin: 2px 0; }
+
+    .cockpit .main .delivery-line {
+      font-family: var(--font-mono); font-size: 11px;
+      padding: 5px 10px; background: var(--c-bg-tertiary);
+      border-radius: 4px; margin: 6px 0; display: flex; gap: 8px; align-items: center;
+    }
+    .cockpit .main .composer {
+      padding: 10px 14px; border-top: 1px solid var(--c-border);
+      background: var(--c-bg-secondary); display: flex; gap: 8px; align-items: center;
+    }
+    .cockpit .main .composer input {
+      flex: 1; font-family: var(--font-sans); font-size: 13px;
+      background: var(--c-bg-tertiary); color: var(--c-text-primary);
+      border: 1px solid var(--c-border); border-radius: 6px; padding: 8px 10px;
+      outline: none;
+    }
+    .cockpit .main .composer input:focus { border-color: var(--c-accent); }
+    .cockpit .main .composer button {
+      font-family: var(--font-sans); font-weight: 600; font-size: 13px;
+      background: var(--c-accent); color: var(--c-text-inverse);
+      border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+    }
+    .cockpit .main .composer .secondary {
+      background: transparent; color: var(--c-text-secondary);
+      border: 1px solid var(--c-border);
+    }
+
+    .badge {
+      font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+      padding: 2px 6px; border-radius: 3px; text-transform: uppercase;
+      letter-spacing: 0.05em; white-space: nowrap;
+    }
+    .b-live { background: var(--c-success); color: var(--c-text-inverse); }
+    .b-stale { background: var(--c-bg-tertiary); color: var(--c-warning); border: 1px solid var(--c-warning); }
+    .b-delivered { background: var(--c-info); color: var(--c-text-inverse); }
+    .b-running { background: var(--c-accent); color: var(--c-text-inverse); }
+    .b-attention { background: var(--c-warning); color: var(--c-text-inverse); }
+
+    .pane-label {
+      font-family: var(--font-mono); font-size: 10px; color: #666;
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+  <nav class="toc">
+    <strong>PATCHBAY · typography 1 × palette variants</strong>
+    <a href="#v1">1 Nostromo</a>
+    <a href="#v2">2 Soviet</a>
+    <a href="#v3">3 Swiss</a>
+    <a href="#v4">A Swiss+amber</a>
+    <a href="#v5">B Nostromo+vermilion</a>
+    <a href="#v6">C Swiss+vermilion</a>
+  </nav>
+
+  <div class="intro">
+    <h1>Typography 1 (IBM Plex Mono / Sans) across palettes</h1>
+    <p>Same cockpit fragment, same markup, same type — only the color tokens change. Each variant shows light + dark side by side. Typography 1 is <span class="locked">LOCKED</span> as direction; this page exists to pick the palette.</p>
+    <p>State badges shown: live·idle, stale·working, delivered, running, and the attention dot in the topbar (amber/warm variants) or accent-colored (others).</p>
+  </div>
+
+  <!-- ============ V1: Nostromo ============ -->
+  <div class="variant" id="v1">
+    <div class="variant-head">
+      <h2>Variant 1 — Nostromo/LCARS</h2>
+      <span class="desc">amber phosphor · warm instrument-panel · dark-first</span>
+      <span class="contrast-note">contrast: all pass (dark) / accent large-only (light)</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#faf6ee;--c-bg-secondary:#f0e6d2;--c-bg-tertiary:#e3d6ba;--c-text-primary:#2a2218;--c-text-secondary:#6b5d49;--c-text-inverse:#f0e6d2;--c-border:#d4c4a0;--c-accent:#b8651a;--c-accent-muted:#f0e6d2;--c-success:#4a7c59;--c-warning:#c8772e;--c-danger:#a83232;--c-info:#4a7c59;">
+          <!-- COCKPIT FRAGMENT (reused markup) -->
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#0e0d0b;--c-bg-secondary:#1a1714;--c-bg-tertiary:#26221d;--c-text-primary:#f0e6d2;--c-text-secondary:#b8a98a;--c-text-inverse:#2a2218;--c-border:#3a3429;--c-accent:#ffb454;--c-accent-muted:#3a3429;--c-success:#4a7c59;--c-warning:#c8772e;--c-danger:#a83232;--c-info:#5b9a6e;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ V2: Soviet ============ -->
+  <div class="variant" id="v2">
+    <div class="variant-head">
+      <h2>Variant 2 — Soviet cybernetics</h2>
+      <span class="desc">vermilion + cream + industrial gray · institutional · system-follow</span>
+      <span class="contrast-note">contrast: all pass</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#f4f1ea;--c-bg-secondary:#ebe5da;--c-bg-tertiary:#ddd6c8;--c-text-primary:#1c1a17;--c-text-secondary:#5a544a;--c-text-inverse:#f4f1ea;--c-border:#c8bfae;--c-accent:#c8341e;--c-accent-muted:#ebe5da;--c-success:#2f6b3f;--c-warning:#c8911e;--c-danger:#9a2a1a;--c-info:#2f6b3f;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#1a1714;--c-bg-secondary:#26211d;--c-bg-tertiary:#322c27;--c-text-primary:#ede6d8;--c-text-secondary:#b8aea0;--c-text-inverse:#1c1a17;--c-border:#443d36;--c-accent:#e8472b;--c-accent-muted:#322c27;--c-success:#3f8a52;--c-warning:#c8911e;--c-danger:#9a2a1a;--c-info:#3f8a52;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ V3: Swiss ============ -->
+  <div class="variant" id="v3">
+    <div class="variant-head">
+      <h2>Variant 3 — Swiss/Editorial</h2>
+      <span class="desc">white/near-black + blue accent · disciplined · light-first</span>
+      <span class="contrast-note">contrast: all pass (cleanest)</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#ffffff;--c-bg-secondary:#f7f7f6;--c-bg-tertiary:#eeece9;--c-text-primary:#1a1a1a;--c-text-secondary:#595959;--c-text-inverse:#ffffff;--c-border:#e2e0dd;--c-accent:#1e40af;--c-accent-muted:#e8edf7;--c-success:#15803d;--c-warning:#b45309;--c-danger:#b91c1c;--c-info:#1e40af;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#1a1a1a;--c-bg-secondary:#242424;--c-bg-tertiary:#2e2e2e;--c-text-primary:#f0f0ee;--c-text-secondary:#b8b8b6;--c-text-inverse:#1a1a1a;--c-border:#3a3a3a;--c-accent:#7ba8f5;--c-accent-muted:#2a3040;--c-success:#4ade80;--c-warning:#fbbf24;--c-danger:#f87171;--c-info:#7ba8f5;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ V4: HYBRID A: Swiss surfaces + amber accent ============ -->
+  <div class="variant" id="v4">
+    <div class="variant-head">
+      <h2>Variant A — Swiss surfaces + Nostromo amber accent</h2>
+      <span class="desc">clean white/near-black + warm amber accent · disciplined + warmth</span>
+      <span class="contrast-note">contrast: all pass (light accent large-only)</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#ffffff;--c-bg-secondary:#f7f7f6;--c-bg-tertiary:#eeece9;--c-text-primary:#1a1a1a;--c-text-secondary:#595959;--c-text-inverse:#ffffff;--c-border:#e2e0dd;--c-accent:#b8651a;--c-accent-muted:#fbf2e6;--c-success:#15803d;--c-warning:#b45309;--c-danger:#b91c1c;--c-info:#1e40af;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#121212;--c-bg-secondary:#1d1d1d;--c-bg-tertiary:#282828;--c-text-primary:#f0f0ee;--c-text-secondary:#b8b8b6;--c-text-inverse:#1a1a1a;--c-border:#333333;--c-accent:#ffb454;--c-accent-muted:#2a2418;--c-success:#4ade80;--c-warning:#fbbf24;--c-danger:#f87171;--c-info:#7ba8f5;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ V5: HYBRID B: Nostromo warm + vermilion accent ============ -->
+  <div class="variant" id="v5">
+    <div class="variant-head">
+      <h2>Variant B — Nostromo warm surfaces + Soviet vermilion accent</h2>
+      <span class="desc">warm cream/near-black + vermilion accent · warm + institutional gravity</span>
+      <span class="contrast-note">contrast: all pass (dark inverse large-only)</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#faf6ee;--c-bg-secondary:#f0e6d2;--c-bg-tertiary:#e3d6ba;--c-text-primary:#1c1a17;--c-text-secondary:#6b5d49;--c-text-inverse:#faf6ee;--c-border:#d4c4a0;--c-accent:#c8341e;--c-accent-muted:#f5e6e0;--c-success:#2f6b3f;--c-warning:#c8772e;--c-danger:#9a2a1a;--c-info:#1e40af;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#0e0d0b;--c-bg-secondary:#1a1714;--c-bg-tertiary:#26221d;--c-text-primary:#f0e6d2;--c-text-secondary:#b8a98a;--c-text-inverse:#1c1a17;--c-border:#3a3429;--c-accent:#e8472b;--c-accent-muted:#2a1a14;--c-success:#3f8a52;--c-warning:#c8772e;--c-danger:#9a2a1a;--c-info:#7ba8f5;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ V6: HYBRID C: Swiss surfaces + vermilion accent ============ -->
+  <div class="variant" id="v6">
+    <div class="variant-head">
+      <h2>Variant C — Swiss surfaces + Soviet vermilion accent</h2>
+      <span class="desc">clean white/near-black + vermilion accent · disciplined + institutional signal</span>
+      <span class="contrast-note">contrast: all pass (dark accent large-only)</span>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="pane-label">light</div>
+        <div class="cockpit" style="--c-bg-primary:#ffffff;--c-bg-secondary:#f7f7f6;--c-bg-tertiary:#eeece9;--c-text-primary:#1a1a1a;--c-text-secondary:#595959;--c-text-inverse:#ffffff;--c-border:#e2e0dd;--c-accent:#c8341e;--c-accent-muted:#f7e8e4;--c-success:#15803d;--c-warning:#b45309;--c-danger:#b91c1c;--c-info:#1e40af;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="pane-label">dark</div>
+        <div class="cockpit" style="--c-bg-primary:#1a1a1a;--c-bg-secondary:#242424;--c-bg-tertiary:#2e2e2e;--c-text-primary:#f0f0ee;--c-text-secondary:#b8b8b6;--c-text-inverse:#1a1a1a;--c-border:#3a3a3a;--c-accent:#e8472b;--c-accent-muted:#2a1a14;--c-success:#4ade80;--c-warning:#fbbf24;--c-danger:#f87171;--c-info:#7ba8f5;">
+          <div class="topbar"><span class="brand">PATCHBAY</span><span class="mode-label">monitoring</span><span class="attention-dot"></span></div>
+          <div class="body">
+            <div class="sidebar">
+              <div class="session-row active"><span class="s-label">pi@laptop</span><span class="s-context">patchbay-core</span><div class="badges"><span class="badge b-live">live idle</span></div></div>
+              <div class="session-row"><span class="s-label">codex@vm</span><span class="s-context">web-server</span><div class="badges"><span class="badge b-stale">stale work</span></div></div>
+              <div class="session-row"><span class="s-label">pi@desktop</span><span class="s-context">pi-adapter</span><div class="badges"><span class="badge b-live">live</span></div></div>
+            </div>
+            <div class="main">
+              <div class="session-head"><div class="identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div><div class="title">patchbay-core</div></div>
+              <div class="timeline">
+                <div class="msg"><span class="who">AGENT · observation</span><p>Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p><pre>let result = ingest_session_report(
+    &amp;mut storage, &amp;mut registry, report).await?;</pre><ul><li><code>validate_report</code> rejects empty identity</li><li>Multi-delta reports append all changes</li></ul></div>
+                <div class="delivery-line"><span class="badge b-delivered">delivered</span> instruct · LSN 1042</div>
+                <div class="delivery-line"><span class="badge b-running">running</span> instruct · LSN 1043</div>
+              </div>
+              <div class="composer"><input value="Run the session tests"><button>Instruct</button><button class="secondary">Cancel</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
