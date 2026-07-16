@@ -62,6 +62,15 @@ The state-binding contract each primitive must encode (the floor, made structura
 - **Failure vocabulary stays distinct.** `FailureBanner` maps timeout / denial (`authorization_denied`) / unsupported (`unsupported_command`) / revoked / expiration / cancellation / supersession / execution failure to distinct presentations. No generic "failed".
 - **Terminal-race explanation.** `CommandTimeline` explains races ("Completed before cancellation arrived", "Cancelled before completion", "Expired before adapter completion") without adding protocol states — UI labels, not registry members.
 
+## Design inputs (palette Phase 2, 2026-07-16)
+
+Structural insights surfaced during aesthetic exploration that constrain the design:
+
+- **Two density modes, not one.** The cockpit-level view (monitoring all agents from the session list/sidebar) is dense — trading-terminal-ish, status-forward at a glance. The session-detail view (working one agent: chat, filesystem, IDE-like) is focused and readable. A single palette serves both; the *components* differ (dense chrome for the list, readable space for the detail). This mirrors the Antigravity bifurcation (Manager Surface vs Editor View) and the Codex/Cursor sidebar-then-drill-in pattern. Captured as a first-class requirement: the component set must cover both densities.
+- **Mobile markdown readability is a differentiator.** The operator reports struggling to preview/read `.md` files on mobile across competitors (Codex, Claude, Cursor). The session-detail message timeline — where agent Observations render — must render markdown excellently on a narrow viewport: headings, code blocks with sane horizontal scroll (not layout-breaking), lists, tables, blockquotes, inline code. This makes the message-rendering primitive load-bearing and imposes a typography constraint (see below). Cross-references `feature-v0-web-cockpit` session-detail/message-timeline behavior.
+- **Typography constraint from markdown.** Because focused-mode message bodies must be readable on mobile, a pure mono-everywhere treatment (terminal romance) would hurt long-form reading. The likely resolution is a *hybrid*: a retrofuturist mono/display face for chrome and state labels (session rows, CommandState, connectivity×activity badges) and a readable proportional face for message bodies + markdown, with mono reserved for code blocks. This is an open design decision for the palette pass.
+- **Dark/Light toggle, system-follow default.** Explicit `[data-theme="dark"]` / `[data-theme="light"]` toggling with `prefers-color-scheme` as the default. Both modes built together (retrofitting dark later is the expensive mistake the palette skill warns against).
+
 ## Mockups
 
 (to be populated by the `palette` + `components` pipeline)
