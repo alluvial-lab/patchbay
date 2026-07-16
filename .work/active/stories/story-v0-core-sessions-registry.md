@@ -1,14 +1,14 @@
 ---
 id: story-v0-core-sessions-registry
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-16
 ---
 
 # Story: Session delta events and the SessionRegistry projection

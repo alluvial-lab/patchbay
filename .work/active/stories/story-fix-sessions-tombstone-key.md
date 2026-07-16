@@ -1,14 +1,14 @@
 ---
 id: story-fix-sessions-tombstone-key
 kind: story
-stage: review
+stage: done
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-registry]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-16
 ---
 
 # Story: Fix session tombstone key to include full identity

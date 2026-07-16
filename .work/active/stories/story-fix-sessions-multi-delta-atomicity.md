@@ -1,14 +1,14 @@
 ---
 id: story-fix-sessions-multi-delta-atomicity
 kind: story
-stage: review
+stage: done
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-fix-sessions-ingest-correctness]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-16
 ---
 
 # Story: Fix sessions multi-delta append atomicity (B5, regression from B3 fix)

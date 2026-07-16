@@ -1,14 +1,14 @@
 ---
 id: story-v0-core-sessions-proptests
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-state-machine, story-v0-core-sessions-registry, story-v0-core-sessions-ingest, story-v0-core-sessions-replay-resolver]
 release_binding: null
 gate_origin: null
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-16
 ---
 
 # Story: Property tests for session invariants
