@@ -17,6 +17,7 @@ export interface PiSessionOptions {
   runtimeSessionId?: string;
   name?: string;
   model?: string;
+  generation?: number;
   sessionOptions?: Omit<CreateAgentSessionOptions, "cwd" | "model">;
 }
 
@@ -50,7 +51,7 @@ export class PiSession {
   readonly #runtimeSessionId: string;
   readonly #transcriptLog = new TranscriptEventLog();
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
-  #generation = 1;
+  #generation: number;
   #turn = initialTurnSnapshot();
   #turnSequence = 0;
   #promptSequence = 0;
@@ -70,13 +71,21 @@ export class PiSession {
     }
     const { session } = await createAgentSession(createOptions);
     if (options.name) session.setSessionName(options.name);
-    return new PiSession(session, options.runtimeSessionId ?? options.name ?? session.sessionId);
+    return new PiSession(
+      session,
+      options.runtimeSessionId ?? options.name ?? session.sessionId,
+      options.generation ?? 1,
+    );
   }
 
-  private constructor(session: AgentSession, runtimeSessionId: string) {
+  private constructor(session: AgentSession, runtimeSessionId: string, generation: number) {
     if (!runtimeSessionId) throw new Error("runtimeSessionId must not be empty");
+    if (!Number.isSafeInteger(generation) || generation < 1) {
+      throw new Error("session generation must be a positive safe integer");
+    }
     this.#session = session;
     this.#runtimeSessionId = runtimeSessionId;
+    this.#generation = generation;
 
     // AgentSession 0.80 exposes the typed hook on its public Agent. This is the
     // same hook AgentSession installs for extensions, but Patchbay owns it

@@ -237,9 +237,7 @@ where
                     .await
                     .map_err(map_session_error)?;
                 *self.sessions.lock().await = rebuilt;
-                session_result_event_id(result).ok_or_else(|| {
-                    Status::already_exists("session report matches current authoritative state")
-                })?
+                session_result_event_id(result)
             }
             Some(observation_request::Observation::Event(observation)) => {
                 if observation.authority_domain_id.as_ref() != Some(&domain) {
@@ -268,15 +266,13 @@ where
                     | acceptance::IngestResult::Transitioned {
                         observation_event_id: event_id,
                         ..
-                    } => event_id,
+                    } => Some(event_id),
                 }
             }
             None => return Err(Status::invalid_argument("missing observation")),
         };
 
-        Ok(Response::new(ObservationResult {
-            event_id: Some(event_id),
-        }))
+        Ok(Response::new(ObservationResult { event_id }))
     }
 
     type ReceiveDeliveriesStream = DeliveryStream;
