@@ -9,11 +9,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .extern_path(".patchbay", "::patchbay_contracts::patchbay")
         .compile_protos(
-            &["../contracts/proto/patchbay/control.proto"],
+            &[
+                "../contracts/proto/patchbay/control.proto",
+                "../contracts/proto/patchbay/adapter_control.proto",
+            ],
             &["../contracts/proto"],
         )?;
 
     println!("cargo:rerun-if-changed=../contracts/proto/patchbay/control.proto");
+    println!("cargo:rerun-if-changed=../contracts/proto/patchbay/adapter_control.proto");
     println!("cargo:rerun-if-changed=../contracts/proto/patchbay");
     Ok(())
 }

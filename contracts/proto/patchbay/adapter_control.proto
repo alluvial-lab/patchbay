@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "patchbay/adapter.proto";
+import "patchbay/common.proto";
+import "patchbay/observations.proto";
+import "patchbay/operations.proto";
+import "patchbay/sessions.proto";
+
+// The adapter-facing service. Adapters are clients of the authoritative core
+// and authenticate with adapter-specific attachment evidence rather than the
+// control-surface principal secret.
+service AdapterControlService {
+  rpc Attach(AttachRequest) returns (AttachResult);
+  rpc IngestObservation(ObservationRequest) returns (ObservationResult);
+  rpc ReceiveDeliveries(ReceiveRequest) returns (stream Delivery);
+}
+
+message AttachRequest {
+  AdapterRegistration registration = 1;
+  bytes attachment_evidence = 2;
+}
+
+message AttachResult {
+  bool accepted = 1;
+  EventId attach_event_id = 2;
+  string failure_code = 3;
+}
+
+// Wire counterpart of patchbay_core::session::SessionReport.
+message SessionReport {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  SessionConnectivityState connectivity = 5;
+  SessionActivityState activity = 6;
+  string project = 7;
+  string cwd = 8;
+  string name = 9;
+  TypedCorrelation spawn_origin = 10;
+}
+
+message ObservationRequest {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof observation {
+    SessionReport session_report = 2;
+    Observation event = 3;
+  }
+}
+
+message ObservationResult {
+  EventId event_id = 1;
+}
+
+message ReceiveRequest {
+  AdapterId adapter_id = 1;
+  Lsn cursor = 2;
+}
+
+message Delivery {
+  Operation operation = 1;
+  EventId delivery_event_id = 2;
+}

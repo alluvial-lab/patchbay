@@ -1662,3 +1662,80 @@ pub struct LoadSnapshotResponse {
     #[prost(bytes = "vec", tag = "3")]
     pub snapshot_payload: ::prost::alloc::vec::Vec<u8>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AttachRequest {
+    #[prost(message, optional, tag = "1")]
+    pub registration: ::core::option::Option<AdapterRegistration>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub attachment_evidence: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AttachResult {
+    #[prost(bool, tag = "1")]
+    pub accepted: bool,
+    #[prost(message, optional, tag = "2")]
+    pub attach_event_id: ::core::option::Option<EventId>,
+    #[prost(string, tag = "3")]
+    pub failure_code: ::prost::alloc::string::String,
+}
+/// Wire counterpart of patchbay_core::session::SessionReport.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionReport {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
+    pub connectivity: i32,
+    #[prost(enumeration = "SessionActivityState", tag = "6")]
+    pub activity: i32,
+    #[prost(string, tag = "7")]
+    pub project: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag = "9")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "10")]
+    pub spawn_origin: ::core::option::Option<TypedCorrelation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ObservationRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(oneof = "observation_request::Observation", tags = "2, 3")]
+    pub observation: ::core::option::Option<observation_request::Observation>,
+}
+/// Nested message and enum types in `ObservationRequest`.
+pub mod observation_request {
+    #[allow(clippy::large_enum_variant)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Observation {
+        #[prost(message, tag = "2")]
+        SessionReport(super::SessionReport),
+        #[prost(message, tag = "3")]
+        Event(super::Observation),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ObservationResult {
+    #[prost(message, optional, tag = "1")]
+    pub event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReceiveRequest {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub cursor: ::core::option::Option<Lsn>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Delivery {
+    #[prost(message, optional, tag = "1")]
+    pub operation: ::core::option::Option<Operation>,
+    #[prost(message, optional, tag = "2")]
+    pub delivery_event_id: ::core::option::Option<EventId>,
+}

@@ -1,7 +1,7 @@
 ---
 id: story-v0-pi-adapter-core-surface
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: feature-v0-pi-adapter
 depends_on: []
@@ -62,13 +62,24 @@ Core-side impl:
 
 ## Acceptance criteria
 
-- [ ] `AdapterControlService` proto defined; Rust + TS bindings generated (`buf generate` + `cargo build -p patchbay-contracts` + `npm run build` in `contracts/ts`).
-- [ ] Core impl: `Attach` records the adapter + capability; `IngestObservation` calls `ingest_session_report`; `ReceiveDeliveries` streams accepted Operations for the adapter's sessions.
-- [ ] A test adapter (Rust or TS) can attach, ingest a session report, and receive a delivered Operation.
-- [ ] `cargo test -p patchbay-core-server` and `cargo test -p patchbay-core` stay green.
+- [x] `AdapterControlService` proto defined; Rust + TS bindings generated (`buf generate` + `cargo build -p patchbay-contracts` + `npm run build` in `contracts/ts`).
+- [x] Core impl: `Attach` records the adapter + capability; `IngestObservation` calls `ingest_session_report`; `ReceiveDeliveries` streams accepted Operations for the adapter's sessions.
+- [x] A test adapter (Rust or TS) can attach, ingest a session report, and receive a delivered Operation.
+- [x] `cargo test -p patchbay-core-server` and `cargo test -p patchbay-core` stay green.
 
 ## Notes
 
 - This is a NEW service, not a modification of `ControlService` (different principal, different auth posture — the adapter authenticates via attachment evidence, not the web-server shared secret).
 - **If the core needs an adapter-registration port**, that's a bounded `core/` addition. The feature brief says "do NOT edit core/" is NOT a constraint here (that was the web-server feature); this feature may touch `core/` for the registration port. Surface it as an implementation note if it grows beyond a small port.
 - Unit 2 (Pi RPC client) is independent and can run in parallel — different write set (`pi-adapter/` vs `server/`+`contracts/`).
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, high effort; selected by the caller for the protocol/security-sensitive cross-language surface.
+- Review weight: `standard` (caller).
+- Files changed: `contracts/proto/patchbay/adapter_control.proto`, generated Rust/TypeScript bindings and generation inputs, `core/src/adapter/mod.rs`, `core/src/lib.rs`, `server/src/adapter_service.rs`, its focused test module, and server composition/build files.
+- Tests added/removed: added a focused adapter-service test proving attach → session report ingest → targeted delivery; no tests removed.
+- Simplification: adapter registration reuses a redacted, schema-tagged durable Observation rather than adding a competing event writer or a new storage event family.
+- Discrepancies from design: added the bounded core adapter-registration port anticipated by the design; attachment evidence is verified on attach and on subsequent adapter RPC metadata and never persisted. `ReceiveDeliveries` uses the explicitly allowed v0.1.0 cursor-polling fallback: each server stream returns the currently durable tail and the client resumes immediately, avoiding a per-adapter in-memory queue. The observation oneof also accepts a generated `Observation` so Unit 3 can stream Pi events without a second RPC.
+- Verification: `cargo build -p patchbay-core-server`, `cargo test -p patchbay-core-server`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`, `cargo test -p patchbay-core`, and `contracts/ts npm run build` passed.
+- Adjacent issues parked: none.

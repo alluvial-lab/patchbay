@@ -19,9 +19,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "../proto/patchbay/authority.proto",
         "../proto/patchbay/adapter.proto",
         "../proto/patchbay/control.proto",
+        "../proto/patchbay/adapter_control.proto",
     ];
 
-    prost_build::Config::new()
+    let mut config = prost_build::Config::new();
+    config.enum_attribute(
+        ".patchbay.ObservationRequest.observation",
+        "#[allow(clippy::large_enum_variant)]",
+    );
+    config
         .out_dir(out_dir)
         .compile_protos(&protos, &["../proto"])?;
 
