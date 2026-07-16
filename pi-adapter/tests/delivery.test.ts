@@ -41,13 +41,39 @@ test("DeliveryTranslator maps instruct/cancel/session-new and rejects spawn", as
   );
 });
 
-test("SessionRegistry keys sessions by runtime identity and rejects collisions", () => {
+test("SessionRegistry owns complete runtime entries and observation wiring", async () => {
   const registry = new SessionRegistry();
-  const session = { runtimeSessionId: "runtime-1", dispose() {} } as unknown as PiSession;
-  registry.register("runtime-1", session);
-  assert.equal(registry.resolve("runtime-1"), session);
-  assert.throws(() => registry.register("runtime-1", session), /already registered/);
-  registry.dispose();
+  let transcriptListener: ((event: never) => void) | undefined;
+  let unsubscribed = false;
+  const session = {
+    runtimeSessionId: "runtime-1",
+    onTranscript(listener: (event: never) => void) {
+      transcriptListener = listener;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+    async dispose() {},
+  } as unknown as PiSession;
+  const config = {
+    runtimeSessionId: "runtime-1",
+    deploymentScope: "machine-a",
+    project: "patchbay",
+    cwd: "/work/patchbay",
+    name: "dynamic",
+  };
+  let observedEntryName = "";
+  registry.register(config, session, (entry) => {
+    observedEntryName = entry.name ?? "";
+  });
+  const entry = registry.resolve("runtime-1");
+  assert.equal(entry?.session, session);
+  assert.equal(entry?.deploymentScope, "machine-a");
+  transcriptListener?.({} as never);
+  assert.equal(observedEntryName, "dynamic");
+  assert.throws(() => registry.register(config, session, () => undefined), /already registered/);
+  await registry.dispose();
+  assert.equal(unsubscribed, true);
 });
 
 function operation(kind: OperationKind, payload = ""): Operation {

@@ -1,11 +1,21 @@
 import {
   createAgentSession,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  getAgentDir,
+  SessionManager,
   type AgentSession,
   type AgentSessionEvent,
+  type AgentSessionRuntime,
   type CreateAgentSessionOptions,
+  type CreateAgentSessionRuntimeFactory,
 } from "@earendil-works/pi-coding-agent";
 import { TranscriptEventLog } from "./transcript_event_log.js";
-import { deterministicTranscriptEventId, projectAgentEvent } from "./transcript_projection.js";
+import {
+  deterministicTranscriptEventId,
+  projectAgentEvent,
+  projectSessionEntries,
+} from "./transcript_projection.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 import { initialTurnSnapshot, reduceTurn, type TurnSnapshot } from "./turn_state.js";
 
@@ -31,6 +41,7 @@ export type ApprovalHandler = (request: ApprovalRequest) => Promise<boolean> | b
 
 export interface PiSessionState {
   sessionId: string;
+  piSessionId: string;
   generation: number;
   streaming: boolean;
   idle: boolean;
@@ -45,9 +56,16 @@ export interface PiModel {
   name: string;
 }
 
-/** Direct in-process host for one Pi AgentSession. */
+interface SessionBinding {
+  readonly session: AgentSession;
+  readonly generation: number;
+  active: boolean;
+  unsubscribe: (() => void) | undefined;
+}
+
+/** Direct in-process host for one replaceable Pi AgentSession runtime. */
 export class PiSession {
-  readonly #session: AgentSession;
+  readonly #runtime: AgentSessionRuntime;
   readonly #runtimeSessionId: string;
   readonly #transcriptLog = new TranscriptEventLog();
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
@@ -55,65 +73,87 @@ export class PiSession {
   #turn = initialTurnSnapshot();
   #turnSequence = 0;
   #promptSequence = 0;
-  #unsubscribe: (() => void) | undefined;
   #approvalHandler: ApprovalHandler = () => true;
+  #binding: SessionBinding | undefined;
+  #pendingGeneration: number | undefined;
+  #disposed = false;
 
   static async create(options: PiSessionOptions): Promise<PiSession> {
-    const createOptions: CreateAgentSessionOptions = {
-      ...options.sessionOptions,
-      cwd: options.cwd,
+    const fixed = options.sessionOptions ?? {};
+    const agentDir = fixed.agentDir ?? getAgentDir();
+    const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+      cwd,
+      agentDir: runtimeAgentDir,
+      sessionManager,
+      sessionStartEvent,
+    }) => {
+      const services = await createAgentSessionServices({
+        cwd,
+        agentDir: runtimeAgentDir,
+        ...(fixed.authStorage ? { authStorage: fixed.authStorage } : {}),
+        ...(fixed.settingsManager ? { settingsManager: fixed.settingsManager } : {}),
+        ...(fixed.modelRegistry ? { modelRegistry: fixed.modelRegistry } : {}),
+      });
+      const model = options.model ? findModel(services.modelRegistry, options.model) : undefined;
+      if (options.model && !model) throw new Error(`Pi model is unavailable: ${options.model}`);
+      const created = await createAgentSession({
+        ...fixed,
+        cwd,
+        agentDir: runtimeAgentDir,
+        authStorage: fixed.authStorage ?? services.authStorage,
+        settingsManager: fixed.settingsManager ?? services.settingsManager,
+        modelRegistry: fixed.modelRegistry ?? services.modelRegistry,
+        resourceLoader: fixed.resourceLoader ?? services.resourceLoader,
+        sessionManager,
+        ...(sessionStartEvent ? { sessionStartEvent } : {}),
+        ...(model ? { model } : {}),
+      });
+      if (options.name) created.session.setSessionName(options.name);
+      return {
+        ...created,
+        services: {
+          ...services,
+          settingsManager: created.session.settingsManager,
+          modelRegistry: created.session.modelRegistry,
+          resourceLoader: created.session.resourceLoader,
+        },
+        diagnostics: services.diagnostics,
+      };
     };
-    if (options.model) {
-      const registry = options.sessionOptions?.modelRegistry;
-      const model = registry ? findModel(registry, options.model) : undefined;
-      if (!model) throw new Error(`Pi model is unavailable: ${options.model}`);
-      createOptions.model = model;
-    }
-    const { session } = await createAgentSession(createOptions);
-    if (options.name) session.setSessionName(options.name);
+    const sessionManager = fixed.sessionManager ?? SessionManager.create(options.cwd);
+    const runtime = await createAgentSessionRuntime(createRuntime, {
+      cwd: options.cwd,
+      agentDir,
+      sessionManager,
+    });
     return new PiSession(
-      session,
-      options.runtimeSessionId ?? options.name ?? session.sessionId,
+      runtime,
+      options.runtimeSessionId ?? options.name ?? runtime.session.sessionId,
       options.generation ?? 1,
     );
   }
 
-  private constructor(session: AgentSession, runtimeSessionId: string, generation: number) {
+  private constructor(runtime: AgentSessionRuntime, runtimeSessionId: string, generation: number) {
     if (!runtimeSessionId) throw new Error("runtimeSessionId must not be empty");
     if (!Number.isSafeInteger(generation) || generation < 1) {
       throw new Error("session generation must be a positive safe integer");
     }
-    this.#session = session;
+    this.#runtime = runtime;
     this.#runtimeSessionId = runtimeSessionId;
     this.#generation = generation;
-
-    // AgentSession 0.80 exposes the typed hook on its public Agent. This is the
-    // same hook AgentSession installs for extensions, but Patchbay owns it
-    // directly because the adapter is the Pi host rather than an extension.
-    this.#session.agent.beforeToolCall = async ({ toolCall, args }) => {
-      const request: ApprovalRequest = {
-        toolCallId: toolCall.id,
-        tool: toolCall.name,
-        args,
-      };
-      this.#append({
-        kind: "tool_requested",
-        eventId: deterministicTranscriptEventId(
-          this.#transcriptSessionId(),
-          "tool_requested",
-          toolCall.id,
-        ),
-        sessionId: this.#transcriptSessionId(),
-        ts: Date.now(),
-        toolCallId: toolCall.id,
-        tool: toolCall.name,
-        args: asRecord(args),
-      });
-      const approved = await this.#approvalHandler(request);
-      return approved ? undefined : { block: true, reason: "Blocked by Patchbay approval policy" };
-    };
-
-    this.#unsubscribe = this.#session.subscribe((event) => this.#handleEvent(event));
+    this.#bind(runtime.session, generation);
+    runtime.setBeforeSessionInvalidate(() => this.#invalidateBinding());
+    runtime.setRebindSession(async (session) => {
+      const replacementGeneration = this.#pendingGeneration;
+      if (replacementGeneration === undefined) {
+        throw new Error("Pi runtime replaced a session without a pending generation bump");
+      }
+      this.#generation = replacementGeneration;
+      this.#turn = initialTurnSnapshot();
+      this.#turnSequence = 0;
+      this.#promptSequence = 0;
+      this.#bind(session, replacementGeneration);
+    });
   }
 
   get runtimeSessionId(): string {
@@ -134,68 +174,83 @@ export class PiSession {
   }
 
   transcriptEvents(): readonly TranscriptEvent[] {
-    return this.#transcriptLog.forSession(this.#transcriptSessionId());
+    return this.#transcriptLog.forSession(this.#transcriptSessionId(this.#generation));
+  }
+
+  /** Rebuild the partial transcript snapshot from Pi's current persisted entries. */
+  snapshotTranscript(): readonly TranscriptEvent[] {
+    const sessionId = this.#transcriptSessionId(this.#generation);
+    this.#transcriptLog.appendAll(
+      projectSessionEntries(this.#runtime.session.sessionManager.getEntries(), sessionId),
+    );
+    return this.#transcriptLog.forSession(sessionId);
   }
 
   prompt(text: string): Promise<void> {
+    const session = this.#runtime.session;
+    const generation = this.#generation;
     this.#promptSequence += 1;
     const messageId = `prompt-${this.#promptSequence}`;
     this.#append({
       kind: "user_confirmed",
       eventId: deterministicTranscriptEventId(
-        this.#transcriptSessionId(),
+        this.#transcriptSessionId(generation),
         "user_confirmed",
         messageId,
       ),
-      sessionId: this.#transcriptSessionId(),
+      sessionId: this.#transcriptSessionId(generation),
       ts: Date.now(),
       messageId,
       text,
     });
-    return this.#session.sendUserMessage(text);
+    return session.sendUserMessage(text);
   }
 
   cancel(): Promise<void> {
-    return this.#session.abort();
+    return this.#runtime.session.abort();
   }
 
   getState(): PiSessionState {
-    const model = this.#session.model;
+    const session = this.#runtime.session;
+    const model = session.model;
     return {
       sessionId: this.#runtimeSessionId,
+      piSessionId: session.sessionId,
       generation: this.#generation,
-      streaming: this.#session.isStreaming,
-      idle: this.#session.isIdle,
+      streaming: session.isStreaming,
+      idle: session.isIdle,
       ...(model
         ? { model: { provider: model.provider, id: model.id, name: model.name } }
         : {}),
-      thinkingLevel: this.#session.thinkingLevel,
+      thinkingLevel: session.thinkingLevel,
       turn: this.#turn,
     };
   }
 
   getEntries(since?: string): { entries: SessionEntry[]; leafId: string | null } {
-    const entries = this.#session.sessionManager.getEntries();
-    if (!since) return { entries, leafId: this.#session.sessionManager.getLeafId() };
+    const manager = this.#runtime.session.sessionManager;
+    const entries = manager.getEntries();
+    if (!since) return { entries, leafId: manager.getLeafId() };
     const cursor = entries.findIndex((entry) => entry.id === since);
     return {
       entries: cursor < 0 ? entries : entries.slice(cursor + 1),
-      leafId: this.#session.sessionManager.getLeafId(),
+      leafId: manager.getLeafId(),
     };
   }
 
   async setModel(provider: string, modelId: string): Promise<void> {
-    const model = this.#session.modelRegistry.find(provider, modelId);
+    const session = this.#runtime.session;
+    const model = session.modelRegistry.find(provider, modelId);
     if (!model) throw new Error(`Pi model is unavailable: ${provider}/${modelId}`);
-    await this.#session.setModel(model);
+    await session.setModel(model);
   }
 
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-    this.#session.setThinkingLevel(level);
+    this.#runtime.session.setThinkingLevel(level);
   }
 
   getAvailableModels(): PiModel[] {
-    return this.#session.modelRegistry.getAll().map((model) => ({
+    return this.#runtime.session.modelRegistry.getAll().map((model) => ({
       provider: model.provider,
       id: model.id,
       name: model.name,
@@ -203,28 +258,96 @@ export class PiSession {
   }
 
   async newSession(): Promise<number> {
-    await this.#session.abort();
-    this.#session.sessionManager.newSession();
-    this.#session.agent.reset();
-    this.#generation += 1;
-    this.#turn = initialTurnSnapshot();
-    return this.#generation;
+    if (this.#pendingGeneration !== undefined) {
+      throw new Error("Pi session replacement is already in progress");
+    }
+    const nextGeneration = this.#generation + 1;
+    this.#pendingGeneration = nextGeneration;
+    try {
+      const result = await this.#runtime.newSession();
+      if (result.cancelled) throw new Error("Pi session replacement was cancelled");
+      if (this.#generation !== nextGeneration) {
+        throw new Error("Pi session replacement did not bind the new generation");
+      }
+      return this.#generation;
+    } finally {
+      this.#pendingGeneration = undefined;
+    }
   }
 
   async compact(instructions?: string): Promise<void> {
-    await this.#session.compact(instructions);
+    await this.#runtime.session.compact(instructions);
   }
 
-  dispose(): void {
-    this.#unsubscribe?.();
-    this.#unsubscribe = undefined;
-    this.#session.dispose();
+  async dispose(): Promise<void> {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#invalidateBinding();
+    this.#listeners.clear();
+    await this.#runtime.dispose();
   }
 
-  #handleEvent(event: AgentSessionEvent): void {
+  #bind(session: AgentSession, generation: number): void {
+    const binding: SessionBinding = {
+      session,
+      generation,
+      active: true,
+      unsubscribe: undefined,
+    };
+    this.#binding = binding;
+    session.agent.beforeToolCall = async ({ toolCall, args }) => {
+      if (!this.#isLive(binding)) {
+        return { block: true, reason: "Stale Pi session context" };
+      }
+      const request: ApprovalRequest = {
+        toolCallId: toolCall.id,
+        tool: toolCall.name,
+        args,
+      };
+      this.#append({
+        kind: "tool_requested",
+        eventId: deterministicTranscriptEventId(
+          this.#transcriptSessionId(generation),
+          "tool_requested",
+          toolCall.id,
+        ),
+        sessionId: this.#transcriptSessionId(generation),
+        ts: Date.now(),
+        toolCallId: toolCall.id,
+        tool: toolCall.name,
+        args: asRecord(args),
+      });
+      const approved = await this.#approvalHandler(request);
+      return approved ? undefined : { block: true, reason: "Blocked by Patchbay approval policy" };
+    };
+    binding.unsubscribe = session.subscribe((event) => {
+      if (this.#isLive(binding)) this.#handleEvent(event, generation);
+    });
+  }
+
+  #invalidateBinding(): void {
+    const binding = this.#binding;
+    if (!binding) return;
+    binding.active = false;
+    binding.unsubscribe?.();
+    binding.unsubscribe = undefined;
+    if (this.#binding === binding) this.#binding = undefined;
+  }
+
+  #isLive(binding: SessionBinding): boolean {
+    return (
+      !this.#disposed &&
+      binding.active &&
+      this.#binding === binding &&
+      binding.generation === this.#generation &&
+      this.#runtime.session === binding.session
+    );
+  }
+
+  #handleEvent(event: AgentSessionEvent, generation: number): void {
     if (event.type === "turn_start") this.#turnSequence += 1;
     this.#turn = reduceTurn(this.#turn, event, `turn-${this.#turnSequence}`);
-    const transcriptEvent = projectAgentEvent(event, this.#transcriptSessionId());
+    const transcriptEvent = projectAgentEvent(event, this.#transcriptSessionId(generation));
     if (transcriptEvent) this.#append(transcriptEvent);
   }
 
@@ -233,8 +356,8 @@ export class PiSession {
     for (const listener of this.#listeners) listener(event);
   }
 
-  #transcriptSessionId(): string {
-    return `${this.#runtimeSessionId}:${this.#generation}`;
+  #transcriptSessionId(generation: number): string {
+    return `${this.#runtimeSessionId}:${generation}`;
   }
 }
 

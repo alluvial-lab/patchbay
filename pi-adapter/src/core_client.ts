@@ -22,6 +22,7 @@ import {
   ObservationRequestSchema,
   ObservationSchema,
   OperationKind,
+  OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
   ReceiveRequestSchema,
@@ -34,6 +35,7 @@ import {
   TypedCorrelationSchema,
   type Delivery,
   type EventId,
+  type Operation,
 } from "@patchbay/contracts";
 import type { TranscriptEvent } from "./transcript_event.js";
 
@@ -170,47 +172,47 @@ export class PatchbayCoreClient {
     return result.eventId;
   }
 
+  async acknowledgeDelivery(operation: Operation, deliveryEventId?: EventId): Promise<EventId | undefined> {
+    return this.#ingestLifecycle(
+      operation,
+      ObservationKind.EVENT,
+      "patchbay.adapter.DeliveryAcknowledgement.v1",
+      {
+        acceptedLsn: deliveryEventId?.lsn?.value.toString() ?? null,
+      },
+    );
+  }
+
+  async reportRunning(operation: Operation): Promise<EventId | undefined> {
+    return this.#ingestLifecycle(
+      operation,
+      ObservationKind.STATUS,
+      "patchbay.pi.DeliveryStatus.v1",
+      { state: operationStateName(OperationState.RUNNING) },
+    );
+  }
+
+  async reportResult(operation: Operation, value?: unknown): Promise<EventId | undefined> {
+    return this.#ingestLifecycle(
+      operation,
+      ObservationKind.RESULT,
+      "patchbay.pi.DeliveryResult.v1",
+      { value: value ?? null },
+    );
+  }
+
   async ingestFailure(
-    identity: SessionIdentity,
-    commandId: string,
+    operation: Operation,
     failureCode: FailureCode,
     diagnostic: string,
   ): Promise<EventId | undefined> {
-    const observation = create(ObservationSchema, {
-      authorityDomainId: this.#authorityDomainId(),
-      sender: create(ActorEndpointRefSchema, {
-        actorId: create(ActorIdSchema, { value: this.#options.adapterId }),
-      }),
-      kind: ObservationKind.RESULT,
-      correlations: [
-        create(TypedCorrelationSchema, {
-          ref: {
-            case: "commandId",
-            value: create(CommandIdSchema, { value: commandId }),
-          },
-        }),
-      ],
-      targetScope: create(TargetScopeSchema, {
-        kind: TargetScopeKind.RUNTIME_SESSION,
-        adapterId: this.#adapterId(),
-        deploymentScope: identity.deploymentScope,
-        runtimeSessionId: create(RuntimeSessionIdSchema, { value: identity.runtimeSessionId }),
-        sessionGeneration: create(GenerationSchema, { value: BigInt(identity.generation) }),
-      }),
-      payload: create(PayloadEnvelopeSchema, {
-        payload: encoder.encode(JSON.stringify({ diagnostic })),
-        contentType: PayloadContentType.JSON,
-        schemaRef: "patchbay.pi.DeliveryFailure.v1",
-      }),
+    return this.#ingestLifecycle(
+      operation,
+      ObservationKind.RESULT,
+      "patchbay.pi.DeliveryFailure.v1",
+      { diagnostic },
       failureCode,
-    });
-    const result = await this.#client.ingestObservation(
-      create(ObservationRequestSchema, {
-        authorityDomainId: this.#authorityDomainId(),
-        observation: { case: "event", value: observation },
-      }),
     );
-    return result.eventId;
   }
 
   receiveDeliveries(cursor: bigint): AsyncIterable<Delivery> {
@@ -229,10 +231,57 @@ export class PatchbayCoreClient {
   #authorityDomainId() {
     return create(AuthorityDomainIdSchema, { value: this.#options.authorityDomainId });
   }
+
+  async #ingestLifecycle(
+    operation: Operation,
+    kind: ObservationKind,
+    schemaRef: string,
+    payload: unknown,
+    failureCode = FailureCode.UNSPECIFIED,
+  ): Promise<EventId | undefined> {
+    const commandId = operation.commandId?.value;
+    if (!commandId) throw new Error("delivery operation is missing command_id");
+    if (!operation.targetScope) throw new Error("delivery operation is missing target_scope");
+    const observation = create(ObservationSchema, {
+      authorityDomainId: this.#authorityDomainId(),
+      sender: create(ActorEndpointRefSchema, {
+        actorId: create(ActorIdSchema, { value: this.#options.adapterId }),
+      }),
+      kind,
+      correlations: [
+        create(TypedCorrelationSchema, {
+          ref: {
+            case: "commandId",
+            value: create(CommandIdSchema, { value: commandId }),
+          },
+        }),
+      ],
+      targetScope: operation.targetScope,
+      payload: create(PayloadEnvelopeSchema, {
+        payload: encoder.encode(jsonStringify(payload)),
+        contentType: PayloadContentType.JSON,
+        schemaRef,
+      }),
+      failureCode,
+    });
+    const result = await this.#client.ingestObservation(
+      create(ObservationRequestSchema, {
+        authorityDomainId: this.#authorityDomainId(),
+        observation: { case: "event", value: observation },
+      }),
+    );
+    return result.eventId;
+  }
 }
 
-export function deliveryCursor(eventId: EventId | undefined, fallback: bigint): bigint {
-  return eventId?.lsn?.value ?? fallback;
+function jsonStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) =>
+    typeof nested === "bigint" ? nested.toString() : nested,
+  );
+}
+
+function operationStateName(state: OperationState): string {
+  return OperationState[state] ?? String(state);
 }
 
 function piCapabilityManifest() {
@@ -243,8 +292,6 @@ function piCapabilityManifest() {
       OperationKind.CANCEL,
       OperationKind.INTERRUPT,
       OperationKind.QUERY,
-      OperationKind.APPROVAL_RESPONSE,
-      OperationKind.ELICITATION_RESPONSE,
       OperationKind.RECONFIGURE,
       OperationKind.SESSION_MANAGEMENT,
     ],

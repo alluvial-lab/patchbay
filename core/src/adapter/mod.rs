@@ -8,15 +8,20 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AdapterRegistration, AuthorityDomainId, EventId, Observation, ObservationKind,
+    typed_correlation, AdapterId, AdapterRegistration, AuthorityDomainId, CommandId,
+    CommandTransition, EventId, FailureCode, Observation, ObservationKind, OperationState,
     PayloadContentType, PayloadEnvelope, StoredEventKind, StoredEventPayload, TargetScope,
     TargetScopeKind,
 };
 use prost::Message;
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::{
+    acceptance::CommandIndex,
+    storage::{RecordedEvent, Storage},
+};
 
 const REGISTRATION_SCHEMA: &str = "patchbay.AdapterRegistration";
+pub const DELIVERY_ACKNOWLEDGEMENT_SCHEMA: &str = "patchbay.adapter.DeliveryAcknowledgement.v1";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterRecord {
@@ -38,6 +43,34 @@ impl AdapterRegistry {
     #[must_use]
     pub fn get(&self, adapter_id: &AdapterId) -> Option<&AdapterRecord> {
         self.records.get(adapter_id)
+    }
+
+    pub fn preflight(&self, registration: &AdapterRegistration) -> Result<(), AdapterError> {
+        validate_registration(registration)?;
+        let adapter_id = registration
+            .adapter_id
+            .as_ref()
+            .expect("validated adapter id");
+        if let Some(current) = self.records.get(adapter_id) {
+            let current_generation = current
+                .registration
+                .adapter_generation
+                .as_ref()
+                .expect("validated generation")
+                .value;
+            let reported_generation = registration
+                .adapter_generation
+                .as_ref()
+                .expect("validated generation")
+                .value;
+            if reported_generation < current_generation {
+                return Err(AdapterError::StaleGeneration {
+                    live: current_generation,
+                    reported: reported_generation,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AdapterError> {
@@ -133,7 +166,7 @@ pub async fn ingest_registration<S: Storage>(
     registry: &mut AdapterRegistry,
     registration: AdapterRegistration,
 ) -> Result<EventId, AdapterError> {
-    validate_registration(&registration)?;
+    registry.preflight(&registration)?;
     let authority_domain_id = registration
         .authority_domain_id
         .clone()
@@ -176,6 +209,125 @@ pub async fn ingest_registration<S: Storage>(
         payload,
     })?;
     Ok(event_id)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeliveryAcknowledgementResult {
+    pub observation_event_id: EventId,
+    pub transition_event_id: EventId,
+}
+
+#[must_use]
+pub fn is_delivery_acknowledgement(observation: &Observation) -> bool {
+    observation
+        .payload
+        .as_ref()
+        .is_some_and(|payload| payload.schema_ref == DELIVERY_ACKNOWLEDGEMENT_SCHEMA)
+}
+
+/// Durably acknowledge that an attached adapter accepted one Operation for delivery.
+///
+/// The acknowledgement commits the canonical `accepted -> delivered` transition and
+/// records the adapter's audit Observation. The core's command projection therefore owns
+/// the resumable delivery checkpoint: an adapter restart may scan from LSN 0 without
+/// re-offering commands that already crossed this durable boundary.
+pub async fn ingest_delivery_acknowledgement<S: Storage>(
+    storage: &S,
+    commands: &CommandIndex,
+    observation: Observation,
+) -> Result<DeliveryAcknowledgementResult, AdapterError> {
+    if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Event)
+        || !is_delivery_acknowledgement(&observation)
+    {
+        return Err(AdapterError::InvalidDeliveryAcknowledgement(
+            "delivery acknowledgement must be an event with the canonical schema".into(),
+        ));
+    }
+    if FailureCode::try_from(observation.failure_code).ok() != Some(FailureCode::Unspecified) {
+        return Err(AdapterError::InvalidDeliveryAcknowledgement(
+            "delivery acknowledgement cannot carry a failure code".into(),
+        ));
+    }
+    let authority_domain_id = observation.authority_domain_id.as_ref().ok_or_else(|| {
+        AdapterError::InvalidDeliveryAcknowledgement("missing authority_domain_id".into())
+    })?;
+    let command_id = correlated_command_id(&observation)?;
+    let record = commands.get_command(&command_id).ok_or_else(|| {
+        AdapterError::InvalidDeliveryAcknowledgement(format!(
+            "acknowledgement references unknown command {:?}",
+            command_id
+        ))
+    })?;
+    if record.state != OperationState::Accepted {
+        return Err(AdapterError::InvalidDeliveryAcknowledgement(format!(
+            "command {:?} is {:?}, not accepted",
+            command_id, record.state
+        )));
+    }
+    if record.operation.authority_domain_id.as_ref() != Some(authority_domain_id) {
+        return Err(AdapterError::InvalidDeliveryAcknowledgement(
+            "acknowledgement authority domain does not match the command".into(),
+        ));
+    }
+    if observation.target_scope != record.operation.target_scope {
+        return Err(AdapterError::InvalidDeliveryAcknowledgement(
+            "acknowledgement target does not match the command".into(),
+        ));
+    }
+
+    // Commit the lifecycle checkpoint first. If the following audit Observation
+    // append fails, recovery still sees `delivered` and cannot re-execute the
+    // Operation. The adapter receives an RPC error and does not begin execution.
+    let transition_event_id = storage
+        .append(
+            authority_domain_id,
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Delivered as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    correlations: observation.correlations.clone(),
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
+    let observation_event_id = storage
+        .append(
+            authority_domain_id,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: observation.encode_to_vec(),
+            },
+        )
+        .await?;
+    Ok(DeliveryAcknowledgementResult {
+        observation_event_id,
+        transition_event_id,
+    })
+}
+
+fn correlated_command_id(observation: &Observation) -> Result<CommandId, AdapterError> {
+    let mut found: Option<&CommandId> = None;
+    for correlation in &observation.correlations {
+        let Some(typed_correlation::Ref::CommandId(candidate)) = correlation.r#ref.as_ref() else {
+            continue;
+        };
+        if candidate.value.is_empty() || found.is_some_and(|existing| existing != candidate) {
+            return Err(AdapterError::InvalidDeliveryAcknowledgement(
+                "acknowledgement must carry one unambiguous, non-empty command correlation".into(),
+            ));
+        }
+        found = Some(candidate);
+    }
+    found.cloned().ok_or_else(|| {
+        AdapterError::InvalidDeliveryAcknowledgement(
+            "acknowledgement is missing a command correlation".into(),
+        )
+    })
 }
 
 fn redact_registration(mut registration: AdapterRegistration) -> AdapterRegistration {
@@ -235,8 +387,72 @@ pub enum AdapterError {
     InvalidRegistration(String),
     #[error("stale adapter generation: live={live}, reported={reported}")]
     StaleGeneration { live: u64, reported: u64 },
+    #[error("invalid delivery acknowledgement: {0}")]
+    InvalidDeliveryAcknowledgement(String),
     #[error("corrupt adapter record: {0}")]
     CorruptRecord(String),
     #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),
+}
+
+#[cfg(test)]
+mod tests {
+    use patchbay_contracts::patchbay::{AdapterCapability, EndpointId, Generation};
+
+    use super::*;
+    use crate::storage::RusqliteStorage;
+
+    #[tokio::test]
+    async fn rejected_stale_attach_does_not_poison_durable_rebuild() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let database = directory.path().join("adapter.sqlite3");
+        let storage =
+            RusqliteStorage::open(database.to_str().expect("utf8 path")).expect("storage opens");
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
+        let mut registry = AdapterRegistry::new();
+
+        ingest_registration(&storage, &mut registry, registration(&domain, 2))
+            .await
+            .expect("generation 2 attaches");
+        let stale = ingest_registration(&storage, &mut registry, registration(&domain, 1))
+            .await
+            .expect_err("generation 1 is stale");
+        assert!(matches!(
+            stale,
+            AdapterError::StaleGeneration {
+                live: 2,
+                reported: 1
+            }
+        ));
+
+        let rebuilt = rebuild_from_log(&storage, &domain)
+            .await
+            .expect("stale rejection left the durable log replayable");
+        assert_eq!(
+            rebuilt
+                .get(&AdapterId { value: "pi".into() })
+                .expect("adapter record")
+                .registration
+                .adapter_generation
+                .as_ref()
+                .expect("generation")
+                .value,
+            2
+        );
+    }
+
+    fn registration(domain: &AuthorityDomainId, generation: u64) -> AdapterRegistration {
+        AdapterRegistration {
+            adapter_id: Some(AdapterId { value: "pi".into() }),
+            endpoint_id: Some(EndpointId {
+                value: "pi-endpoint".into(),
+            }),
+            authority_domain_id: Some(domain.clone()),
+            adapter_generation: Some(Generation { value: generation }),
+            capability: Some(AdapterCapability::default()),
+            ..Default::default()
+        }
+    }
 }

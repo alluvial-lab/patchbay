@@ -13,8 +13,10 @@ import {
   ActorEndpointRefSchema,
   ActorIdSchema,
   AdapterIdSchema,
+  AdapterRegistrationSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
+  CommandTransitionSchema,
   ControlService,
   FailureCode,
   GenerationSchema,
@@ -23,12 +25,15 @@ import {
   GrantSchema,
   GrantIdSchema,
   LsnSchema,
+  ObservationKind,
   ObservationSchema,
   OperationKind,
+  OperationState,
   OperationSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
   RuntimeSessionIdSchema,
+  SessionActivityState,
   SessionStateEventSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
@@ -84,10 +89,34 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       authorityDomainId: domainId,
       attachmentEvidence: adapterEvidence,
       adapterGeneration: 1,
-      sessions: [configured],
+      sessions: [],
       createSession: sessionFixture.create,
     });
     await adapter.start();
+    // Future spawn uses this same complete runtime-entry path; delivery routing
+    // has no separate immutable pre-provisioned configuration dependency.
+    await adapter.registerSession(configured);
+
+    const attachedEvents = await readAfter(makeControlClient(baseUrl), 0n);
+    const manifest = attachedEvents
+      .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+      .map((payload) => fromBinary(ObservationSchema, payload.payload))
+      .find((observation) => observation.payload?.schemaRef === "patchbay.AdapterRegistration")
+      ?.payload;
+    assert.ok(manifest);
+    const registration = fromBinary(AdapterRegistrationSchema, manifest.payload);
+    assert.equal(
+      registration.capability?.supportedOperationKinds.includes(
+        OperationKind.APPROVAL_RESPONSE,
+      ),
+      false,
+    );
+    assert.equal(
+      registration.capability?.supportedOperationKinds.includes(
+        OperationKind.ELICITATION_RESPONSE,
+      ),
+      false,
+    );
 
     seedOperatorGrant(databasePath, 1);
     const control = makeControlClient(baseUrl);
@@ -100,6 +129,10 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.equal(await adapter.pollOnce(), 1);
 
     const outputEvents = await readAfter(control, accepted.acceptedLsn?.value ?? 0n);
+    assert.deepEqual(
+      commandStates(outputEvents, "command-instruct"),
+      [OperationState.DELIVERED, OperationState.RUNNING, OperationState.COMPLETED],
+    );
     const transcriptPayloads = outputEvents
       .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
       .map((payload) => fromBinary(ObservationSchema, payload.payload))
@@ -125,6 +158,27 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.ok(generationEvents.some(isGenerationTwo));
     seedOperatorGrant(databasePath, 2);
 
+    const query = await control.submit(
+      create(SubmitRequestSchema, {
+        operation: operation(
+          "command-query",
+          OperationKind.QUERY,
+          JSON.stringify({ action: "state" }),
+          2,
+        ),
+      }),
+    );
+    assert.equal(await adapter.pollOnce(), 1);
+    const queryEvents = await readAfter(control, query.acceptedLsn?.value ?? 0n);
+    const queryResult = observationsFor(queryEvents, "command-query").find(
+      (observation) => observation.kind === ObservationKind.RESULT,
+    );
+    assert.equal(queryResult?.payload?.schemaRef, "patchbay.pi.DeliveryResult.v1");
+    const queryValue = JSON.parse(
+      new TextDecoder().decode(queryResult?.payload?.payload),
+    ) as { value?: { generation?: number } };
+    assert.equal(queryValue.value?.generation, 2);
+
     const cancelFixture = sessionFixture.faux;
     cancelFixture.appendResponses([
       async () => {
@@ -145,6 +199,26 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.equal(await adapter.pollOnce(), 2);
     assert.equal(sessionFixture.session?.getState().idle, true);
 
+    // An accepted old-generation delivery may remain after replacement, but it
+    // must be acknowledged-and-rejected without entering the new Pi context.
+    appendAcceptedOperation(
+      databasePath,
+      operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
+    );
+    assert.equal(await adapter.pollOnce(), 1);
+    const staleDeliveryEvents = await readAfter(control, 0n);
+    const staleFailure = observationsFor(
+      staleDeliveryEvents,
+      "command-old-generation",
+    ).find((observation) => observation.kind === ObservationKind.RESULT);
+    assert.equal(staleFailure?.failureCode, FailureCode.DELIVERY_REJECTED);
+    assert.equal(
+      observationsFor(staleDeliveryEvents, "command-old-generation").some(
+        (observation) => observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1",
+      ),
+      false,
+    );
+
     const spawn = await control.submit(
       create(SubmitRequestSchema, {
         operation: operation("command-spawn", OperationKind.SPAWN, "", 2),
@@ -159,9 +233,9 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         .some((observation) => observation.failureCode === FailureCode.UNSUPPORTED_COMMAND),
     );
 
-    adapter.dispose();
+    await adapter.dispose();
     adapter = undefined;
-    const reconnectFixture = createSessionFixture(3);
+    const reconnectFixture = createSessionFixture(3, true);
     reconnect = new AdapterProcess({
       coreAddress: baseUrl,
       adapterId,
@@ -173,15 +247,30 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     });
     await reconnect.start();
     assert.equal(reconnectFixture.session?.getState().generation, 3);
+    assert.equal(await reconnect.pollOnce(), 0, "durably acknowledged history is not re-offered");
+
+    const reconnectEvents = await readAfter(control, 0n);
+    assert.ok(
+      reconnectEvents
+        .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+        .map((payload) => fromBinary(ObservationSchema, payload.payload))
+        .some(
+          (observation) =>
+            observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
+            new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry"),
+        ),
+      "reconnect explicitly replays Pi getEntries()/TranscriptEventLog snapshot",
+    );
+    assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
   } finally {
-    reconnect?.dispose();
-    adapter?.dispose();
+    if (reconnect) await reconnect.dispose();
+    if (adapter) await adapter.dispose();
     core.kill("SIGTERM");
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-function createSessionFixture(generation: number) {
+function createSessionFixture(generation: number, seedSnapshot = false) {
   const provider = `patchbay-e2e-${generation}`;
   const faux = createFauxCore({ provider, api: provider, tokensPerSecond: 0 });
   faux.setResponses([fauxAssistantMessage("Pi received the operation")]);
@@ -215,12 +304,20 @@ function createSessionFixture(generation: number) {
           },
         ],
       });
+      const sessionManager = SessionManager.inMemory(repoRoot);
+      if (seedSnapshot) {
+        sessionManager.appendMessage({
+          role: "user",
+          content: "replayed snapshot entry",
+          timestamp: Date.now(),
+        });
+      }
       session = await PiSession.create({
         ...configured,
         model: `${provider}/${model.id}`,
         sessionOptions: {
           modelRegistry: registry,
-          sessionManager: SessionManager.inMemory(repoRoot),
+          sessionManager,
           settingsManager: SettingsManager.inMemory(),
           noTools: "all",
         },
@@ -266,6 +363,7 @@ function seedOperatorGrant(databasePath: string, generation: number): void {
         OperationKind.INSTRUCT,
         OperationKind.CANCEL,
         OperationKind.SESSION_MANAGEMENT,
+        OperationKind.QUERY,
         OperationKind.SPAWN,
       ],
       provenance: create(GrantProvenanceSchema, { reason: "Pi adapter e2e fixture" }),
@@ -350,12 +448,73 @@ async function readAfter(
   return payloads;
 }
 
+function commandStates(
+  payloads: readonly StoredEventPayload[],
+  commandId: string,
+): OperationState[] {
+  return payloads
+    .filter((payload) => payload.kind === StoredEventKind.COMMAND_TRANSITION)
+    .map((payload) => fromBinary(CommandTransitionSchema, payload.payload))
+    .filter((transition) => transition.commandId?.value === commandId)
+    .map((transition) => transition.toState);
+}
+
+function observationsFor(
+  payloads: readonly StoredEventPayload[],
+  commandId: string,
+) {
+  return payloads
+    .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+    .map((payload) => fromBinary(ObservationSchema, payload.payload))
+    .filter((observation) =>
+      observation.correlations.some(
+        (correlation) =>
+          correlation.ref.case === "commandId" && correlation.ref.value.value === commandId,
+      ),
+    );
+}
+
+function appendAcceptedOperation(
+  databasePath: string,
+  acceptedOperation: ReturnType<typeof operation>,
+): void {
+  const database = new DatabaseSync(databasePath);
+  try {
+    database
+      .prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)")
+      .run(
+        domainId,
+        StoredEventKind.OPERATION,
+        toBinary(
+          StoredEventPayloadSchema,
+          create(StoredEventPayloadSchema, {
+            kind: StoredEventKind.OPERATION,
+            payload: toBinary(OperationSchema, acceptedOperation),
+          }),
+        ),
+      );
+  } finally {
+    database.close();
+  }
+}
+
 function isGenerationTwo(payload: StoredEventPayload): boolean {
   if (payload.kind !== StoredEventKind.SESSION_STATE) return false;
   const event = fromBinary(SessionStateEventSchema, payload.payload);
   if (event.mutation.case !== "generationBumped") return false;
   const bump = event.mutation.value;
   return bump.fromGeneration?.value === 1n && bump.toGeneration?.value === 2n;
+}
+
+function isGenerationThreeUnknown(payload: StoredEventPayload): boolean {
+  if (payload.kind !== StoredEventKind.SESSION_STATE) return false;
+  const event = fromBinary(SessionStateEventSchema, payload.payload);
+  if (event.mutation.case !== "generationBumped") return false;
+  const bump = event.mutation.value;
+  return (
+    bump.toGeneration?.value === 3n &&
+    bump.initialState?.activity === SessionActivityState.UNKNOWN
+  );
 }
 
 async function freePort(): Promise<number> {

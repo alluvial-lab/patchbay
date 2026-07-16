@@ -83,3 +83,9 @@ Core-side impl:
 - Discrepancies from design: added the bounded core adapter-registration port anticipated by the design; attachment evidence is verified on attach and on subsequent adapter RPC metadata and never persisted. `ReceiveDeliveries` uses the explicitly allowed v0.1.0 cursor-polling fallback: each server stream returns the currently durable tail and the client resumes immediately, avoiding a per-adapter in-memory queue. The observation oneof also accepts a generated `Observation` so Unit 3 can stream Pi events without a second RPC.
 - Verification: `cargo build -p patchbay-core-server`, `cargo test -p patchbay-core-server`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`, `cargo test -p patchbay-core`, and `contracts/ts npm run build` passed.
 - Adjacent issues parked: none.
+
+### Review-response implementation update
+
+- Added the explicit delivery-acknowledgement path through the existing Observation RPC. The bounded core adapter port commits `accepted → delivered` first, then the audit Observation; `ReceiveDeliveries` rebuilds durable command state and offers only still-`accepted` Operations, making resume core-owned and restart-safe without a proto change.
+- Added registration generation preflight before append so a rejected stale attach cannot poison replay.
+- Regression coverage: real-process lifecycle/resume assertions in `pi-adapter/tests/e2e.test.ts`; core unit regression for generation-2 attach → generation-1 rejection → successful durable rebuild; adapter-service delivery fixture updated for the command projection filter.

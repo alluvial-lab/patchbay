@@ -152,10 +152,11 @@ v0.1.0 architecture decisions:
 
 ### v0.1.0 process topology
 
-v0.1.0 runs two logical processes, not one:
+v0.1.0 runs three logical processes:
 
 - **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.1.0.
 - **TypeScript web server** — a control-surface process that terminates HTTP/HTTPS for the browser cockpit, owns operator sessions, cookies, and CSRF protection, and speaks the generated Protobuf/Connect contract to the Rust core.
+- **TypeScript Pi adapter** — a runtime-adapter process that hosts Pi `AgentSession` runtimes, translates delivered Operations into Pi actions, and reports source-authenticated session state, results, and transcript Observations to the Rust core.
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
 

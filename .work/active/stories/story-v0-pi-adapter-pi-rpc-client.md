@@ -78,3 +78,9 @@ export class PiSession {
 - Discrepancies from design: installed Pi 0.80.7 exposes the tool gate as the public `session.agent.beforeToolCall` hook and events as `session.subscribe(...)`, not `session.beforeToolCall` / `session.on(...)`. Entries are exposed by `session.sessionManager.getEntries()` rather than `session.getEntries()`. The driver wraps those current typed APIs behind the designed `PiSession` surface. Full approval Elicitation round-trip is the explicit minimal-slice cut: the default gate auto-proceeds while recording the request in the transcript; Unit 3 can install an async approval handler, and the smoke test proves both allow and block decisions.
 - Verification: `npm install --cache /home/agent/projects/patchbay/.npm-cache`, `npm run build`, and `npm test` passed under Node with a real `AgentSession`.
 - Adjacent issues parked: none.
+
+### Review-response implementation update
+
+- Replaced the same-object `SessionManager.newSession()`/agent reset with Pi 0.80.7's programmatic `AgentSessionRuntime.newSession()` lifecycle. The old `AgentSession` is disposed (including extension-context invalidation), a fresh runtime/session is created, and approval/event hooks are rebound before Patchbay reports the generation bump.
+- Event and approval bindings capture an immutable generation and become inert synchronously during replacement; persisted `SessionManager.getEntries()` values can now be projected into the partial `TranscriptEventLog` snapshot for reconnect replay.
+- Regression coverage: the real Pi smoke test verifies the Pi-internal session id changes and a delayed response from the disposed context cannot be labeled as generation 2; snapshot projection is exercised by the reconnect e2e.

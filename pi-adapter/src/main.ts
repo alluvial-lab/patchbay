@@ -6,10 +6,13 @@ import {
   type Delivery,
   type Operation,
 } from "@patchbay/contracts";
-import { PatchbayCoreClient, deliveryCursor, type SessionIdentity } from "./core_client.js";
+import { PatchbayCoreClient, type SessionIdentity } from "./core_client.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "./delivery.js";
 import { PiSession, type PiSessionOptions } from "./pi_session.js";
-import { SessionRegistry } from "./session_registry.js";
+import {
+  SessionRegistry,
+  type RuntimeSessionEntry,
+} from "./session_registry.js";
 
 export interface PreprovisionedSession extends PiSessionOptions {
   runtimeSessionId: string;
@@ -27,7 +30,11 @@ export interface AdapterProcessOptions {
   createSession?: (options: PreprovisionedSession) => Promise<PiSession>;
 }
 
-/** Composition root: gRPC client + pre-provisioned Pi session registry. */
+interface StartedDelivery {
+  completion: Promise<void>;
+}
+
+/** Composition root: gRPC client + complete runtime-session registry. */
 export class AdapterProcess {
   readonly #options: AdapterProcessOptions;
   readonly #core: PatchbayCoreClient;
@@ -47,29 +54,53 @@ export class AdapterProcess {
   async start(): Promise<void> {
     if (this.#started) return;
     await this.#core.attach(this.#options.adapterGeneration);
+    this.#started = true;
+    try {
+      for (const configured of this.#options.sessions) {
+        await this.registerSession(configured);
+      }
+    } catch (error) {
+      this.#started = false;
+      await this.#registry.dispose();
+      throw error;
+    }
+  }
+
+  /** The same complete registration path used by pre-provisioning and future spawn. */
+  async registerSession(configured: PreprovisionedSession): Promise<void> {
+    if (!this.#started) throw new Error("adapter process has not started");
     const createSession = this.#options.createSession ?? PiSession.create;
-    for (const configured of this.#options.sessions) {
-      const session = await createSession(configured);
-      this.#registry.register(configured.runtimeSessionId, session);
-      session.onTranscript((event) => {
+    const session = await createSession(configured);
+    let entry: RuntimeSessionEntry;
+    try {
+      entry = this.#registry.register(configured, session, (observedEntry, event) => {
         const promise = this.#core
           .ingestTranscript(
-            this.#identity(configured, session),
+            this.#identity(observedEntry),
             event,
-            this.#activeCommands.get(configured.runtimeSessionId),
+            this.#activeCommands.get(observedEntry.runtimeSessionId),
           )
           .then(() => undefined);
         this.#trackObservation(promise);
       });
-      await this.#core.reportSession(
-        this.#identity(configured, session),
-        this.#options.adapterGeneration > 1
-          ? SessionActivityState.UNKNOWN
-          : SessionActivityState.IDLE,
-        SessionConnectivityState.LIVE,
-      );
+    } catch (error) {
+      await session.dispose();
+      throw error;
     }
-    this.#started = true;
+
+    // Reconcile Pi's persisted getEntries()/TranscriptEventLog snapshot before
+    // claiming a current activity state. Stable transcript event ids make this
+    // replay a partial snapshot rather than command re-execution.
+    for (const event of session.snapshotTranscript()) {
+      await this.#core.ingestTranscript(this.#identity(entry), event);
+    }
+    await this.#core.reportSession(
+      this.#identity(entry),
+      this.#options.adapterGeneration > 1
+        ? SessionActivityState.UNKNOWN
+        : SessionActivityState.IDLE,
+      SessionConnectivityState.LIVE,
+    );
   }
 
   async pollOnce(): Promise<number> {
@@ -77,14 +108,15 @@ export class AdapterProcess {
     const inFlight: Promise<void>[] = [];
     let delivered = 0;
     for await (const delivery of this.#core.receiveDeliveries(this.#cursor)) {
-      this.#cursor = deliveryCursor(delivery.deliveryEventId, this.#cursor);
-      delivered += 1;
       const operation = requiredOperation(delivery);
-      // Instruct runs are allowed to remain in flight so a later cancel in the
-      // same durable tail can abort them. Other mappings remain ordered.
-      const work = this.#processDelivery(operation);
-      if (operation.kind === OperationKind.INSTRUCT) inFlight.push(work);
-      else await work;
+      const started = await this.#beginDelivery(delivery, operation);
+      this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
+      delivered += 1;
+      // Instruct runs remain in flight so a later cancel in the same durable
+      // tail can abort them. Delivery acknowledgement and running status have
+      // already committed before the next Operation starts.
+      if (operation.kind === OperationKind.INSTRUCT) inFlight.push(started.completion);
+      else await started.completion;
     }
     await Promise.all(inFlight);
     await this.flushObservations();
@@ -108,68 +140,104 @@ export class AdapterProcess {
     }
   }
 
-  dispose(): void {
-    this.#registry.dispose();
+  async dispose(): Promise<void> {
+    await this.#registry.dispose();
     this.#started = false;
   }
 
-  async #processDelivery(operation: Operation): Promise<void> {
+  async #beginDelivery(delivery: Delivery, operation: Operation): Promise<StartedDelivery> {
+    // This is the durable delivery checkpoint. ReceiveDeliveries filters on the
+    // resulting command state, so an adapter restart from cursor 0 cannot
+    // re-offer or re-execute acknowledged history.
+    await this.#core.acknowledgeDelivery(operation, delivery.deliveryEventId);
+
     const target = operation.targetScope;
     const runtimeSessionId = target?.runtimeSessionId?.value;
-    if (!runtimeSessionId) throw new Error("delivery is missing runtime_session_id");
-    const configured = this.#options.sessions.find(
-      (candidate) => candidate.runtimeSessionId === runtimeSessionId,
-    );
-    const session = this.#registry.resolve(runtimeSessionId);
-    if (!configured || !session) throw new Error(`target runtime session is not registered: ${runtimeSessionId}`);
-    const commandId = operation.commandId?.value;
-    if (commandId) this.#activeCommands.set(runtimeSessionId, commandId);
+    const entry = runtimeSessionId ? this.#registry.resolve(runtimeSessionId) : undefined;
+    const targetError = this.#validateTarget(operation, entry);
+    if (targetError) {
+      return {
+        completion: this.#core
+          .ingestFailure(operation, FailureCode.DELIVERY_REJECTED, targetError)
+          .then(() => undefined),
+      };
+    }
 
+    if (!entry) throw new Error("validated delivery lost its runtime entry");
+    await this.#core.reportRunning(operation);
+    const commandId = operation.commandId?.value;
+    if (commandId) this.#activeCommands.set(entry.runtimeSessionId, commandId);
+    if (operation.kind === OperationKind.INSTRUCT) {
+      await this.#core.reportSession(
+        this.#identity(entry),
+        SessionActivityState.WORKING,
+      );
+    }
+    return { completion: this.#executeDelivery(operation, entry) };
+  }
+
+  async #executeDelivery(operation: Operation, entry: RuntimeSessionEntry): Promise<void> {
+    const commandId = operation.commandId?.value;
     try {
-      if (operation.kind === OperationKind.INSTRUCT) {
-        await this.#core.reportSession(
-          this.#identity(configured, session),
-          SessionActivityState.WORKING,
-        );
-      }
-      const outcome = await this.#translator.deliver(operation, session);
+      const outcome = await this.#translator.deliver(operation, entry.session);
       if (outcome.sessionGenerationChanged) {
         await this.#core.reportSession(
-          this.#identity(configured, session),
+          this.#identity(entry),
           SessionActivityState.IDLE,
         );
-      } else if (operation.kind === OperationKind.INSTRUCT || operation.kind === OperationKind.CANCEL) {
+      } else if (operation.kind === OperationKind.INSTRUCT) {
         await this.#core.reportSession(
-          this.#identity(configured, session),
+          this.#identity(entry),
           SessionActivityState.IDLE,
         );
       }
+      await this.#core.reportResult(operation, outcome.value);
     } catch (error) {
-      if (error instanceof UnsupportedCommandError && commandId) {
-        await this.#core.ingestFailure(
-          this.#identity(configured, session),
-          commandId,
-          FailureCode.UNSUPPORTED_COMMAND,
-          error.message,
+      const failureCode =
+        error instanceof UnsupportedCommandError
+          ? FailureCode.UNSUPPORTED_COMMAND
+          : FailureCode.EXECUTION_FAILED;
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      await this.#core.ingestFailure(operation, failureCode, diagnostic);
+      if (operation.kind === OperationKind.INSTRUCT) {
+        await this.#core.reportSession(
+          this.#identity(entry),
+          SessionActivityState.UNKNOWN,
         );
-        return;
       }
-      throw error;
     } finally {
-      if (commandId && this.#activeCommands.get(runtimeSessionId) === commandId) {
-        this.#activeCommands.delete(runtimeSessionId);
+      if (commandId && this.#activeCommands.get(entry.runtimeSessionId) === commandId) {
+        this.#activeCommands.delete(entry.runtimeSessionId);
       }
     }
   }
 
-  #identity(configured: PreprovisionedSession, session: PiSession): SessionIdentity {
+  #validateTarget(
+    operation: Operation,
+    entry: RuntimeSessionEntry | undefined,
+  ): string | undefined {
+    const target = operation.targetScope;
+    if (!target?.runtimeSessionId?.value) return "delivery is missing runtime_session_id";
+    if (!entry) return `target runtime session is not registered: ${target.runtimeSessionId.value}`;
+    if (target.deploymentScope !== entry.deploymentScope) {
+      return `delivery deployment scope ${target.deploymentScope} does not match ${entry.deploymentScope}`;
+    }
+    const deliveredGeneration = target.sessionGeneration?.value;
+    if (deliveredGeneration === undefined) return "delivery is missing session_generation";
+    if (deliveredGeneration !== BigInt(entry.session.generation)) {
+      return `delivery generation ${deliveredGeneration} does not match live generation ${entry.session.generation}`;
+    }
+    return undefined;
+  }
+
+  #identity(entry: RuntimeSessionEntry): SessionIdentity {
     return {
-      runtimeSessionId: configured.runtimeSessionId,
-      deploymentScope: configured.deploymentScope,
-      generation: session.generation,
-      project: configured.project ?? "",
-      cwd: configured.cwd,
-      name: configured.name ?? configured.runtimeSessionId,
+      runtimeSessionId: entry.runtimeSessionId,
+      deploymentScope: entry.deploymentScope,
+      generation: entry.session.generation,
+      project: entry.project ?? "",
+      cwd: entry.cwd,
+      name: entry.name ?? entry.runtimeSessionId,
     };
   }
 
@@ -219,7 +287,7 @@ async function runFromEnvironment(): Promise<void> {
   try {
     await processHost.run(controller.signal);
   } finally {
-    processHost.dispose();
+    await processHost.dispose();
   }
 }
 

@@ -2,11 +2,11 @@ use std::{pin::Pin, sync::Arc};
 
 use patchbay_contracts::patchbay::{
     observation_request, AdapterId, AttachRequest, AttachResult, AuthorityDomainId, Delivery,
-    Generation, ObservationRequest, ObservationResult, Operation, ReceiveRequest,
+    Generation, ObservationRequest, ObservationResult, Operation, OperationState, ReceiveRequest,
     SessionActivityState, SessionConnectivityState, StoredEventKind,
 };
 use patchbay_core::{
-    acceptance,
+    acceptance::{self, CommandIndex},
     adapter::{self, AdapterRegistry},
     session::{self, SessionRegistry, SessionReport},
     storage::Storage,
@@ -102,6 +102,7 @@ pub struct AdapterControlServiceImpl<S> {
     authority_domain_id: AuthorityDomainId,
     evidence: AdapterEvidenceVerifier,
     adapters: Arc<Mutex<AdapterRegistry>>,
+    commands: Arc<Mutex<CommandIndex>>,
     sessions: Arc<Mutex<SessionRegistry>>,
 }
 
@@ -120,6 +121,9 @@ where
         let adapters = adapter::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
+        let commands = acceptance::rebuild_from_log(&storage, &authority_domain_id)
+            .await
+            .map_err(|error| error.to_string())?;
         let sessions = session::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
@@ -128,6 +132,7 @@ where
             authority_domain_id,
             evidence,
             adapters: Arc::new(Mutex::new(adapters)),
+            commands: Arc::new(Mutex::new(commands)),
             sessions: Arc::new(Mutex::new(sessions)),
         })
     }
@@ -252,22 +257,31 @@ where
                         .and_then(|target| target.adapter_id.as_ref()),
                     &authenticated_adapter,
                 )?;
-                let commands = acceptance::rebuild_from_log(&self.storage, &domain)
+                let mut commands = self.commands.lock().await;
+                let event_id = if adapter::is_delivery_acknowledgement(&observation) {
+                    adapter::ingest_delivery_acknowledgement(&self.storage, &commands, observation)
+                        .await
+                        .map_err(map_adapter_error)?
+                        .observation_event_id
+                } else {
+                    match acceptance::ingest_observation(&self.storage, &*commands, observation)
+                        .await
+                        .map_err(map_acceptance_error_to_status)?
+                    {
+                        acceptance::IngestResult::Recorded { event_id }
+                        | acceptance::IngestResult::StaleCandidate {
+                            observation_event_id: event_id,
+                        }
+                        | acceptance::IngestResult::Transitioned {
+                            observation_event_id: event_id,
+                            ..
+                        } => event_id,
+                    }
+                };
+                *commands = acceptance::rebuild_from_log(&self.storage, &domain)
                     .await
                     .map_err(map_acceptance_error_to_status)?;
-                match acceptance::ingest_observation(&self.storage, &commands, observation)
-                    .await
-                    .map_err(map_acceptance_error_to_status)?
-                {
-                    acceptance::IngestResult::Recorded { event_id }
-                    | acceptance::IngestResult::StaleCandidate {
-                        observation_event_id: event_id,
-                    }
-                    | acceptance::IngestResult::Transitioned {
-                        observation_event_id: event_id,
-                        ..
-                    } => Some(event_id),
-                }
+                Some(event_id)
             }
             None => return Err(Status::invalid_argument("missing observation")),
         };
@@ -293,6 +307,12 @@ where
             .read_after(&domain, cursor)
             .await
             .map_err(map_storage_error_to_status)?;
+        let mut live_commands = self.commands.lock().await;
+        *live_commands = acceptance::rebuild_from_log(&self.storage, &domain)
+            .await
+            .map_err(map_acceptance_error_to_status)?;
+        let commands = live_commands.clone();
+        drop(live_commands);
         let deliveries = events.into_iter().filter_map(move |event| {
             if event.payload.kind != StoredEventKind::Operation as i32 {
                 return None;
@@ -310,7 +330,12 @@ where
                 .as_ref()
                 .and_then(|target| target.adapter_id.as_ref())
                 == Some(&authenticated_adapter);
-            targets_adapter.then_some(Ok(Delivery {
+            let remains_accepted = operation
+                .command_id
+                .as_ref()
+                .and_then(|command_id| commands.get_command(command_id))
+                .is_some_and(|record| record.state == OperationState::Accepted);
+            (targets_adapter && remains_accepted).then_some(Ok(Delivery {
                 operation: Some(operation),
                 delivery_event_id: Some(event.event_id),
             }))
@@ -352,6 +377,9 @@ fn map_adapter_error(error: adapter::AdapterError) -> Status {
         adapter::AdapterError::InvalidRegistration(message) => Status::invalid_argument(message),
         adapter::AdapterError::StaleGeneration { .. } => {
             Status::failed_precondition(error.to_string())
+        }
+        adapter::AdapterError::InvalidDeliveryAcknowledgement(message) => {
+            Status::failed_precondition(message)
         }
         adapter::AdapterError::CorruptRecord(message) => Status::internal(message),
         adapter::AdapterError::Storage(error) => map_storage_error_to_status(error),

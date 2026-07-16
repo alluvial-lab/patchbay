@@ -93,3 +93,10 @@ Pi `AgentSession` events → `transcript_projection` → `TranscriptEventLog` (l
 - Discrepancies from design: the full approval-response Elicitation round-trip remains the explicit minimal-slice follow-on; the delivery registry rejects it visibly instead of leaving a silent gap. Query, reconfigure, and session-management mappings were small enough to land now. The current adapter RPC has no separate snapshot upload, so reconnect re-attaches with a higher adapter/session generation and reports activity `unknown` when its in-memory partial transcript cache was lost; the core tombstones the old generation instead of fabricating replay history. Identical session reports now succeed idempotently with no new event id.
 - Verification: `pi-adapter npm run build && npm test` passed, including the real-process e2e; `cargo build -p patchbay-core-server`, `cargo test -p patchbay-core-server`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`, and `cargo test -p patchbay-core` passed.
 - Adjacent issues parked: none.
+
+### Review-response implementation update
+
+- The registry now owns complete runtime entries and transcript wiring; both startup provisioning and future dynamic spawn use `AdapterProcess.registerSession`, and delivery has no lookup against immutable `options.sessions`.
+- Delivery now acknowledges durably before execution, validates generation/scope, emits running/result/failure lifecycle Observations, preserves query values, and advances its optimization cursor only after acknowledgement. Reconnect starts from zero safely because the core offers only durable `accepted` commands, then explicitly replays the partial transcript snapshot and reports unreconciled activity as `unknown`.
+- The manifest no longer advertises deferred approval/elicitation response delivery.
+- Regression coverage: dynamic registration delivery, exact lifecycle transitions, query result payload, stale-generation non-execution, restart with zero historical re-deliveries, partial snapshot replay, unknown reconnect activity, and manifest honesty are integrated into `pi-adapter/tests/e2e.test.ts`; registry ownership has focused unit coverage.

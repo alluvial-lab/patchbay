@@ -1,8 +1,8 @@
 use patchbay_contracts::patchbay::{
     observation_request, AdapterCapability, AdapterRegistration, AdapterSnapshotSupport,
-    AttachRequest, AuthorityDomainId, EndpointId, Generation, Lsn, Operation, OperationKind,
-    ReceiveRequest, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    AttachRequest, AuthorityDomainId, CommandId, EndpointId, Generation, Lsn, Operation,
+    OperationKind, ReceiveRequest, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::storage::{RusqliteStorage, Storage};
 use prost::Message;
@@ -64,6 +64,9 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
         .expect("session report succeeds");
 
     let operation = Operation {
+        command_id: Some(CommandId {
+            value: "command-1".into(),
+        }),
         authority_domain_id: Some(domain.clone()),
         kind: OperationKind::Instruct as i32,
         target_scope: Some(TargetScope {
@@ -76,6 +79,7 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
             session_generation: Some(Generation { value: 1 }),
             ..Default::default()
         }),
+        idempotency_key: "command-1-key".into(),
         ..Default::default()
     };
     storage

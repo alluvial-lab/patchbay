@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { TranscriptEvent } from "./transcript_event.js";
 
 /** Map one typed Pi event to one canonical partial-snapshot fact. */
@@ -120,6 +120,64 @@ export function projectAgentEvent(
   }
 }
 
+/** Project Pi's persisted entry snapshot into the same stable transcript facts as live events. */
+export function projectSessionEntries(
+  entries: readonly SessionEntry[],
+  sessionId: string,
+): TranscriptEvent[] {
+  const projected: TranscriptEvent[] = [];
+  for (const entry of entries) {
+    const ts = timestampValue(entry.timestamp);
+    if (entry.type === "compaction") {
+      projected.push({
+        kind: "compaction_recorded",
+        eventId: deterministicTranscriptEventId(sessionId, "compaction_recorded", entry.id),
+        sessionId,
+        ts,
+        summary: entry.summary,
+        tokensBefore: entry.tokensBefore,
+      });
+      continue;
+    }
+    if (entry.type !== "message") continue;
+    const message = asRecord(entry.message);
+    const role = stringValue(message["role"]);
+    const text = stringifyContent(message["content"]);
+    if (role === "user" && text) {
+      projected.push({
+        kind: "user_confirmed",
+        eventId: deterministicTranscriptEventId(sessionId, "user_confirmed", entry.id),
+        sessionId,
+        ts,
+        messageId: entry.id,
+        text,
+      });
+    } else if (role === "assistant") {
+      const error = stringValue(message["errorMessage"]);
+      const messageId = stringValue(message["responseId"]) ?? entry.id;
+      if (error) {
+        projected.push({
+          kind: "provider_error",
+          eventId: deterministicTranscriptEventId(sessionId, "provider_error", entry.id),
+          sessionId,
+          ts,
+          message: error,
+        });
+      } else if (text) {
+        projected.push({
+          kind: "assistant_committed",
+          eventId: deterministicTranscriptEventId(sessionId, "assistant_committed", messageId),
+          sessionId,
+          ts,
+          messageId,
+          text,
+        });
+      }
+    }
+  }
+  return projected;
+}
+
 export function deterministicTranscriptEventId(
   sessionId: string,
   kind: TranscriptEvent["kind"],
@@ -147,6 +205,11 @@ function assistantMessageId(message: Record<string, unknown>, ts: number): strin
 
 function messageTimestamp(message: Record<string, unknown>, fallback: number): number {
   return typeof message["timestamp"] === "number" ? message["timestamp"] : fallback;
+}
+
+function timestampValue(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -127,10 +127,40 @@ test("real AgentSession prompt emits transcript events and honors the approval g
 
     await pi.setModel(provider, model.id);
     await pi.setThinkingLevel("off");
+    const oldPiSessionId = pi.getState().piSessionId;
+    faux.appendResponses([
+      async () => {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+        return fauxAssistantMessage("late old-context response", { timestamp: 14 });
+      },
+    ]);
+    const oldContextRun = pi.prompt("replace this context while it is running");
+    await waitUntil(() => pi.getState().streaming);
     assert.equal(await pi.newSession(), 2);
+    await oldContextRun.catch(() => undefined);
     assert.equal(pi.getState().generation, 2);
+    assert.notEqual(pi.getState().piSessionId, oldPiSessionId);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+    assert.equal(
+      observed.some(
+        (event) =>
+          event.sessionId === "runtime-1:2" &&
+          event.kind === "assistant_committed" &&
+          event.text === "late old-context response",
+      ),
+      false,
+      "late events from the disposed generation stay inert",
+    );
     await pi.cancel();
   } finally {
-    pi.dispose();
+    await pi.dispose();
   }
 });
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition was not reached");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
