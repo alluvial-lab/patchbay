@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay — Component library</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="components.css">
+  <style>
+    /* Showcase chrome only — NOT component styles */
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-bg-primary);
+      color: var(--color-text-primary);
+      margin: 0;
+    }
+    .showcase-nav {
+      position: sticky; top: 0; z-index: 10;
+      background: var(--color-bg-secondary);
+      border-bottom: 1px solid var(--color-border);
+      padding: var(--space-3) var(--space-6);
+      display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center;
+      font-family: var(--font-mono); font-size: var(--font-size-sm);
+    }
+    .showcase-nav strong { letter-spacing: 0.04em; }
+    .showcase-nav a { color: var(--color-text-link); text-decoration: none; }
+    .showcase-nav a:hover { text-decoration: underline; }
+    .theme-toggle {
+      margin-left: auto;
+      padding: var(--space-1) var(--space-3);
+      background: transparent;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      color: var(--color-text-primary);
+      font: var(--font-size-sm) var(--font-sans);
+      cursor: pointer;
+    }
+    .showcase-section {
+      padding: var(--space-8) var(--space-6);
+      border-bottom: 1px solid var(--color-border);
+      max-width: 1100px; margin: 0 auto;
+    }
+    .showcase-section h2 {
+      font-family: var(--font-mono);
+      font-size: var(--font-size-2xl);
+      margin: 0 0 var(--space-2);
+    }
+    .showcase-section > p {
+      color: var(--color-text-secondary);
+      margin: 0 0 var(--space-6);
+      max-width: 70ch;
+      font-size: var(--font-size-sm);
+    }
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: var(--space-4);
+    }
+    .showcase-cell {
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: var(--space-4);
+      display: flex; flex-direction: column; gap: var(--space-3);
+    }
+    .showcase-cell h3 {
+      font: var(--font-weight-medium) var(--font-size-sm)/1 var(--font-mono);
+      margin: 0; color: var(--color-text-secondary);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .showcase-cell .demo {
+      display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+      padding: var(--space-3);
+      background: var(--color-bg-primary);
+      border-radius: var(--radius-sm);
+    }
+    .showcase-cell .demo--col { flex-direction: column; align-items: stretch; }
+    .showcase-cell pre {
+      margin: 0;
+      padding: var(--space-2) var(--space-3);
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-primary);
+      border-radius: var(--radius-sm);
+      font: var(--font-size-xs)/1.5 var(--font-mono);
+      overflow-x: auto;
+    }
+    .matrix-note {
+      font: var(--font-size-xs)/1.4 var(--font-mono);
+      color: var(--color-text-tertiary);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <nav class="showcase-nav">
+    <strong>PATCHBAY · components</strong>
+    <a href="#actions">Actions</a>
+    <a href="#forms">Forms</a>
+    <a href="#surfaces">Surfaces</a>
+    <a href="#feedback">Feedback</a>
+    <a href="#navigation">Navigation</a>
+    <a href="#connectivity">Connectivity</a>
+    <a href="#activity">Activity</a>
+    <a href="#session-status">Session status</a>
+    <a href="#command">Command timeline</a>
+    <a href="#session-row">Session row</a>
+    <a href="#composer">Composer</a>
+    <a href="#elicitation">Elicitation</a>
+    <a href="#failure">Failure</a>
+    <a href="#retry">Retry safety</a>
+    <a href="#attention">Attention</a>
+    <button class="theme-toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">🌓 Toggle theme</button>
+  </nav>
+
+  <!-- ============ ACTIONS ============ -->
+  <section id="actions" class="showcase-section">
+    <h2>Actions</h2>
+    <p>Buttons use pill radius (LCARS geometric discipline — pill on actions, sharp on surfaces). Four variants × three sizes.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Button matrix — variants × sizes</h3>
+        <div class="demo" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2);">
+          <button class="btn btn-primary btn--sm">SM</button>
+          <button class="btn btn-secondary btn--sm">SM</button>
+          <button class="btn btn-ghost btn--sm">SM</button>
+          <button class="btn btn-danger btn--sm">SM</button>
+          <button class="btn btn-primary">MD</button>
+          <button class="btn btn-secondary">MD</button>
+          <button class="btn btn-ghost">MD</button>
+          <button class="btn btn-danger">MD</button>
+          <button class="btn btn-primary btn--lg">LG</button>
+          <button class="btn btn-secondary btn--lg">LG</button>
+          <button class="btn btn-ghost btn--lg">LG</button>
+          <button class="btn btn-danger btn--lg">LG</button>
+        </div>
+        <pre>&lt;button class="btn btn-primary"&gt;Instruct&lt;/button&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>States — primary</h3>
+        <div class="demo">
+          <button class="btn btn-primary">Default</button>
+          <button class="btn btn-primary" disabled>Disabled</button>
+          <button class="btn btn-primary btn--icon-only">⚙</button>
+        </div>
+        <p class="matrix-note">:hover / :focus-visible trigger on interaction</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FORMS ============ -->
+  <section id="forms" class="showcase-section">
+    <h2>Forms</h2>
+    <p>Sharp radius on inputs (surfaces). Field wrapper carries label, helper, error.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Field — default</h3>
+        <div class="demo demo--col">
+          <div class="field">
+            <label class="field__label">Prompt</label>
+            <input class="input" placeholder="Run the session tests">
+            <p class="field__helper">Delivered as an instruct Operation.</p>
+          </div>
+        </div>
+        <pre>&lt;div class="field"&gt;&lt;label class="field__label"&gt;Prompt&lt;/label&gt;
+&lt;input class="input"&gt;&lt;/div&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>Field — error</h3>
+        <div class="demo demo--col">
+          <div class="field field--error">
+            <label class="field__label">Runtime session id</label>
+            <input class="input" value="01J8K3">
+            <p class="field__error">Identity field must not be empty.</p>
+          </div>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Textarea</h3>
+        <div class="demo demo--col">
+          <textarea class="textarea" placeholder="Multi-line prompt payload..."></textarea>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SURFACES ============ -->
+  <section id="surfaces" class="showcase-section">
+    <h2>Surfaces</h2>
+    <p>Cards use sharp radius (instrument-panel). Raised variant adds shadow.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Card — default + raised</h3>
+        <div class="demo demo--col">
+          <div class="card">Default card</div>
+          <div class="card card--raised">Raised card</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEEDBACK ============ -->
+  <section id="feedback" class="showcase-section">
+    <h2>Feedback</h2>
+    <p>Alerts carry a left-border accent by severity. Empty states center the operator's next action.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Alerts — all severities</h3>
+        <div class="demo demo--col">
+          <div class="alert alert--success"><div><p class="alert__title">Completed</p><p class="alert__body">LSN 1042 reached completed.</p></div></div>
+          <div class="alert alert--warning"><div><p class="alert__title">Stale view</p><p class="alert__body">Reconciling against newer snapshot.</p></div></div>
+          <div class="alert alert--danger"><div><p class="alert__title">Failed</p><p class="alert__body">execution_failed — see retry safety.</p></div></div>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Empty state</h3>
+        <div class="demo demo--col">
+          <div class="empty-state">
+            <p class="empty-state__title">No sessions</p>
+            <p class="empty-state__body">No adapters attached. Run <code>patchbay setup</code> to enroll one.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NAVIGATION ============ -->
+  <section id="navigation" class="showcase-section">
+    <h2>Navigation</h2>
+    <p>Responsive shell: sidebar on desktop collapses to bottom-nav on mobile. Tabs for in-session views.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Nav bar</h3>
+        <div class="demo demo--col">
+          <nav class="nav-bar"><span class="nav-bar__brand">PATCHBAY</span><span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span></nav>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Tabs</h3>
+        <div class="demo demo--col">
+          <div class="tabs">
+            <button class="tabs__tab" aria-selected="true">Timeline</button>
+            <button class="tabs__tab">Files</button>
+            <button class="tabs__tab">Audit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CONNECTIVITY ============ -->
+  <section id="connectivity" class="showcase-section">
+    <h2>connectivity-indicator — SessionConnectivityState (5)</h2>
+    <p>Binds the 5 connectivity values. Dot is the primary scannable signal — readable as a column in dense monitoring mode. Stale is emphasized (dominates presentation). Compact variant: dot only.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>All 5 states</h3>
+        <div class="demo demo--col">
+          <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+          <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
+          <span class="connectivity-indicator connectivity-indicator--offline"><span class="connectivity-indicator__dot"></span>offline</span>
+          <span class="connectivity-indicator connectivity-indicator--unknown"><span class="connectivity-indicator__dot"></span>unknown</span>
+          <span class="connectivity-indicator connectivity-indicator--failed"><span class="connectivity-indicator__dot"></span>failed</span>
+        </div>
+        <pre>&lt;span class="connectivity-indicator connectivity-indicator--live"&gt;
+  &lt;span class="connectivity-indicator__dot"&gt;&lt;/span&gt;live
+&lt;/span&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>Compact (dot only) — dense column</h3>
+        <div class="demo demo--col" style="align-items:flex-start; gap: var(--space-2);">
+          <span class="connectivity-indicator connectivity-indicator--live connectivity-indicator--compact"><span class="connectivity-indicator__dot"></span></span>
+          <span class="connectivity-indicator connectivity-indicator--stale connectivity-indicator--compact"><span class="connectivity-indicator__dot"></span></span>
+          <span class="connectivity-indicator connectivity-indicator--offline connectivity-indicator--compact"><span class="connectivity-indicator__dot"></span></span>
+          <span class="connectivity-indicator connectivity-indicator--unknown connectivity-indicator--compact"><span class="connectivity-indicator__dot"></span></span>
+          <span class="connectivity-indicator connectivity-indicator--failed connectivity-indicator--compact"><span class="connectivity-indicator__dot"></span></span>
+        </div>
+        <p class="matrix-note">Scannable as a column: live / stale / offline / unknown / failed</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ACTIVITY ============ -->
+  <section id="activity" class="showcase-section">
+    <h2>activity-indicator — SessionActivityState (3) + detail</h2>
+    <p>Binds the 3 activity values. <strong>working</strong> carries an optional Observation-composed detail (Option C) — thinking vs executing vs waiting — derived from the adapter's event stream (<code>tool_call</code>, <code>tool_execution_start</code>, <code>message_update</code>, <code>agent_end</code>). The detail is an ephemeral presentation hint, NOT a durable protocol state; the durable state stays <code>working</code>/<code>idle</code>.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>3 states (no detail)</h3>
+        <div class="demo demo--col">
+          <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span>
+          <span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>working + Observation-composed detail</h3>
+        <div class="demo demo--col">
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">executing bash</span></span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">tool: read_file</span></span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">subagent: explore</span></span>
+        </div>
+        <pre>&lt;span class="activity-indicator activity-indicator--working"&gt;
+  &lt;span class="activity-indicator__icon"&gt;&lt;/span&gt;working
+  &lt;span class="activity-indicator__detail"&gt;executing bash&lt;/span&gt;
+&lt;/span&gt;</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SESSION STATUS ============ -->
+  <section id="session-status" class="showcase-section">
+    <h2>session-status — composition + dominance rule</h2>
+    <p>Places connectivity + activity side by side. <strong>Dominance rule:</strong> when connectivity is stale/unknown/offline/failed, the activity indicator is de-emphasized (opacity 0.55). When live, both read at equal weight. This is where "stale dominates presentation" lives — as a composition rule, not a merged label.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>live — equal weight</h3>
+        <div class="demo">
+          <span class="session-status">
+            <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+            <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+          </span>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>stale — activity de-emphasized</h3>
+        <div class="demo">
+          <span class="session-status">
+            <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
+            <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">executing bash</span></span>
+          </span>
+        </div>
+        <p class="matrix-note">stale connectivity dominates; activity dims</p>
+      </div>
+      <div class="showcase-cell">
+        <h3>offline — activity de-emphasized</h3>
+        <div class="demo">
+          <span class="session-status">
+            <span class="connectivity-indicator connectivity-indicator--offline"><span class="connectivity-indicator__dot"></span>offline</span>
+            <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+          </span>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>failed — activity de-emphasized</h3>
+        <div class="demo">
+          <span class="session-status">
+            <span class="connectivity-indicator connectivity-indicator--failed"><span class="connectivity-indicator__dot"></span>failed</span>
+            <span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMMAND TIMELINE ============ -->
+  <section id="command" class="showcase-section">
+    <h2>command-timeline — CommandState (9) + terminal races</h2>
+    <p>Binds all 9 CommandState values. Delivery states rendered distinctly from message content (liveness ≠ delivery). Terminal-race explanations are UI labels, not protocol states.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>All 9 states</h3>
+        <div class="demo demo--col">
+          <div class="command-timeline">
+            <div class="command-step command-step--accepted"><span class="command-step__marker"></span><span class="command-step__state">accepted</span><span class="command-step__lsn">LSN 1040</span></div>
+            <div class="command-step command-step--delivered"><span class="command-step__marker"></span><span class="command-step__state">delivered</span><span class="command-step__lsn">LSN 1041</span></div>
+            <div class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span><span class="command-step__lsn">LSN 1042</span></div>
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span><span class="command-step__lsn">LSN 1042</span></div>
+            <div class="command-step command-step--rejected"><span class="command-step__marker"></span><span class="command-step__state">rejected</span><span class="command-step__lsn">LSN 1043</span></div>
+            <div class="command-step command-step--failed"><span class="command-step__marker"></span><span class="command-step__state">failed</span><span class="command-step__lsn">LSN 1044</span></div>
+            <div class="command-step command-step--expired"><span class="command-step__marker"></span><span class="command-step__state">expired</span><span class="command-step__lsn">LSN 1045</span></div>
+            <div class="command-step command-step--cancelled"><span class="command-step__marker"></span><span class="command-step__state">cancelled</span><span class="command-step__lsn">LSN 1046</span></div>
+            <div class="command-step command-step--superseded"><span class="command-step__marker"></span><span class="command-step__state">superseded</span><span class="command-step__lsn">LSN 1047</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Terminal-race explanation labels</h3>
+        <div class="demo demo--col">
+          <div class="command-timeline">
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span></div>
+            <div class="command-step"><span class="command-step__race">Completed before cancellation arrived</span></div>
+          </div>
+          <div class="command-timeline">
+            <div class="command-step command-step--cancelled"><span class="command-step__marker"></span><span class="command-step__state">cancelled</span></div>
+            <div class="command-step"><span class="command-step__race">Cancelled before completion</span></div>
+          </div>
+          <div class="command-timeline">
+            <div class="command-step command-step--expired"><span class="command-step__marker"></span><span class="command-step__state">expired</span></div>
+            <div class="command-step"><span class="command-step__race">Expired before adapter completion</span></div>
+          </div>
+        </div>
+        <p class="matrix-note">UI labels — not added protocol states</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SESSION ROW ============ -->
+  <section id="session-row" class="showcase-section">
+    <h2>session-row — session list item</h2>
+    <p>Identity-before-intent: the identity tuple (adapter/scope/runtime/gen) is primary; human-readable labels are metadata. "needs you" state foregrounds sessions waiting for a command or with a pending elicitation.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Default + active + needs-you</h3>
+        <div class="demo demo--col">
+          <div class="session-row">
+            <span class="session-row__label">pi@laptop</span>
+            <span class="session-row__context">patchbay-core</span>
+            <div class="session-row__badges">
+              <span class="session-status">
+                <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+                <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+              </span>
+            </div>
+          </div>
+          <div class="session-row session-row--active">
+            <span class="session-row__label">codex@vm</span>
+            <span class="session-row__context">web-server</span>
+            <div class="session-row__badges">
+              <span class="session-status">
+                <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
+                <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+              </span>
+            </div>
+          </div>
+          <div class="session-row session-row--needs-you">
+            <span class="session-row__label">pi@desktop</span>
+            <span class="session-row__context">pi-adapter</span>
+            <span class="session-row__identity">gen 2 · waiting for command</span>
+            <div class="session-row__badges">
+              <span class="session-status">
+                <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+                <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMPOSER ============ -->
+  <section id="composer" class="showcase-section">
+    <h2>composer — in-session OperationKind input</h2>
+    <p>Shows local submission state + durable CommandState + idempotency/retry behavior. The composer surfaces in-session OperationKinds (instruct, cancel/interrupt, approval/elicitation-response, query, reconfigure, session-management).</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Default composer</h3>
+        <div class="demo demo--col">
+          <div class="composer">
+            <input class="composer__input" placeholder="Instruct, query, or slash-command...">
+            <div class="composer__actions">
+              <button class="btn btn-secondary btn--sm">Cancel</button>
+              <button class="btn btn-primary btn--sm">Instruct</button>
+            </div>
+          </div>
+        </div>
+        <pre>&lt;div class="composer"&gt;
+  &lt;input class="composer__input"&gt;
+  &lt;div class="composer__actions"&gt;
+    &lt;button class="btn btn-primary btn--sm"&gt;Instruct&lt;/button&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>With idempotency key shown</h3>
+        <div class="demo demo--col">
+          <div class="composer">
+            <input class="composer__input" value="Run the session tests">
+            <div class="composer__actions">
+              <button class="btn btn-primary btn--sm">Instruct</button>
+            </div>
+          </div>
+          <span class="composer__idempotency">idempotency_key: 01J8K3M2N4 · retry reuses key+id</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ELICITATION ============ -->
+  <section id="elicitation" class="showcase-section">
+    <h2>elicitation-card — pending Elicitation</h2>
+    <p>Pending approvals and questions surface as attention-required state. First-answer-wins: any authenticated endpoint may answer; the first valid answer clears it everywhere. Response contract is visible.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Pending — approval</h3>
+        <div class="demo demo--col">
+          <div class="elicitation-card">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">approval</span>
+              <span class="elicitation-card__contract">contract: approval</span>
+            </div>
+            <p class="elicitation-card__prompt">Approve tool call: <code>bash: rm -rf target/</code></p>
+            <div class="elicitation-card__actions">
+              <button class="btn btn-danger btn--sm">Deny</button>
+              <button class="btn btn-primary btn--sm">Approve</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Answered + expired</h3>
+        <div class="demo demo--col">
+          <div class="elicitation-card elicitation-card--answered">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">approval</span>
+              <span class="elicitation-card__contract">answered · endpoint: laptop</span>
+            </div>
+            <p class="elicitation-card__prompt">Approve tool call: <code>read_file</code></p>
+          </div>
+          <div class="elicitation-card elicitation-card--expired">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">question</span>
+              <span class="elicitation-card__contract">expired</span>
+            </div>
+            <p class="elicitation-card__prompt">Which branch should I target?</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FAILURE ============ -->
+  <section id="failure" class="showcase-section">
+    <h2>failure-banner — failure vocabulary mapping</h2>
+    <p>Never collapses to a generic "failed". Each failure term is distinct: denial, unsupported, revoked, timeout, expiration, cancellation, supersession, execution failure.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Distinct failure terms</h3>
+        <div class="demo demo--col">
+          <div class="failure-banner"><span class="failure-banner__term">authorization_denied</span><p class="failure-banner__message">Grant does not cover this OperationKind on this target.</p></div>
+          <div class="failure-banner"><span class="failure-banner__term">unsupported_command</span><p class="failure-banner__message">Adapter does not support <code>spawn</code> at delivery.</p></div>
+          <div class="failure-banner"><span class="failure-banner__term">target_offline</span><p class="failure-banner__message">Session endpoint unavailable. Safe to retry.</p></div>
+          <div class="failure-banner"><span class="failure-banner__term">execution_failed</span><p class="failure-banner__message">Target began executing and reported failure.</p></div>
+          <div class="failure-banner"><span class="failure-banner__term">execution_outcome_unknown</span><p class="failure-banner__message">Execution may have occurred. See retry safety.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RETRY SAFETY ============ -->
+  <section id="retry" class="showcase-section">
+    <h2>retry-safety-indicator — failure term × idempotency_strength</h2>
+    <p>Retry safety is derived from the failure term + the adapter's <code>idempotency_strength</code>, NEVER from CommandState alone. Three outcomes: safe / maybe / unsafe.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>The matrix</h3>
+        <div class="demo demo--col">
+          <span class="retry-safety-indicator retry-safety-indicator--safe">safe to retry</span>
+          <span class="retry-safety-indicator retry-safety-indicator--maybe">retry may double-execute</span>
+          <span class="retry-safety-indicator retry-safety-indicator--unsafe">retry will double-execute</span>
+        </div>
+        <pre>&lt;span class="retry-safety-indicator retry-safety-indicator--safe"&gt;
+  safe to retry
+&lt;/span&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>Matrix derivation</h3>
+        <div class="demo demo--col">
+          <p class="matrix-note">execution_outcome_unknown × end-to-end → safe</p>
+          <p class="matrix-note">execution_outcome_unknown × at-Patchbay-boundary → maybe</p>
+          <p class="matrix-note">execution_outcome_unknown × none → unsafe</p>
+          <p class="matrix-note">execution_failed × any → not unconditionally safe</p>
+          <p class="matrix-note">target_offline × any → safe (pre-execution)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ATTENTION ============ -->
+  <section id="attention" class="showcase-section">
+    <h2>attention-badge — global pending-elicitation count</h2>
+    <p>Global awareness signal: sidebar header on desktop, bottom-nav item on mobile. Shows pending-elicitation count; deep-links into the Attention destination.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>With count</h3>
+        <div class="demo">
+          <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
+        </div>
+        <pre>&lt;span class="attention-badge"&gt;
+  &lt;span class="attention-badge__dot"&gt;&lt;/span&gt;
+  &lt;span class="attention-badge__count"&gt;3&lt;/span&gt;
+&lt;/span&gt;</pre>
+      </div>
+      <div class="showcase-cell">
+        <h3>Zero / none</h3>
+        <div class="demo">
+          <span class="attention-badge"><span class="attention-badge__dot" style="opacity:0.3"></span></span>
+        </div>
+        <p class="matrix-note">No count badge when zero</p>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // Theme toggle (also respects system on first load — no JS needed for that)
+  </script>
+</body>
+</html>
