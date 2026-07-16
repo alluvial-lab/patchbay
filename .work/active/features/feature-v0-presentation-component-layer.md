@@ -1,7 +1,7 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
@@ -79,6 +79,7 @@ Structural insights surfaced during aesthetic exploration that constrain the des
   - Palette: **Option 1 — Nostromo/LCARS hybrid** (locked 2026-07-16). Amber phosphor on warm instrument-panel black; warm cream/parchment light mode. Dark-first; explicit `[data-theme]` toggle with `prefers-color-scheme` system-follow default. WCAG AA viable in both modes (accent-as-text is AA-large-only; accent is a fill, not body text).
   - Typography: **Option 1 — IBM Plex Mono / IBM Plex Sans hybrid** (locked 2026-07-16). Mono for chrome + state labels (session rows, CommandState, connectivity×activity badges, code); humanist sans for message bodies + markdown. Resolves the mobile-markdown-readability tension by pairing a retrofuturist chrome face with a readable proportional body face.
   - Tokens locked: `.mockups/design-system/tokens.css`
+  - Components: **locked 2026-07-16** — `.mockups/design-system/components.css` + `components.html` showcase. Common starter set (btn, field/input/textarea, card, alert/toast/empty-state, nav-bar/tabs) + 11 project-unique state-binding primitives (connectivity-indicator, activity-indicator, session-status, command-timeline/step, session-row, composer, elicitation-card, failure-banner, retry-safety-indicator, delivery-line, attention-badge). Aesthetic: subtle depth / mixed corners (pill actions, sharp surfaces) / dual density.
   - Preview pages: `palette.html`, `typography.html`, `typography-in-palettes.html` (comparison of all 6 palette variants under the locked typography; retained for traceability)
 
 ## Notes
