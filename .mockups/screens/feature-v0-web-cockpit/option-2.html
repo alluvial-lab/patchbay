@@ -192,11 +192,15 @@
     .attention-badge__count { position: absolute; top: -6px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-full); background: var(--color-danger); color: var(--color-text-inverse); font: var(--font-weight-bold) 10px/16px var(--font-mono); text-align: center; }
 
     /* === page-specific layout === */
-    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; font: 13px/1.4 'IBM Plex Sans', sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; font: 13px/1.4 'IBM Plex Sans', sans-serif; border-bottom: 1px solid #30363d; flex-shrink: 0; }
     .mock-meta strong { font-weight: 600; }
     .mock-meta span { color: #8b949e; }
 
-    .cockpit { display: flex; height: calc(100vh - 40px); min-height: 600px; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); }
+    /* body is a flex column: mock-meta takes its natural height, cockpit fills the rest.
+       This keeps the composer pinned to the visible bottom even when the header wraps. */
+    body { display: flex; flex-direction: column; height: 100vh; margin: 0; overflow: hidden; }
+
+    .cockpit { display: flex; flex: 1; min-height: 0; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); }
 
     .sidebar { width: 300px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
     .sidebar__head { padding: var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
@@ -227,7 +231,7 @@
     @media (max-width: 760px) {
       .cockpit { flex-direction: column; height: auto; min-height: 100vh; }
       .sidebar { width: 100%; flex: 1; }
-      .main { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 20; display: none; }
+      .main { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 20; display: none; background: var(--color-bg-primary); flex-direction: column; }
       .main.is-open { display: flex; }
       .main__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
       .back-btn { display: inline-flex; align-items: center; gap: var(--space-1); background: none; border: 0; color: var(--color-text-secondary); font: 500 var(--font-size-sm)/1 var(--font-sans); cursor: pointer; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); }
@@ -237,7 +241,7 @@
       .main { padding-bottom: 56px; } /* clear the bottom-nav so composer isn't hidden */
       .bottom-nav { display: flex; }
     }
-    .bottom-nav { display: none; position: sticky; bottom: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; z-index: 30; }
+    .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; z-index: 30; }
     .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; padding: var(--space-1); }
     .bottom-nav__item--active { color: var(--color-accent); }
   </style>
