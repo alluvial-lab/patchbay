@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — Session detail</title>
+  <style>
+    /* === inlined tokens.css === */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+    :root {
+      --color-bg-primary: #faf6ee; --color-bg-secondary: #f0e6d2; --color-bg-tertiary: #e3d6ba; --color-bg-inverse: #2a2218;
+      --color-text-primary: #2a2218; --color-text-secondary: #6b5d49; --color-text-tertiary: #9a8b73; --color-text-inverse: #f0e6d2;
+      --color-text-link: #b8651a; --color-text-link-hover: #8a4a14;
+      --color-border: #d4c4a0; --color-border-strong: #b8a87a;
+      --color-accent: #b8651a; --color-accent-hover: #8a4a14; --color-accent-muted: #f5e6d0;
+      --color-success: #4a7c59; --color-warning: #c8772e; --color-danger: #a83232; --color-info: #355c7a;
+      --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, ui-sans-serif, sans-serif;
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+      --font-size-xs: 12px; --font-size-sm: 14px; --font-size-base: 16px; --font-size-lg: 18px;
+      --font-size-xl: 20px; --font-size-2xl: 24px; --font-size-3xl: 32px;
+      --font-weight-regular: 400; --font-weight-medium: 500; --font-weight-semibold: 600; --font-weight-bold: 700;
+      --line-height-tight: 1.25; --line-height-base: 1.5; --line-height-loose: 1.75;
+      --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
+      --radius-sm: 4px; --radius-md: 8px; --radius-lg: 16px; --radius-full: 9999px;
+    }
+    :root[data-theme="dark"] {
+      --color-bg-primary: #0e0d0b; --color-bg-secondary: #1a1714; --color-bg-tertiary: #26221d; --color-bg-inverse: #f0e6d2;
+      --color-text-primary: #f0e6d2; --color-text-secondary: #b8a98a; --color-text-tertiary: #7a6e58; --color-text-inverse: #2a2218;
+      --color-text-link: #ffb454; --color-text-link-hover: #ffc878;
+      --color-border: #3a3429; --color-border-strong: #5a4f3e;
+      --color-accent: #ffb454; --color-accent-hover: #ffc878; --color-accent-muted: #3a3429;
+      --color-success: #5b9a6e; --color-warning: #e8954a; --color-danger: #c84545; --color-info: #6ba3c9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --color-bg-primary: #0e0d0b; --color-bg-secondary: #1a1714; --color-bg-tertiary: #26221d; --color-bg-inverse: #f0e6d2;
+        --color-text-primary: #f0e6d2; --color-text-secondary: #b8a98a; --color-text-tertiary: #7a6e58; --color-text-inverse: #2a2218;
+        --color-text-link: #ffb454; --color-text-link-hover: #ffc878;
+        --color-border: #3a3429; --color-border-strong: #5a4f3e;
+        --color-accent: #ffb454; --color-accent-hover: #ffc878; --color-accent-muted: #3a3429;
+        --color-success: #5b9a6e; --color-warning: #e8954a; --color-danger: #c84545; --color-info: #6ba3c9;
+      }
+    }
+    :root { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.08); }
+    :root[data-theme="dark"] { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); } }
+
+    /* === inlined components.css (subset used by this screen) === */
+    *, *::before, *::after { box-sizing: border-box; }
+    button { font: inherit; cursor: pointer; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-full); font: var(--font-weight-semibold) var(--font-size-sm)/1 var(--font-sans); transition: background-color 120ms, opacity 120ms; white-space: nowrap; }
+    .btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--color-accent); color: var(--color-text-inverse); }
+    .btn-primary:hover:not(:disabled) { background: var(--color-accent-hover); }
+    .btn-secondary { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+    .btn-ghost { background: transparent; color: var(--color-text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--color-bg-secondary); color: var(--color-text-primary); }
+    .btn-danger { background: var(--color-danger); color: var(--color-text-inverse); }
+    .btn--sm { padding: var(--space-1) var(--space-3); font-size: var(--font-size-xs); }
+    .card { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4); }
+
+    /* connectivity + activity indicators */
+    .connectivity-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+    .connectivity-indicator__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .connectivity-indicator--live .connectivity-indicator__dot { background: var(--color-success); }
+    .connectivity-indicator--live { color: var(--color-success); }
+    .activity-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-secondary); }
+    .activity-indicator__icon { width: 12px; height: 12px; flex-shrink: 0; }
+    .activity-indicator--working { color: var(--color-accent); }
+    .activity-indicator--working .activity-indicator__icon { border: 2px solid var(--color-accent); border-top-color: transparent; border-radius: 50%; animation: pb-spin 800ms linear infinite; }
+    .activity-indicator__detail { font-weight: var(--font-weight-regular); color: var(--color-text-secondary); text-transform: none; letter-spacing: 0; }
+    .activity-indicator__detail::before { content: " · "; color: var(--color-text-tertiary); }
+    @keyframes pb-spin { to { transform: rotate(360deg); } }
+
+    /* command-step (delivery) */
+    .command-step { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--color-text-secondary); font: var(--font-size-xs)/1 var(--font-mono); }
+    .command-step__marker { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
+    .command-step__state { font-weight: var(--font-weight-semibold); text-transform: uppercase; letter-spacing: 0.04em; }
+    .command-step__lsn { color: var(--color-text-tertiary); margin-left: auto; }
+    .command-step--completed .command-step__marker { background: var(--color-success); }
+    .command-step--completed .command-step__state { color: var(--color-success); }
+    .command-step--running .command-step__marker { background: var(--color-accent); box-shadow: 0 0 6px var(--color-accent); animation: pb-pulse 1.2s ease-in-out infinite; }
+    .command-step--running .command-step__state { color: var(--color-accent); }
+    @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .command-step__race { font-style: italic; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+
+    /* === page layout === */
+    body { margin: 0; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+    .cockpit { display: flex; flex: 1; min-height: 0; }
+
+    /* sidebar (compressed for this screen focus) */
+    .sidebar { width: 220px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+    .sidebar__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font: 600 var(--font-size-sm)/1 var(--font-mono); letter-spacing: 0.04em; }
+    .session-row { padding: var(--space-3); border-bottom: 1px solid var(--color-border); cursor: pointer; border-left: 3px solid transparent; }
+    .session-row--active { background: var(--color-accent-muted); border-left-color: var(--color-accent); }
+    .session-row__label { font: 600 var(--font-size-sm)/1.2 var(--font-sans); display: block; }
+    .session-row__context { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); display: block; margin-top: 2px; }
+    .session-row__badges { display: flex; gap: var(--space-2); margin-top: var(--space-1); flex-wrap: wrap; }
+
+    /* main detail pane */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    .timeline { flex: 1; overflow-y: auto; padding: var(--space-6); }
+    .timeline__empty { color: var(--color-text-tertiary); text-align: center; padding: var(--space-8); font-size: var(--font-size-sm); }
+
+    /* message bubbles — agent vs operator */
+    .msg { margin-bottom: var(--space-6); max-width: 760px; }
+    .msg__who { font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: var(--space-2); }
+    .msg__who .lsn { color: var(--color-text-tertiary); }
+    .msg__body { font: var(--font-size-base)/var(--line-height-loose) var(--font-sans); color: var(--color-text-primary); }
+    .msg--operator .msg__body { background: var(--color-accent-muted); border-left: 2px solid var(--color-accent); padding: var(--space-3) var(--space-4); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+
+    /* markdown rendering inside msg body — the differentiator */
+    .msg__body h3 { font: 600 var(--font-size-lg)/1.3 var(--font-sans); margin: var(--space-4) 0 var(--space-2); }
+    .msg__body h3:first-child { margin-top: 0; }
+    .msg__body p { margin: 0 0 var(--space-3); }
+    .msg__body ul, .msg__body ol { margin: var(--space-2) 0; padding-left: 1.4em; }
+    .msg__body li { margin: var(--space-1) 0; }
+    .msg__body code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
+    .msg__body pre {
+      font: var(--font-size-sm)/1.5 var(--font-mono);
+      background: var(--color-bg-tertiary); color: var(--color-text-primary);
+      padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm);
+      overflow-x: auto; margin: var(--space-3) 0; border: 1px solid var(--color-border);
+    }
+    .msg__body pre code { background: none; padding: 0; font-size: inherit; }
+    .msg__body blockquote { border-left: 3px solid var(--color-border-strong); margin: var(--space-3) 0; padding: var(--space-1) var(--space-4); color: var(--color-text-secondary); }
+    .msg__body table { border-collapse: collapse; margin: var(--space-3) 0; font-size: var(--font-size-sm); width: 100%; }
+    .msg__body th, .msg__body td { border: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); text-align: left; }
+    .msg__body th { background: var(--color-bg-secondary); font-weight: var(--font-weight-semibold); }
+
+    /* collapsible command delivery strip (interleaved, compact) */
+    .delivery-strip {
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm); margin: var(--space-2) 0 var(--space-4);
+      font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary);
+      max-width: 760px; cursor: pointer;
+    }
+    .delivery-strip:hover { border-color: var(--color-border-strong); }
+    .delivery-strip__kind { font-weight: var(--font-weight-semibold); color: var(--color-text-primary); text-transform: uppercase; letter-spacing: 0.04em; }
+    .delivery-strip__summary { display: flex; align-items: center; gap: var(--space-2); flex: 1; }
+    .delivery-strip__dots { display: flex; align-items: center; gap: 3px; }
+    .delivery-strip__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-tertiary); }
+    .delivery-strip__dot--done { background: var(--color-success); }
+    .delivery-strip__dot--current { background: var(--color-accent); box-shadow: 0 0 4px var(--color-accent); }
+    .delivery-strip__state { color: var(--color-text-secondary); }
+    .delivery-strip__state--running { color: var(--color-accent); }
+    .delivery-strip__state--completed { color: var(--color-success); }
+    .delivery-strip__chevron { color: var(--color-text-tertiary); transition: transform 150ms; }
+    .delivery-strip.is-open .delivery-strip__chevron { transform: rotate(90deg); }
+    .delivery-strip__detail { display: none; margin-top: var(--space-2); flex-basis: 100%; flex-direction: column; gap: 2px; }
+    .delivery-strip.is-open .delivery-strip__detail { display: flex; }
+
+    /* elicitation — inline card (desktop default) */
+    .elicitation-card {
+      display: flex; flex-direction: column; gap: var(--space-3);
+      padding: var(--space-4); background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border); border-left: 3px solid var(--color-warning);
+      border-radius: var(--radius-sm); margin: var(--space-4) 0; max-width: 760px;
+    }
+    .elicitation-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+    .elicitation-card__kind { font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-warning); }
+    .elicitation-card__contract { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .elicitation-card__prompt { margin: 0; font: var(--font-size-base)/var(--line-height-base) var(--font-sans); color: var(--color-text-primary); }
+    .elicitation-card__prompt code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
+    .elicitation-card__prompt pre { font: var(--font-size-sm)/1.5 var(--font-mono); background: var(--color-bg-tertiary); padding: var(--space-3); border-radius: var(--radius-sm); overflow-x: auto; margin: var(--space-2) 0; }
+    .elicitation-card__options { display: flex; flex-direction: column; gap: var(--space-2); }
+    .option { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; background: var(--color-bg-primary); }
+    .option:hover { border-color: var(--color-border-strong); }
+    .option--selected { border-color: var(--color-accent); background: var(--color-accent-muted); }
+    .option__control { width: 18px; height: 18px; border: 2px solid var(--color-border-strong); border-radius: 50%; flex-shrink: 0; margin-top: 1px; }
+    .option--selected .option__control { border-color: var(--color-accent); background: var(--color-accent); box-shadow: inset 0 0 0 3px var(--color-bg-primary); }
+    .option__body { flex: 1; min-width: 0; }
+    .option__label { font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-primary); }
+    .option__desc { font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin-top: 2px; }
+    .elicitation-card__actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+
+    /* composer */
+    .composer { display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-3) var(--space-6); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
+    .composer__input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; resize: none; min-height: 40px; max-height: 120px; }
+    .composer__input:focus { border-color: var(--color-accent); }
+    .composer__input::placeholder { color: var(--color-text-tertiary); }
+
+    /* === mobile: bottom sheet for elicitation === */
+    @media (max-width: 760px) {
+      .cockpit { flex-direction: column; }
+      .sidebar { display: none; }
+      .timeline { padding: var(--space-3); }
+      .msg { max-width: 100%; }
+      .delivery-strip { max-width: 100%; }
+      .elicitation-card { max-width: 100%; }
+      /* on mobile, the inline elicitation card becomes a tappable teaser that opens a bottom sheet */
+      .elicitation-card--inline-teaser { cursor: pointer; }
+      .elicitation-card--inline-teaser .elicitation-card__options,
+      .elicitation-card--inline-teaser .elicitation-card__actions { display: none; }
+      .elicitation-card--inline-teaser .elicitation-card__prompt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .bottom-nav { display: flex; }
+      .composer { padding: var(--space-3); padding-bottom: 64px; }
+    }
+    .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; z-index: 30; }
+    .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; padding: var(--space-1); }
+    .bottom-nav__item--active { color: var(--color-accent); }
+
+    /* bottom sheet (mobile elicitation focus) */
+    .sheet-backdrop { display: none; position: fixed; inset: 0; background: rgb(0 0 0 / 0.5); z-index: 40; }
+    .sheet-backdrop.is-open { display: block; }
+    .sheet {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--color-bg-primary); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      box-shadow: 0 -4px 24px rgb(0 0 0 / 0.2); z-index: 50;
+      max-height: 88vh; flex-direction: column;
+      padding: var(--space-4); padding-bottom: 72px;
+    }
+    .sheet.is-open { display: flex; }
+    .sheet__handle { width: 40px; height: 4px; background: var(--color-border-strong); border-radius: 2px; margin: 0 auto var(--space-4); }
+    .sheet__header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+    .sheet__kind { font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-warning); }
+    .sheet__close { margin-left: auto; background: none; border: 0; color: var(--color-text-secondary); font-size: 20px; cursor: pointer; padding: var(--space-1); }
+    .sheet__prompt { margin: 0 0 var(--space-4); font: var(--font-size-base)/var(--line-height-base) var(--font-sans); color: var(--color-text-primary); overflow-y: auto; }
+    .sheet__prompt code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
+    .sheet__prompt pre { font: var(--font-size-sm)/1.5 var(--font-mono); background: var(--color-bg-tertiary); padding: var(--space-3); border-radius: var(--radius-sm); overflow-x: auto; margin: var(--space-2) 0; }
+    .sheet__options { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; }
+    .sheet__actions { display: flex; gap: var(--space-2); position: fixed; bottom: 0; left: 0; right: 0; padding: var(--space-3) var(--space-4) var(--space-4); background: var(--color-bg-primary); border-top: 1px solid var(--color-border); }
+    .sheet__actions .btn { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="cockpit">
+    <aside class="sidebar">
+      <div class="sidebar__head">PATCHBAY</div>
+      <div class="session-row session-row--active">
+        <span class="session-row__label">patchbay-core</span>
+        <span class="session-row__context">pi@laptop</span>
+        <div class="session-row__badges">
+          <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+        </div>
+      </div>
+      <div class="session-row">
+        <span class="session-row__label">pi-adapter</span>
+        <span class="session-row__context">pi@desktop</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="timeline" id="timeline">
+        <!-- operator message (the instruct that started this turn) -->
+        <div class="msg msg--operator">
+          <div class="msg__who">YOU · instruct <span class="lsn">LSN 1042</span></div>
+          <div class="msg__body">Refactor the session ingest path to mirror acceptance's `ingest_observation`, and add a property test for generation monotonicity.</div>
+        </div>
+
+        <!-- collapsible delivery strip for that command -->
+        <div class="delivery-strip" onclick="this.classList.toggle('is-open')">
+          <span class="delivery-strip__kind">instruct</span>
+          <div class="delivery-strip__summary">
+            <div class="delivery-strip__dots">
+              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
+              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
+              <span class="delivery-strip__dot delivery-strip__dot--current"></span>
+            </div>
+            <span class="delivery-strip__state delivery-strip__state--running">running · LSN 1042</span>
+          </div>
+          <span class="delivery-strip__chevron">›</span>
+          <div class="delivery-strip__detail">
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">accepted</span><span class="command-step__lsn">LSN 1042</span></div>
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">delivered</span><span class="command-step__lsn">LSN 1042</span></div>
+            <div class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span><span class="command-step__lsn">LSN 1042</span></div>
+          </div>
+        </div>
+
+        <!-- agent observation: markdown content (the differentiator) -->
+        <div class="msg">
+          <div class="msg__who">AGENT · observation <span class="lsn">LSN 1042.3</span></div>
+          <div class="msg__body">
+            <h3>Refactor plan</h3>
+            <p>Split the ingestion path into <code>validate → derive → append</code>, mirroring <code>ingest_observation</code>. Generation bumps now carry the replacement's initial state rather than inheriting stale values.</p>
+            <p>Three changes land together:</p>
+            <ul>
+              <li><code>validate_report</code> rejects empty identity fields before any durable append</li>
+              <li>Multi-delta reports append all changed deltas in order (connectivity, activity, metadata)</li>
+              <li>Replay is a clean fold over the event log — no projection state needed</li>
+            </ul>
+            <p>The tricky part is the warm path:</p>
+            <pre><code>let result = ingest_session_report(
+    &amp;mut storage,
+    &amp;mut registry,
+    report,
+).await?;</code></pre>
+            <blockquote>Note: a partial multi-delta failure leaves earlier appends durable; retry must re-derive against the warmed projection, not the pre-report state.</blockquote>
+          </div>
+        </div>
+
+        <!-- pending approval elicitation (inline card on desktop) -->
+        <div class="elicitation-card elicitation-card--inline-teaser" onclick="openSheet(event)">
+          <div class="elicitation-card__header">
+            <span class="elicitation-card__kind">approval</span>
+            <span class="elicitation-card__contract">contract: approval · pending</span>
+          </div>
+          <p class="elicitation-card__prompt">Approve tool call: <code>bash: rm -rf target/</code><br><br>This will delete the build cache. The agent wants to clear it before running the test suite.</p>
+          <div class="elicitation-card__options">
+            <div class="option" onclick="selectOption(event, this)">
+              <span class="option__control"></span>
+              <div class="option__body">
+                <div class="option__label">Approve</div>
+                <div class="option__desc">Allow the command to execute. <code>target/</code> is regenerable.</div>
+              </div>
+            </div>
+            <div class="option" onclick="selectOption(event, this)">
+              <span class="option__control"></span>
+              <div class="option__body">
+                <div class="option__label">Deny</div>
+                <div class="option__desc">Reject the tool call. The agent will be told it was denied.</div>
+              </div>
+            </div>
+          </div>
+          <div class="elicitation-card__actions">
+            <button class="btn btn-danger btn--sm">Deny</button>
+            <button class="btn btn-primary btn--sm">Approve</button>
+          </div>
+        </div>
+
+        <!-- a completed command delivery strip (showing terminal race explanation) -->
+        <div class="delivery-strip" onclick="this.classList.toggle('is-open')">
+          <span class="delivery-strip__kind">cancel</span>
+          <div class="delivery-strip__summary">
+            <div class="delivery-strip__dots">
+              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
+              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
+              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
+            </div>
+            <span class="delivery-strip__state delivery-strip__state--completed">completed · LSN 1043</span>
+          </div>
+          <span class="delivery-strip__chevron">›</span>
+          <div class="delivery-strip__detail">
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">accepted</span><span class="command-step__lsn">LSN 1043</span></div>
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">delivered</span><span class="command-step__lsn">LSN 1043</span></div>
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span><span class="command-step__lsn">LSN 1043</span></div>
+            <div class="command-step"><span class="command-step__race">Completed before cancellation arrived</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <textarea class="composer__input" placeholder="Instruct, query, or slash-command..." rows="1"></textarea>
+        <button class="btn btn-primary btn--sm">Instruct</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- mobile bottom sheet for the elicitation -->
+  <div class="sheet-backdrop" id="sheetBackdrop" onclick="closeSheet()"></div>
+  <div class="sheet" id="sheet">
+    <div class="sheet__handle"></div>
+    <div class="sheet__header">
+      <span class="sheet__kind">approval · pending</span>
+      <button class="sheet__close" onclick="closeSheet()">✕</button>
+    </div>
+    <div class="sheet__prompt">
+      Approve tool call: <code>bash: rm -rf target/</code><br><br>
+      This will delete the build cache. The agent wants to clear it before running the test suite.
+      <pre><code>rm -rf target/</code></pre>
+    </div>
+    <div class="sheet__options" id="sheetOptions">
+      <div class="option" onclick="selectSheetOption(this)">
+        <span class="option__control"></span>
+        <div class="option__body">
+          <div class="option__label">Approve</div>
+          <div class="option__desc">Allow the command to execute. <code>target/</code> is regenerable.</div>
+        </div>
+      </div>
+      <div class="option" onclick="selectSheetOption(this)">
+        <span class="option__control"></span>
+        <div class="option__body">
+          <div class="option__label">Deny</div>
+          <div class="option__desc">Reject the tool call. The agent will be told it was denied.</div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet__actions">
+      <button class="btn btn-danger">Deny</button>
+      <button class="btn btn-primary">Approve</button>
+    </div>
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item bottom-nav__item--active">Sessions</button>
+    <button class="bottom-nav__item">Attention</button>
+    <button class="bottom-nav__item">Activity</button>
+  </nav>
+
+  <script>
+    function openSheet(e) {
+      if (window.matchMedia('(max-width: 760px)').matches) {
+        e.stopPropagation();
+        document.getElementById('sheet').classList.add('is-open');
+        document.getElementById('sheetBackdrop').classList.add('is-open');
+      }
+    }
+    function closeSheet() {
+      document.getElementById('sheet').classList.remove('is-open');
+      document.getElementById('sheetBackdrop').classList.remove('is-open');
+    }
+    function selectOption(e, el) {
+      e.stopPropagation();
+      el.parentElement.querySelectorAll('.option').forEach(o => o.classList.remove('option--selected'));
+      el.classList.add('option--selected');
+    }
+    function selectSheetOption(el) {
+      el.parentElement.querySelectorAll('.option').forEach(o => o.classList.remove('option--selected'));
+      el.classList.add('option__control') && el.classList.add('option--selected');
+      el.parentElement.querySelectorAll('.option').forEach(o => o.classList.remove('option--selected'));
+      el.classList.add('option--selected');
+    }
+  </script>
+</body>
+</html>
