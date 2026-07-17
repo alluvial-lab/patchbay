@@ -95,7 +95,7 @@
     .msg--agent { align-self: flex-start; align-items: flex-start; }
     .msg__body { font: var(--font-size-base)/var(--line-height-loose) var(--font-sans); color: var(--color-text-primary); }
     .msg--operator .msg__body { background: var(--color-accent); color: var(--color-text-inverse); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg); }
-    .msg--agent .msg__body { background: var(--color-bg-secondary); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm); border: 1px solid var(--color-border); }
+    .msg--agent .msg__body { background: var(--color-bg-secondary); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm); border: 1px solid var(--color-border); align-self: flex-start; max-width: 100%; }
     /* footer: who + delivery badge, below the bubble */
     .msg__footer { display: flex; align-items: center; gap: var(--space-2); font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 var(--space-1); }
 
@@ -152,12 +152,13 @@
     .msg__body pre code { background: none; padding: 0; font-size: inherit; }
     .msg__body blockquote { border-left: 3px solid var(--color-border-strong); margin: var(--space-3) 0; padding: var(--space-1) var(--space-4); color: var(--color-text-secondary); }
 
-    /* elicitation — inline card (desktop). Aligns left (agent-side, since the agent opened it). */
+    /* elicitation — inline card (desktop). Aligns left (agent-side, since the agent opened it).
+       Same max-width as the message bubbles so it lines up with the agent turn above. */
     .elicitation-card {
       display: flex; flex-direction: column; gap: var(--space-3);
       padding: var(--space-4); background: var(--color-bg-secondary);
       border: 1px solid var(--color-border); border-left: 3px solid var(--color-warning);
-      border-radius: var(--radius-sm); align-self: flex-start; max-width: 78%;
+      border-radius: var(--radius-sm); align-self: flex-start; max-width: 78%; width: fit-content; min-width: 320px;
     }
     .elicitation-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
     .elicitation-card__kind { font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-warning); }
@@ -178,9 +179,9 @@
     .option--freetext { flex-direction: column; align-items: stretch; gap: var(--space-2); cursor: default; }
     .option--freetext:hover { border-color: var(--color-border); }
     .option--freetext__label { display: flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-secondary); }
-    .option--freetext__label .option__control { width: 18px; height: 18px; border: 2px solid var(--color-border-strong); border-radius: var(--radius-sm); flex-shrink: 0; margin-top: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .option--freetext__label .option__control { width: 18px; height: 18px; border: 2px solid var(--color-border-strong); border-radius: 50%; flex-shrink: 0; margin-top: 0; display: inline-flex; align-items: center; justify-content: center; }
     .option--freetext.is-active .option__control { border-color: var(--color-accent); background: var(--color-accent); }
-    .option--freetext.is-active .option__control::after { content: ''; width: 8px; height: 8px; background: var(--color-bg-primary); border-radius: 1px; }
+    .option--freetext.is-active .option__control::after { content: ''; width: 8px; height: 8px; background: var(--color-bg-primary); border-radius: 50%; }
     .option--freetext__input { width: 100%; padding: var(--space-2) var(--space-3); background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; }
     .option--freetext__input:focus { border-color: var(--color-accent); }
     .option--freetext__input::placeholder { color: var(--color-text-tertiary); }
