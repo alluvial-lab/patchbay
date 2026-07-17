@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — Option 1: Trading terminal</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta {
+      padding: 8px 16px; background: #0d1117; color: #c9d1d9;
+      display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+      font: 13px/1.4 'IBM Plex Sans', sans-serif; border-bottom: 1px solid #30363d;
+    }
+    .mock-meta strong { font-weight: 600; }
+    .mock-meta span { color: #8b949e; }
+
+    .cockpit { display: flex; height: calc(100vh - 40px); min-height: 600px; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); }
+
+    /* Sidebar — narrow rail, dense */
+    .sidebar { width: 260px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+    .sidebar__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
+    .sidebar__brand { font: 600 var(--font-size-sm)/1 var(--font-mono); letter-spacing: 0.04em; }
+    .sidebar__top-actions { display: flex; gap: var(--space-1); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); }
+    .sidebar__top-actions .btn { flex: 1; }
+
+    /* Attention section pinned to top */
+    .attention-section { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); background: var(--color-accent-muted); }
+    .attention-section__head { font: 600 var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-warning); margin-bottom: var(--space-2); display: flex; align-items: center; gap: var(--space-2); }
+    .attention-section__head .attention-badge { margin-left: auto; }
+
+    .session-list { flex: 1; overflow-y: auto; }
+    /* Dense compact rows */
+    .session-row--dense { padding: var(--space-2) var(--space-3); }
+    .session-row--dense .session-row__label { font-size: var(--font-size-xs); }
+    .session-row--dense .session-row__context { font-size: 10px; }
+
+    /* Connectivity dot column — make dots align */
+    .session-row--dense { display: grid; grid-template-columns: 14px 1fr auto; gap: var(--space-2); align-items: center; }
+    .session-row--dense .session-row__badges { grid-column: 2 / 4; margin-top: 2px; }
+    .session-row--dense .conn-dot { width: 9px; height: 9px; border-radius: 50%; }
+
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .main__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); display: flex; align-items: center; gap: var(--space-3); }
+    .main__title { font: 600 var(--font-size-base)/1 var(--font-mono); }
+    .main__identity { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .main__body { flex: 1; padding: var(--space-4); overflow-y: auto; }
+
+    .stat-strip { display: flex; gap: var(--space-6); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat__value { font: 600 var(--font-size-lg)/1 var(--font-mono); color: var(--color-accent); }
+    .stat__label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* Mobile: collapse sidebar to bottom nav */
+    @media (max-width: 760px) {
+      .cockpit { flex-direction: column; height: auto; }
+      .sidebar { width: 100%; height: 100%; }
+      .sidebar { display: none; }
+      .bottom-nav { display: flex; }
+    }
+    .bottom-nav { display: none; position: sticky; bottom: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; }
+    .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; }
+    .bottom-nav__item--active { color: var(--color-accent); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta">
+    <strong>Option 1 — Trading terminal</strong>
+    <span>Dense compact rows, connectivity dot column dominant, needs-you pinned as a top Attention section, spawn/attach as top-bar actions. Maximal monitoring density.</span>
+  </header>
+  <div class="cockpit">
+    <aside class="sidebar">
+      <div class="sidebar__head">
+        <span class="sidebar__brand">PATCHBAY</span>
+        <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
+      </div>
+      <div class="sidebar__top-actions">
+        <button class="btn btn-secondary btn--sm">+ Spawn</button>
+        <button class="btn btn-secondary btn--sm">+ Attach</button>
+      </div>
+      <div class="attention-section">
+        <div class="attention-section__head">Needs you <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span></div>
+        <div class="session-row session-row--needs-you session-row--dense">
+          <span class="conn-dot" style="background:var(--color-success)"></span>
+          <span class="session-row__label">pi@desktop</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle · waiting</span></div>
+        </div>
+        <div class="session-row session-row--needs-you session-row--dense">
+          <span class="conn-dot" style="background:var(--color-success)"></span>
+          <span class="session-row__label">codex@vm</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>approval pending</span></div>
+        </div>
+      </div>
+      <div class="session-list">
+        <div class="session-row session-row--active session-row--dense">
+          <span class="conn-dot" style="background:var(--color-success)"></span>
+          <span class="session-row__label">pi@laptop</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span></div>
+        </div>
+        <div class="session-row session-row--dense">
+          <span class="conn-dot" style="background:var(--color-warning); box-shadow:0 0 6px var(--color-warning)"></span>
+          <span class="session-row__label">codex@vm</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">executing bash</span></span></div>
+        </div>
+        <div class="session-row session-row--dense">
+          <span class="conn-dot" style="background:var(--color-success)"></span>
+          <span class="session-row__label">pi@desktop</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span></div>
+        </div>
+        <div class="session-row session-row--dense">
+          <span class="conn-dot" style="background:transparent; border:2px solid var(--color-text-tertiary)"></span>
+          <span class="session-row__label">claude@cloud</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span></div>
+        </div>
+        <div class="session-row session-row--dense">
+          <span class="conn-dot" style="background:var(--color-danger)"></span>
+          <span class="session-row__label">pi@vm-2</span>
+          <span></span>
+          <div class="session-row__badges"><span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span></div>
+        </div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="main__head">
+        <div>
+          <div class="main__title">pi@laptop · patchbay-core</div>
+          <div class="main__identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div>
+        </div>
+        <span class="session-status" style="margin-left:auto">
+          <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+          <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+        </span>
+      </div>
+      <div class="stat-strip">
+        <div class="stat"><span class="stat__value">5</span><span class="stat__label">sessions</span></div>
+        <div class="stat"><span class="stat__value">3</span><span class="stat__label">live</span></div>
+        <div class="stat"><span class="stat__value">1</span><span class="stat__label">stale</span></div>
+        <div class="stat"><span class="stat__value">3</span><span class="stat__label">attention</span></div>
+      </div>
+      <div class="main__body">
+        <div class="card">
+          <p style="margin:0 0 var(--space-2); font-weight:600">Latest observation</p>
+          <p style="margin:0; color:var(--color-text-secondary); font-size:var(--font-size-sm)">Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>. Generation bumps now carry initial state.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item bottom-nav__item--active">Sessions</button>
+    <button class="bottom-nav__item">Attention</button>
+    <button class="bottom-nav__item">Activity</button>
+  </nav>
+</body>
+</html>

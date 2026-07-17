@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — Option 4: Two-pane always</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; font: 13px/1.4 'IBM Plex Sans', sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta strong { font-weight: 600; }
+    .mock-meta span { color: #8b949e; }
+
+    .cockpit { display: flex; height: calc(100vh - 40px); min-height: 600px; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); }
+
+    /* Narrow rail — connectivity-first */
+    .rail { width: 64px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; padding: var(--space-2); gap: var(--space-1); }
+    .rail__brand { font: 600 var(--font-size-xs)/1 var(--font-mono); text-align: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); letter-spacing: 0.04em; }
+    .rail__item { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--space-2) var(--space-1); border-radius: var(--radius-sm); cursor: pointer; border-left: 2px solid transparent; }
+    .rail__item:hover { background: var(--color-bg-tertiary); }
+    .rail__item--active { background: var(--color-accent-muted); border-left-color: var(--color-accent); }
+    .rail__item--needs-you { border-left-color: var(--color-warning); }
+    .rail__dot { width: 10px; height: 10px; border-radius: 50%; }
+    .rail__label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Session list — middle pane */
+    .list-pane { width: 280px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+    .list-pane__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
+    .list-pane__title { font: 600 var(--font-size-sm)/1 var(--font-mono); }
+    .list-pane__list { flex: 1; overflow-y: auto; }
+    .session-row--twopane { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); }
+    .session-row--twopane .session-row__label { font: 500 var(--font-size-sm)/1.2 var(--font-mono); }
+    .session-row--twopane .session-row__context { font: var(--font-size-xs)/1 var(--font-sans); color: var(--color-text-secondary); }
+    .session-row--twopane .session-row__badges { margin-top: var(--space-1); }
+
+    /* Preview pane — right */
+    .preview-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .preview-pane__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+    .preview-pane__title { font: 600 var(--font-size-base)/1 var(--font-mono); }
+    .preview-pane__identity { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); margin-top: 2px; }
+    .preview-pane__body { flex: 1; padding: var(--space-4); overflow-y: auto; }
+
+    .preview-section { margin-bottom: var(--space-4); }
+    .preview-section__title { font: 600 var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); margin-bottom: var(--space-2); }
+
+    @media (max-width: 760px) {
+      .cockpit { flex-direction: column; height: auto; }
+      .rail { width: 100%; flex-direction: row; padding: var(--space-2); overflow-x: auto; }
+      .rail__brand { display: none; }
+      .rail__item { flex-direction: row; gap: var(--space-2); }
+      .list-pane { width: 100%; }
+      .preview-pane { display: none; }
+      .bottom-nav { display: flex; }
+    }
+    .bottom-nav { display: none; position: sticky; bottom: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; }
+    .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; }
+    .bottom-nav__item--active { color: var(--color-accent); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta">
+    <strong>Option 4 — Two-pane always</strong>
+    <span>Narrow connectivity-first rail + session list + persistent preview pane showing selected session's latest state. Split even on mobile via drawer. Connectivity-first rail, identity in the preview.</span>
+  </header>
+  <div class="cockpit">
+    <aside class="rail">
+      <div class="rail__brand">PB</div>
+      <div class="rail__item rail__item--active">
+        <span class="rail__dot" style="background:var(--color-success)"></span>
+        <span class="rail__label">pi@laptop</span>
+      </div>
+      <div class="rail__item rail__item--needs-you">
+        <span class="rail__dot" style="background:var(--color-success)"></span>
+        <span class="rail__label">pi@desktop</span>
+      </div>
+      <div class="rail__item">
+        <span class="rail__dot" style="background:var(--color-warning); box-shadow:0 0 6px var(--color-warning)"></span>
+        <span class="rail__label">codex@vm</span>
+      </div>
+      <div class="rail__item">
+        <span class="rail__dot" style="background:transparent; border:2px dashed var(--color-text-tertiary)"></span>
+        <span class="rail__label">claude@cl</span>
+      </div>
+      <div class="rail__item">
+        <span class="rail__dot" style="background:var(--color-danger)"></span>
+        <span class="rail__label">pi@vm-2</span>
+      </div>
+    </aside>
+    <div class="list-pane">
+      <div class="list-pane__head">
+        <span class="list-pane__title">Sessions</span>
+        <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
+      </div>
+      <div class="list-pane__list">
+        <div class="session-row session-row--active session-row--twopane">
+          <span class="session-row__label">pi@laptop</span>
+          <span class="session-row__context">patchbay-core</span>
+          <div class="session-row__badges">
+            <span class="session-status">
+              <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+              <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+            </span>
+          </div>
+        </div>
+        <div class="session-row session-row--needs-you session-row--twopane">
+          <span class="session-row__label">pi@desktop</span>
+          <span class="session-row__context">pi-adapter</span>
+          <div class="session-row__badges">
+            <span class="session-status">
+              <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+              <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+            </span>
+          </div>
+        </div>
+        <div class="session-row session-row--twopane">
+          <span class="session-row__label">codex@vm</span>
+          <span class="session-row__context">web-server</span>
+          <div class="session-row__badges">
+            <span class="session-status">
+              <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
+              <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">executing bash</span></span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <main class="preview-pane">
+      <div class="preview-pane__head">
+        <div class="preview-pane__title">pi@laptop · patchbay-core</div>
+        <div class="preview-pane__identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div>
+      </div>
+      <div class="preview-pane__body">
+        <div class="preview-section">
+          <div class="preview-section__title">Status</div>
+          <span class="session-status">
+            <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+            <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
+          </span>
+        </div>
+        <div class="preview-section">
+          <div class="preview-section__title">Latest observation</div>
+          <div class="card">
+            <p style="margin:0; color:var(--color-text-secondary); font-size:var(--font-size-sm)">Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>. Generation bumps now carry initial state.</p>
+          </div>
+        </div>
+        <div class="preview-section">
+          <div class="preview-section__title">Recent delivery</div>
+          <div class="command-timeline">
+            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span><span class="command-step__lsn">LSN 1042</span></div>
+            <div class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span><span class="command-step__lsn">LSN 1043</span></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item bottom-nav__item--active">Sessions</button>
+    <button class="bottom-nav__item">Attention</button>
+    <button class="bottom-nav__item">Activity</button>
+  </nav>
+</body>
+</html>

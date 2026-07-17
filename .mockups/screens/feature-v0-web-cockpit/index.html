@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — screen options</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    body { margin: 0; background: #0a0a0a; color: #eee; font-family: var(--font-sans); }
+    .index-head {
+      padding: 20px 24px; background: #0d0d0d; border-bottom: 1px solid #222;
+      display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+    }
+    .index-head h1 { font-family: var(--font-mono); font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.02em; }
+    .index-head p { margin: 0; color: #888; font-size: 13px; max-width: 70ch; }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px;
+      height: calc(100vh - 80px);
+    }
+    .cell {
+      display: flex; flex-direction: column; border: 1px solid #333; border-radius: 8px; overflow: hidden; background: #1a1a1a;
+    }
+    .cell__label {
+      padding: 8px 14px; background: #0d0d0d; border-bottom: 1px solid #333;
+      font: 600 13px/1 var(--font-mono); color: #ccc; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    }
+    .cell__label .desc { font-weight: 400; color: #888; font-size: 12px; }
+    .cell__frame { flex: 1; border: 0; width: 100%; background: #fff; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; height: auto; } .cell { height: 70vh; } }
+  </style>
+</head>
+<body>
+  <div class="index-head">
+    <h1>web-cockpit — session list + shell options</h1>
+    <p>Four layout directions for the cockpit monitoring home, all in the locked Nostromo/LCARS + Plex visual world. Varying density, needs-you placement, spawn/attach entry, and information hierarchy. Click a frame to open the full mock.</p>
+  </div>
+  <div class="grid">
+    <div class="cell">
+      <div class="cell__label">Option 1 — Trading terminal <span class="desc">dense · dot column · attention pinned · top-bar actions</span></div>
+      <iframe class="cell__frame" src="option-1.html"></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell__label">Option 2 — Identity-forward <span class="desc">generous rows · label dominant · FAB · inline needs-you</span></div>
+      <iframe class="cell__frame" src="option-2.html"></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell__label">Option 3 — Activity-stream <span class="desc">grouped by activity · working/idle/needs-you · footer actions</span></div>
+      <iframe class="cell__frame" src="option-3.html"></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell__label">Option 4 — Two-pane always <span class="desc">connectivity rail + list + preview pane · split even on mobile</span></div>
+      <iframe class="cell__frame" src="option-4.html"></iframe>
+    </div>
+  </div>
+</body>
+</html>

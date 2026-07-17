@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — Option 3: Activity-stream</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; font: 13px/1.4 'IBM Plex Sans', sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta strong { font-weight: 600; }
+    .mock-meta span { color: #8b949e; }
+
+    .cockpit { display: flex; height: calc(100vh - 40px); min-height: 600px; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); }
+
+    .sidebar { width: 280px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+    .sidebar__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
+    .sidebar__brand { font: 600 var(--font-size-sm)/1 var(--font-mono); letter-spacing: 0.04em; }
+
+    .session-list { flex: 1; overflow-y: auto; }
+    .group { border-bottom: 1px solid var(--color-border); }
+    .group__head { padding: var(--space-2) var(--space-4); font: 600 var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); display: flex; align-items: center; gap: var(--space-2); background: var(--color-bg-tertiary); }
+    .group__head .count { margin-left: auto; color: var(--color-text-tertiary); }
+    .group--working .group__head { color: var(--color-accent); }
+    .group--needs-you .group__head { color: var(--color-warning); }
+
+    .session-row--grouped { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); }
+    .session-row--grouped .session-row__label { font: 500 var(--font-size-sm)/1.2 var(--font-mono); }
+    .session-row--grouped .session-row__context { font: var(--font-size-xs)/1 var(--font-sans); color: var(--color-text-secondary); }
+    .session-row--grouped .session-row__badges { margin-top: var(--space-1); }
+
+    .group--idle .session-row--grouped { opacity: 0.6; }
+
+    .sidebar__footer { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); display: flex; gap: var(--space-2); }
+
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .main__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+    .main__title { font: 600 var(--font-size-base)/1 var(--font-mono); }
+    .main__identity { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); margin-top: 2px; }
+    .main__body { flex: 1; padding: var(--space-4); overflow-y: auto; }
+
+    @media (max-width: 760px) {
+      .cockpit { flex-direction: column; height: auto; }
+      .sidebar { width: 100%; }
+      .bottom-nav { display: flex; }
+    }
+    .bottom-nav { display: none; position: sticky; bottom: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; }
+    .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; }
+    .bottom-nav__item--active { color: var(--color-accent); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta">
+    <strong>Option 3 — Activity-stream</strong>
+    <span>Rows grouped by what the agent is doing right now (working sessions grouped, idle collapsed), activity detail prominent, needs-you inline, spawn/attach in list footer. Work-forward.</span>
+  </header>
+  <div class="cockpit">
+    <aside class="sidebar">
+      <div class="sidebar__head">
+        <span class="sidebar__brand">PATCHBAY</span>
+        <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
+      </div>
+      <div class="session-list">
+        <div class="group group--needs-you">
+          <div class="group__head">Needs you <span class="count">2</span></div>
+          <div class="session-row session-row--needs-you session-row--grouped">
+            <span class="session-row__label">pi@desktop</span>
+            <span class="session-row__context">pi-adapter · waiting for command</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span></div>
+          </div>
+          <div class="session-row session-row--needs-you session-row--grouped">
+            <span class="session-row__label">codex@vm</span>
+            <span class="session-row__context">web-server · approval pending</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span></div>
+          </div>
+        </div>
+        <div class="group group--working">
+          <div class="group__head">Working <span class="count">2</span></div>
+          <div class="session-row session-row--active session-row--grouped">
+            <span class="session-row__label">pi@laptop</span>
+            <span class="session-row__context">patchbay-core</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span></div>
+          </div>
+          <div class="session-row session-row--grouped">
+            <span class="session-row__label">codex@vm</span>
+            <span class="session-row__context">web-server</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">executing bash</span></span></div>
+          </div>
+        </div>
+        <div class="group group--idle">
+          <div class="group__head">Idle / unknown <span class="count">2</span></div>
+          <div class="session-row session-row--grouped">
+            <span class="session-row__label">claude@cloud</span>
+            <span class="session-row__context">research-spike</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span></div>
+          </div>
+          <div class="session-row session-row--grouped">
+            <span class="session-row__label">pi@vm-2</span>
+            <span class="session-row__context">ci-runner</span>
+            <div class="session-row__badges"><span class="activity-indicator activity-indicator--unknown"><span class="activity-indicator__icon"></span>unknown</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar__footer">
+        <button class="btn btn-secondary btn--sm" style="flex:1">+ Spawn</button>
+        <button class="btn btn-secondary btn--sm" style="flex:1">+ Attach</button>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="main__head">
+        <div class="main__title">pi@laptop · patchbay-core</div>
+        <div class="main__identity">adapter: pi · scope: laptop · runtime: 01J8K3M2 · gen 2</div>
+      </div>
+      <div class="main__body">
+        <div class="card">
+          <p style="margin:0 0 var(--space-2); font-weight:600">Latest observation</p>
+          <p style="margin:0; color:var(--color-text-secondary); font-size:var(--font-size-sm)">Refactor complete. Split ingestion into validate → derive → append, mirroring <code>ingest_observation</code>.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item bottom-nav__item--active">Sessions</button>
+    <button class="bottom-nav__item">Attention</button>
+    <button class="bottom-nav__item">Activity</button>
+  </nav>
+</body>
+</html>
