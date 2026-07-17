@@ -192,6 +192,19 @@
     .clarify__input:focus { border-color: var(--color-accent); }
     .clarify__input::placeholder { color: var(--color-text-tertiary); }
     .elicitation-card__actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+    /* multi-question grouping: N independent Elicitations (each single-answer in v0.1.0)
+       rendered as one visual card so the operator answers each in order.
+       The multi-answer contract is a reserved seam; this grouping is the committed path. */
+    .elicitation-group {
+      display: flex; flex-direction: column; gap: var(--space-3);
+      padding: var(--space-4); background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border); border-left: 3px solid var(--color-warning);
+      border-radius: var(--radius-sm); align-self: flex-start; max-width: 78%; width: fit-content; min-width: 360px;
+    }
+    .elicitation-group__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-border); }
+    .elicitation-group__qa { display: flex; flex-direction: column; gap: var(--space-2); }
+    .elicitation-group__q { font: 500 var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-primary); }
+    .elicitation-group__opts { gap: var(--space-1); }
 
     /* composer — full-width chrome bar; contents align with the capped timeline column. */
     .composer { padding: var(--space-3) var(--space-6); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
@@ -306,7 +319,56 @@
           </div>
         </div>
 
-        <!-- question elicitation (multi-option) with free-text option + answer-and clarification -->
+        <!-- multi-question elicitation: Claude nests multiple questions into one prompt.
+             v0.1.0 maps this to N independent Elicitations (each single-answer) grouped visually.
+             Multi-answer contract is a reserved seam; this grouping is the committed v0.1.0 path. -->
+        <div class="elicitation-group">
+          <div class="elicitation-group__header">
+            <span class="elicitation-card__kind">questions</span>
+            <span class="elicitation-card__contract">3 questions · answer in order</span>
+          </div>
+          <div class="elicitation-group__qa">
+            <div class="elicitation-group__q">1. Which branch should I target?</div>
+            <div class="elicitation-card__options elicitation-group__opts">
+              <div class="option option--selected" onclick="selectOption(event, this)">
+                <span class="option__control"></span>
+                <div class="option__body"><div class="option__label">refactor/sessions</div></div>
+              </div>
+              <div class="option" onclick="selectOption(event, this)">
+                <span class="option__control"></span>
+                <div class="option__body"><div class="option__label">main</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="elicitation-group__qa">
+            <div class="elicitation-group__q">2. Run the full test suite before merging?</div>
+            <div class="elicitation-card__options elicitation-group__opts">
+              <div class="option option--selected" onclick="selectOption(event, this)">
+                <span class="option__control"></span>
+                <div class="option__body"><div class="option__label">Yes</div></div>
+              </div>
+              <div class="option" onclick="selectOption(event, this)">
+                <span class="option__control"></span>
+                <div class="option__body"><div class="option__label">No</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="elicitation-group__qa">
+            <div class="elicitation-group__q">3. Anything else?</div>
+            <div class="elicitation-card__options elicitation-group__opts">
+              <div class="option option--freetext">
+                <div class="option--freetext__label"><span class="option__control"></span>Or type your own answer</div>
+                <input class="option--freetext__input" placeholder="e.g. rebase onto main first" onclick="event.stopPropagation()" onfocus="this.closest('.option--freetext').classList.add('is-active')">
+              </div>
+            </div>
+          </div>
+          <div class="elicitation-card__actions">
+            <button class="btn btn-ghost btn--sm">Skip all</button>
+            <button class="btn btn-primary btn--sm">Submit answers</button>
+          </div>
+        </div>
+
+        <!-- single question elicitation with free-text option + answer-and clarification -->
         <div class="elicitation-card elicitation-card--inline-teaser" onclick="openSheet(event)">
           <div class="elicitation-card__header">
             <span class="elicitation-card__kind">question</span>
