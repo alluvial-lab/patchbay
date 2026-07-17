@@ -89,16 +89,17 @@
     .timeline { flex: 1; overflow-y: auto; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-4); max-width: 860px; margin-left: auto; margin-right: auto; width: 100%; }
     .timeline__empty { color: var(--color-text-tertiary); text-align: center; padding: var(--space-8); font-size: var(--font-size-sm); }
 
-    /* messages — chat alignment: operator right, agent left */
+    /* messages — chat alignment: operator right, agent left. Badge sits BELOW the bubble. */
     .msg { max-width: 78%; display: flex; flex-direction: column; gap: var(--space-1); }
     .msg--operator { align-self: flex-end; align-items: flex-end; }
     .msg--agent { align-self: flex-start; align-items: flex-start; }
-    .msg__who { font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
     .msg__body { font: var(--font-size-base)/var(--line-height-loose) var(--font-sans); color: var(--color-text-primary); }
     .msg--operator .msg__body { background: var(--color-accent); color: var(--color-text-inverse); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg); }
     .msg--agent .msg__body { background: var(--color-bg-secondary); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm); border: 1px solid var(--color-border); }
+    /* footer: who + delivery badge, below the bubble */
+    .msg__footer { display: flex; align-items: center; gap: var(--space-2); font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 var(--space-1); }
 
-    /* command badge — small, attached to the message header.
+    /* command badge — small, in the message footer (below the bubble).
        Shows current state compactly; tap expands the full history + LSNs (debug). */
     .cmd-badge {
       display: inline-flex; align-items: center; gap: var(--space-1);
@@ -109,8 +110,6 @@
       border: 1px solid var(--color-border); transition: border-color 120ms;
     }
     .cmd-badge:hover { border-color: var(--color-border-strong); }
-    /* on operator (accent) bubbles, the badge sits on the accent fill — invert it */
-    .msg--operator .cmd-badge { background: rgb(0 0 0 / 0.18); border-color: rgb(0 0 0 / 0.22); color: var(--color-text-inverse); }
     .cmd-badge__dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
     .cmd-badge--running { color: var(--color-accent); }
     .cmd-badge--running .cmd-badge__dot { background: var(--color-accent); box-shadow: 0 0 4px var(--color-accent); animation: pb-pulse 1.2s ease-in-out infinite; }
@@ -121,10 +120,9 @@
     .cmd-badge--cancelled .cmd-badge__dot { background: transparent; border: 2px solid var(--color-text-tertiary); }
     @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-    /* expanded detail (debug view, off by default) */
-    .cmd-detail { display: none; margin-top: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.6 var(--font-mono); color: var(--color-text-secondary); min-width: 240px; }
+    /* expanded detail (debug view, off by default). Consistent fixed width, aligned with the footer. */
+    .cmd-detail { display: none; margin-top: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.6 var(--font-mono); color: var(--color-text-secondary); width: 280px; max-width: 100%; }
     .cmd-detail.is-open { display: block; }
-    .msg--operator .cmd-detail { align-self: flex-end; }
     .cmd-detail__step { display: flex; align-items: center; gap: var(--space-2); }
     .cmd-detail__marker { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
     .cmd-detail__state { font-weight: var(--font-weight-semibold); }
@@ -135,9 +133,8 @@
     .cmd-detail__step--running .cmd-detail__state { color: var(--color-accent); }
     .cmd-detail__race { font-style: italic; color: var(--color-text-secondary); padding-left: var(--space-4); }
 
-    /* action-only command (cancel/interrupt — no message body) */
-    .action-row { display: flex; align-items: center; gap: var(--space-2); align-self: flex-end; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
-    .action-row .cmd-detail { align-self: stretch; margin-top: var(--space-1); }
+    /* action-only command (cancel/interrupt — no message body): same .msg wrapper, no body, footer + detail only */
+    .msg--action { max-width: 78%; }
 
     /* markdown rendering inside msg body — the differentiator */
     .msg__body h3 { font: 600 var(--font-size-lg)/1.3 var(--font-sans); margin: var(--space-4) 0 var(--space-2); }
@@ -242,13 +239,13 @@
 
     <main class="main">
       <div class="timeline" id="timeline">
-        <!-- operator message: the instruct that started this turn, with a compact delivery badge -->
+        <!-- operator message: the instruct, with delivery badge below the bubble -->
         <div class="msg msg--operator">
-          <div class="msg__who">
+          <div class="msg__body">Refactor the session ingest path to mirror acceptance's <code style="background:rgb(0 0 0 / 0.18);color:inherit">ingest_observation</code>, and add a property test for generation monotonicity.</div>
+          <div class="msg__footer">
             YOU · instruct
             <span class="cmd-badge cmd-badge--running" onclick="toggleDetail('d1')"><span class="cmd-badge__dot"></span>running</span>
           </div>
-          <div class="msg__body">Refactor the session ingest path to mirror acceptance's <code style="background:rgb(0 0 0 / 0.18);color:inherit">ingest_observation</code>, and add a property test for generation monotonicity.</div>
           <div class="cmd-detail" id="d1">
             <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">accepted</span><span class="cmd-detail__lsn">LSN 1042</span></div>
             <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">delivered</span><span class="cmd-detail__lsn">LSN 1042</span></div>
@@ -258,7 +255,6 @@
 
         <!-- agent observation: markdown content -->
         <div class="msg msg--agent">
-          <div class="msg__who">AGENT · observation</div>
           <div class="msg__body">
             <h3>Refactor plan</h3>
             <p>Split the ingestion path into <code>validate → derive → append</code>, mirroring <code>ingest_observation</code>. Generation bumps now carry the replacement's initial state rather than inheriting stale values.</p>
@@ -276,6 +272,7 @@
 ).await?;</code></pre>
             <blockquote>Note: a partial multi-delta failure leaves earlier appends durable; retry must re-derive against the warmed projection, not the pre-report state.</blockquote>
           </div>
+          <div class="msg__footer">AGENT · observation</div>
         </div>
 
         <!-- pending approval elicitation -->
@@ -307,16 +304,18 @@
           </div>
         </div>
 
-        <!-- action-only command (cancel — no message body), with terminal-race explanation -->
-        <div class="action-row">
-          YOU · cancel
-          <span class="cmd-badge cmd-badge--cancelled" onclick="toggleDetail('d2')"><span class="cmd-badge__dot"></span>completed</span>
-        </div>
-        <div class="cmd-detail" id="d2">
-          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">accepted</span><span class="cmd-detail__lsn">LSN 1043</span></div>
-          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">delivered</span><span class="cmd-detail__lsn">LSN 1043</span></div>
-          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">completed</span><span class="cmd-detail__lsn">LSN 1043</span></div>
-          <div class="cmd-detail__race">Completed before cancellation arrived</div>
+        <!-- action-only command (cancel — no message body), same wrapper for consistent footer+detail -->
+        <div class="msg msg--operator msg--action">
+          <div class="msg__footer">
+            YOU · cancel
+            <span class="cmd-badge cmd-badge--cancelled" onclick="toggleDetail('d2')"><span class="cmd-badge__dot"></span>completed</span>
+          </div>
+          <div class="cmd-detail" id="d2">
+            <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">accepted</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+            <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">delivered</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+            <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">completed</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+            <div class="cmd-detail__race">Completed before cancellation arrived</div>
+          </div>
         </div>
       </div>
 
