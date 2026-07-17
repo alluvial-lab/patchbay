@@ -45,7 +45,7 @@
     :root[data-theme="dark"] { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); }
     @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); } }
 
-    /* === inlined components.css (subset used by this screen) === */
+    /* === inlined components.css (subset) === */
     *, *::before, *::after { box-sizing: border-box; }
     button { font: inherit; cursor: pointer; }
     .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-full); font: var(--font-weight-semibold) var(--font-size-sm)/1 var(--font-sans); transition: background-color 120ms, opacity 120ms; white-space: nowrap; }
@@ -54,14 +54,13 @@
     .btn-primary { background: var(--color-accent); color: var(--color-text-inverse); }
     .btn-primary:hover:not(:disabled) { background: var(--color-accent-hover); }
     .btn-secondary { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border); }
-    .btn-secondary:hover:not(:disabled) { background: var(--color-bg-tertiary); }
     .btn-ghost { background: transparent; color: var(--color-text-secondary); }
     .btn-ghost:hover:not(:disabled) { background: var(--color-bg-secondary); color: var(--color-text-primary); }
     .btn-danger { background: var(--color-danger); color: var(--color-text-inverse); }
     .btn--sm { padding: var(--space-1) var(--space-3); font-size: var(--font-size-xs); }
-    .card { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4); }
+    .btn--icon { padding: var(--space-2); aspect-ratio: 1; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text-secondary); }
+    .btn--icon:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
 
-    /* connectivity + activity indicators */
     .connectivity-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
     .connectivity-indicator__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
     .connectivity-indicator--live .connectivity-indicator__dot { background: var(--color-success); }
@@ -74,24 +73,10 @@
     .activity-indicator__detail::before { content: " · "; color: var(--color-text-tertiary); }
     @keyframes pb-spin { to { transform: rotate(360deg); } }
 
-    /* command-step (delivery) */
-    .command-step { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--color-text-secondary); font: var(--font-size-xs)/1 var(--font-mono); }
-    .command-step__marker { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
-    .command-step__state { font-weight: var(--font-weight-semibold); text-transform: uppercase; letter-spacing: 0.04em; }
-    .command-step__lsn { color: var(--color-text-tertiary); margin-left: auto; }
-    .command-step--completed .command-step__marker { background: var(--color-success); }
-    .command-step--completed .command-step__state { color: var(--color-success); }
-    .command-step--running .command-step__marker { background: var(--color-accent); box-shadow: 0 0 6px var(--color-accent); animation: pb-pulse 1.2s ease-in-out infinite; }
-    .command-step--running .command-step__state { color: var(--color-accent); }
-    @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-    .command-step__race { font-style: italic; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-
     /* === page layout === */
     body { margin: 0; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-
     .cockpit { display: flex; flex: 1; min-height: 0; }
 
-    /* sidebar (compressed for this screen focus) */
     .sidebar { width: 220px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
     .sidebar__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font: 600 var(--font-size-sm)/1 var(--font-mono); letter-spacing: 0.04em; }
     .session-row { padding: var(--space-3); border-bottom: 1px solid var(--color-border); cursor: pointer; border-left: 3px solid transparent; }
@@ -100,24 +85,57 @@
     .session-row__context { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); display: block; margin-top: 2px; }
     .session-row__badges { display: flex; gap: var(--space-2); margin-top: var(--space-1); flex-wrap: wrap; }
 
-    /* main detail pane */
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-
     .timeline { flex: 1; overflow-y: auto; padding: var(--space-6); }
-    .timeline__empty { color: var(--color-text-tertiary); text-align: center; padding: var(--space-8); font-size: var(--font-size-sm); }
 
-    /* message bubbles — agent vs operator */
+    /* messages — compact, conversational */
     .msg { margin-bottom: var(--space-6); max-width: 760px; }
-    .msg__who { font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: var(--space-2); }
-    .msg__who .lsn { color: var(--color-text-tertiary); }
+    .msg__who { font: 500 var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
     .msg__body { font: var(--font-size-base)/var(--line-height-loose) var(--font-sans); color: var(--color-text-primary); }
     .msg--operator .msg__body { background: var(--color-accent-muted); border-left: 2px solid var(--color-accent); padding: var(--space-3) var(--space-4); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+
+    /* command badge — small, attached to the message header.
+       Shows current state compactly; tap expands the full history + LSNs (debug). */
+    .cmd-badge {
+      display: inline-flex; align-items: center; gap: var(--space-1);
+      padding: 2px var(--space-2); border-radius: var(--radius-full);
+      font: var(--font-weight-semibold) 10px/1 var(--font-mono);
+      text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer;
+      background: var(--color-bg-tertiary); color: var(--color-text-secondary);
+      border: 1px solid var(--color-border); transition: border-color 120ms;
+    }
+    .cmd-badge:hover { border-color: var(--color-border-strong); }
+    .cmd-badge__dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
+    .cmd-badge--running { color: var(--color-accent); }
+    .cmd-badge--running .cmd-badge__dot { background: var(--color-accent); box-shadow: 0 0 4px var(--color-accent); animation: pb-pulse 1.2s ease-in-out infinite; }
+    .cmd-badge--completed { color: var(--color-success); }
+    .cmd-badge--completed .cmd-badge__dot { background: var(--color-success); }
+    .cmd-badge--failed { color: var(--color-danger); }
+    .cmd-badge--failed .cmd-badge__dot { background: var(--color-danger); }
+    .cmd-badge--cancelled .cmd-badge__dot { background: transparent; border: 2px solid var(--color-text-tertiary); }
+    @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    /* expanded detail (debug view, off by default) */
+    .cmd-detail { display: none; margin: var(--space-2) 0 var(--space-3); padding: var(--space-2) var(--space-3); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.6 var(--font-mono); color: var(--color-text-secondary); }
+    .cmd-detail.is-open { display: block; }
+    .cmd-detail__step { display: flex; align-items: center; gap: var(--space-2); }
+    .cmd-detail__marker { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-text-tertiary); }
+    .cmd-detail__state { font-weight: var(--font-weight-semibold); }
+    .cmd-detail__lsn { color: var(--color-text-tertiary); margin-left: auto; }
+    .cmd-detail__step--completed .cmd-detail__marker { background: var(--color-success); }
+    .cmd-detail__step--completed .cmd-detail__state { color: var(--color-success); }
+    .cmd-detail__step--running .cmd-detail__marker { background: var(--color-accent); }
+    .cmd-detail__step--running .cmd-detail__state { color: var(--color-accent); }
+    .cmd-detail__race { font-style: italic; color: var(--color-text-secondary); padding-left: var(--space-4); }
+
+    /* action-only command (cancel/interrupt — no message body) */
+    .action-row { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0; max-width: 760px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); }
 
     /* markdown rendering inside msg body — the differentiator */
     .msg__body h3 { font: 600 var(--font-size-lg)/1.3 var(--font-sans); margin: var(--space-4) 0 var(--space-2); }
     .msg__body h3:first-child { margin-top: 0; }
     .msg__body p { margin: 0 0 var(--space-3); }
-    .msg__body ul, .msg__body ol { margin: var(--space-2) 0; padding-left: 1.4em; }
+    .msg__body ul { margin: var(--space-2) 0; padding-left: 1.4em; }
     .msg__body li { margin: var(--space-1) 0; }
     .msg__body code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
     .msg__body pre {
@@ -128,35 +146,8 @@
     }
     .msg__body pre code { background: none; padding: 0; font-size: inherit; }
     .msg__body blockquote { border-left: 3px solid var(--color-border-strong); margin: var(--space-3) 0; padding: var(--space-1) var(--space-4); color: var(--color-text-secondary); }
-    .msg__body table { border-collapse: collapse; margin: var(--space-3) 0; font-size: var(--font-size-sm); width: 100%; }
-    .msg__body th, .msg__body td { border: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); text-align: left; }
-    .msg__body th { background: var(--color-bg-secondary); font-weight: var(--font-weight-semibold); }
 
-    /* collapsible command delivery strip (interleaved, compact) */
-    .delivery-strip {
-      display: flex; align-items: center; gap: var(--space-3);
-      padding: var(--space-2) var(--space-3);
-      background: var(--color-bg-secondary); border: 1px solid var(--color-border);
-      border-radius: var(--radius-sm); margin: var(--space-2) 0 var(--space-4);
-      font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary);
-      max-width: 760px; cursor: pointer;
-    }
-    .delivery-strip:hover { border-color: var(--color-border-strong); }
-    .delivery-strip__kind { font-weight: var(--font-weight-semibold); color: var(--color-text-primary); text-transform: uppercase; letter-spacing: 0.04em; }
-    .delivery-strip__summary { display: flex; align-items: center; gap: var(--space-2); flex: 1; }
-    .delivery-strip__dots { display: flex; align-items: center; gap: 3px; }
-    .delivery-strip__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-tertiary); }
-    .delivery-strip__dot--done { background: var(--color-success); }
-    .delivery-strip__dot--current { background: var(--color-accent); box-shadow: 0 0 4px var(--color-accent); }
-    .delivery-strip__state { color: var(--color-text-secondary); }
-    .delivery-strip__state--running { color: var(--color-accent); }
-    .delivery-strip__state--completed { color: var(--color-success); }
-    .delivery-strip__chevron { color: var(--color-text-tertiary); transition: transform 150ms; }
-    .delivery-strip.is-open .delivery-strip__chevron { transform: rotate(90deg); }
-    .delivery-strip__detail { display: none; margin-top: var(--space-2); flex-basis: 100%; flex-direction: column; gap: 2px; }
-    .delivery-strip.is-open .delivery-strip__detail { display: flex; }
-
-    /* elicitation — inline card (desktop default) */
+    /* elicitation — inline card (desktop) */
     .elicitation-card {
       display: flex; flex-direction: column; gap: var(--space-3);
       padding: var(--space-4); background: var(--color-bg-secondary);
@@ -168,7 +159,6 @@
     .elicitation-card__contract { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
     .elicitation-card__prompt { margin: 0; font: var(--font-size-base)/var(--line-height-base) var(--font-sans); color: var(--color-text-primary); }
     .elicitation-card__prompt code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
-    .elicitation-card__prompt pre { font: var(--font-size-sm)/1.5 var(--font-mono); background: var(--color-bg-tertiary); padding: var(--space-3); border-radius: var(--radius-sm); overflow-x: auto; margin: var(--space-2) 0; }
     .elicitation-card__options { display: flex; flex-direction: column; gap: var(--space-2); }
     .option { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; background: var(--color-bg-primary); }
     .option:hover { border-color: var(--color-border-strong); }
@@ -180,21 +170,21 @@
     .option__desc { font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin-top: 2px; }
     .elicitation-card__actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
 
-    /* composer */
+    /* composer — textarea + attach + send */
     .composer { display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-3) var(--space-6); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
     .composer__input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; resize: none; min-height: 40px; max-height: 120px; }
     .composer__input:focus { border-color: var(--color-accent); }
     .composer__input::placeholder { color: var(--color-text-tertiary); }
+    .composer__attach { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg-primary); color: var(--color-text-secondary); cursor: pointer; flex-shrink: 0; }
+    .composer__attach:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+    .composer__attach svg { width: 18px; height: 18px; }
 
-    /* === mobile: bottom sheet for elicitation === */
+    /* mobile */
     @media (max-width: 760px) {
       .cockpit { flex-direction: column; }
       .sidebar { display: none; }
       .timeline { padding: var(--space-3); }
-      .msg { max-width: 100%; }
-      .delivery-strip { max-width: 100%; }
-      .elicitation-card { max-width: 100%; }
-      /* on mobile, the inline elicitation card becomes a tappable teaser that opens a bottom sheet */
+      .msg, .elicitation-card { max-width: 100%; }
       .elicitation-card--inline-teaser { cursor: pointer; }
       .elicitation-card--inline-teaser .elicitation-card__options,
       .elicitation-card--inline-teaser .elicitation-card__actions { display: none; }
@@ -209,13 +199,7 @@
     /* bottom sheet (mobile elicitation focus) */
     .sheet-backdrop { display: none; position: fixed; inset: 0; background: rgb(0 0 0 / 0.5); z-index: 40; }
     .sheet-backdrop.is-open { display: block; }
-    .sheet {
-      display: none; position: fixed; bottom: 0; left: 0; right: 0;
-      background: var(--color-bg-primary); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-      box-shadow: 0 -4px 24px rgb(0 0 0 / 0.2); z-index: 50;
-      max-height: 88vh; flex-direction: column;
-      padding: var(--space-4); padding-bottom: 72px;
-    }
+    .sheet { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--color-bg-primary); border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: 0 -4px 24px rgb(0 0 0 / 0.2); z-index: 50; max-height: 88vh; flex-direction: column; padding: var(--space-4); padding-bottom: 72px; }
     .sheet.is-open { display: flex; }
     .sheet__handle { width: 40px; height: 4px; background: var(--color-border-strong); border-radius: 2px; margin: 0 auto var(--space-4); }
     .sheet__header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
@@ -249,34 +233,23 @@
 
     <main class="main">
       <div class="timeline" id="timeline">
-        <!-- operator message (the instruct that started this turn) -->
+        <!-- operator message: the instruct that started this turn, with a compact delivery badge -->
         <div class="msg msg--operator">
-          <div class="msg__who">YOU · instruct <span class="lsn">LSN 1042</span></div>
+          <div class="msg__who">
+            YOU · instruct
+            <span class="cmd-badge cmd-badge--running" onclick="toggleDetail('d1')"><span class="cmd-badge__dot"></span>running</span>
+          </div>
           <div class="msg__body">Refactor the session ingest path to mirror acceptance's `ingest_observation`, and add a property test for generation monotonicity.</div>
-        </div>
-
-        <!-- collapsible delivery strip for that command -->
-        <div class="delivery-strip" onclick="this.classList.toggle('is-open')">
-          <span class="delivery-strip__kind">instruct</span>
-          <div class="delivery-strip__summary">
-            <div class="delivery-strip__dots">
-              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
-              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
-              <span class="delivery-strip__dot delivery-strip__dot--current"></span>
-            </div>
-            <span class="delivery-strip__state delivery-strip__state--running">running · LSN 1042</span>
-          </div>
-          <span class="delivery-strip__chevron">›</span>
-          <div class="delivery-strip__detail">
-            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">accepted</span><span class="command-step__lsn">LSN 1042</span></div>
-            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">delivered</span><span class="command-step__lsn">LSN 1042</span></div>
-            <div class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span><span class="command-step__lsn">LSN 1042</span></div>
+          <div class="cmd-detail" id="d1">
+            <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">accepted</span><span class="cmd-detail__lsn">LSN 1042</span></div>
+            <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">delivered</span><span class="cmd-detail__lsn">LSN 1042</span></div>
+            <div class="cmd-detail__step cmd-detail__step--running"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">running</span><span class="cmd-detail__lsn">LSN 1042</span></div>
           </div>
         </div>
 
-        <!-- agent observation: markdown content (the differentiator) -->
+        <!-- agent observation: markdown content -->
         <div class="msg">
-          <div class="msg__who">AGENT · observation <span class="lsn">LSN 1042.3</span></div>
+          <div class="msg__who">AGENT · observation</div>
           <div class="msg__body">
             <h3>Refactor plan</h3>
             <p>Split the ingestion path into <code>validate → derive → append</code>, mirroring <code>ingest_observation</code>. Generation bumps now carry the replacement's initial state rather than inheriting stale values.</p>
@@ -296,7 +269,7 @@
           </div>
         </div>
 
-        <!-- pending approval elicitation (inline card on desktop) -->
+        <!-- pending approval elicitation -->
         <div class="elicitation-card elicitation-card--inline-teaser" onclick="openSheet(event)">
           <div class="elicitation-card__header">
             <span class="elicitation-card__kind">approval</span>
@@ -325,28 +298,25 @@
           </div>
         </div>
 
-        <!-- a completed command delivery strip (showing terminal race explanation) -->
-        <div class="delivery-strip" onclick="this.classList.toggle('is-open')">
-          <span class="delivery-strip__kind">cancel</span>
-          <div class="delivery-strip__summary">
-            <div class="delivery-strip__dots">
-              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
-              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
-              <span class="delivery-strip__dot delivery-strip__dot--done"></span>
-            </div>
-            <span class="delivery-strip__state delivery-strip__state--completed">completed · LSN 1043</span>
-          </div>
-          <span class="delivery-strip__chevron">›</span>
-          <div class="delivery-strip__detail">
-            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">accepted</span><span class="command-step__lsn">LSN 1043</span></div>
-            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">delivered</span><span class="command-step__lsn">LSN 1043</span></div>
-            <div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span><span class="command-step__lsn">LSN 1043</span></div>
-            <div class="command-step"><span class="command-step__race">Completed before cancellation arrived</span></div>
-          </div>
+        <!-- action-only command (cancel — no message body), with terminal-race explanation -->
+        <div class="action-row">
+          YOU · cancel
+          <span class="cmd-badge cmd-badge--cancelled" onclick="toggleDetail('d2')"><span class="cmd-badge__dot"></span>completed</span>
+        </div>
+        <div class="cmd-detail" id="d2">
+          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">accepted</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">delivered</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+          <div class="cmd-detail__step cmd-detail__step--completed"><span class="cmd-detail__marker"></span><span class="cmd-detail__state">completed</span><span class="cmd-detail__lsn">LSN 1043</span></div>
+          <div class="cmd-detail__race">Completed before cancellation arrived</div>
         </div>
       </div>
 
       <div class="composer">
+        <button class="composer__attach" title="Attach file or image" aria-label="Attach">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
         <textarea class="composer__input" placeholder="Instruct, query, or slash-command..." rows="1"></textarea>
         <button class="btn btn-primary btn--sm">Instruct</button>
       </div>
@@ -395,6 +365,9 @@
   </nav>
 
   <script>
+    function toggleDetail(id) {
+      document.getElementById(id).classList.toggle('is-open');
+    }
     function openSheet(e) {
       if (window.matchMedia('(max-width: 760px)').matches) {
         e.stopPropagation();
@@ -412,8 +385,6 @@
       el.classList.add('option--selected');
     }
     function selectSheetOption(el) {
-      el.parentElement.querySelectorAll('.option').forEach(o => o.classList.remove('option--selected'));
-      el.classList.add('option__control') && el.classList.add('option--selected');
       el.parentElement.querySelectorAll('.option').forEach(o => o.classList.remove('option--selected'));
       el.classList.add('option--selected');
     }
