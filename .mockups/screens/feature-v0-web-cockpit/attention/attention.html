@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-cockpit — Attention</title>
+  <style>
+    /* === inlined tokens.css === */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+    :root {
+      --color-bg-primary: #faf6ee; --color-bg-secondary: #f0e6d2; --color-bg-tertiary: #e3d6ba; --color-bg-inverse: #2a2218;
+      --color-text-primary: #2a2218; --color-text-secondary: #6b5d49; --color-text-tertiary: #9a8b73; --color-text-inverse: #f0e6d2;
+      --color-text-link: #b8651a; --color-text-link-hover: #8a4a14;
+      --color-border: #d4c4a0; --color-border-strong: #b8a87a;
+      --color-accent: #b8651a; --color-accent-hover: #8a4a14; --color-accent-muted: #f5e6d0;
+      --color-success: #4a7c59; --color-warning: #c8772e; --color-danger: #a83232; --color-info: #355c7a;
+      --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, ui-sans-serif, sans-serif;
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+      --font-size-xs: 12px; --font-size-sm: 14px; --font-size-base: 16px; --font-size-lg: 18px;
+      --font-size-xl: 20px; --font-size-2xl: 24px; --font-size-3xl: 32px;
+      --font-weight-regular: 400; --font-weight-medium: 500; --font-weight-semibold: 600; --font-weight-bold: 700;
+      --line-height-tight: 1.25; --line-height-base: 1.5; --line-height-loose: 1.75;
+      --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
+      --radius-sm: 4px; --radius-md: 8px; --radius-lg: 16px; --radius-full: 9999px;
+    }
+    :root[data-theme="dark"] {
+      --color-bg-primary: #0e0d0b; --color-bg-secondary: #1a1714; --color-bg-tertiary: #26221d; --color-bg-inverse: #f0e6d2;
+      --color-text-primary: #f0e6d2; --color-text-secondary: #b8a98a; --color-text-tertiary: #7a6e58; --color-text-inverse: #2a2218;
+      --color-text-link: #ffb454; --color-text-link-hover: #ffc878;
+      --color-border: #3a3429; --color-border-strong: #5a4f3e;
+      --color-accent: #ffb454; --color-accent-hover: #ffc878; --color-accent-muted: #3a3429;
+      --color-success: #5b9a6e; --color-warning: #e8954a; --color-danger: #c84545; --color-info: #6ba3c9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --color-bg-primary: #0e0d0b; --color-bg-secondary: #1a1714; --color-bg-tertiary: #26221d; --color-bg-inverse: #f0e6d2;
+        --color-text-primary: #f0e6d2; --color-text-secondary: #b8a98a; --color-text-tertiary: #7a6e58; --color-text-inverse: #2a2218;
+        --color-text-link: #ffb454; --color-text-link-hover: #ffc878;
+        --color-border: #3a3429; --color-border-strong: #5a4f3e;
+        --color-accent: #ffb454; --color-accent-hover: #ffc878; --color-accent-muted: #3a3429;
+        --color-success: #5b9a6e; --color-warning: #e8954a; --color-danger: #c84545; --color-info: #6ba3c9;
+      }
+    }
+    :root { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.08); }
+    :root[data-theme="dark"] { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.4); } }
+
+    /* === inlined components.css (subset) === */
+    *, *::before, *::after { box-sizing: border-box; }
+    button { font: inherit; cursor: pointer; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-full); font: var(--font-weight-semibold) var(--font-size-sm)/1 var(--font-sans); transition: background-color 120ms, opacity 120ms; white-space: nowrap; }
+    .btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--color-accent); color: var(--color-text-inverse); }
+    .btn-primary:hover:not(:disabled) { background: var(--color-accent-hover); }
+    .btn-secondary { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border); }
+    .btn-ghost { background: transparent; color: var(--color-text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--color-bg-secondary); color: var(--color-text-primary); }
+    .btn-danger { background: var(--color-danger); color: var(--color-text-inverse); }
+    .btn--sm { padding: var(--space-1) var(--space-3); font-size: var(--font-size-xs); }
+
+    /* connectivity indicator (for session context) */
+    .connectivity-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+    .connectivity-indicator__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .connectivity-indicator--live .connectivity-indicator__dot { background: var(--color-success); }
+    .connectivity-indicator--live { color: var(--color-success); }
+    .connectivity-indicator--stale .connectivity-indicator__dot { background: var(--color-warning); box-shadow: 0 0 6px var(--color-warning); }
+    .connectivity-indicator--stale { color: var(--color-warning); }
+
+    /* === page layout === */
+    body { margin: 0; font-family: var(--font-sans); background: var(--color-bg-primary); color: var(--color-text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .cockpit { display: flex; flex: 1; min-height: 0; }
+
+    .sidebar { width: 220px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+    .sidebar__head { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
+    .sidebar__brand { font: 600 var(--font-size-sm)/1 var(--font-mono); letter-spacing: 0.04em; }
+    .attention-badge { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+    .attention-badge__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 6px var(--color-accent); }
+    .attention-badge__count { position: absolute; top: -6px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-full); background: var(--color-danger); color: var(--color-text-inverse); font: var(--font-weight-bold) 10px/16px var(--font-mono); text-align: center; }
+    .sidebar__nav { padding: var(--space-2); display: flex; flex-direction: column; gap: 2px; }
+    .nav-item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font: 500 var(--font-size-sm)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; background: none; border: 0; text-align: left; width: 100%; }
+    .nav-item:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+    .nav-item--active { background: var(--color-accent-muted); color: var(--color-accent); }
+    .nav-item--active .attention-badge__dot { background: var(--color-accent); }
+    .session-row { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); cursor: pointer; border-left: 3px solid transparent; }
+    .session-row--needs-you { border-left-color: var(--color-warning); }
+    .session-row__label { font: 500 var(--font-size-xs)/1.2 var(--font-mono); display: block; }
+    .session-row__context { font: 10px/1 var(--font-mono); color: var(--color-text-secondary); display: block; margin-top: 1px; }
+
+    /* main attention surface */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
+    .main__head { padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); position: sticky; top: 0; z-index: 5; }
+    .main__title { font: 600 var(--font-size-xl)/1.2 var(--font-sans); display: flex; align-items: center; gap: var(--space-3); }
+    .main__count { font: var(--font-weight-semibold) var(--font-size-sm)/1 var(--font-mono); color: var(--color-warning); background: var(--color-bg-tertiary); padding: 3px var(--space-2); border-radius: var(--radius-full); }
+    .main__sub { font: var(--font-size-sm)/1.4 var(--font-sans); color: var(--color-text-secondary); margin-top: var(--space-1); }
+    .main__body { padding: var(--space-6); max-width: 860px; margin: 0 auto; width: 100%; }
+
+    /* grouped by session */
+    .session-group { margin-bottom: var(--space-8); }
+    .session-group__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; margin-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+    .session-group__label { font: 600 var(--font-size-base)/1.2 var(--font-sans); }
+    .session-group__context { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .session-group__count { margin-left: auto; font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); color: var(--color-warning); }
+
+    /* elicitation card in the attention list */
+    .elicit {
+      background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-left: 3px solid var(--color-warning);
+      border-radius: var(--radius-sm); padding: var(--space-4); margin-bottom: var(--space-3);
+      display: flex; flex-direction: column; gap: var(--space-3);
+    }
+    .elicit--approval { border-left-color: var(--color-danger); }
+    .elicit--question { border-left-color: var(--color-warning); }
+    .elicit--answered { opacity: 0.6; border-left-color: var(--color-success); }
+    .elicit__header { display: flex; align-items: center; gap: var(--space-2); }
+    .elicit__kind { font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-warning); }
+    .elicit--approval .elicit__kind { color: var(--color-danger); }
+    .elicit__age { margin-left: auto; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .elicit__prompt { margin: 0; font: var(--font-size-sm)/var(--line-height-base) var(--font-sans); color: var(--color-text-primary); }
+    .elicit__prompt code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
+    .elicit__prompt pre { font: var(--font-size-xs)/1.5 var(--font-mono); background: var(--color-bg-tertiary); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-x: auto; margin: var(--space-2) 0; }
+    .elicit__options { display: flex; flex-direction: column; gap: var(--space-2); }
+    .option { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; background: var(--color-bg-primary); }
+    .option:hover { border-color: var(--color-border-strong); }
+    .option--selected { border-color: var(--color-accent); background: var(--color-accent-muted); }
+    .option__control { width: 16px; height: 16px; border: 2px solid var(--color-border-strong); border-radius: 50%; flex-shrink: 0; margin-top: 1px; }
+    .option--selected .option__control { border-color: var(--color-accent); background: var(--color-accent); box-shadow: inset 0 0 0 3px var(--color-bg-primary); }
+    .option__label { font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-primary); }
+    .option__desc { font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin-top: 1px; }
+    .option--freetext { flex-direction: column; align-items: stretch; gap: var(--space-2); cursor: default; }
+    .option--freetext__label { display: flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+    .option--freetext__input { width: 100%; padding: var(--space-2) var(--space-3); background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; }
+    .option--freetext__input:focus { border-color: var(--color-accent); }
+    .elicit__actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+    .elicit__open { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-link); cursor: pointer; background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+
+    /* empty state */
+    .empty { text-align: center; padding: var(--space-12); color: var(--color-text-secondary); }
+    .empty__title { font: 600 var(--font-size-lg)/1.2 var(--font-sans); color: var(--color-text-primary); margin-bottom: var(--space-2); }
+    .empty__body { font: var(--font-size-sm)/1.5 var(--font-sans); max-width: 36ch; margin: 0 auto; }
+
+    /* mobile */
+    @media (max-width: 760px) {
+      body { height: auto; overflow: visible; }
+      .cockpit { flex-direction: column; height: auto; }
+      .sidebar { display: none; }
+      .main { min-height: 100vh; }
+      .main__head { padding: var(--space-3) var(--space-4); position: sticky; top: 0; }
+      .main__body { padding: var(--space-3); padding-bottom: 80px; }
+      .bottom-nav { display: flex; }
+    }
+    .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; z-index: 30; }
+    .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; padding: var(--space-1); position: relative; }
+    .bottom-nav__item--active { color: var(--color-accent); }
+  </style>
+</head>
+<body>
+  <div class="cockpit">
+    <aside class="sidebar">
+      <div class="sidebar__head">
+        <span class="sidebar__brand">PATCHBAY</span>
+      </div>
+      <nav class="sidebar__nav">
+        <button class="nav-item">Sessions</button>
+        <button class="nav-item nav-item--active">
+          Attention
+          <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">4</span></span>
+        </button>
+        <button class="nav-item">Activity</button>
+      </nav>
+      <div style="padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); font: 600 var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); margin-top: auto;">Sessions needing you</div>
+      <div class="session-row session-row--needs-you">
+        <span class="session-row__label">patchbay-core</span>
+        <span class="session-row__context">pi@laptop · 2 pending</span>
+      </div>
+      <div class="session-row session-row--needs-you">
+        <span class="session-row__label">web-server</span>
+        <span class="session-row__context">codex@vm · 1 pending</span>
+      </div>
+      <div class="session-row session-row--needs-you">
+        <span class="session-row__label">research-spike</span>
+        <span class="session-row__context">claude@cloud · 1 pending</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="main__head">
+        <div class="main__title">Attention <span class="main__count">4 pending</span></div>
+        <div class="main__sub">Elicitations across all sessions — approvals and questions waiting for you. Answer here, or open the session.</div>
+      </div>
+      <div class="main__body">
+
+        <!-- session group: patchbay-core (2 pending) -->
+        <div class="session-group">
+          <div class="session-group__head">
+            <div>
+              <div class="session-group__label">patchbay-core</div>
+              <div class="session-group__context">pi@laptop · runtime 01J8K3M2 · gen 2</div>
+            </div>
+            <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+            <span class="session-group__count">2 pending</span>
+          </div>
+
+          <!-- approval -->
+          <div class="elicit elicit--approval">
+            <div class="elicit__header">
+              <span class="elicit__kind">approval</span>
+              <span class="elicit__age">2m ago</span>
+            </div>
+            <p class="elicit__prompt">Approve tool call: <code>bash: rm -rf target/</code><br><br>This will delete the build cache. The agent wants to clear it before running the test suite.</p>
+            <div class="elicit__actions">
+              <button class="btn btn-danger btn--sm">Deny</button>
+              <button class="btn btn-primary btn--sm">Approve</button>
+              <button class="elicit__open">Open in session →</button>
+            </div>
+          </div>
+
+          <!-- question (select-one with free-text) -->
+          <div class="elicit elicit--question">
+            <div class="elicit__header">
+              <span class="elicit__kind">question · select-one</span>
+              <span class="elicit__age">1m ago</span>
+            </div>
+            <p class="elicit__prompt">Which branch should I target for the refactor?</p>
+            <div class="elicit__options">
+              <div class="option" onclick="selectOpt(this)"><span class="option__control"></span><div><div class="option__label">main</div><div class="option__desc">Direct to the default branch.</div></div></div>
+              <div class="option option--selected" onclick="selectOpt(this)"><span class="option__control"></span><div><div class="option__label">refactor/sessions</div><div class="option__desc">The dedicated refactor branch.</div></div></div>
+              <div class="option option--freetext">
+                <div class="option--freetext__label"><span class="option__control"></span>Or type your own answer</div>
+                <input class="option--freetext__input" placeholder="e.g. refactor/sessions-v2" onfocus="this.closest('.option--freetext').classList.add('is-active')">
+              </div>
+            </div>
+            <div class="elicit__actions">
+              <button class="btn btn-ghost btn--sm">Skip</button>
+              <button class="btn btn-primary btn--sm">Answer</button>
+              <button class="elicit__open">Open in session →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- session group: web-server (1 pending) -->
+        <div class="session-group">
+          <div class="session-group__head">
+            <div>
+              <div class="session-group__label">web-server</div>
+              <div class="session-group__context">codex@vm · runtime 01J8K5Q8 · gen 3</div>
+            </div>
+            <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
+            <span class="session-group__count">1 pending</span>
+          </div>
+
+          <div class="elicit elicit--approval">
+            <div class="elicit__header">
+              <span class="elicit__kind">approval</span>
+              <span class="elicit__age">5m ago</span>
+            </div>
+            <p class="elicit__prompt">Approve tool call: <code>bash: cargo build --release</code><br><br>This will take ~3 minutes and write to the target directory.</p>
+            <div class="elicit__actions">
+              <button class="btn btn-danger btn--sm">Deny</button>
+              <button class="btn btn-primary btn--sm">Approve</button>
+              <button class="elicit__open">Open in session →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- session group: research-spike (1 pending) -->
+        <div class="session-group">
+          <div class="session-group__head">
+            <div>
+              <div class="session-group__label">research-spike</div>
+              <div class="session-group__context">claude@cloud · runtime 01J8K6R9 · gen 1</div>
+            </div>
+            <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
+            <span class="session-group__count">1 pending</span>
+          </div>
+
+          <div class="elicit elicit--question">
+            <div class="elicit__header">
+              <span class="elicit__kind">question · select-one</span>
+              <span class="elicit__age">8m ago</span>
+            </div>
+            <p class="elicit__prompt">How deep should the comparison between Rust and Go web frameworks go?</p>
+            <div class="elicit__options">
+              <div class="option" onclick="selectOpt(this)"><span class="option__control"></span><div><div class="option__label">Overview</div><div class="option__desc">High-level pros/cons, pick one.</div></div></div>
+              <div class="option" onclick="selectOpt(this)"><span class="option__control"></span><div><div class="option__label">Benchmark</div><div class="option__desc">Include performance numbers and memory.</div></div></div>
+              <div class="option option--selected" onclick="selectOpt(this)"><span class="option__control"></span><div><div class="option__label">Deep dive</div><div class="option__desc">Full architecture, ergonomics, ecosystem, benchmarks.</div></div></div>
+              <div class="option option--freetext">
+                <div class="option--freetext__label"><span class="option__control"></span>Or type your own answer</div>
+                <input class="option--freetext__input" placeholder="e.g. focus on async story only" onfocus="this.closest('.option--freetext').classList.add('is-active')">
+              </div>
+            </div>
+            <div class="elicit__actions">
+              <button class="btn btn-ghost btn--sm">Skip</button>
+              <button class="btn btn-primary btn--sm">Answer</button>
+              <button class="elicit__open">Open in session →</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item">Sessions</button>
+    <button class="bottom-nav__item bottom-nav__item--active">
+      Attention
+      <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">4</span></span>
+    </button>
+    <button class="bottom-nav__item">Activity</button>
+  </nav>
+
+  <script>
+    function selectOpt(el) {
+      if (el.classList.contains('option--freetext')) return;
+      el.parentElement.querySelectorAll('.option:not(.option--freetext)').forEach(o => o.classList.remove('option--selected'));
+      el.classList.add('option--selected');
+    }
+  </script>
+</body>
+</html>
