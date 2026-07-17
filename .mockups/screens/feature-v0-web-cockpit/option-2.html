@@ -207,6 +207,11 @@
     .sidebar { width: 300px; flex-shrink: 0; background: var(--color-bg-secondary); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
     .sidebar__head { padding: var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: var(--space-2); }
     .sidebar__brand { font: 600 var(--font-size-base)/1 var(--font-mono); letter-spacing: 0.04em; }
+    .sidebar__nav { padding: var(--space-2); display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--color-border); }
+    .nav-item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font: 500 var(--font-size-sm)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; background: none; border: 0; text-align: left; width: 100%; text-decoration: none; }
+    .nav-item:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+    .nav-item--active { background: var(--color-accent-muted); color: var(--color-accent); }
+    .nav-item .attention-badge { margin-left: auto; }
     .sidebar__search { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
     .session-list { flex: 1; overflow-y: auto; }
     .session-row--generous { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
@@ -257,8 +262,12 @@
     <aside class="sidebar">
       <div class="sidebar__head">
         <span class="sidebar__brand">PATCHBAY</span>
-        <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
       </div>
+      <nav class="sidebar__nav">
+        <a class="nav-item nav-item--active" href="option-2.html">Sessions</a>
+        <a class="nav-item" href="attention/attention.html">Attention <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span></a>
+        <a class="nav-item" href="#">Activity</a>
+      </nav>
       <div class="sidebar__actions">
         <button class="btn btn-secondary btn--sm">+ Spawn</button>
         <button class="btn btn-secondary btn--sm">+ Attach</button>
