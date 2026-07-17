@@ -209,11 +209,12 @@
     .session-row--generous .session-row__identity { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
     .session-row--generous .session-row__badges { margin-top: var(--space-1); }
 
-    .fab { position: absolute; bottom: var(--space-6); right: var(--space-6); width: 56px; height: 56px; border-radius: var(--radius-full); background: var(--color-accent); color: var(--color-text-inverse); border: 0; font-size: 24px; cursor: pointer; box-shadow: var(--shadow-raised); z-index: 5; }
-    .fab:hover { background: var(--color-accent-hover); }
+    /* spawn/attach are list-level actions — live in the sidebar header, not a FAB */
+    .sidebar__actions { display: flex; gap: var(--space-1); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .sidebar__actions .btn { flex: 1; }
 
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
-    .main__head { padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+    .main__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
     .main__title { font: 600 var(--font-size-xl)/1.2 var(--font-sans); margin-bottom: var(--space-1); }
     .main__identity { font: var(--font-size-sm)/1 var(--font-mono); color: var(--color-text-tertiary); }
     .main__status-row { margin-top: var(--space-2); }
@@ -233,8 +234,8 @@
       .back-btn:hover { background: var(--color-bg-tertiary); }
       .main__title { font-size: var(--font-size-base); margin: 0; }
       .main__body { padding: var(--space-3); }
+      .main { padding-bottom: 56px; } /* clear the bottom-nav so composer isn't hidden */
       .bottom-nav { display: flex; }
-      .fab { bottom: 70px; right: var(--space-4); width: 48px; height: 48px; font-size: 20px; }
     }
     .bottom-nav { display: none; position: sticky; bottom: 0; background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); padding: var(--space-2); justify-content: space-around; z-index: 30; }
     .bottom-nav__item { display: flex; flex-direction: column; align-items: center; gap: 2px; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); background: none; border: 0; cursor: pointer; padding: var(--space-1); }
@@ -251,6 +252,10 @@
       <div class="sidebar__head">
         <span class="sidebar__brand">PATCHBAY</span>
         <span class="attention-badge" style="margin-left:auto"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span>
+      </div>
+      <div class="sidebar__actions">
+        <button class="btn btn-secondary btn--sm">+ Spawn</button>
+        <button class="btn btn-secondary btn--sm">+ Attach</button>
       </div>
       <div class="sidebar__search"><input class="input" placeholder="Filter sessions..."></div>
       <div class="session-list">
@@ -331,7 +336,6 @@
         <input class="composer__input" placeholder="Instruct, query, or slash-command...">
         <button class="btn btn-primary btn--sm">Instruct</button>
       </div>
-      <button class="fab" title="Spawn / Attach">+</button>
     </main>
   </div>
   <nav class="bottom-nav">
