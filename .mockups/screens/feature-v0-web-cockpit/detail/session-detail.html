@@ -173,6 +173,23 @@
     .option__body { flex: 1; min-width: 0; }
     .option__label { font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-primary); }
     .option__desc { font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin-top: 2px; }
+    /* free-text option: 'or type your own answer' appended to a select-one/select-many question.
+       Renders as the last option but with a text field instead of a radio/checkbox. */
+    .option--freetext { flex-direction: column; align-items: stretch; gap: var(--space-2); cursor: default; }
+    .option--freetext:hover { border-color: var(--color-border); }
+    .option--freetext__label { display: flex; align-items: center; gap: var(--space-2); font: var(--font-weight-medium) var(--font-size-sm)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+    .option--freetext__label .option__control { width: 18px; height: 18px; border: 2px solid var(--color-border-strong); border-radius: var(--radius-sm); flex-shrink: 0; margin-top: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .option--freetext.is-active .option__control { border-color: var(--color-accent); background: var(--color-accent); }
+    .option--freetext.is-active .option__control::after { content: ''; width: 8px; height: 8px; background: var(--color-bg-primary); border-radius: 1px; }
+    .option--freetext__input { width: 100%; padding: var(--space-2) var(--space-3); background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; }
+    .option--freetext__input:focus { border-color: var(--color-accent); }
+    .option--freetext__input::placeholder { color: var(--color-text-tertiary); }
+    /* 'answer AND...' clarification field — appends free-text context to a selected option. */
+    .clarify { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px dashed var(--color-border); }
+    .clarify__label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: var(--space-1); }
+    .clarify__input { width: 100%; padding: var(--space-2) var(--space-3); background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); outline: none; min-height: 56px; resize: vertical; font-family: var(--font-sans); }
+    .clarify__input:focus { border-color: var(--color-accent); }
+    .clarify__input::placeholder { color: var(--color-text-tertiary); }
     .elicitation-card__actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
 
     /* composer — full-width chrome bar; contents align with the capped timeline column. */
@@ -285,6 +302,52 @@
           <div class="elicitation-card__actions">
             <button class="btn btn-danger btn--sm" title="Reject the tool call. The agent will be told it was denied.">Deny</button>
             <button class="btn btn-primary btn--sm" title="Allow the command to execute. target/ is regenerable.">Approve</button>
+          </div>
+        </div>
+
+        <!-- question elicitation (multi-option) with free-text option + answer-and clarification -->
+        <div class="elicitation-card elicitation-card--inline-teaser" onclick="openSheet(event)">
+          <div class="elicitation-card__header">
+            <span class="elicitation-card__kind">question</span>
+            <span class="elicitation-card__contract">contract: question · select-one · pending</span>
+          </div>
+          <p class="elicitation-card__prompt">Which branch should I target for the refactor?</p>
+          <div class="elicitation-card__options">
+            <div class="option" onclick="selectOption(event, this)">
+              <span class="option__control"></span>
+              <div class="option__body">
+                <div class="option__label">main</div>
+                <div class="option__desc">Direct to the default branch.</div>
+              </div>
+            </div>
+            <div class="option option--selected" onclick="selectOption(event, this)">
+              <span class="option__control"></span>
+              <div class="option__body">
+                <div class="option__label">refactor/sessions</div>
+                <div class="option__desc">The dedicated refactor branch.</div>
+              </div>
+            </div>
+            <div class="option" onclick="selectOption(event, this)">
+              <span class="option__control"></span>
+              <div class="option__body">
+                <div class="option__label">feature/v0-cockpit</div>
+                <div class="option__desc">Where the cockpit work lives.</div>
+              </div>
+            </div>
+            <!-- free-text option: 'or type your own answer' -->
+            <div class="option option--freetext">
+              <div class="option--freetext__label"><span class="option__control"></span>Or type your own answer</div>
+              <input class="option--freetext__input" placeholder="e.g. refactor/sessions-v2" onclick="event.stopPropagation()" onfocus="this.closest('.option--freetext').classList.add('is-active')">
+            </div>
+          </div>
+          <!-- answer-and clarification: appends free-text context to the selected option -->
+          <div class="clarify">
+            <div class="clarify__label">And... (optional context)</div>
+            <textarea class="clarify__input" placeholder="e.g. rebase onto main first, and run the full test suite before merging" onclick="event.stopPropagation()"></textarea>
+          </div>
+          <div class="elicitation-card__actions">
+            <button class="btn btn-ghost btn--sm">Skip</button>
+            <button class="btn btn-primary btn--sm">Answer</button>
           </div>
         </div>
 
