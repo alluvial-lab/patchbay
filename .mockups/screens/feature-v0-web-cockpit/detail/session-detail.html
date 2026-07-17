@@ -282,25 +282,9 @@
             <span class="elicitation-card__contract">contract: approval · pending</span>
           </div>
           <p class="elicitation-card__prompt">Approve tool call: <code>bash: rm -rf target/</code><br><br>This will delete the build cache. The agent wants to clear it before running the test suite.</p>
-          <div class="elicitation-card__options">
-            <div class="option" onclick="selectOption(event, this)">
-              <span class="option__control"></span>
-              <div class="option__body">
-                <div class="option__label">Approve</div>
-                <div class="option__desc">Allow the command to execute. <code>target/</code> is regenerable.</div>
-              </div>
-            </div>
-            <div class="option" onclick="selectOption(event, this)">
-              <span class="option__control"></span>
-              <div class="option__body">
-                <div class="option__label">Deny</div>
-                <div class="option__desc">Reject the tool call. The agent will be told it was denied.</div>
-              </div>
-            </div>
-          </div>
           <div class="elicitation-card__actions">
-            <button class="btn btn-danger btn--sm">Deny</button>
-            <button class="btn btn-primary btn--sm">Approve</button>
+            <button class="btn btn-danger btn--sm" title="Reject the tool call. The agent will be told it was denied.">Deny</button>
+            <button class="btn btn-primary btn--sm" title="Allow the command to execute. target/ is regenerable.">Approve</button>
           </div>
         </div>
 
@@ -345,22 +329,6 @@
       Approve tool call: <code>bash: rm -rf target/</code><br><br>
       This will delete the build cache. The agent wants to clear it before running the test suite.
       <pre><code>rm -rf target/</code></pre>
-    </div>
-    <div class="sheet__options" id="sheetOptions">
-      <div class="option" onclick="selectSheetOption(this)">
-        <span class="option__control"></span>
-        <div class="option__body">
-          <div class="option__label">Approve</div>
-          <div class="option__desc">Allow the command to execute. <code>target/</code> is regenerable.</div>
-        </div>
-      </div>
-      <div class="option" onclick="selectSheetOption(this)">
-        <span class="option__control"></span>
-        <div class="option__body">
-          <div class="option__label">Deny</div>
-          <div class="option__desc">Reject the tool call. The agent will be told it was denied.</div>
-        </div>
-      </div>
     </div>
     <div class="sheet__actions">
       <button class="btn btn-danger">Deny</button>
