@@ -8,7 +8,7 @@ depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-17
+updated: 2026-07-18
 ---
 
 # Feature: Responsive web cockpit
@@ -26,6 +26,7 @@ The cockpit is the first conformant instance of the conformance floor. Mockups a
 - Design system: `.mockups/design-system/` (see `feature-v0-presentation-component-layer`)
 - Shell screen: `.mockups/screens/feature-v0-web-cockpit/`
   - **Selected: option-2 (Identity-forward)** — locked 2026-07-16. Generous session rows (label + project dominant, identity + status as metadata), sidebar header actions for spawn/attach, filter search.
+  - **v0.1.0 scope: sessions shell only.** Operator decision (2026-07-17): pare down to just the sessions shell for v0.1.0 to hone it in. The Attention destination is **deferred from v0.1.0** — elicitations surface inline in the session detail (cards + mobile bottom sheet) and via the `needs-you` badge on session rows, so they remain discoverable and answerable without a dedicated cross-session inbox. The cross-session Attention destination is the natural promotion when monitoring many sessions; its mock (`attention/attention.html`) is preserved on disk as a designed-but-deferred artifact, not wired into the nav.
   - **Responsive IA (committed A / reserved B):** desktop is two-pane (list + live session-detail side-by-side); mobile is drill-in (list is the home, tap a session → full-screen detail with back button). B (drill-in) is both the reserved seam AND the natural mobile mode — promotion to desktop drill-in is additive (container change), not a rebuild.
   - Detail-pane header hidden on desktop (redundant with the active sidebar row); kept on mobile (drill-in needs back button + which-session context).
   - option-2.html is self-contained (inlined tokens+components) and interactive (mobile drill-in works via tap/back).
