@@ -244,8 +244,14 @@
     .sheet__prompt { margin: 0 0 var(--space-4); font: var(--font-size-base)/var(--line-height-base) var(--font-sans); color: var(--color-text-primary); overflow-y: auto; }
     .sheet__prompt code { font: 0.86em var(--font-mono); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }
     .sheet__prompt pre { font: var(--font-size-sm)/1.5 var(--font-mono); background: var(--color-bg-tertiary); padding: var(--space-3); border-radius: var(--radius-sm); overflow-x: auto; margin: var(--space-2) 0; }
-    .sheet__options { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; }
-    .sheet__actions { display: flex; gap: var(--space-2); position: fixed; bottom: 0; left: 0; right: 0; padding: var(--space-3) var(--space-4) var(--space-4); background: var(--color-bg-primary); border-top: 1px solid var(--color-border); }
+    .sheet__options { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; flex: 1; min-height: 0; }
+    .sheet__actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+    /* force-show content cloned into the sheet (inline-teaser CSS hides it on mobile) */
+    .sheet__body .elicitation-card__options,
+    .sheet__body .clarify,
+    .sheet__body .elicitation-card__actions,
+    .sheet__body .elicitation-group__qa { display: revert !important; }
+    .sheet__body .elicitation-card__prompt { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
     .sheet__actions .btn { flex: 1; }
   </style>
 </head>
@@ -485,24 +491,15 @@
     </main>
   </div>
 
-  <!-- mobile bottom sheet for the elicitation -->
+  <!-- mobile bottom sheet for the elicitation (content cloned from the tapped card) -->
   <div class="sheet-backdrop" id="sheetBackdrop" onclick="closeSheet()"></div>
   <div class="sheet" id="sheet">
     <div class="sheet__handle"></div>
     <div class="sheet__header">
-      <span class="sheet__kind">approval · pending</span>
+      <span class="sheet__kind" id="sheetKind"></span>
       <button class="sheet__close" onclick="closeSheet()">✕</button>
     </div>
-    <div class="sheet__prompt">
-      Approve tool call: <code>bash: rm -rf target/</code><br><br>
-      This will delete the build cache. The agent wants to clear it before running the test suite.
-      <pre><code>rm -rf target/</code></pre>
-    </div>
-    <div class="sheet__options" id="sheetOptions"></div>
-    <div class="sheet__actions">
-      <button class="btn btn-danger">Deny</button>
-      <button class="btn btn-primary">Approve</button>
-    </div>
+    <div class="sheet__body" id="sheetBody" style="overflow-y:auto; flex:1; min-height:0;"></div>
   </div>
 
   <nav class="bottom-nav">
@@ -521,11 +518,23 @@
     }
     function toggleDetail(id) { document.getElementById(id).classList.toggle('is-open'); }
     function openSheet(e) {
-      if (window.matchMedia('(max-width: 760px)').matches) {
-        e.stopPropagation();
-        document.getElementById('sheet').classList.add('is-open');
-        document.getElementById('sheetBackdrop').classList.add('is-open');
-      }
+      if (!window.matchMedia('(max-width: 760px)').matches) return;
+      var card = e.currentTarget;
+      // clone the card's real content (prompt + options + clarify + actions) into the sheet body
+      var kind = card.querySelector('.elicitation-card__kind, .elicitation-group__header .elicitation-card__kind');
+      var contract = card.querySelector('.elicitation-card__contract');
+      var kindText = kind ? kind.textContent.trim() : 'elicitation';
+      var contractText = contract ? contract.textContent.trim() : 'pending';
+      document.getElementById('sheetKind').textContent = kindText + ' · ' + contractText;
+      // gather the visible-content nodes (everything except the header)
+      var body = document.getElementById('sheetBody');
+      body.innerHTML = '';
+      Array.prototype.forEach.call(card.children, function(node) {
+        if (node.classList.contains('elicitation-card__header') || node.classList.contains('elicitation-group__header')) return;
+        body.appendChild(node.cloneNode(true));
+      });
+      document.getElementById('sheet').classList.add('is-open');
+      document.getElementById('sheetBackdrop').classList.add('is-open');
     }
     function closeSheet() {
       document.getElementById('sheet').classList.remove('is-open');
