@@ -357,22 +357,40 @@ function checkContrast(cssSource, tokensSource, errors) {
   // ([data-theme="dark"]), AND the system-follow dark block
   // (@media prefers-color-scheme: dark → :root:not([data-theme="light"])).
   // The tokens.css header documents the system-follow block as intentionally
-  // identical to explicit dark; a mutation diverging them (e.g. making the
-  // default-dark toast invisible) must be caught. We check both explicitly.
+  // identical to explicit dark. Enforce KEY-SET parity (a missing override
+  // silently inherits the light value, which can produce a 1:1 contrast that
+  // the check would skip because var() can't resolve) and VALUE parity.
+  const lightTokens = parseColorTokens(tokensSource, ':root');
   const explicitDark = parseColorTokens(tokensSource, ':root[data-theme="dark"]');
   const systemDark = parseColorTokens(tokensSource, ':root:not([data-theme="light"])');
-  // If system-dark tokens diverge from explicit-dark, the header's "identical"
-  // invariant is violated — flag each divergence.
+  // Key-set parity: explicit-dark and system-dark must define the SAME keys.
+  const explicitKeys = [...explicitDark.keys()].sort();
+  const systemKeys = [...systemDark.keys()].sort();
+  if (explicitKeys.join(',') !== systemKeys.join(',')) {
+    const missingInSystem = explicitKeys.filter((k) => !systemDark.has(k));
+    const missingInExplicit = systemKeys.filter((k) => !explicitDark.has(k));
+    if (missingInSystem.length) errors.push(`contrast: system-follow dark block is missing token overrides present in explicit dark: ${missingInSystem.join(', ')} (a missing override inherits the light value, which can hide a contrast defect)`);
+    if (missingInExplicit.length) errors.push(`contrast: explicit dark block is missing token overrides present in system-follow dark: ${missingInExplicit.join(', ')}`);
+  }
+  // Value parity: where both define a key, they must be identical.
   for (const [key, value] of explicitDark) {
     const sysValue = systemDark.get(key);
     if (sysValue !== undefined && sysValue !== value) {
       errors.push(`contrast: system-follow dark token ${key} (#${sysValue}) diverges from explicit dark (#${value}); tokens.css documents these as intentionally identical`);
     }
   }
+  // Compute EFFECTIVE dark theme = light tokens overlaid with dark overrides.
+  // This catches a missing dark override: the light value inherits, and if that
+  // produces a bad contrast pair (e.g. light text-inverse on dark bg-inverse),
+  // the check catches it rather than skipping the unresolvable var().
+  const effectiveExplicitDark = new Map(lightTokens);
+  for (const [k, v] of explicitDark) effectiveExplicitDark.set(k, v);
+  const effectiveSystemDark = new Map(lightTokens);
+  for (const [k, v] of systemDark) effectiveSystemDark.set(k, v);
   const modes = [
-    ['light', parseColorTokens(tokensSource, ':root')],
-    ['dark (explicit)', explicitDark],
-    ['dark (system-follow)', systemDark],
+    ['light', lightTokens],
+    ['dark (explicit)', effectiveExplicitDark],
+    ['dark (system-follow)', effectiveSystemDark],
   ];
   for (const [mode, tokens] of modes) {
     const pairs = deriveContrastPairs(cssSource, tokens, errors);
