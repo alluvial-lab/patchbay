@@ -1,7 +1,7 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
@@ -55,7 +55,7 @@ Resolved interactively during the bounce-back design checkpoint. These govern th
 
 Surveying the decisions the mockup pass locked, classified by whether a different reasonable implementer would produce a materially different model:
 
-- **Option C — `working` stays a 3-value protocol axis; thinking-vs-executing is a presentation detail composed from the Observation stream.** This is the one genuine 50/50. It explicitly dispositions a reserved seam: Option B (promote `thinking`/`executing` to the `SessionActivityState` registry — a reversal requiring enum + transition table + proto + model + conformance-vector updates) was available and was declined in favor of keeping the detail ephemeral and Observation-composed. The decision affects the conformance vector's shape (does it assert 3 activity states, or 3 + detail-states?), the `.activity-indicator` binding, and whether thinking-vs-executing is a checked property or uncheckable presentation hint. **Surfaced for re-opening — see question below.**
+- **Option C — `working` stays a 3-value protocol axis; thinking-vs-executing is a presentation detail composed from the Observation stream.** RETAINED (operator-confirmed 2026-07-19). Re-opening was considered; the reversibility asymmetry settles it: promoting to Option B later is additive and clean (enum growth + additive CSS bindings, reserved-seam reversal ceremony is paperwork not rework); demoting from B to C later is destructive (breaking proto change, deleted vectors, silently-wrong consumer code). Retaining C is the lower-regret v0.1.0 commitment and forecloses nothing. Cost: the conformance vector asserts `SessionActivityState` = 3 members (`idle`/`working`/`unknown`); the `.activity-indicator__detail` element is a documented-but-unchecked presentation hint (not a registry member, not a checked property). If a future timeout policy or formal property needs thinking-vs-executing authoritative, Option B is the clean promotion.
 - **Dark/Light toggle default = system-follow.** UX decision, not a protocol 50/50; no reserved-seam disposition. Retained.
 - **Skip the `motion` design-system pass.** Scope decision for v0. Q3B now requires reduced-motion guards on the two existing animations, which partially back-fills this — but the motion *language* (easing, duration scale, spring presets) remains undesigned. Retained as v0 scope; the motion pass is a natural v1 follow-on now that Q3B establishes an a11y harness that would validate it.
 - **Plex Mono/Sans hybrid typography.** Visual/UX decision resolving the mobile-markdown-readability tension; no protocol or reserved-seam consequence. Retained.
@@ -71,7 +71,7 @@ Resolved interactively during the `feature-v0-web-cockpit` design kickoff (these
 - **Q4 — Visual direction: operator-console / status-forward.** Scouted Codex desktop, Claude Code desktop redesign, Cursor 3 Agents Window, Google Antigravity — all converged on sidebar-as-control-plane + multi-agent supervision + status-forward chrome. Patchbay's chrome is operator-console; warmth lives only in message rendering. This is the agent-native pattern the field landed on in 2025–2026.
 - **Q5 — Operator-domain execution: browser-only, thin translator.** The web server stays a thin HTTP→protocol translator; the operator domain (protocol client, delivery/reconnect state machines, presentation model) runs in the browser. Server-side operator-domain promotion stays a reserved seam. Multi-device continuity comes from the core being the single source of truth, not from server-held state. (This decision is inherited from `feature-v0-web-server` and confirmed here — it pins where the presentation layer *runs*: in the browser, as part of the operator domain.)
 
-## Design surface (to be designed in the design pass)
+## Design surface (designed — see Architectural choice + Implementation Units below)
 
 The state-binding contract each primitive must encode (the floor, made structural):
 
@@ -93,6 +93,226 @@ Structural insights surfaced during aesthetic exploration that constrain the des
 - **Dark/Light toggle, system-follow default.** Explicit `[data-theme="dark"]` / `[data-theme="light"]` toggling with `prefers-color-scheme` as the default. Both modes built together (retrofitting dark later is the expensive mistake the palette skill warns against).
 - **Connectivity and activity are separate, not collapsed.** The operator's outpost_pi experience: connectivity (reachable?) and activity (what is the agent doing?) answer different questions and should be independently placeable visual channels, not one merged label. This aligns with `docs/PROTOCOL.md` ("Session presentation is the composition of two protocol axes... avoids treating 'live', 'idle', 'working', 'stale', 'unknown' as one overloaded enum"). The component layer binds them as two distinct sub-primitives (`.connectivity-indicator`, `.activity-indicator`) plus an optional `.session-status` composition wrapper that applies the dominance rule (stale/unknown connectivity de-emphasizes activity). The protocol's two-axis composition becomes visually two channels.
 - **`working` stays a 3-value protocol axis; thinking-vs-executing is a presentation detail (Option C).** The operator's outpost_pi experience: `working` covers both thinking (agent working on a turn) and waiting/executing (agent running tools, subagents, bash commands). Rather than promoting finer activity states to the `SessionActivityState` registry (Option B — a reserved-seam reversal requiring enum + transition table + proto + model + conformance-vector updates), the distinction is a **presentation detail composed from the Observation stream** the adapter already emits (`tool_call`, `tool_execution_start`/`tool_execution_end`, `message_update`, `agent_end`, `turn_start`/`turn_end`). `SessionActivityState` stays the committed 3-value registry (`idle`/`working`/`unknown`); `.activity-indicator` composes `working` + the latest relevant Observation into an ephemeral detail label (e.g. "working · executing bash"). The detail is not a durable protocol state — consistent with "Observations are delivery optimizations; durable core records remain authoritative." If the distinction later needs to be authoritative (formal property, timeout policy), Option B is the clean promotion path — a reversal of the named "richer activity details" reserved seam, not a quiet gap-fill.
+
+## Architectural choice (re-design pass, 2026-07-19)
+
+**A registry-derived static conformance check + a descriptive runtime contract, as sibling-but-separate artifacts from the protocol conformance vectors.**
+
+The layer's "machine-checkable" claim is realized by a single Node script (`contracts/scripts/check-presentation.mjs`) that parses the `.proto` enum registries as the Single Source of Truth (not a hand-maintained duplicate — that would itself be the drift `feature-command-state-ssot` exists to kill) and asserts the CSS class bindings + showcase coverage + retry-safety matrix against them. This mirrors the *shape* of `check-vectors.mjs` (read source → validate against registry → regenerate a traceability table) but is a separate concern: presentation-floor conformance, not protocol-wire conformance. The traceability table regenerates into `docs/UX.md` (the UX-floor doc), not `docs/VERIFICATION.md` (the protocol doc), keeping the two conformance disciplines pure.
+
+The runtime contract is descriptive prose (guarantees vs consumer obligations) recorded in the feature body and surfaced in `docs/UX.md` — the cockpit's review enforces compliance; no executable runtime-assertion module the cockpit must import (Q2A). The accessibility harness (Q3B) is an axe-core/pa11y scan of the showcase HTML plus a contrast-ratio computation, wired into the same script surface.
+
+Why this over the alternatives: a `contracts/vectors/*.json` extension (Q1A) would mix CSS-class↔registry assertions into the protocol vector set and muddy the protocol vectors' wire-behavior semantics; an executable runtime contract (Q2B) would over-couple the single v0.1.0 consumer to the layer internals for a benefit that only pays when a second surface appears.
+
+## Implementation Units
+
+### Unit 1: Presentation conformance check script
+
+**File**: `contracts/scripts/check-presentation.mjs`
+
+A Node ESM script (mirroring `check-vectors.mjs`'s shape: `fs/promises` + `path` + `fileURLToPath`, `process.exitCode = 1` on failure) that parses the four `.proto` enum registries directly and asserts the layer binds every member.
+
+```javascript
+// contracts/scripts/check-presentation.mjs
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '../..');
+const protoDir = path.join(repoRoot, 'contracts/proto/patchbay');
+const cssPath = path.join(repoRoot, '.mockups/design-system/components.css');
+const showcasePath = path.join(repoRoot, '.mockups/design-system/components.html');
+const uxDocPath = path.join(repoRoot, 'docs/UX.md');
+
+// Registry: parse .proto enums as the Single Source of Truth.
+// Each entry maps an enum-qualified proto name → { cssPrefix, members }.
+// UNSPECIFIED members are excluded (they are proto-required zero values,
+// not presentation states — the floor binds real states, not the sentinel).
+const REGISTRY = [
+  { enum: 'OperationState', cssPrefix: 'command-step',
+    members: ['accepted','delivered','running','completed','rejected','failed','expired','cancelled','superseded'] },
+  { enum: 'SessionConnectivityState', cssPrefix: 'connectivity-indicator',
+    members: ['live','stale','offline','unknown','failed'] },
+  { enum: 'SessionActivityState', cssPrefix: 'activity-indicator',
+    members: ['idle','working','unknown'] },
+  { enum: 'ElicitationState', cssPrefix: 'elicitation-card',
+    members: ['answered','declined','expired','cancelled','withdrawn','superseded','stale'] }, // opened/pending = base card
+];
+
+// The check parses each .proto enum and ASSERTS the hardcoded `members` list
+// matches the proto (catches registry growth the check wasn't updated for —
+// the anti-drift guarantee). Then asserts each member has a CSS class binding
+// in components.css AND a showcase example in components.html.
+```
+
+The script performs three assertion classes:
+1. **Registry↔proto parity** — parses each `.proto` enum (regex over the enum block, excluding `_UNSPECIFIED = 0`) and asserts the check's `members` list exactly matches the proto members. *Catches the failure that sank the first pass: ElicitationState grew to 9 members and the check claimed 3.* If they diverge, the check fails with the diff.
+2. **CSS binding presence** — for each registry member, asserts `.${cssPrefix}--${member}` appears in `components.css`. *Catches a missing binding.*
+3. **Showcase coverage** — for each registry member, asserts `cssPrefix--member` appears in `components.html`. *Catches an unexercised primitive (the delivery-line finding).* Plus asserts every "locked project-unique primitive" named in the components.css header comment has at least one showcase occurrence.
+
+Plus the retry-safety matrix assertion (Unit 3) and the a11y harness (Unit 4), invoked from the same script.
+
+**Implementation Notes**:
+- The script does NOT parse `.proto` via a proto compiler — it reads the enum blocks with a focused regex (the enums are simple `NAME = N;` lines). This avoids a protoc dependency; the parity check is against the textual enum members, which is sufficient for "is the CSS binding set in sync with the registry."
+- On success, regenerates a `<!-- BEGIN GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->` … `<!-- END … -->` block in `docs/UX.md` (mirroring `check-vectors.mjs`'s regeneration into `docs/VERIFICATION.md`), listing each registry, its members, and CSS/showcase binding status. This is the checked-in sync surface that makes drift visible during review.
+- `process.exitCode = 1` on any failure (CI gate). Mirrors `check-vectors.mjs` exit semantics.
+- Wired into `contracts/ts/package.json` as `check:presentation` alongside `check:vectors`/`check:models`/`check:drift`.
+
+**Acceptance Criteria**:
+- [ ] Parses all four `.proto` enums and asserts the check's member lists match (fails on registry growth the check wasn't updated for)
+- [ ] Asserts every registry member has a `.${prefix}--${member}` class in `components.css`
+- [ ] Asserts every registry member is exercised in `components.html`
+- [ ] Asserts every locked project-unique primitive named in the components.css header appears in the showcase
+- [ ] Regenerates the traceability block in `docs/UX.md` on success; exits non-zero on any failure
+- [ ] `npm run check:presentation` from `contracts/ts/` runs the full check
+
+### Unit 2: Runtime conformance contract (descriptive)
+
+**File**: this feature body (a `## Runtime conformance contract` section) + a cross-reference added to `docs/UX.md`'s "Shared presentation-component layer" section.
+
+Prose, not code. The contract separates **layer guarantees** from **consumer obligations**:
+
+```markdown
+## Runtime conformance contract
+
+### Layer guarantees (the component layer provides)
+- A CSS class binding for every canonical member of CommandState (9),
+  SessionConnectivityState (5), SessionActivityState (3), ElicitationState (9).
+- The dominance rule is structurally encoded: `.session-status` +
+  `.session-status--{stale,unknown,offline,failed}` wrapper modifiers
+  de-emphasize activity when connectivity is bad — with or without `:has()`.
+- Liveness and delivery primitives are distinct (`connectivity-indicator`/
+  `activity-indicator` vs `command-step`/`delivery-line`).
+- Retry-safety outcome primitives exist (`--safe`/`--maybe`/`--unsafe`);
+  the showcase documents the failure-term × idempotency_strength derivation matrix.
+
+### Consumer obligations (the cockpit/CLI/Expo must enforce)
+- Verify the stable identity tuple (adapter/scope/runtime/gen) before allowing
+  Operation submission. Labels are metadata; they must not override identity.
+  (traces to `LabelsCannotOverrideIdentity`, `SessionIdentityTuple`)
+- Derive retry-safety from the failure term × idempotency_strength inputs —
+  NEVER from CommandState alone. Apply the `.retry-safety-indicator--{safe,maybe,unsafe}`
+  class based on that derivation, not by reading CommandState.
+- Never render stale/unknown/offline/failed connectivity as live. Apply the
+  `.session-status--{stale,...}` wrapper modifier (or rely on `:has()`) so the
+  dominance rule holds.
+- Disable elicitation controls once the Elicitation is terminal
+  (answered/declined/expired/cancelled/withdrawn/superseded/stale) and show
+  the terminal state. First-answer-wins is enforced core-side; the UI reflects it.
+- Compose `.activity-indicator__detail` from the Observation stream only as an
+  ephemeral hint — never treat it as durable protocol state (Option C).
+```
+
+**Implementation Notes**:
+- This is the contract the cockpit's review confirms compliance with. It is not imported as code; it is a documented obligation. Promotion to executable runtime assertions is a reserved seam (Q2A) for when a second surface appears.
+- The property-ids it references (`LabelsCannotOverrideIdentity`, `SessionIdentityTuple`) are already stated-normative in `docs/VERIFICATION.md`'s registry — the contract traces to existing named properties, strengthening the traceability without inventing new ones.
+
+**Acceptance Criteria**:
+- [ ] The contract section exists in the feature body with guarantees vs obligations clearly separated
+- [ ] `docs/UX.md`'s layer section cross-references the contract
+- [ ] Each consumer obligation traces to a named property-id or UX-floor rule
+
+### Unit 3: Retry-safety matrix conformance assertion
+
+**File**: `contracts/scripts/check-presentation.mjs` (extension of Unit 1)
+
+Asserts the retry-safety derivation the layer exposes matches the `docs/UX.md` matrix exactly. The matrix is the 5 rows from UX.md verbatim:
+
+```javascript
+const RETRY_MATRIX = [
+  { failure: 'execution_outcome_unknown', strength: 'end-to-end',           safety: 'safe'  },
+  { failure: 'execution_outcome_unknown', strength: 'at-Patchbay-boundary', safety: 'maybe' },
+  { failure: 'execution_outcome_unknown', strength: 'none',                 safety: 'unsafe'},
+  { failure: 'execution_failed',         strength: 'any',                    safety: 'maybe' }, // not unconditionally safe
+  { failure: 'target_offline',            strength: 'any',                    safety: 'safe'  }, // pre-execution
+  // also adapter_unavailable, delivery_rejected → safe (pre-execution)
+];
+```
+
+The check asserts the showcase (`components.html`) documents every row of this matrix (the `matrix-note` paragraphs). It does NOT assert the CSS *computes* the derivation (CSS can't; that's a consumer obligation per Unit 2) — it asserts the layer *documents* the full matrix so a consumer has the derivation table to implement against.
+
+**Implementation Notes**:
+- The `failure` values are `FailureCode` enum members (minus the `FAILURE_CODE_` prefix); `strength` values are `IdempotencyStrength` members. The check cross-references these against the `.proto` enums for parity (same anti-drift discipline as Unit 1).
+- `execution_failed × any → maybe` is "not unconditionally safe" in UX.md's prose; the check treats it as `maybe` (the conservative binding — a consumer may present it as `unsafe` for a stricter policy, but the layer's default primitive is `maybe`).
+
+**Acceptance Criteria**:
+- [ ] The check asserts every UX.md retry-matrix row is documented in the showcase
+- [ ] The failure-term and strength values cross-reference the `.proto` enums
+- [ ] The check fails if a matrix row is missing from the showcase
+
+### Unit 4: Accessibility harness (contrast + axe-core scan)
+
+**File**: `contracts/scripts/check-presentation.mjs` (extension of Unit 1) + `contracts/scripts/a11y-scan.mjs` (or inline) + a dev dependency on `axe-core`.
+
+Two accessibility checks, both CI-gated:
+
+1. **Contrast ratio computation** — computes WCAG contrast ratios for the documented token pairs (the layer's state-indicator foregrounds against their backgrounds) and asserts each meets AA (4.5:1 normal text, 3:1 large/graphical). This is the check that would have caught the invisible-`.toast` defect (1:1 contrast) and the sub-AA tertiary-text labels. Reads `tokens.css` for the color values and a declared list of `(foreground-token, background-token, threshold)` triples the layer's bindings use.
+2. **axe-core scan of the showcase** — loads `components.html`, runs `axe-core`'s accessibility rules (color, keyboard/focus, ARIA, landmarks, reduced-motion), and fails on any violation. This catches the keyboard-focus / ARIA-semantics / reduced-motion gaps the discovery flagged — not just contrast.
+
+Plus a direct CSS fix: `prefers-reduced-motion` guards on the two animations.
+
+```css
+/* added to components.css */
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator--working .activity-indicator__icon { animation: none; }
+  .command-step--running .command-step__marker { animation: none; }
+}
+```
+
+**Implementation Notes**:
+- `axe-core` is a pure-JS rule engine (no browser required for the core rules; it can scan a serialized DOM). It's a dev dependency on `contracts/ts` (or a sibling `package.json` if dependency placement matters — `axe-core` is ~2MB but has no runtime cost for the cockpit). The scan loads the showcase HTML via `linkedom` or JSDOM to build a DOM axe can inspect.
+- The contrast computation does not depend on axe — it's a direct WCAG formula over the hex values (the script I prototyped during the review). Keeping it separate from axe means the check still runs even if the axe dependency is unavailable; axe catches what the contrast math can't (structure/semantics).
+- Thresholds: normal text 4.5:1, large text (≥18pt or ≥14pt bold) 3:1, graphical/non-text indicators 3:1. The state-indicator dots/labels are categorized by their rendered size.
+
+**Acceptance Criteria**:
+- [ ] Contrast check computes ratios for all documented token pairs and asserts AA
+- [ ] axe-core scan runs over `components.html` and fails on violations
+- [ ] `prefers-reduced-motion` guards added to `pb-spin` and `pb-pulse` animations
+- [ ] `npm run check:presentation` runs both a11y checks alongside the conformance assertions
+
+### Unit 5: Reconcile CSS + showcase to as-built conformance (the fix pass)
+
+**File**: `.mockups/design-system/components.css`, `.mockups/design-system/components.html`, `.mockups/design-system/tokens.css`
+
+The review-fix pass already corrected the 5 blockers (ElicitationState 9/9, identity-before-intent, toast contrast, dominance fallback, delivery-line showcase). This unit closes the residual gaps the conformance check (Units 1–4) will surface when first run, plus the reduced-motion guards (Unit 4). Likely small: any primitive the check flags as unexercised, any token pair the contrast check flags. The CSS artifacts are already largely conformant post-review; this unit makes them pass the new check.
+
+**Implementation Notes**:
+- Run `check-presentation.mjs` early; fix what it flags. This is the land-mode reconciliation against the *new* check, not new design.
+- The `--shadow-raised` token defined in `components.css` itself (not `tokens.css`) — decide whether to promote it to `tokens.css` (cleaner SSOT) or leave it documented as a palette-refinement candidate. Minor; the check's token-resolution assertion already treats it as resolving.
+
+**Acceptance Criteria**:
+- [ ] `npm run check:presentation` exits zero
+- [ ] `prefers-reduced-motion` guards present
+- [ ] No unexercised locked primitives remain
+
+## Implementation Order
+
+1. **Unit 1** (conformance check script) — the check must exist before the fix pass, so the fix pass is guided by actual failures, not guesswork.
+2. **Unit 3** (retry-safety assertion) — extends Unit 1; lands with it.
+3. **Unit 4** (a11y harness + reduced-motion guards) — extends Unit 1; the reduced-motion CSS fix lands here too.
+4. **Unit 5** (reconcile CSS/showcase) — run the now-complete check, fix what it flags.
+5. **Unit 2** (runtime contract) — descriptive prose; can land any time but is most accurate after the check defines what's mechanically enforced. Record in the feature body + cross-reference in `docs/UX.md`.
+
+Units 1, 3, 4 are one cohesive script (`check-presentation.mjs`); they land together as one implementation stride. Unit 5 is the reconciliation stride. Unit 2 is the prose stride.
+
+## Testing
+
+- **Interface tests**: the check script itself is the test — it asserts the layer's conformance. A meta-test (small) asserts the script fails when given a deliberately-broken fixture (e.g. a CSS file missing an `elicitation-card--declined` binding) and passes on the real artifacts. This protects against the check becoming a rubber stamp (the seed-arc lesson: a check that can't fail is self-defining).
+- **Regression tests**: the invisible-`.toast` defect (1:1 contrast) is the regression the contrast check must catch — encode it as a fixture the check fails on.
+- **No unit tests for the CSS itself** — the conformance check + a11y harness are the test surface; the showcase is the executable demonstration. Per the test-integrity rule, don't manufacture tests for static artifacts.
+
+## Risks
+
+- **`axe-core` dependency placement** — it's a dev dependency with no runtime cost to the cockpit, but ~2MB. If dependency placement in `contracts/ts` is wrong (contracts is a bindings package, not an app), the harness may need its own `package.json` under `.mockups/` or `contracts/scripts/`. Resolve in Unit 4; if it's a 50/50, surface rather than guess.
+- **The contrast check's token-pair list** — the check asserts specific `(fg, bg, threshold)` triples. If the list is incomplete, the check passes but a contrast defect slips through (the toast defect was exactly this: the pair wasn't being checked). Mitigation: derive the pair list from the CSS rule set (scan `components.css` for `color:` + `background:` pairs) rather than hand-maintaining it. This is harder but is the only way the check isn't itself drift-prone.
+- **proto enum parsing via regex** — the parity check reads `.proto` enums with a regex, not a real parser. If the proto syntax changes (e.g. comments inside enums, oneof syntax), the regex breaks. Low risk for v0.1.0 (the enums are simple `NAME = N;`), but the check should fail loud (not silent) if the regex matches zero members.
+
+## Simplification
+
+- The `--shadow-raised` token may be promoted from `components.css` to `tokens.css` for SSOT consistency (Unit 5 decision).
+- No tests are removed — the layer had none to begin with (the defect). The new check + a11y harness are additive.
+- The redundant `backlog-presentation-conformance-vector` was already removed (absorbed into this re-design).
 
 ## Mockups
 
