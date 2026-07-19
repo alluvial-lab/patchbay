@@ -225,7 +225,12 @@
       .elicitation-card--inline-teaser .clarify,
       .elicitation-card--inline-teaser .elicitation-card__actions { display: none; }
       .elicitation-card--inline-teaser .elicitation-card__prompt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .elicitation-card--inline-teaser::after { content: "Tap to answer ›"; display: block; margin-top: var(--space-2); font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-accent); }
+      /* multi-question teaser: show header + first question only, hide its options, hint at the count */
       .elicitation-group--inline-teaser .elicitation-group__qa:not(:first-child) { display: none; }
+      .elicitation-group--inline-teaser .elicitation-group__qa:first-child .elicitation-card__options { display: none; }
+      .elicitation-group--inline-teaser .elicitation-group__qa:first-child .elicitation-group__q { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+      .elicitation-group--inline-teaser::after { content: "3 questions · tap to answer ›"; display: block; margin-top: var(--space-2); font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-accent); }
       .bottom-nav { display: flex; }
       .composer { padding: var(--space-3); }
     }
@@ -252,6 +257,7 @@
     .sheet__body .elicitation-card__actions,
     .sheet__body .elicitation-group__qa { display: revert !important; }
     .sheet__body .elicitation-card__prompt { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
+    .sheet__body .elicitation-group__q { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
     .sheet__actions .btn { flex: 1; }
   </style>
 </head>
