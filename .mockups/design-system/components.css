@@ -334,6 +334,10 @@ button { font: inherit; cursor: pointer; }
 .activity-indicator--unknown .activity-indicator__icon::after { content: "?"; }
 @keyframes pb-spin { to { transform: rotate(360deg); } }
 
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator--working .activity-indicator__icon { animation: none; }
+}
+
 /* Observation-composed detail (Option C) — NOT a protocol state.
    Appended after the activity label when the adapter stream provides it:
    tool_call, tool_execution_start/end, message_update, agent_end, turn_start/end.
@@ -442,6 +446,10 @@ button { font: inherit; cursor: pointer; }
 }
 .command-step--superseded .command-step__state { color: var(--color-text-tertiary); }
 @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .command-step--running .command-step__marker { animation: none; }
+}
 
 /* Terminal-race explanation labels — UI labels, NOT protocol states */
 .command-step__race {

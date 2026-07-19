@@ -1,7 +1,7 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
@@ -329,6 +329,25 @@ Units 1, 3, 4 are one cohesive script (`check-presentation.mjs`); they land toge
 - The layer is the structural enforcement that makes the conformance floor machine-checkable. Without it, conformance is a prose checklist each surface re-binds independently (the drift `feature-command-state-ssot` exists to kill).
 - Token vocabulary (colors, type, spacing, radii) is the skin surface; reserved as operator-customizable per `docs/SPEC.md`. The layer consumes tokens; it does not own them.
 
+## Runtime conformance contract
+
+### Layer guarantees (the component layer provides)
+
+- A CSS class binding for every canonical member of CommandState (9), SessionConnectivityState (5), SessionActivityState (3), and ElicitationState (9).
+- The dominance rule is structurally encoded: `.session-status` plus `.session-status--{stale,unknown,offline,failed}` wrapper modifiers de-emphasize activity when connectivity is bad, with or without `:has()`.
+- Liveness and delivery primitives are distinct (`connectivity-indicator`/`activity-indicator` versus `command-step`/`delivery-line`).
+- Retry-safety outcome primitives exist (`--safe`/`--maybe`/`--unsafe`); the showcase documents the failure-term × `idempotency_strength` derivation matrix.
+
+### Consumer obligations (the cockpit/CLI/Expo must enforce)
+
+- Verify the stable identity tuple (adapter/scope/runtime/gen) before allowing Operation submission. Labels are metadata; they must not override identity. (Traces to `LabelsCannotOverrideIdentity` and `SessionIdentityTuple`.)
+- Derive retry-safety from the failure term × `idempotency_strength` inputs — never from CommandState alone. Apply `.retry-safety-indicator--{safe,maybe,unsafe}` based on that derivation, not by reading CommandState.
+- Never render stale/unknown/offline/failed connectivity as live. Apply the `.session-status--{stale,...}` wrapper modifier (or rely on `:has()`) so the dominance rule holds.
+- Disable elicitation controls once the Elicitation is terminal (answered/declined/expired/cancelled/withdrawn/superseded/stale) and show the terminal state. First-answer-wins is enforced core-side; the UI reflects it.
+- Compose `.activity-indicator__detail` from the Observation stream only as an ephemeral hint — never treat it as durable protocol state (Option C).
+
+The contract is descriptive rather than an executable runtime-assertion module. The static check is the machine-checkable artifact; executable consumer assertions remain a reserved seam for a second conformant surface.
+
 ## Implementation notes
 
 - **Execution capability:** host-session inline (land mode). The deliverable is mockup artifacts (CSS + showcase), not application code — no worker fan-out warranted. Capability choice N/A for a no-build CSS verification pass.
@@ -352,6 +371,17 @@ Units 1, 3, 4 are one cohesive script (`check-presentation.mjs`); they land toge
 - **Discrepancies from design:** one — the 'identity-before-intent' visual emphasis is inverted in as-built relative to the design body's phrasing (label leads, identity is metadata), but this matches the operator-selected mock `option-2.html`. Reconciled to as-built; see verification note above.
 - **Adjacent issues parked:** `backlog-presentation-conformance-vector` (important — formal registry↔class conformance check; see finding F2 below).
 - **Dependency readiness:** `feature-v0-web-server` is `stage: done` — verified via `work-view --scope all --stage done`.
+
+### Implementation pass (2026-07-19, re-design)
+
+- **Execution capability:** host-session inline; one cohesive feature owner, with no nested delegation.
+- **Review weight:** `thorough`, as pinned by the re-design decisions.
+- **Files changed:** `contracts/scripts/check-presentation.mjs`, `contracts/scripts/test-presentation-check.mjs`, `contracts/ts/package.json`, `contracts/ts/package-lock.json`, `.mockups/design-system/components.css`, `.mockups/design-system/components.html`, `docs/UX.md`, and this feature body.
+- **Conformance mechanism:** the check parses the six relevant proto enums, validates registry parity, CSS/showcase bindings, locked primitive coverage, retry matrix, WCAG token-pair contrast, and axe-core output; successful runs regenerate UX traceability.
+- **A11y dependency placement:** `axe-core` and `jsdom` are dev dependencies of `contracts/ts` because all repository conformance scripts are wired through that package and the dependencies are not runtime exports. The script resolves them from `contracts/ts/node_modules` when invoked from either the repository root or the package script.
+- **Tests added:** the meta-test rejects a missing `elicitation-card--declined` binding and an intentionally invisible toast contrast fixture. The real check and both npm entry points pass after installing package dependencies.
+- **Mechanical decisions:** retained `--shadow-raised` in `components.css` as the existing documented palette refinement; used focused proto enum parsing with loud zero-match failures; treated Elicitation `opened`/`pending` as base-card bindings; categorized filled state indicators at the 3:1 graphical threshold.
+- **Discrepancies/blockers:** none. The previous machine-checkable over-claim is replaced by the static check plus the descriptive runtime contract; no semantic 50/50 was encountered.
 
 ## Review (2026-07-19)
 

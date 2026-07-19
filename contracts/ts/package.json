@@ -18,13 +18,17 @@
     "gen": "cd .. && buf generate",
     "check:vectors": "node ../scripts/check-vectors.mjs",
     "check:models": "node ../scripts/check-models.mjs",
-    "check:drift": "node ../scripts/check-generated-drift.mjs"
+    "check:drift": "node ../scripts/check-generated-drift.mjs",
+    "check:presentation": "node ../scripts/check-presentation.mjs",
+    "test:presentation": "node ../scripts/test-presentation-check.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1"
   },
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "2.12.1",
+    "axe-core": "^4.12.1",
+    "jsdom": "^26.1.0",
     "typescript": "5.9.3"
   }
 }

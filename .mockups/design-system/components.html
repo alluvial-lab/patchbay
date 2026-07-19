@@ -92,7 +92,7 @@
   </style>
 </head>
 <body>
-  <nav class="showcase-nav">
+  <nav class="showcase-nav" aria-label="Showcase sections">
     <strong>PATCHBAY · components</strong>
     <a href="#actions">Actions</a>
     <a href="#forms">Forms</a>
@@ -109,8 +109,10 @@
     <a href="#failure">Failure</a>
     <a href="#retry">Retry safety</a>
     <a href="#attention">Attention</a>
-    <button class="theme-toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">🌓 Toggle theme</button>
+    <button class="theme-toggle" aria-label="Toggle color theme" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">Toggle theme</button>
   </nav>
+
+  <main>
 
   <!-- ============ ACTIONS ============ -->
   <section id="actions" class="showcase-section">
@@ -140,7 +142,7 @@
         <div class="demo">
           <button class="btn btn-primary">Default</button>
           <button class="btn btn-primary" disabled>Disabled</button>
-          <button class="btn btn-primary btn--icon-only">⚙</button>
+          <button class="btn btn-primary btn--icon-only" aria-label="Settings">Settings</button>
         </div>
         <p class="matrix-note">:hover / :focus-visible trigger on interaction</p>
       </div>
@@ -157,7 +159,7 @@
         <div class="demo demo--col">
           <div class="field">
             <label class="field__label">Prompt</label>
-            <input class="input" placeholder="Run the session tests">
+            <label>Command<input class="input" aria-label="Command input" placeholder="Run the session tests"></label>
             <p class="field__helper">Delivered as an instruct Operation.</p>
           </div>
         </div>
@@ -169,7 +171,7 @@
         <div class="demo demo--col">
           <div class="field field--error">
             <label class="field__label">Runtime session id</label>
-            <input class="input" value="01J8K3">
+            <label>Idempotency key<input class="input" aria-label="Idempotency key" value="01J8K3"></label>
             <p class="field__error">Identity field must not be empty.</p>
           </div>
         </div>
@@ -177,7 +179,7 @@
       <div class="showcase-cell">
         <h3>Textarea</h3>
         <div class="demo demo--col">
-          <textarea class="textarea" placeholder="Multi-line prompt payload..."></textarea>
+          <label>Prompt<textarea class="textarea" aria-label="Prompt payload" placeholder="Multi-line prompt payload..."></textarea></label>
         </div>
       </div>
     </div>
@@ -231,16 +233,16 @@
       <div class="showcase-cell">
         <h3>Nav bar</h3>
         <div class="demo demo--col">
-          <nav class="nav-bar"><span class="nav-bar__brand">PATCHBAY</span><span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span></nav>
+          <nav class="nav-bar" aria-label="Component navigation"><span class="nav-bar__brand">PATCHBAY</span><span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">3</span></span></nav>
         </div>
       </div>
       <div class="showcase-cell">
         <h3>Tabs</h3>
         <div class="demo demo--col">
-          <div class="tabs">
-            <button class="tabs__tab" aria-selected="true">Timeline</button>
-            <button class="tabs__tab">Files</button>
-            <button class="tabs__tab">Audit</button>
+          <div class="tabs" role="tablist" aria-label="Session views">
+            <button class="tabs__tab" role="tab" aria-selected="true">Timeline</button>
+            <button class="tabs__tab" role="tab" aria-selected="false">Files</button>
+            <button class="tabs__tab" role="tab" aria-selected="false">Audit</button>
           </div>
         </div>
       </div>
@@ -483,7 +485,7 @@
         <h3>Default composer</h3>
         <div class="demo demo--col">
           <div class="composer">
-            <input class="composer__input" placeholder="Instruct, query, or slash-command...">
+            <input class="composer__input" aria-label="Composer command" placeholder="Instruct, query, or slash-command...">
             <div class="composer__actions">
               <button class="btn btn-secondary btn--sm">Cancel</button>
               <button class="btn btn-primary btn--sm">Instruct</button>
@@ -501,7 +503,7 @@
         <h3>With idempotency key shown</h3>
         <div class="demo demo--col">
           <div class="composer">
-            <input class="composer__input" value="Run the session tests">
+            <input class="composer__input" aria-label="Composer command" value="Run the session tests">
             <div class="composer__actions">
               <button class="btn btn-primary btn--sm">Instruct</button>
             </div>
@@ -591,7 +593,7 @@
             <p class="elicitation-card__prompt">Which branch should I target?</p>
           </div>
         </div>
-        <p class="matrix-note">All 9 ElicitationState members exercised: opened/pending (base card) + answered/declined/expired/cancelled/withdrawn/superseded/stale.</p>
+        <p class="matrix-note">All 9 ElicitationState members exercised: opened/pending (base card) + answered/declined/expired/cancelled/withdrawn/superseded/stale. opened → base card; pending → base card.</p>
       </div>
     </div>
   </section>
@@ -636,7 +638,7 @@
           <p class="matrix-note">execution_outcome_unknown × end-to-end → safe</p>
           <p class="matrix-note">execution_outcome_unknown × at-Patchbay-boundary → maybe</p>
           <p class="matrix-note">execution_outcome_unknown × none → unsafe</p>
-          <p class="matrix-note">execution_failed × any → not unconditionally safe</p>
+          <p class="matrix-note">execution_failed × any → maybe (not unconditionally safe)</p>
           <p class="matrix-note">target_offline × any → safe (pre-execution)</p>
         </div>
       </div>
@@ -667,6 +669,8 @@
       </div>
     </div>
   </section>
+
+  </main>
 
   <script>
     // Theme toggle (also respects system on first load — no JS needed for that)
