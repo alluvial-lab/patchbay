@@ -157,36 +157,50 @@ function checkDominance(cssSource, errors) {
   const dominanceModifiers = ['--stale', '--unknown', '--offline', '--failed'];
   const rulePattern = /([^{}]*?)\{([^{}]*?)\}/g;
   let ruleMatch;
-  const modifierToOpacities = new Map();
-  for (const m of dominanceModifiers) modifierToOpacities.set(m, []);
+  // Track BOTH paths per modifier: the :has() automatic path AND the explicit
+  // wrapper-modifier fallback. The design requires the rule to hold WITH OR
+  // WITHOUT :has() — a check that accepts :has() alone would pass if someone
+  // deleted the fallback (breaking browsers without :has). Also require the
+  // selector to target .activity-indicator (the de-emphasized element).
+  const modifierToPaths = new Map();
+  for (const m of dominanceModifiers) modifierToPaths.set(m, { has: false, wrapper: false });
   while ((ruleMatch = rulePattern.exec(css)) !== null) {
     const selectorText = ruleMatch[1];
     const body = ruleMatch[2];
+    // The selector must target .activity-indicator. Split the selector list and
+    // require a token containing .activity-indicator (not .never-match).
+    const selectors = selectorText.split(',').map((x) => x.trim().replace(/\s+/g, ' '));
+    const targetsActivity = selectors.some((sel) => /\.activity-indicator\b/.test(sel));
+    if (!targetsActivity) continue;
     for (const modifier of dominanceModifiers) {
       const wrapperRe = new RegExp(`\\.session-status${modifier}\\b`);
       const hasRe = new RegExp(`\\.session-status:has\\(\\.connectivity-indicator${modifier}\\)`);
-      if (wrapperRe.test(selectorText) || hasRe.test(selectorText)) {
+      // Check per-selector: a modifier counts as having a path ONLY if some
+      // selector in the comma list BOTH matches the dominance modifier AND
+      // targets .activity-indicator. A selector matching the modifier but
+      // targeting .never-match (a mutation) must NOT count as the path.
+      const matchingSelectors = selectors.filter((sel) => (wrapperRe.test(sel) || hasRe.test(sel)) && /\.activity-indicator\b/.test(sel));
+      if (matchingSelectors.length > 0) {
         const opacityMatch = body.match(/opacity:\s*([0-9.]+)/);
+        const paths = modifierToPaths.get(modifier);
+        if (matchingSelectors.some((sel) => wrapperRe.test(sel))) paths.wrapper = true;
+        if (matchingSelectors.some((sel) => hasRe.test(sel))) paths.has = true;
         if (!opacityMatch) {
           errors.push(`dominance: ${modifier} rule sets no opacity`);
-        } else {
-          modifierToOpacities.get(modifier).push(Number.parseFloat(opacityMatch[1]));
+        } else if (Number.parseFloat(opacityMatch[1]) >= 1) {
+          errors.push(`dominance: ${modifier} de-emphasis sets opacity ${opacityMatch[1]} (must be < 1 to de-emphasize activity)`);
         }
       }
     }
   }
-  // EACH modifier must have a dominance rule (not just SOME). A prior version
-  // used some(), which passed if only --failed remained after deleting the
-  // others — that is the self-defining oracle this fixes.
+  // EACH modifier must have BOTH paths (the rule must hold with or without :has()).
   for (const modifier of dominanceModifiers) {
-    const opacities = modifierToOpacities.get(modifier);
-    if (opacities.length === 0) {
-      errors.push(`dominance: no de-emphasis rule found for connectivity ${modifier} (stale/unknown/offline/failed each require one)`);
+    const paths = modifierToPaths.get(modifier);
+    if (!paths.wrapper) {
+      errors.push(`dominance: ${modifier} missing the explicit .session-status${modifier} wrapper-modifier fallback (required so the rule holds without :has())`);
     }
-    for (const opacity of opacities) {
-      if (opacity >= 1) {
-        errors.push(`dominance: ${modifier} de-emphasis sets opacity ${opacity} (must be < 1 to de-emphasize activity)`);
-      }
+    if (!paths.has) {
+      errors.push(`dominance: ${modifier} missing the :has() automatic path`);
     }
   }
   // Assert reduced-motion guards exist for BOTH animations AND actually set
@@ -216,24 +230,30 @@ function checkDominance(cssSource, errors) {
     { selector: '.command-step--running .command-step__marker', keyframe: 'pb-pulse' },
   ];
   for (const target of motionTargets) {
-    const guardFound = reducedMotionBodies.some((body) => {
-      // The rule must select the target AND set animation: none in its body.
-      // Split the selector list and require an EXACT match (after normalizing
-      // whitespace) — `sel.includes(target.selector)` is substring and would
-      // pass for `.never-match .activity-indicator--working ...`. Exact match
-      // on a comma-split selector token is not gameable by extra ancestors.
+    let guardFound = false;
+    let restoringFound = false;
+    for (const body of reducedMotionBodies) {
       const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
       let rm;
       while ((rm = ruleRe.exec(body)) !== null) {
         const sel = rm[1];
         const ruleBody = rm[2];
         const selectors = sel.split(',').map((s) => s.trim().replace(/\s+/g, ' '));
-        if (selectors.includes(target.selector) && /animation:\s*none/.test(ruleBody)) return true;
+        if (selectors.includes(target.selector)) {
+          if (/animation:\s*none/.test(ruleBody)) guardFound = true;
+          // A LATER rule that restores a non-none animation for the same
+          // selector would override the guard (CSS cascade: last wins among
+          // equal specificity). Catch this — a prior version only checked for
+          // any 'animation: none' and missed a restoring override.
+          else if (/animation:\s*(?!none)/.test(ruleBody)) restoringFound = true;
+        }
       }
-      return false;
-    });
+    }
     if (!guardFound) {
       errors.push(`dominance/a11y: prefers-reduced-motion does not disable ${target.keyframe} for ${target.selector} (must set animation: none)`);
+    }
+    if (restoringFound) {
+      errors.push(`dominance/a11y: a reduced-motion rule restores an active animation for ${target.selector}, overriding the guard (cascade)`);
     }
   }
   if (reducedMotionBodies.length < 2) {
@@ -333,9 +353,26 @@ function deriveContrastPairs(css, tokens, errors) {
 }
 
 function checkContrast(cssSource, tokensSource, errors) {
+  // Three token contexts must be checked: light (:root), explicit dark
+  // ([data-theme="dark"]), AND the system-follow dark block
+  // (@media prefers-color-scheme: dark → :root:not([data-theme="light"])).
+  // The tokens.css header documents the system-follow block as intentionally
+  // identical to explicit dark; a mutation diverging them (e.g. making the
+  // default-dark toast invisible) must be caught. We check both explicitly.
+  const explicitDark = parseColorTokens(tokensSource, ':root[data-theme="dark"]');
+  const systemDark = parseColorTokens(tokensSource, ':root:not([data-theme="light"])');
+  // If system-dark tokens diverge from explicit-dark, the header's "identical"
+  // invariant is violated — flag each divergence.
+  for (const [key, value] of explicitDark) {
+    const sysValue = systemDark.get(key);
+    if (sysValue !== undefined && sysValue !== value) {
+      errors.push(`contrast: system-follow dark token ${key} (#${sysValue}) diverges from explicit dark (#${value}); tokens.css documents these as intentionally identical`);
+    }
+  }
   const modes = [
     ['light', parseColorTokens(tokensSource, ':root')],
-    ['dark', parseColorTokens(tokensSource, ':root[data-theme="dark"]')],
+    ['dark (explicit)', explicitDark],
+    ['dark (system-follow)', systemDark],
   ];
   for (const [mode, tokens] of modes) {
     const pairs = deriveContrastPairs(cssSource, tokens, errors);
@@ -381,6 +418,24 @@ async function checkBindings({ css, showcase, protoEnums }, errors) {
     const parsed = protoEnums.get(entry.enum);
     const allExpected = [...entry.members, ...(entry.baseMembers ?? [])];
     assertEqualMembers(allExpected, parsed.map((item) => item.member), entry.enum, errors);
+
+    // Reject INVENTED state modifiers: any .{cssPrefix}--{x} in the CSS where
+    // x is not a registry member is a divergent state name — a conformance-floor
+    // violation ("never invent divergent state names"). Presentation-only
+    // modifiers like --compact are allowed via the ALLOWED_EXTRA_MODIFIERS set.
+    const allowedExtra = new Set(['compact', 'sm', 'lg', 'icon-only', 'interactive', 'raised', 'active', 'needs-you', 'danger', 'ghost', 'secondary', 'primary', 'success', 'warning', 'info']);
+    const registryMembers = new Set(allExpected);
+    const modifierRe = new RegExp(`\\.${entry.cssPrefix}--([a-z][a-z0-9-]*)`, 'g');
+    const foundModifiers = new Set();
+    let modMatch;
+    while ((modMatch = modifierRe.exec(cssStripped)) !== null) {
+      foundModifiers.add(modMatch[1]);
+    }
+    for (const found of foundModifiers) {
+      if (!registryMembers.has(found) && !allowedExtra.has(found)) {
+        errors.push(`${entry.enum}: invented divergent state modifier .${entry.cssPrefix}--${found} (not in the protocol registry; presentation-only modifiers must be in the allowlist)`);
+      }
+    }
 
     for (const member of entry.members) {
       const className = `${entry.cssPrefix}--${member}`;
@@ -463,7 +518,7 @@ function parseUxRetryMatrix(uxSource, errors) {
   return rows;
 }
 
-function checkRetryMatrix(showcase, protoEnums, uxSource, errors) {
+function checkRetryMatrix(showcase, protoEnums, uxSource, document, errors) {
   const uxRows = parseUxRetryMatrix(uxSource, errors);
   const failureCodes = protoMembers(protoEnums, 'FailureCode');
   const strengths = new Set(protoEnums.get('IdempotencyStrength').map((item) => item.name.slice('IDEMPOTENCY_STRENGTH_'.length)));
@@ -473,7 +528,16 @@ function checkRetryMatrix(showcase, protoEnums, uxSource, errors) {
       errors.push(`retry matrix: UX.md strength ${row.strength} is not an IdempotencyStrength enum member`);
     }
     const documented = `${row.failure} × ${row.strength} → ${row.safety}`;
-    if (!showcase.includes(documented)) errors.push(`retry matrix: showcase is missing row "${documented}"`);
+    // DOM-aware: require a VISIBLE text node containing the exact matrix row,
+    // not a substring anywhere in the HTML (a prior version passed if the row
+    // was in an HTML comment). query for elements whose visible text matches.
+    if (document) {
+      const els = [...document.querySelectorAll('.matrix-note, p, span, div')];
+      const visible = els.filter((el) => !el.closest('[hidden]') && el.style?.display !== 'none' && el.textContent?.includes(documented));
+      if (visible.length === 0) errors.push(`retry matrix: showcase is missing a visible element with text "${documented}"`);
+    } else if (!showcase.includes(documented)) {
+      errors.push(`retry matrix: showcase is missing row "${documented}"`);
+    }
   }
 }
 
@@ -595,7 +659,8 @@ async function main() {
     ]);
     await checkBindings({ css, showcase, protoEnums }, errors);
     checkDominance(css, errors);
-    checkRetryMatrix(showcase, protoEnums, uxSource, errors);
+    const retryDom = await getShowcaseDom(showcase, errors);
+    checkRetryMatrix(showcase, protoEnums, uxSource, retryDom?.window?.document ?? null, errors);
     checkContrast(css, tokens, errors);
   } catch (error) {
     errors.push(error.message);
