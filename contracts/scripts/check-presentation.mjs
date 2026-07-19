@@ -80,18 +80,27 @@ const LOCKED_PRIMITIVES = [
 // CSS rules in components.css. A hand-maintained list is self-defining: a
 // mutation that introduces a new failing pair (e.g. setting .toast color to
 // its own background) would pass if the pair isn't in the list. Deriving from
-// the CSS means EVERY rendered foreground/background combination in the layer
-// is checked, including ones the check author didn't anticipate.
+// the CSS means every CO-LOCATED foreground/background combination (a rule that
+// sets both color and background in the same declaration) is checked. This is
+// a bounded structural check: it does not model cascade, inheritance, hover
+// overrides, or split-rule combinations. The layer convention is to co-locate
+// critical color/background pairs; the toast meta-test proves it catches a real
+// regression. Browser-computed-style coverage is a reserved promotion if future
+// CSS composition requires it.
 // Font-size classifies the WCAG threshold: normal text (<18pt, or <14pt bold)
 // needs 4.5:1; large text (>=18pt, or >=14pt bold) needs 3:1. We map the
 // layer's --font-size-* tokens to pt (xs=12, sm=14, base=16) and treat sm+bold
 // or base as large, xs/sm-regular as normal.
-// Font-size classifies the WCAG threshold: normal text (<18pt, or <14pt bold)
-// needs 4.5:1; large text (>=18pt, or >=14pt BOLD) needs 3:1. Note: WCAG
-// 'bold' means font-weight >= 700 (bold); semibold (600) is NOT bold for
-// WCAG large-text purposes. A prior version treated --font-weight-semibold
-// as bold, misclassifying 14px semibold as large (3:1) when it's normal (4.5:1).
-const FONT_SIZE_PT = { '--font-size-xs': 12, '--font-size-sm': 14, '--font-size-base': 16 };
+// Font-size classifies the WCAG threshold: normal text (<18pt regular, or
+// <14pt bold) needs 4.5:1; large text (>=18pt regular, or >=14pt BOLD) needs
+// 3:1. WCAG uses points; CSS uses pixels. 1px = 0.75pt, so 18pt = 24px and
+// 14pt ≈ 18.67px. The layer's tokens are in px. We store px and compare in
+// px against the pt-derived px thresholds. Unknown/literal sizes default
+// conservatively to normal text (4.5:1) rather than assuming large.
+// Note: WCAG 'bold' means font-weight >= 700 (bold); semibold (600) is NOT bold.
+const FONT_SIZE_PX = { '--font-size-xs': 12, '--font-size-sm': 14, '--font-size-base': 16 };
+const LARGE_REGULAR_PX = 24;   // 18pt
+const LARGE_BOLD_PX = 18.67;   // ~14pt
 const BOLD_WEIGHT_TOKENS = new Set(['--font-weight-bold']); // semibold (600) is NOT WCAG-bold (>=700)
 
 const GENERATED_BEGIN = '<!-- BEGIN GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
@@ -209,12 +218,17 @@ function checkDominance(cssSource, errors) {
   for (const target of motionTargets) {
     const guardFound = reducedMotionBodies.some((body) => {
       // The rule must select the target AND set animation: none in its body.
+      // Split the selector list and require an EXACT match (after normalizing
+      // whitespace) — `sel.includes(target.selector)` is substring and would
+      // pass for `.never-match .activity-indicator--working ...`. Exact match
+      // on a comma-split selector token is not gameable by extra ancestors.
       const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
       let rm;
       while ((rm = ruleRe.exec(body)) !== null) {
         const sel = rm[1];
         const ruleBody = rm[2];
-        if (sel.includes(target.selector) && /animation:\s*none/.test(ruleBody)) return true;
+        const selectors = sel.split(',').map((s) => s.trim().replace(/\s+/g, ' '));
+        if (selectors.includes(target.selector) && /animation:\s*none/.test(ruleBody)) return true;
       }
       return false;
     });
@@ -298,14 +312,18 @@ function deriveContrastPairs(css, tokens, errors) {
     const bg = resolveColorValue(bgMatch[1], tokens);
     if (!fg || !bg) continue; // non-resolvable (transparent, etc.) — skip
 
-    // Determine font-size for threshold classification.
+    // Determine font-size for threshold classification. Compare in px against
+    // the pt-derived px thresholds (1px = 0.75pt). Unknown sizes default
+    // conservatively to normal text (4.5:1) — a prior version defaulted to 16
+    // (treating it as 16pt), misclassifying 10px bold as large text.
     const fontMatch = body.match(/font:\s*[^;]*?(--font-size-[a-z]+)/) || body.match(/font-size:\s*var\((--font-size-[a-z]+)\)/);
     const sizeToken = fontMatch ? (fontMatch[1] || fontMatch[2]) : null;
-    const sizePt = sizeToken ? (FONT_SIZE_PT[sizeToken] ?? 16) : 16;
+    const sizePx = sizeToken ? (FONT_SIZE_PX[sizeToken] ?? null) : null;
     const weightMatch = body.match(/font:\s*[^;]*?(--font-weight-[a-z]+)/);
     const isBold = weightMatch ? BOLD_WEIGHT_TOKENS.has(weightMatch[1]) : false;
-    // WCAG large text: >=18pt, or >=14pt bold. Else normal (4.5:1).
-    const isLarge = sizePt >= 18 || (sizePt >= 14 && isBold);
+    // WCAG large text: >=18pt regular (24px), or >=14pt bold (~18.67px).
+    // Unknown size → conservatively normal (4.5:1), never assume large.
+    const isLarge = sizePx !== null && (sizePx >= LARGE_REGULAR_PX || (sizePx >= LARGE_BOLD_PX && isBold));
     const threshold = isLarge ? 3 : 4.5;
 
     const selectorLabel = selectors.trim().split(',').map((s) => s.trim()).slice(0, 1).join('').slice(0, 40);
@@ -334,9 +352,31 @@ function checkContrast(cssSource, tokensSource, errors) {
   }
 }
 
-function checkBindings({ css, showcase, protoEnums }, errors) {
+// Parse the showcase into a DOM (JSDOM) for genuine element-aware checks.
+// Regex over raw HTML is self-defining: a class in an HTML comment passes,
+// a suffixed class (declined-missing) matches \b before the hyphen, and a
+// data-state on the wrong element passes via forward-spanning regex. DOM
+// querySelector is not gameable by those mutations.
+let SHOWCASE_DOM_CACHE = null;
+async function getShowcaseDom(showcaseHtml, errors) {
+  if (SHOWCASE_DOM_CACHE && SHOWCASE_DOM_CACHE.html === showcaseHtml) return SHOWCASE_DOM_CACHE.dom;
+  try {
+    const scriptsNodeModules = path.join(repoRoot, 'contracts', 'ts', 'node_modules');
+    const { JSDOM } = await import(pathToFileURL(path.join(scriptsNodeModules, 'jsdom', 'lib', 'api.js')).href);
+    const dom = new JSDOM(showcaseHtml, { url: `file://${defaultShowcasePath}` });
+    SHOWCASE_DOM_CACHE = { html: showcaseHtml, dom };
+    return dom;
+  } catch (error) {
+    errors.push(`showcase DOM parse unavailable (${error.message}); falling back to text checks`);
+    return null;
+  }
+}
+
+async function checkBindings({ css, showcase, protoEnums }, errors) {
   // Strip CSS comments so a binding commented out can't pass as present.
   const cssStripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const dom = await getShowcaseDom(showcase, errors);
+  const document = dom?.window?.document ?? null;
   for (const entry of REGISTRY) {
     const parsed = protoEnums.get(entry.enum);
     const allExpected = [...entry.members, ...(entry.baseMembers ?? [])];
@@ -345,20 +385,40 @@ function checkBindings({ css, showcase, protoEnums }, errors) {
     for (const member of entry.members) {
       const className = `${entry.cssPrefix}--${member}`;
       if (!new RegExp(`\\.${className}(?=[\\s,{])`).test(cssStripped)) errors.push(`${entry.enum}: missing CSS binding .${className}`);
-      if (!new RegExp(`class=\"[^\"]*\\b${className}\\b`).test(showcase)) errors.push(`${entry.enum}: missing showcase coverage ${className} (must appear in a class attribute)`);
+      // DOM-aware: require an element whose classList contains the exact class.
+      // (querySelector with two class selectors requires BOTH on the same element;
+      // not gameable by HTML comments or suffixed class names.)
+      if (document) {
+        if (!document.querySelector(`.${entry.cssPrefix}.${className}`)) {
+          errors.push(`${entry.enum}: missing showcase element with class ${className}`);
+        }
+      } else if (!new RegExp(`class="[^"]*\b${className}\b`).test(showcase)) {
+        errors.push(`${entry.enum}: missing showcase coverage ${className}`);
+      }
     }
     for (const member of entry.baseMembers ?? []) {
-      // Base states (opened/pending) require a concrete rendered example
-      // marked with data-state, not a prose word-mention anywhere in the HTML.
-      const attrRe = new RegExp(`data-state=\"${member}\"[^>]*>[\\s\\S]*?class=\"[^\"]*\\b${entry.cssPrefix}\\b|class=\"[^\"]*\\b${entry.cssPrefix}\\b[^\"]*\"[^>]*data-state=\"${member}\"`);
-      if (!attrRe.test(showcase)) {
-        errors.push(`${entry.enum}: missing concrete showcase example for base state ${member} (requires data-state=\"${member}\" on a .${entry.cssPrefix} element)`);
+      // Base states require an element that is BOTH .elicitation-card AND has
+      // data-state="<member>" on the SAME element (querySelector on the same
+      // element is not gameable by moving data-state to an ancestor).
+      if (document) {
+        if (!document.querySelector(`.${entry.cssPrefix}[data-state="${member}"]`)) {
+          errors.push(`${entry.enum}: missing concrete showcase element .${entry.cssPrefix}[data-state="${member}"]`);
+        }
+      } else {
+        const attrRe = new RegExp(`class="[^"]*\b${entry.cssPrefix}\b[^"]*"[^>]*data-state="${member}"|data-state="${member}"[^>]*class="[^"]*\b${entry.cssPrefix}\b`);
+        if (!attrRe.test(showcase)) {
+          errors.push(`${entry.enum}: missing concrete showcase example for base state ${member}`);
+        }
       }
     }
   }
 
   for (const primitive of extractCommentPrimitiveNames(css)) {
-    if (!new RegExp(`class=\"[^\"]*\\b${primitive}\\b`).test(showcase)) errors.push(`project-unique primitive ${primitive}: missing showcase occurrence in a class attribute`);
+    if (document) {
+      if (!document.querySelector(`.${primitive}`)) errors.push(`project-unique primitive ${primitive}: missing showcase element`);
+    } else if (!new RegExp(`class="[^"]*\b${primitive}\b`).test(showcase)) {
+      errors.push(`project-unique primitive ${primitive}: missing showcase occurrence`);
+    }
   }
 }
 
@@ -533,7 +593,7 @@ async function main() {
       readFile(tokensPath, 'utf8'),
       readFile(uxDocPath, 'utf8'),
     ]);
-    checkBindings({ css, showcase, protoEnums }, errors);
+    await checkBindings({ css, showcase, protoEnums }, errors);
     checkDominance(css, errors);
     checkRetryMatrix(showcase, protoEnums, uxSource, errors);
     checkContrast(css, tokens, errors);
