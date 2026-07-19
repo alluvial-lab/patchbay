@@ -18,6 +18,11 @@ jobs:
           cache: npm
           cache-dependency-path: contracts/ts/package-lock.json
 
+      - name: Install Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install contracts deps
         working-directory: contracts/ts
         run: npm ci

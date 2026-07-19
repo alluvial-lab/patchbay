@@ -77,7 +77,7 @@ try {
   if (toastContrast.status === 0) {
     throw new Error('meta-test: invisible-toast fixture exited 0; expected non-zero (check must FAIL on defect)');
   }
-  if (!/toast\/inverse surface text/.test(toastContrast.output)) {
+  if (!/contrast.*\.toast:.*requires 4\.5/.test(toastContrast.output) && !/contrast.*inverse.*surface/.test(toastContrast.output)) {
     throw new Error('meta-test: invisible-toast fixture did not print the expected contrast diagnostic');
   }
 

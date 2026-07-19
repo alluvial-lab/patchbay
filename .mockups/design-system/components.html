@@ -520,9 +520,16 @@
     <p>Pending approvals and questions surface as attention-required state. First-answer-wins: any authenticated endpoint may answer; the first valid answer clears it everywhere. Response contract is visible.</p>
     <div class="showcase-grid">
       <div class="showcase-cell">
-        <h3>Pending — approval</h3>
+        <h3>Opened + pending (base card)</h3>
         <div class="demo demo--col">
-          <div class="elicitation-card">
+          <div class="elicitation-card" data-state="opened">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">approval</span>
+              <span class="elicitation-card__contract">opened · not yet fanned-out-visible</span>
+            </div>
+            <p class="elicitation-card__prompt">Approve tool call: <code>read_file</code></p>
+          </div>
+          <div class="elicitation-card" data-state="pending">
             <div class="elicitation-card__header">
               <span class="elicitation-card__kind">approval</span>
               <span class="elicitation-card__contract">contract: approval</span>

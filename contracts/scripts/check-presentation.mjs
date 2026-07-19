@@ -86,7 +86,13 @@ const LOCKED_PRIMITIVES = [
 // needs 4.5:1; large text (>=18pt, or >=14pt bold) needs 3:1. We map the
 // layer's --font-size-* tokens to pt (xs=12, sm=14, base=16) and treat sm+bold
 // or base as large, xs/sm-regular as normal.
+// Font-size classifies the WCAG threshold: normal text (<18pt, or <14pt bold)
+// needs 4.5:1; large text (>=18pt, or >=14pt BOLD) needs 3:1. Note: WCAG
+// 'bold' means font-weight >= 700 (bold); semibold (600) is NOT bold for
+// WCAG large-text purposes. A prior version treated --font-weight-semibold
+// as bold, misclassifying 14px semibold as large (3:1) when it's normal (4.5:1).
 const FONT_SIZE_PT = { '--font-size-xs': 12, '--font-size-sm': 14, '--font-size-base': 16 };
+const BOLD_WEIGHT_TOKENS = new Set(['--font-weight-bold']); // semibold (600) is NOT WCAG-bold (>=700)
 
 const GENERATED_BEGIN = '<!-- BEGIN GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
 const GENERATED_END = '<!-- END GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
@@ -191,15 +197,30 @@ function checkDominance(cssSource, errors) {
     }
     reducedMotionBodies.push(body);
   }
-  const reducedMotionJoined = reducedMotionBodies.join('\n');
-  const needsNone = ['pb-spin', 'pb-pulse'];
-  let noneFound = false;
-  for (const keyframe of needsNone) {
-    if (!/animation:\s*none/.test(reducedMotionJoined)) {
-      errors.push(`dominance/a11y: prefers-reduced-motion block does not set animation: none (must disable ${keyframe})`);
-      break;
+  // Each animation must be disabled UNDER REDUCED MOTION by a guard targeting
+  // its specific selector. A prior version checked for ANY 'animation: none' in
+  // the joined body, so mutating one guard back to active animation passed if
+  // the other still said 'none'. This parses each reduced-motion rule and
+  // requires each target selector to set animation: none.
+  const motionTargets = [
+    { selector: '.activity-indicator--working .activity-indicator__icon', keyframe: 'pb-spin' },
+    { selector: '.command-step--running .command-step__marker', keyframe: 'pb-pulse' },
+  ];
+  for (const target of motionTargets) {
+    const guardFound = reducedMotionBodies.some((body) => {
+      // The rule must select the target AND set animation: none in its body.
+      const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+      let rm;
+      while ((rm = ruleRe.exec(body)) !== null) {
+        const sel = rm[1];
+        const ruleBody = rm[2];
+        if (sel.includes(target.selector) && /animation:\s*none/.test(ruleBody)) return true;
+      }
+      return false;
+    });
+    if (!guardFound) {
+      errors.push(`dominance/a11y: prefers-reduced-motion does not disable ${target.keyframe} for ${target.selector} (must set animation: none)`);
     }
-    noneFound = true;
   }
   if (reducedMotionBodies.length < 2) {
     errors.push(`dominance/a11y: expected at least 2 prefers-reduced-motion guards (found ${reducedMotionBodies.length})`);
@@ -281,8 +302,8 @@ function deriveContrastPairs(css, tokens, errors) {
     const fontMatch = body.match(/font:\s*[^;]*?(--font-size-[a-z]+)/) || body.match(/font-size:\s*var\((--font-size-[a-z]+)\)/);
     const sizeToken = fontMatch ? (fontMatch[1] || fontMatch[2]) : null;
     const sizePt = sizeToken ? (FONT_SIZE_PT[sizeToken] ?? 16) : 16;
-    const weightMatch = body.match(/font:\s*[^;]*?(--font-weight-(?:semibold|bold))/);
-    const isBold = weightMatch !== null;
+    const weightMatch = body.match(/font:\s*[^;]*?(--font-weight-[a-z]+)/);
+    const isBold = weightMatch ? BOLD_WEIGHT_TOKENS.has(weightMatch[1]) : false;
     // WCAG large text: >=18pt, or >=14pt bold. Else normal (4.5:1).
     const isLarge = sizePt >= 18 || (sizePt >= 14 && isBold);
     const threshold = isLarge ? 3 : 4.5;
@@ -314,6 +335,8 @@ function checkContrast(cssSource, tokensSource, errors) {
 }
 
 function checkBindings({ css, showcase, protoEnums }, errors) {
+  // Strip CSS comments so a binding commented out can't pass as present.
+  const cssStripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
   for (const entry of REGISTRY) {
     const parsed = protoEnums.get(entry.enum);
     const allExpected = [...entry.members, ...(entry.baseMembers ?? [])];
@@ -321,17 +344,21 @@ function checkBindings({ css, showcase, protoEnums }, errors) {
 
     for (const member of entry.members) {
       const className = `${entry.cssPrefix}--${member}`;
-      if (!new RegExp(`\\.${className}(?=[\\s,{])`).test(css)) errors.push(`${entry.enum}: missing CSS binding .${className}`);
-      if (!showcase.includes(className)) errors.push(`${entry.enum}: missing showcase coverage ${className}`);
+      if (!new RegExp(`\\.${className}(?=[\\s,{])`).test(cssStripped)) errors.push(`${entry.enum}: missing CSS binding .${className}`);
+      if (!new RegExp(`class=\"[^\"]*\\b${className}\\b`).test(showcase)) errors.push(`${entry.enum}: missing showcase coverage ${className} (must appear in a class attribute)`);
     }
     for (const member of entry.baseMembers ?? []) {
-      if (!showcase.includes(entry.cssPrefix)) errors.push(`${entry.enum}: missing base showcase binding .${entry.cssPrefix} for ${member}`);
-      if (!showcase.toLowerCase().includes(member.toLowerCase())) errors.push(`${entry.enum}: missing showcase exercise for base state ${member}`);
+      // Base states (opened/pending) require a concrete rendered example
+      // marked with data-state, not a prose word-mention anywhere in the HTML.
+      const attrRe = new RegExp(`data-state=\"${member}\"[^>]*>[\\s\\S]*?class=\"[^\"]*\\b${entry.cssPrefix}\\b|class=\"[^\"]*\\b${entry.cssPrefix}\\b[^\"]*\"[^>]*data-state=\"${member}\"`);
+      if (!attrRe.test(showcase)) {
+        errors.push(`${entry.enum}: missing concrete showcase example for base state ${member} (requires data-state=\"${member}\" on a .${entry.cssPrefix} element)`);
+      }
     }
   }
 
   for (const primitive of extractCommentPrimitiveNames(css)) {
-    if (!showcase.includes(primitive)) errors.push(`project-unique primitive ${primitive}: missing showcase occurrence`);
+    if (!new RegExp(`class=\"[^\"]*\\b${primitive}\\b`).test(showcase)) errors.push(`project-unique primitive ${primitive}: missing showcase occurrence in a class attribute`);
   }
 }
 
