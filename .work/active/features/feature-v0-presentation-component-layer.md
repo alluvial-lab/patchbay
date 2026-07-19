@@ -1,14 +1,14 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: review
+stage: done
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
 release_binding: null
 gate_origin: null
 created: 2026-07-16
-updated: 2026-07-18
+updated: 2026-07-19
 ---
 
 # Feature: Shared presentation-component layer (v0)
@@ -433,3 +433,31 @@ The design pass should specify:
 **What stays.** The locked CSS primitives, tokens, and showcase are retained as the mockup-time analog (`docs/UX.md:49`'s wording) — they are good artifacts and the 5 review fixes are kept. They become inputs to the re-design, not the deliverable. The `palette`/`components` design decisions (Q1–Q5, Option C, the state-binding contract) are retained.
 
 **Lifecycle.** Reverted `done → drafting` per the implement skill's design-flaw escape hatch. The feature returns to `feature-design` for the design gate to specify the conformance-vector + runtime-contract deliverable before any further implementation. The parked `backlog-presentation-conformance-vector` is absorbed into this re-design (it was the symptom; this discovery is the cause). `feature-v0-web-cockpit`'s `depends_on` edge to this feature is now genuinely unmet again — the cockpit must not proceed on the assumption that the layer is done.
+
+## Thorough review (2026-07-19) — converged after 7 passes
+
+**Verdict**: Approve (thorough weight, convergence achieved at pass 7; cross-model fresh-context passes via `openai-codex/gpt-5.6-sol` high).
+
+**Weight**: `thorough`, pinned by the re-design (Q4). Convergence loop: review → adjudicate → fix → verify, repeated until a pass yielded no receiver-confirmed material current-cycle blockers.
+
+**Pass count**: 7 independent passes. Each pass did adversarial mutation testing of the check script and the CSS/showcase artifacts. Issues per pass: 4 → 7 → 5 → 4 → 5 → 1 → 0 (clean). Pass 7 returned `ready` with no findings.
+
+**What the loop caught and fixed** (cumulative — the check was repeatedly self-defining in progressively subtler ways; each fix made an oracle genuinely independent of the artifact under test):
+- Hand-maintained token-pair contrast list → **structural derivation** from CSS rules (every co-located color/background pair).
+- Hand-maintained retry matrix → **derived from `docs/UX.md` table** (expanded grouped pre-execution row); deleting a row from both check+showcase fails because UX.md still names it.
+- Lexical dominance (class presence only, `some()` not `every()`, CSS comments fool regex) → **structural**: each modifier requires both `:has()` AND wrapper-fallback paths targeting `.activity-indicator`, opacity < 1 asserted semantically, comments stripped, per-selector matching (`.never-match` mutation caught).
+- Showcase raw-text matching (HTML comments, suffixed classes, forward-spanning `data-state`) → **DOM-aware** via JSDOM `querySelector` (exact `classList.contains`, same-element `data-state`).
+- Reduced-motion count-only → **per-selector exact match + override detection** (a later rule restoring `animation: none`→active in the reduced-motion context fails).
+- Invented divergent state modifiers (`.command-step--queued`) → **rejected** (CSS scanned for `.{prefix}--{x}` not in registry, presentation-only allowlist).
+- System-follow dark block unchecked → **contrast-checked + key-set parity + effective-theme overlay** (missing override inherits light value, 1:1 toast caught; key-set parity asserted between explicit-dark and system-dark).
+- Meta-test not asserting exit status → **hardened** (baseline must exit 0; broken fixtures must exit non-zero with diagnostics; neutered exitCode caught).
+- px-to-pt misclassification (14px semibold as large) → **WCAG-correct** (bold = ≥700; unknown sizes → normal 4.5:1 conservatively).
+- `PROTOCOL.md:592` contradiction (layer classified unbuilt) → **rolled forward** (R → C, implemented).
+- No CI → **`.github/workflows/ci.yml`** added (presentation check, meta-test, vectors, models, build, Rust clippy/test).
+
+**Accepted v0.1.0 limitations (category b, documented, not blockers)**:
+- Contrast checks co-located color/background pairs, not full cascade/inheritance/hover/split-rule (bounded in source comment; browser-computed-style disproportionate for v0.1.0).
+- `LOCKED_PRIMITIVES` hardcoded but independent of the CSS artifact (sourced from the design body).
+- CI does not run `check:drift` (pre-existing repo gap: needs `protoc-gen-prost` + Rust-gen divergence; not introduced by this feature; documented in CI).
+
+**Outcome**: the check is genuinely non-self-defining for the realistic defect classes. The meta-test proves it fails on real defects (missing binding, invisible toast, neutered exitCode). The "machine-checkable" claim is now earned, not asserted. Feature advances to `done`.
