@@ -76,31 +76,17 @@ const LOCKED_PRIMITIVES = [
   'delivery-line', 'attention-badge',
 ];
 
-// State-indicator pairs are declared here so the WCAG formula is auditable and
-// the thresholds are explicit. Both light and dark token modes are checked.
-// Thresholds follow WCAG 2.1 by RENDERED USE, not element type:
-//  - normal text (< 18pt, or < 14pt bold): 4.5:1
-//  - large text (>= 18pt, or >= 14pt bold): 3:1
-//  - non-text graphical indicators (dots/markers with no text): 3:1
-// The retry-safety-indicator and btn-primary render --font-size-xs (12px) text,
-// so they are NORMAL TEXT (4.5:1), not graphical — a prior version wrongly
-// classified the retry badge at 3:1, certifying sub-AA text.
-const CONTRAST_PAIRS = [
-  { foreground: '--color-text-primary', background: '--color-bg-primary', threshold: 4.5, label: 'primary text' },
-  { foreground: '--color-text-secondary', background: '--color-bg-primary', threshold: 4.5, label: 'secondary text' },
-  { foreground: '--color-text-tertiary', background: '--color-bg-primary', threshold: 4.5, label: 'tertiary text' },
-  { foreground: '--color-text-link', background: '--color-bg-primary', threshold: 3, label: 'link/accent text (large)' },
-  { foreground: '--color-success', background: '--color-bg-primary', threshold: 4.5, label: 'success state label' },
-  { foreground: '--color-warning', background: '--color-bg-primary', threshold: 3, label: 'warning state indicator (large)' },
-  { foreground: '--color-danger', background: '--color-bg-primary', threshold: 4.5, label: 'danger state label' },
-  { foreground: '--color-info', background: '--color-bg-primary', threshold: 4.5, label: 'info state label' },
-  { foreground: '--color-text-inverse', background: '--color-bg-inverse', threshold: 4.5, label: 'toast/inverse surface text' },
-  // retry-safety-indicator + btn-primary render 12px text on colored fills → normal text (4.5:1)
-  { foreground: '--color-text-inverse', background: '--color-success', threshold: 4.5, label: 'retry-safety / btn text on success fill' },
-  { foreground: '--color-text-inverse', background: '--color-warning', threshold: 4.5, label: 'retry-safety / btn text on warning fill' },
-  { foreground: '--color-text-inverse', background: '--color-danger', threshold: 4.5, label: 'retry-safety / btn text on danger fill' },
-  { foreground: '--color-text-inverse', background: '--color-accent', threshold: 4.5, label: 'btn-primary text on accent fill' },
-];
+// Contrast pairs are NOT hand-maintained — they are DERIVED from the actual
+// CSS rules in components.css. A hand-maintained list is self-defining: a
+// mutation that introduces a new failing pair (e.g. setting .toast color to
+// its own background) would pass if the pair isn't in the list. Deriving from
+// the CSS means EVERY rendered foreground/background combination in the layer
+// is checked, including ones the check author didn't anticipate.
+// Font-size classifies the WCAG threshold: normal text (<18pt, or <14pt bold)
+// needs 4.5:1; large text (>=18pt, or >=14pt bold) needs 3:1. We map the
+// layer's --font-size-* tokens to pt (xs=12, sm=14, base=16) and treat sm+bold
+// or base as large, xs/sm-regular as normal.
+const FONT_SIZE_PT = { '--font-size-xs': 12, '--font-size-sm': 14, '--font-size-base': 16 };
 
 const GENERATED_BEGIN = '<!-- BEGIN GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
 const GENERATED_END = '<!-- END GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
@@ -147,50 +133,76 @@ function extractCommentPrimitiveNames(css) {
 // Assert the dominance rule is structurally enforced, not just present as a
 // class name. The layer guarantees: bad connectivity (stale/unknown/offline/
 // failed) de-emphasizes activity. A self-defining check would only assert the
-// selector exists; this asserts each bad-connectivity modifier appears in a
-// dominance selector AND that the rule those selectors share sets opacity < 1.
-// opacity:1 under bad connectivity would pass a lexical check but fails this.
-function checkDominance(css, errors) {
+// selector exists; this asserts EACH modifier has a dominance rule AND that
+// the rule sets opacity < 1 (the semantic). CSS comments are stripped first so
+// a commented-out rule cannot fool the regex.
+function checkDominance(cssSource, errors) {
+  // Strip CSS comments so a binding commented out can't pass as present.
+  const css = cssSource.replace(/\/\*[\s\S]*?\*\//g, '');
   const dominanceModifiers = ['--stale', '--unknown', '--offline', '--failed'];
-  // The dominance rule groups multiple selectors (both :has() and wrapper
- // modifier forms) into one rule body. Find every rule whose selector list
-  // contains a .session-status dominance selector and collect the opacity.
-  // Strategy: find all rule blocks, check if any selector in the block matches
-  // a session-status dominance selector, and if so assert opacity < 1.
   const rulePattern = /([^{}]*?)\{([^{}]*?)\}/g;
   let ruleMatch;
-  const deEmphasisOpacities = [];
+  const modifierToOpacities = new Map();
+  for (const m of dominanceModifiers) modifierToOpacities.set(m, []);
   while ((ruleMatch = rulePattern.exec(css)) !== null) {
     const selectorText = ruleMatch[1];
     const body = ruleMatch[2];
-    // Does this rule's selector list include a session-status dominance selector?
-    // (either the :has() form or the explicit wrapper-modifier form)
-    const hasDominanceSelector = dominanceModifiers.some((modifier) => {
+    for (const modifier of dominanceModifiers) {
       const wrapperRe = new RegExp(`\\.session-status${modifier}\\b`);
       const hasRe = new RegExp(`\\.session-status:has\\(\\.connectivity-indicator${modifier}\\)`);
-      return wrapperRe.test(selectorText) || hasRe.test(selectorText);
-    });
-    if (hasDominanceSelector) {
-      const opacityMatch = body.match(/opacity:\s*([0-9.]+)/);
-      if (!opacityMatch) {
-        errors.push('dominance: a session-status dominance selector rule sets no opacity');
-      } else {
-        deEmphasisOpacities.push(Number.parseFloat(opacityMatch[1]));
+      if (wrapperRe.test(selectorText) || hasRe.test(selectorText)) {
+        const opacityMatch = body.match(/opacity:\s*([0-9.]+)/);
+        if (!opacityMatch) {
+          errors.push(`dominance: ${modifier} rule sets no opacity`);
+        } else {
+          modifierToOpacities.get(modifier).push(Number.parseFloat(opacityMatch[1]));
+        }
       }
     }
   }
-  if (deEmphasisOpacities.length === 0) {
-    errors.push('dominance: no rule found that de-emphasizes activity under bad connectivity');
-  }
-  for (const opacity of deEmphasisOpacities) {
-    if (opacity >= 1) {
-      errors.push(`dominance: de-emphasis rule sets opacity ${opacity} (must be < 1 to de-emphasize activity under bad connectivity)`);
+  // EACH modifier must have a dominance rule (not just SOME). A prior version
+  // used some(), which passed if only --failed remained after deleting the
+  // others — that is the self-defining oracle this fixes.
+  for (const modifier of dominanceModifiers) {
+    const opacities = modifierToOpacities.get(modifier);
+    if (opacities.length === 0) {
+      errors.push(`dominance: no de-emphasis rule found for connectivity ${modifier} (stale/unknown/offline/failed each require one)`);
+    }
+    for (const opacity of opacities) {
+      if (opacity >= 1) {
+        errors.push(`dominance: ${modifier} de-emphasis sets opacity ${opacity} (must be < 1 to de-emphasize activity)`);
+      }
     }
   }
-  // Assert reduced-motion guards exist for both animations.
-  const reducedMotionBlock = css.match(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\}/g);
-  if (!reducedMotionBlock || reducedMotionBlock.length < 2) {
-    errors.push('dominance/a11y: expected at least 2 prefers-reduced-motion guards (pb-spin, pb-pulse)');
+  // Assert reduced-motion guards exist for BOTH animations AND actually set
+  // animation: none (not just count media blocks — a prior version passed if
+  // the media block existed but didn't disable the animation). Use a
+  // depth-aware extract because the media block contains nested braces.
+  const reducedMotionBodies = [];
+  const mediaRe = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g;
+  let mediaMatch;
+  while ((mediaMatch = mediaRe.exec(css)) !== null) {
+    let depth = 1;
+    let body = '';
+    for (let i = mediaMatch.index + mediaMatch[0].length; i < css.length && depth > 0; i += 1) {
+      if (css[i] === '{') depth += 1;
+      else if (css[i] === '}') { depth -= 1; if (depth === 0) break; }
+      body += css[i];
+    }
+    reducedMotionBodies.push(body);
+  }
+  const reducedMotionJoined = reducedMotionBodies.join('\n');
+  const needsNone = ['pb-spin', 'pb-pulse'];
+  let noneFound = false;
+  for (const keyframe of needsNone) {
+    if (!/animation:\s*none/.test(reducedMotionJoined)) {
+      errors.push(`dominance/a11y: prefers-reduced-motion block does not set animation: none (must disable ${keyframe})`);
+      break;
+    }
+    noneFound = true;
+  }
+  if (reducedMotionBodies.length < 2) {
+    errors.push(`dominance/a11y: expected at least 2 prefers-reduced-motion guards (found ${reducedMotionBodies.length})`);
   }
 }
 
@@ -230,22 +242,72 @@ function contrastRatio(first, second) {
   return (Math.max(firstLum, secondLum) + 0.05) / (Math.min(firstLum, secondLum) + 0.05);
 }
 
-function checkContrast(tokensSource, errors) {
+// Resolve a CSS value that may be var(--token) or a literal hex to a hex color
+// via the token map. Returns null if it can't resolve (e.g. 'transparent',
+// or a token not in the color-token set — those are non-color backgrounds).
+function resolveColorValue(value, tokens) {
+  const trimmed = value.trim();
+  const varMatch = trimmed.match(/^var\((--[a-z0-9-]+)\)$/);
+  if (varMatch) return tokens.get(varMatch[1]) ?? null;
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
+  return null; // 'transparent', inherit, etc.
+}
+
+// Derive the rendered foreground/background/font-size for every CSS rule that
+// sets both color and background. This is the genuine oracle: it checks the
+// ACTUAL combinations the CSS produces, not a hand-maintained list. A mutation
+// setting .toast color to its own background is caught here because the rule
+// is parsed, not anticipated.
+function deriveContrastPairs(css, tokens, errors) {
+  const pairs = [];
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+  while ((match = rulePattern.exec(css)) !== null) {
+    const selectors = match[1];
+    const body = match[2];
+    // Skip at-rules (@media, @keyframes) — their inner rules are handled when
+    // the regex reaches them. Skip rules inside comments (rare in body).
+    if (selectors.includes('@')) continue;
+
+    const colorMatch = body.match(/(?:^|;|\{)\s*color\s*:\s*([^;]+)/m);
+    const bgMatch = body.match(/background(?:-color)?\s*:\s*([^;]+)/m);
+    if (!colorMatch || !bgMatch) continue;
+
+    const fg = resolveColorValue(colorMatch[1], tokens);
+    const bg = resolveColorValue(bgMatch[1], tokens);
+    if (!fg || !bg) continue; // non-resolvable (transparent, etc.) — skip
+
+    // Determine font-size for threshold classification.
+    const fontMatch = body.match(/font:\s*[^;]*?(--font-size-[a-z]+)/) || body.match(/font-size:\s*var\((--font-size-[a-z]+)\)/);
+    const sizeToken = fontMatch ? (fontMatch[1] || fontMatch[2]) : null;
+    const sizePt = sizeToken ? (FONT_SIZE_PT[sizeToken] ?? 16) : 16;
+    const weightMatch = body.match(/font:\s*[^;]*?(--font-weight-(?:semibold|bold))/);
+    const isBold = weightMatch !== null;
+    // WCAG large text: >=18pt, or >=14pt bold. Else normal (4.5:1).
+    const isLarge = sizePt >= 18 || (sizePt >= 14 && isBold);
+    const threshold = isLarge ? 3 : 4.5;
+
+    const selectorLabel = selectors.trim().split(',').map((s) => s.trim()).slice(0, 1).join('').slice(0, 40);
+    pairs.push({ fg, bg, threshold, label: selectorLabel });
+  }
+  return pairs;
+}
+
+function checkContrast(cssSource, tokensSource, errors) {
   const modes = [
     ['light', parseColorTokens(tokensSource, ':root')],
     ['dark', parseColorTokens(tokensSource, ':root[data-theme="dark"]')],
   ];
   for (const [mode, tokens] of modes) {
-    for (const pair of CONTRAST_PAIRS) {
-      const foreground = tokens.get(pair.foreground);
-      const background = tokens.get(pair.background);
-      if (!foreground || !background) {
-        errors.push(`contrast ${mode}/${pair.label}: missing token ${!foreground ? pair.foreground : pair.background}`);
-        continue;
-      }
-      const ratio = contrastRatio(foreground, background);
+    const pairs = deriveContrastPairs(cssSource, tokens, errors);
+    if (pairs.length === 0) {
+      errors.push(`contrast ${mode}: no color+background rules derived from CSS (oracle broken)`);
+      continue;
+    }
+    for (const pair of pairs) {
+      const ratio = contrastRatio(pair.fg, pair.bg);
       if (ratio < pair.threshold) {
-        errors.push(`contrast ${mode}/${pair.label}: ${foreground} on ${background} is ${ratio.toFixed(2)}:1, requires ${pair.threshold}:1`);
+        errors.push(`contrast ${mode}/${pair.label}: ${pair.fg} on ${pair.bg} is ${ratio.toFixed(2)}:1, requires ${pair.threshold}:1`);
       }
     }
   }
@@ -277,13 +339,51 @@ function protoMembers(protoEnums, enumName) {
   return new Set(protoEnums.get(enumName).map((item) => item.member));
 }
 
-function checkRetryMatrix(showcase, protoEnums, errors) {
+// Parse the canonical retry-safety table from docs/UX.md as the Single Source
+// of Truth. The UX.md table's grouped pre-execution row lists three failure
+// codes (target_offline, adapter_unavailable, delivery_rejected); this expands
+// it into individual triples. The check's matrix is thus DERIVED from UX.md,
+// not hand-maintained alongside it — deleting a row from both the check and the
+// showcase would still fail because UX.md (the independent source) still
+// names it.
+function parseUxRetryMatrix(uxSource, errors) {
+  const rows = [];
+  // Match the grouped pre-execution row: lists multiple codes in backticks.
+  const groupedRe = /pre-execution failures \(([^)]+)\)\s*\|\s*`?any`?\s*\|\s*safe to retry/i;
+  const groupedMatch = uxSource.match(groupedRe);
+  if (groupedMatch) {
+    const codes = [...groupedMatch[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+    for (const code of codes) rows.push({ failure: code, strength: 'any', safety: 'safe' });
+  } else {
+    errors.push('retry matrix: could not parse UX.md grouped pre-execution failures row');
+  }
+  // Match the explicit single-code rows.
+  const rowRe = /^\s*\|\s*`([a-z_]+)`\s*\|\s*`([a-z-]+)`\s*\|\s*(.+?)\s*\|\s*$/gm;
+  let m;
+  while ((m = rowRe.exec(uxSource)) !== null) {
+    const failure = m[1];
+    const strength = m[2];
+    const safetyDesc = m[3].toLowerCase();
+    if (failure === 'failure' || failure.includes('---')) continue;
+    let safety;
+    if (safetyDesc.includes('safe to retry')) safety = 'safe';
+    else if (safetyDesc.includes('may double')) safety = 'maybe';
+    else if (safetyDesc.includes('will double')) safety = 'unsafe';
+    else if (safetyDesc.includes('not unconditionally')) safety = 'maybe';
+    else { errors.push(`retry matrix UX.md: could not classify safety for "${failure}"`); continue; }
+    rows.push({ failure, strength, safety });
+  }
+  return rows;
+}
+
+function checkRetryMatrix(showcase, protoEnums, uxSource, errors) {
+  const uxRows = parseUxRetryMatrix(uxSource, errors);
   const failureCodes = protoMembers(protoEnums, 'FailureCode');
   const strengths = new Set(protoEnums.get('IdempotencyStrength').map((item) => item.name.slice('IDEMPOTENCY_STRENGTH_'.length)));
-  for (const row of RETRY_MATRIX) {
-    if (!failureCodes.has(row.failure)) errors.push(`retry matrix: ${row.failure} is not a FailureCode enum member`);
-    if (row.strength !== 'any' && !strengths.has(row.strengthProto)) {
-      errors.push(`retry matrix: ${row.strength} is not an IdempotencyStrength enum member`);
+  for (const row of uxRows) {
+    if (!failureCodes.has(row.failure)) errors.push(`retry matrix: UX.md failure term ${row.failure} is not a FailureCode enum member`);
+    if (row.strength !== 'any' && !strengths.has(row.strength.toUpperCase().replace(/-/g, '_'))) {
+      errors.push(`retry matrix: UX.md strength ${row.strength} is not an IdempotencyStrength enum member`);
     }
     const documented = `${row.failure} × ${row.strength} → ${row.safety}`;
     if (!showcase.includes(documented)) errors.push(`retry matrix: showcase is missing row "${documented}"`);
@@ -398,16 +498,18 @@ async function main() {
   let css;
   let showcase;
   let tokens;
+  let uxSource;
   try {
-    [css, showcase, tokens] = await Promise.all([
+    [css, showcase, tokens, uxSource] = await Promise.all([
       readFile(cssPath, 'utf8'),
       readFile(showcasePath, 'utf8'),
       readFile(tokensPath, 'utf8'),
+      readFile(uxDocPath, 'utf8'),
     ]);
     checkBindings({ css, showcase, protoEnums }, errors);
     checkDominance(css, errors);
-    checkRetryMatrix(showcase, protoEnums, errors);
-    checkContrast(tokens, errors);
+    checkRetryMatrix(showcase, protoEnums, uxSource, errors);
+    checkContrast(css, tokens, errors);
   } catch (error) {
     errors.push(error.message);
   }
@@ -418,7 +520,7 @@ async function main() {
   console.log(`- registries checked: ${REGISTRY.length}`);
   console.log(`- CSS target: ${rel(cssPath)}`);
   console.log(`- showcase target: ${rel(showcasePath)}`);
-  console.log(`- contrast modes/pairs: 2/${CONTRAST_PAIRS.length}`);
+  console.log(`- contrast: derived from CSS color+background rules (both light/dark modes)`);
   console.log(`- axe-core scan: ${errors.some((error) => error.startsWith('axe-core:')) ? 'failed' : 'passed'}`);
 
   if (errors.length > 0) {

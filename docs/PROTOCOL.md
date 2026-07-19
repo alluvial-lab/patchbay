@@ -589,7 +589,7 @@ Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does
 | human control surfaces | native desktop app | R | `idea-desktop-app-surface`; SPEC "Starting scope" |
 | human control surfaces | notification surface as a control surface | R | SPEC; GLOSSARY "control surface" |
 | human control surfaces | operator-customizable skins/layouts above the conformance floor | R | `feature-ux-v0-acceptance`; `idea-operator-customizable-ux-skins` |
-| human control surfaces | shared presentation-component layer implementation (seam named, not built in v0.1.0) | R | `feature-ux-v0-acceptance`; ARCHITECTURE "presentation model" |
+| human control surfaces | shared presentation-component layer (registry-derived static conformance check + skin-able CSS/showcase artifacts; implemented v0.1.0) | C | `feature-v0-presentation-component-layer`; `feature-ux-v0-acceptance`; ARCHITECTURE "presentation model" |
 | transports / deployment topology | single authoritative core; adapters/surfaces may be separate processes | C | SPEC topology |
 | transports / deployment topology | HA, clustering, split-brain recovery, multiple authoritative cores | R | SPEC non-goals; ARCHITECTURE |
 | storage / persistence backends | local durable event/snapshot store behind ports | C | `feature-persistence-snapshot-model` |
