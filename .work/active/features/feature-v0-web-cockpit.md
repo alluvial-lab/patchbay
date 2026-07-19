@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer]
@@ -44,3 +44,201 @@ The cockpit is the first conformant instance of the conformance floor. Mockups a
 - `docs/PROTOCOL.md` — CommandState, SessionConnectivityState, SessionActivityState, ElicitationState, failure vocabulary
 - `docs/SPEC.md` — v0.1.0 performance posture (qualitative responsiveness floor: "feels responsive under normal single-operator use")
 - `feature-ux-v0-acceptance` (done) — the UX conformance floor design this feature implements
+
+## Architectural choice
+
+A browser-side TypeScript cockpit (`patchbay-web-cockpit`) that runs the shared operator domain as a client of the `patchbay-web-server` thin translator. The browser holds the presentation model and the delivery/reconnect state machines; the web server only terminates HTTP + auth/CSRF and proxies Connect-Web calls to the core's gRPC `ControlService`. This realizes the committed v0.1.0 topology (Q5a — thin translator, operator domain browser-only) and the reserved-seam posture (server-side operator-domain promotion stays reserved).
+
+The cockpit consumes the locked presentation-component layer (`feature-v0-presentation-component-layer`: `tokens.css` + `components.css` primitives) for all state-binding — it does not re-bind protocol states to presentation. The mockup-locked shell (`option-2.html`) is the visual reference; the implementation translates it into real components driven by live protocol state.
+
+## Design decisions (feature-design, 2026-07-18)
+
+Resolved interactively during the mockup pass; pinned here so implementation does not re-litigate them.
+
+- **Q1 — Two-pane desktop / drill-in mobile (committed A / reserved B).** Desktop is two-pane (list + live detail side-by-side); mobile is drill-in (list home, tap → full-screen detail + back). B (drill-in) is both the reserved seam and the natural mobile mode; desktop drill-in promotion is additive.
+- **Q2 — Delivery state as a compact badge below the message.** Not a separate timeline strip and not above the message. The badge shows current `CommandState` compactly; tap expands the full state history + LSNs as a debug detail (LSNs hidden by default — not conversational noise). Terminal-race explanations render as UI labels, not protocol states.
+- **Q3 — Chat alignment (operator right / agent left).** Conventional chat-app affordance; position carries most of the speaker signal, the `who` label is secondary. Conversation column capped at 860px centered; left-side content capped at 560px for a clean right edge.
+- **Q4 — Composer is text-first + contextual actions.** Default input is a prompt textarea (instruct). Attach button for files/images (the `file_attachment` reserved-contract surface). Cancel/Interrupt appear inline near a running command; Approve/Deny and question-answer surface inline as elicitation cards where the agent opened them. No composer-level OperationKind selector — actions appear where relevant.
+
+### Response-contract-shape decisions (surfaced during elicitation mock review)
+
+These three touch `response_contract` validation semantics and were grounded against `docs/PROTOCOL.md` before deciding.
+
+- **EC1 — Free-text option within a `question` contract: v0.1.0 committed.** A `select-one`/`select-many` question may append a free-text option ("or type your own answer"). The response Operation carries the free-text string instead of a selected option id. This is a `free-text` ui_hint within the committed `question` contract_kind — no contract-kind promotion. The control shape matches the `ui_hint` (radio for select-one including the free-text alternative, checkbox for select-many).
+- **EC2 — "Answer-and" composed response (structured selection + free-text clarification): v0.1.0 committed.** A question response may carry a selected option *plus* an appended free-text clarification in one Operation (the "And..." field). This is a response-payload shape on the `question` contract, not a new contract_kind. The clarification is supplementary context; the structured selection remains the primary answer.
+- **EC3 — Grouped multi-question (N independent single-answer Elicitations as one visual card): v0.1.0 committed as the grouping; the multi-answer contract is reserved.** Claude's nested multi-question maps to N independent Elicitations opened as a batch, rendered as one visual card, each independently single-answer and independently terminal. This keeps every Elicitation single-answer (committed v0.1.0). A true multi-answer contract (one Elicitation carrying multiple questions) is a reserved seam ("multi-answer accumulation", PROTOCOL:312) — promotion is a clean reserved-seam reversal, not a quiet gap.
+- **EC4 — Attention destination deferred from v0.1.0.** Elicitations surface inline in the session detail + via the `needs-you` badge. The cross-session Attention destination is deferred; its mock is preserved. Promotion is additive when monitoring many sessions.
+
+## Implementation Units
+
+### Unit 1: Operator-domain core — protocol client + state machines
+
+**File**: `web-cockpit/src/domain/protocol-client.ts`, `web-cockpit/src/domain/reconcile.ts`
+
+The browser-side operator domain. A typed Connect-Web client to `ControlService` (Submit / Subscribe / LoadSnapshot) over the web-server's Connect-Web bridge. Holds the cursor-based reconnect state machine: subscribe with last-known cursor, fold incoming `SubscribeEvent`s into the presentation model, reconcile against `LoadSnapshot` on reconnect gaps. Reconnect submits the cursor + reconciles against snapshots/core records — never optimistic UI state (the snapshot-correctness rule).
+
+```typescript
+// web-cockpit/src/domain/protocol-client.ts
+import { createClient, type Transport } from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-web";
+import { ControlService } from "@patchbay/contracts";
+
+export function createProtocolClient(): { client, transport } {
+  const transport = createConnectTransport({ baseUrl: "/" }); // same-origin via web-server bridge
+  const client = createClient(ControlService, transport);
+  return { client, transport };
+}
+```
+
+```typescript
+// web-cockpit/src/domain/reconcile.ts — cursor-based reconnect
+export class Reconciler {
+  private cursor: bigint = 0n; // last applied LSN
+  constructor(private client: ControlServiceClient) {}
+
+  // Subscribe with cursor; on reconnect, LoadSnapshot then re-Subscribe.
+  async *subscribe(domainId: AuthorityDomainId): AsyncIterable<SubscribeEvent> {
+    while (true) {
+      try {
+        for await (const ev of this.client.subscribe({ authorityDomainId: domainId, cursor: this.cursor })) {
+          this.cursor = ev.eventId!.lsn; // advance on fold
+          yield ev;
+        }
+      } catch (e) {
+        // stream broke — reconcile against snapshot before re-subscribing
+        await this.reconcile(domainId);
+      }
+    }
+  }
+  private async reconcile(domainId): Promise<void> { /* LoadSnapshot at-or-before cursor; fold; mark unreconciled stale */ }
+}
+```
+
+**Implementation Notes**:
+- Cursor is the last *folded* LSN, advanced only after the presentation model applies the event. Reconnect resumes from there.
+- A gap (missed events) is detected when the stream resumes at an LSN > cursor+1; reconcile via `LoadSnapshot` rather than synthesizing state.
+- Unreconciled state is marked stale/unknown per the degraded-behavior rules — never rendered as live.
+
+**Acceptance Criteria**:
+- [ ] Subscribe folds events into the presentation model; cursor advances on fold
+- [ ] Reconnect after a stream break re-subscribes from the last cursor without losing applied state
+- [ ] A snapshot gap is reconciled via LoadSnapshot; unreconciled axes render stale/unknown
+- [ ] Optimistic UI state is never authority for the cursor or the presentation model
+
+### Unit 2: Presentation model — the session/command/elicitation projections
+
+**File**: `web-cockpit/src/domain/model.ts`
+
+The in-browser presentation model: a fold over `StoredEventPayload` events that produces the view state (sessions with connectivity×activity axes, commands with CommandState, pending elicitations). This is the browser-side analog of the core's `SessionRegistry` / `CommandIndex` — a pure projection, never authoritative. Binds to the presentation-component layer's primitives for rendering.
+
+```typescript
+// web-cockpit/src/domain/model.ts
+export interface SessionView {
+  identity: SessionIdentity; // adapter/scope/runtime/gen — identity-before-intent
+  label: { project?: string; cwd?: string; name?: string };
+  connectivity: SessionConnectivityState;
+  activity: SessionActivityState;
+  activityDetail?: string; // Observation-composed (Option C) — thinking/executing/waiting
+  needsYou: boolean; // waiting for command OR pending elicitation
+  lastUpdate: Date;
+}
+export interface CommandView { id: CommandId; state: CommandState; lsn: Lsn; race?: string; }
+export interface ElicitationView { id: ElicitationId; kind: "approval"|"question"; state: ElicitationState; contract: ResponseContract; prompt: string; options?: Option[]; }
+export interface PresentationModel {
+  sessions: Map<SessionIdentity, SessionView>;
+  commands: Map<CommandId, CommandView>;
+  elicitations: Map<ElicitationId, ElicitationView>;
+}
+export function fold(model: PresentationModel, ev: StoredEventPayload): PresentationModel { /* pure fold */ }
+```
+
+**Implementation Notes**:
+- The fold mirrors the core's projection semantics (registry observe + command-index observe) but is read-only — it never writes back. Reconnect reconciliation replaces the model from a snapshot.
+- `activityDetail` (Option C) is composed from the Observation stream (`tool_call`, `tool_execution_start/end`, `message_update`, `agent_end`, `turn_start/end`) — an ephemeral presentation hint, not a durable state. The durable `activity` stays `working`/`idle`.
+- `needsYou` is derived: a session is needs-you if its last command is terminal-and-awaiting-input OR it has a pending elicitation.
+
+**Acceptance Criteria**:
+- [ ] fold is a pure function over (model, event) → model
+- [ ] stale/unknown connectivity never renders as live (dominance rule enforced in the view binding)
+- [ ] activityDetail composes from Observations but does not mutate durable activity state
+- [ ] Reconnect replaces the model from a snapshot; the old model is never rendered as live during reconciliation
+
+### Unit 3: Markdown rendering (the mobile-readability differentiator)
+
+**File**: `web-cockpit/src/ui/markdown.ts`
+
+Renders agent Observation payloads (markdown) into the message timeline with excellent mobile readability — the v0.1.0 hard requirement. Headings, paragraphs, lists, tables, blockquotes, inline code, fenced code blocks with sane horizontal scroll (not layout-breaking). This is where the differentiator lives.
+
+**Implementation Notes**:
+- Use a small, safe markdown renderer (e.g. `marked` + `DOMPurify` for sanitization, or a streaming-friendly parser). The payload is source-authenticated but still untrusted at the render boundary — sanitize.
+- Code blocks: `overflow-x: auto` on `<pre>`, never `overflow: hidden` (which breaks long lines). The mock's `pre` treatment is the reference.
+- Tables: horizontal scroll wrapper on narrow viewports; never let a wide table break the chat column.
+- Typography uses the locked Plex Sans body face (from tokens.css); code uses Plex Mono.
+
+**Acceptance Criteria**:
+- [ ] Markdown renders headings, lists, code blocks, tables, blockquotes, inline code on a 360px viewport without horizontal page-scroll
+- [ ] Code blocks scroll internally, not the page
+- [ ] Rendered output is sanitized (no unescaped HTML injection)
+- [ ] Long content does not break the chat column width
+
+### Unit 4: Elicitation handling (the three shapes + mobile sheet)
+
+**File**: `web-cockpit/src/ui/elicitation.ts`
+
+Implements the three elicitation shapes (EC1–EC3) and the mobile bottom-sheet. Binary approval = direct buttons; multi-option question = radio/checkbox + free-text option (EC1) + answer-and clarification (EC2); grouped multi-question = N independent single-answer Elicitations as one card (EC3).
+
+**Implementation Notes**:
+- The response Operation is built from the selected option (or free-text) + optional clarification, correlated to the `ElicitationId`. First-answer-wins is enforced core-side; the UI disables the controls once the elicitation terminalizes (answered/declined/expired) and shows the terminal state.
+- The mobile bottom sheet clones the tapped card's content (per the locked mock behavior) and force-shows the options/actions that the inline-teaser CSS hides.
+- Control shape matches `ui_hint`: radio for select-one (including the free-text alternative), checkbox for select-many. Never mix in one elicitation.
+
+**Acceptance Criteria**:
+- [ ] Binary approval submits Deny/Approve directly (no select-then-submit)
+- [ ] Question with free-text option submits either a selected option id or a free-text string
+- [ ] Answer-and submits a selected option + appended clarification in one Operation
+- [ ] Grouped multi-question renders N questions as one card; each answers independently
+- [ ] Once terminal, the elicitation controls disable and show the terminal state
+
+### Unit 5: Shell + session list + responsive layout
+
+**File**: `web-cockpit/src/ui/shell.ts`, `web-cockpit/src/ui/session-list.ts`, `web-cockpit/src/ui/session-detail.ts`
+
+The responsive shell: desktop two-pane (list + live detail), mobile drill-in (list home, tap → full-screen detail + back). Session rows show identity-before-intent (identity tuple primary, labels metadata), connectivity×activity badges (separate, per the split), and the needs-you state. The detail pane carries the message timeline + delivery badges + composer.
+
+**Implementation Notes**:
+- Uses the presentation-component layer primitives (`.session-row`, `.session-status`, `.connectivity-indicator`, `.activity-indicator`, `.composer`, `.elicitation-card`, etc.) from `components.css` — no inline protocol-state rebinding.
+- The drill-in (mobile) is a container swap, not a separate screen — the session-detail content component is identical in both modes (the reserved B seam).
+- Composer: textarea + attach + send; contextual actions (Cancel/Interrupt) appear near running commands.
+
+**Acceptance Criteria**:
+- [ ] Desktop: list + detail side-by-side; selecting a session fills the detail pane
+- [ ] Mobile: list is home; tap drills into full-screen detail; back returns to list
+- [ ] Session rows show identity tuple + connectivity/activity (separate channels) + needs-you state
+- [ ] All state-binding uses the presentation-component layer primitives
+
+## Implementation Order
+
+1. Unit 1 (protocol client + reconcile) — the foundation; nothing runs without it
+2. Unit 2 (presentation model) — the fold the UI renders
+3. Unit 3 (markdown rendering) — the differentiator; can parallelize with 4 once 2 lands
+4. Unit 4 (elicitation handling) — can parallelize with 3
+5. Unit 5 (shell + UI) — composes 2/3/4 into the locked shell
+
+## Testing
+
+- **Interface tests**: the fold (Unit 2) is a pure function — property-test it against event sequences (generation monotonicity, stale-never-live, reconnect reconciliation). The protocol client (Unit 1) — reconnect/resume behavior against a fake transport.
+- **Regression tests**: markdown rendering on a 360px viewport (the differentiator); elicitation submission shapes (EC1 free-text, EC2 answer-and, EC3 grouped).
+- **Unit tests**: elicitation control-shape matching ui_hint (radio vs checkbox); needs-you derivation.
+- **Test removal**: none anticipated — greenfield.
+
+## Risks
+
+- **Markdown renderer choice** — must be small + safe + streaming-friendly. A heavy parser bloats the bundle; an unsafe one is an XSS vector despite source authentication. Spike the choice in Unit 3.
+- **Reconnect correctness** — the snapshot-correctness rule is load-bearing. If the reconciler ever renders an unreconciled snapshot as live, that's a conformance-floor violation. Property-test the reconcile path.
+- **Elicitation payload shapes (EC1–EC3)** — these are new response-contract shapes not yet in the proto. Implementation must extend the `elicitation-response` Operation payload schema; coordinate with the contracts crate. If the proto extension is non-trivial, surface as a blocker (semantic 50/50 per the harness rule).
+
+## Simplification
+
+- Dropped the standalone detail mock — folded into the shell (one coherent product mock, no competing paths).
+- Deferred the Attention destination — elicitations surface inline + via needs-you badge; the cross-session inbox is a future promotion.
+- No composer-level OperationKind selector — actions surface contextually where relevant, keeping the composer simple.
