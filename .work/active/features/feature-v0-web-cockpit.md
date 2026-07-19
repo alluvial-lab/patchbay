@@ -4,11 +4,11 @@ kind: feature
 stage: implementing
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
-depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer]
+depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-18
+updated: 2026-07-19
 ---
 
 # Feature: Responsive web cockpit
