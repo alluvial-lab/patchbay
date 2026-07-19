@@ -63,7 +63,7 @@ Source registries: `.proto` enum declarations. CI check: `node contracts/scripts
 | `SessionActivityState` | idle, working, unknown | all CSS bindings present | all showcase bindings present | pass |
 | `ElicitationState` | answered, declined, expired, cancelled, withdrawn, superseded, stale, opened (base .elicitation-card), pending (base .elicitation-card) | all CSS bindings present | all showcase bindings present | pass |
 
-Retry-safety matrix: all five `docs/UX.md` rows cross-reference `FailureCode` and `IdempotencyStrength` and are documented in the showcase.
+Retry-safety matrix: all `docs/UX.md` rows (execution_outcome_unknown × {end-to-end,at-Patchbay-boundary,none}; execution_failed × any; pre-execution failures target_offline/adapter_unavailable/delivery_rejected × any) cross-reference `FailureCode` and `IdempotencyStrength` and are documented in the showcase.
 Accessibility: WCAG contrast pairs and axe-core scan of `.mockups/design-system/components.html` pass.
 
 <!-- END GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->

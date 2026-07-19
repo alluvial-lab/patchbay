@@ -22,7 +22,17 @@ function runFixture(dir) {
       PRESENTATION_SKIP_TRACE: '1',
     },
   });
-  return `${result.stdout}\n${result.stderr}`;
+  // Return status AND output so assertions can prove the check actually
+  // FAILS (non-zero exit) on a broken fixture, not merely that it prints a
+  // diagnostic. A check that prints failures but exits 0 (neutered exitCode)
+  // would pass an output-only assertion — that is the self-defining-check
+  // anti-pattern this meta-test exists to catch.
+  return {
+    status: result.status,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    output: `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
+  };
 }
 
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'patchbay-presentation-'));
@@ -31,14 +41,29 @@ try {
     await writeFile(path.join(fixture, file), await readFile(path.join(designDir, file)));
   }
 
+  // POSITIVE control: unmodified fixture must exit 0 (proves the check
+  // actually passes on conformant artifacts — guards against a check that
+  // fails indiscriminately, which would also be unsound).
+  const baseline = runFixture(fixture);
+  if (baseline.status !== 0) {
+    throw new Error(`meta-test baseline (unmodified) exited ${baseline.status}; expected 0. Output: ${baseline.output.slice(0, 500)}`);
+  }
+
+  // NEGATIVE fixture 1: missing elicitation CSS binding → must exit non-zero
+  // AND print the diagnostic (status alone isn't enough; output alone isn't enough).
   let css = await readFile(path.join(fixture, 'components.css'), 'utf8');
   css = css.replace('.elicitation-card--declined {', '.elicitation-card--declined-missing {');
   await writeFile(path.join(fixture, 'components.css'), css);
-  const missingBindingOutput = runFixture(fixture);
-  if (!/missing CSS binding \.elicitation-card--declined/.test(missingBindingOutput)) {
-    throw new Error('meta-test expected a missing elicitation CSS binding failure');
+  const missingBinding = runFixture(fixture);
+  if (missingBinding.status === 0) {
+    throw new Error('meta-test: missing-binding fixture exited 0; expected non-zero (check must FAIL on defect)');
+  }
+  if (!/missing CSS binding \.elicitation-card--declined/.test(missingBinding.output)) {
+    throw new Error('meta-test: missing-binding fixture did not print the expected diagnostic');
   }
 
+  // NEGATIVE fixture 2: invisible-toast contrast (1:1) → must exit non-zero
+  // AND print the contrast diagnostic. This is the regression the check exists for.
   css = await readFile(path.join(designDir, 'components.css'), 'utf8');
   await writeFile(path.join(fixture, 'components.css'), css);
   let tokens = await readFile(path.join(fixture, 'tokens.css'), 'utf8');
@@ -48,12 +73,15 @@ try {
     return inverseTokenCount === 1 ? '--color-text-inverse: #2a2218;' : '--color-text-inverse: #f0e6d2;';
   });
   await writeFile(path.join(fixture, 'tokens.css'), tokens);
-  const toastContrastOutput = runFixture(fixture);
-  if (!/toast\/inverse surface text/.test(toastContrastOutput)) {
-    throw new Error('meta-test expected the invisible-toast contrast failure');
+  const toastContrast = runFixture(fixture);
+  if (toastContrast.status === 0) {
+    throw new Error('meta-test: invisible-toast fixture exited 0; expected non-zero (check must FAIL on defect)');
+  }
+  if (!/toast\/inverse surface text/.test(toastContrast.output)) {
+    throw new Error('meta-test: invisible-toast fixture did not print the expected contrast diagnostic');
   }
 
-  console.log('Presentation check meta-tests passed (missing binding and invisible-toast fixtures rejected).');
+  console.log('Presentation check meta-tests passed: baseline exits 0; missing-binding and invisible-toast fixtures exit non-zero with diagnostics.');
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

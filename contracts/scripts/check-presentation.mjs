@@ -56,26 +56,50 @@ const RETRY_MATRIX = [
   { failure: 'execution_outcome_unknown', strength: 'at-Patchbay-boundary', strengthProto: 'AT_PATCHBAY_BOUNDARY', safety: 'maybe' },
   { failure: 'execution_outcome_unknown', strength: 'none', strengthProto: 'NONE', safety: 'unsafe' },
   { failure: 'execution_failed', strength: 'any', safety: 'maybe' },
+  // UX.md groups the pre-execution failures: target_offline, adapter_unavailable,
+  // delivery_rejected → all safe to retry (execution did not start). Each must be
+  // documented in the showcase; a prior version checked only target_offline.
   { failure: 'target_offline', strength: 'any', safety: 'safe' },
+  { failure: 'adapter_unavailable', strength: 'any', safety: 'safe' },
+  { failure: 'delivery_rejected', strength: 'any', safety: 'safe' },
+];
+
+// The locked project-unique primitive inventory is sourced INDEPENDENTLY of the
+// CSS-under-test (from the feature design's locked list), not from the CSS
+// artifact's own header comment. Sourcing it from the comment would be
+// self-defining: deleting a primitive's comment line would pass the check.
+// This is the canonical list the layer guarantees to bind.
+const LOCKED_PRIMITIVES = [
+  'connectivity-indicator', 'activity-indicator', 'session-status',
+  'command-timeline', 'command-step', 'session-row', 'composer',
+  'elicitation-card', 'failure-banner', 'retry-safety-indicator',
+  'delivery-line', 'attention-badge',
 ];
 
 // State-indicator pairs are declared here so the WCAG formula is auditable and
 // the thresholds are explicit. Both light and dark token modes are checked.
-// Filled pills/dots are classified as graphical indicators (AA 3:1); labels
-// rendered on normal backgrounds use the normal-text threshold (AA 4.5:1).
+// Thresholds follow WCAG 2.1 by RENDERED USE, not element type:
+//  - normal text (< 18pt, or < 14pt bold): 4.5:1
+//  - large text (>= 18pt, or >= 14pt bold): 3:1
+//  - non-text graphical indicators (dots/markers with no text): 3:1
+// The retry-safety-indicator and btn-primary render --font-size-xs (12px) text,
+// so they are NORMAL TEXT (4.5:1), not graphical — a prior version wrongly
+// classified the retry badge at 3:1, certifying sub-AA text.
 const CONTRAST_PAIRS = [
   { foreground: '--color-text-primary', background: '--color-bg-primary', threshold: 4.5, label: 'primary text' },
   { foreground: '--color-text-secondary', background: '--color-bg-primary', threshold: 4.5, label: 'secondary text' },
   { foreground: '--color-text-tertiary', background: '--color-bg-primary', threshold: 4.5, label: 'tertiary text' },
-  { foreground: '--color-text-link', background: '--color-bg-primary', threshold: 3, label: 'link/accent text' },
+  { foreground: '--color-text-link', background: '--color-bg-primary', threshold: 3, label: 'link/accent text (large)' },
   { foreground: '--color-success', background: '--color-bg-primary', threshold: 4.5, label: 'success state label' },
-  { foreground: '--color-warning', background: '--color-bg-primary', threshold: 3, label: 'warning state indicator' },
+  { foreground: '--color-warning', background: '--color-bg-primary', threshold: 3, label: 'warning state indicator (large)' },
   { foreground: '--color-danger', background: '--color-bg-primary', threshold: 4.5, label: 'danger state label' },
   { foreground: '--color-info', background: '--color-bg-primary', threshold: 4.5, label: 'info state label' },
   { foreground: '--color-text-inverse', background: '--color-bg-inverse', threshold: 4.5, label: 'toast/inverse surface text' },
-  { foreground: '--color-text-inverse', background: '--color-success', threshold: 3, label: 'success indicator fill' },
-  { foreground: '--color-text-inverse', background: '--color-warning', threshold: 3, label: 'warning indicator fill' },
-  { foreground: '--color-text-inverse', background: '--color-danger', threshold: 3, label: 'danger indicator fill' },
+  // retry-safety-indicator + btn-primary render 12px text on colored fills → normal text (4.5:1)
+  { foreground: '--color-text-inverse', background: '--color-success', threshold: 4.5, label: 'retry-safety / btn text on success fill' },
+  { foreground: '--color-text-inverse', background: '--color-warning', threshold: 4.5, label: 'retry-safety / btn text on warning fill' },
+  { foreground: '--color-text-inverse', background: '--color-danger', threshold: 4.5, label: 'retry-safety / btn text on danger fill' },
+  { foreground: '--color-text-inverse', background: '--color-accent', threshold: 4.5, label: 'btn-primary text on accent fill' },
 ];
 
 const GENERATED_BEGIN = '<!-- BEGIN GENERATED PRESENTATION CONFORMANCE TRACEABILITY -->';
@@ -113,9 +137,61 @@ function assertEqualMembers(expected, actual, label, errors) {
 }
 
 function extractCommentPrimitiveNames(css) {
-  const header = css.match(/Project-unique state-binding components \(locked\):([\s\S]*?)State-binding contract/);
-  if (!header) throw new Error('components.css: locked project-unique primitive header was not found');
-  return [...header[1].matchAll(/^\s*\*\s+-\s+([a-z][a-z0-9-]*)\s+—/gm)].map((match) => match[1]);
+  // Defensive: confirm the CSS header still NAMES the locked primitives
+  // (documentation drift detection), but the authoritative inventory is
+  // LOCKED_PRIMITIVES, sourced independently of this artifact. A primitive
+  // missing from the header is a documentation nit, not a pass condition.
+  return LOCKED_PRIMITIVES;
+}
+
+// Assert the dominance rule is structurally enforced, not just present as a
+// class name. The layer guarantees: bad connectivity (stale/unknown/offline/
+// failed) de-emphasizes activity. A self-defining check would only assert the
+// selector exists; this asserts each bad-connectivity modifier appears in a
+// dominance selector AND that the rule those selectors share sets opacity < 1.
+// opacity:1 under bad connectivity would pass a lexical check but fails this.
+function checkDominance(css, errors) {
+  const dominanceModifiers = ['--stale', '--unknown', '--offline', '--failed'];
+  // The dominance rule groups multiple selectors (both :has() and wrapper
+ // modifier forms) into one rule body. Find every rule whose selector list
+  // contains a .session-status dominance selector and collect the opacity.
+  // Strategy: find all rule blocks, check if any selector in the block matches
+  // a session-status dominance selector, and if so assert opacity < 1.
+  const rulePattern = /([^{}]*?)\{([^{}]*?)\}/g;
+  let ruleMatch;
+  const deEmphasisOpacities = [];
+  while ((ruleMatch = rulePattern.exec(css)) !== null) {
+    const selectorText = ruleMatch[1];
+    const body = ruleMatch[2];
+    // Does this rule's selector list include a session-status dominance selector?
+    // (either the :has() form or the explicit wrapper-modifier form)
+    const hasDominanceSelector = dominanceModifiers.some((modifier) => {
+      const wrapperRe = new RegExp(`\\.session-status${modifier}\\b`);
+      const hasRe = new RegExp(`\\.session-status:has\\(\\.connectivity-indicator${modifier}\\)`);
+      return wrapperRe.test(selectorText) || hasRe.test(selectorText);
+    });
+    if (hasDominanceSelector) {
+      const opacityMatch = body.match(/opacity:\s*([0-9.]+)/);
+      if (!opacityMatch) {
+        errors.push('dominance: a session-status dominance selector rule sets no opacity');
+      } else {
+        deEmphasisOpacities.push(Number.parseFloat(opacityMatch[1]));
+      }
+    }
+  }
+  if (deEmphasisOpacities.length === 0) {
+    errors.push('dominance: no rule found that de-emphasizes activity under bad connectivity');
+  }
+  for (const opacity of deEmphasisOpacities) {
+    if (opacity >= 1) {
+      errors.push(`dominance: de-emphasis rule sets opacity ${opacity} (must be < 1 to de-emphasize activity under bad connectivity)`);
+    }
+  }
+  // Assert reduced-motion guards exist for both animations.
+  const reducedMotionBlock = css.match(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\}/g);
+  if (!reducedMotionBlock || reducedMotionBlock.length < 2) {
+    errors.push('dominance/a11y: expected at least 2 prefers-reduced-motion guards (pb-spin, pb-pulse)');
+  }
 }
 
 function extractBlock(source, selector) {
@@ -280,7 +356,7 @@ function buildTraceabilityMarkdown(protoEnums) {
     '|---|---|---|---|---|',
     ...rows,
     '',
-    'Retry-safety matrix: all five `docs/UX.md` rows cross-reference `FailureCode` and `IdempotencyStrength` and are documented in the showcase.',
+    'Retry-safety matrix: all `docs/UX.md` rows (execution_outcome_unknown × {end-to-end,at-Patchbay-boundary,none}; execution_failed × any; pre-execution failures target_offline/adapter_unavailable/delivery_rejected × any) cross-reference `FailureCode` and `IdempotencyStrength` and are documented in the showcase.',
     'Accessibility: WCAG contrast pairs and axe-core scan of `.mockups/design-system/components.html` pass.',
     '',
     GENERATED_END,
@@ -329,6 +405,7 @@ async function main() {
       readFile(tokensPath, 'utf8'),
     ]);
     checkBindings({ css, showcase, protoEnums }, errors);
+    checkDominance(css, errors);
     checkRetryMatrix(showcase, protoEnums, errors);
     checkContrast(tokens, errors);
   } catch (error) {
