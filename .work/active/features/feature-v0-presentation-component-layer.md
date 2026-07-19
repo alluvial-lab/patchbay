@@ -1,14 +1,14 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
 release_binding: null
 gate_origin: null
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-07-18
 ---
 
 # Feature: Shared presentation-component layer (v0)
@@ -87,3 +87,27 @@ Structural insights surfaced during aesthetic exploration that constrain the des
 - The `ux-ui-design:components` skill is the mockup-time analog of this layer (per `docs/UX.md`). The design pass runs `palette` (lock tokens) then `components` (lock primitives + state bindings), producing `.mockups/design-system/tokens.css` and `.mockups/design-system/components.css`.
 - The layer is the structural enforcement that makes the conformance floor machine-checkable. Without it, conformance is a prose checklist each surface re-binds independently (the drift `feature-command-state-ssot` exists to kill).
 - Token vocabulary (colors, type, spacing, radii) is the skin surface; reserved as operator-customizable per `docs/SPEC.md`. The layer consumes tokens; it does not own them.
+
+## Implementation notes
+
+- **Execution capability:** host-session inline (land mode). The deliverable is mockup artifacts (CSS + showcase), not application code — no worker fan-out warranted. Capability choice N/A for a no-build CSS verification pass.
+- **Review weight:** `standard` (default — no caller override, no project convention for this feature).
+- **Land mode.** The design-system pipeline output (`tokens.css`, `components.css`, `components.html` showcase) was already committed on disk by the `palette` → `components` mockup passes (commits `e324178`, `95ac1f7`). This implementation pass reconciled the as-built artifacts against the design's state-binding contract, verified, and advanced the lifecycle — no new code/artifacts were authored.
+- **Files (verified, not changed this pass):** `.mockups/design-system/tokens.css`, `.mockups/design-system/components.css`, `.mockups/design-system/components.html`. No working-tree changes to the deliverable; only this item body + frontmatter.
+- **Verification (the conformance floor, made structural):**
+  - **Registry-derived bindings — complete.** All three protocol registries fully bound against `docs/PROTOCOL.md`: CommandState 9/9 (`.command-step--{accepted,delivered,running,completed,rejected,failed,expired,cancelled,superseded}`), SessionConnectivityState 5/5 (`.connectivity-indicator--{live,stale,offline,unknown,failed}`), SessionActivityState 3/3 (`.activity-indicator--{idle,working,unknown}`).
+  - **Dominance rule — present.** `.session-status` applies the stale/unknown/offline/failed-de-emphasizes-activity rule via `:has()`, with an `@supports not selector(:has(*))` graceful fallback for browsers without `:has`.
+  - **Liveness ≠ delivery — structural.** `command-step`/`delivery-line` (delivery) are distinct primitives from `connectivity-indicator`/`activity-indicator` (liveness); no shared state class.
+  - **Identity-before-intent — structural.** `.session-row__label` (project/cwd/name) is primary weight; `.session-row__identity` (adapter/scope/runtime/gen tuple) is tertiary color — identity is shown but de-emphasized as metadata, intent (the label) leads. (Note: the design body phrases this as 'identity tuple primary, labels metadata'; the as-built inverts the visual emphasis — label leads, identity is the metadata. This matches the locked cockpit mock `option-2.html` which the operator selected as 'Identity-forward' with 'label + project dominant, identity + status as metadata'. Reconciled as-built; flagged here for traceability.)
+  - **Retry safety — derived, not from CommandState.** `.retry-safety-indicator--{safe,maybe,unsafe}` variants exist; the showcase enumerates the full UX.md matrix (`execution_outcome_unknown × {end-to-end→safe, at-Patchbay-boundary→maybe, none→unsafe}`, `execution_failed × any → not unconditionally safe`, `target_offline × any → safe`). Derived from failure term × `idempotency_strength`, never `CommandState` alone.
+  - **Terminal races as UI labels.** `.command-step__race` renders race explanations ('Completed before cancellation arrived', etc.) as italic labels — not added protocol states.
+  - **Failure vocabulary distinct.** `failure-banner` presents each failure term via `.failure-banner__term` (text label) rather than per-code color variants. UX.md requires terms 'remain distinct', not per-code colors — the term IS the distinction. Acceptable as-built; the showcase enumerates `authorization_denied`, `unsupported_command`, `timeout`, `expired`, `cancelled`, `superseded`, `execution_failed`, `target_offline`.
+  - **Token resolution — clean.** Every `var(--…)` in `components.css` resolves to a definition in `tokens.css` (no undefined references). `components.css` carries no `@import`; the showcase links `tokens.css` before `components.css` per the components.css header comment.
+  - **CSS syntax — balanced.** Brace balance: components 143/143, tokens 4/4.
+  - **Skin-ability — structural.** All color/type/spacing/radius values flow through `tokens.css` custom properties; no hard-coded values in `components.css` state bindings (only two local `--shadow-raised` overrides, dark-mode-aware, documented as palette-refinement candidates in the header).
+  - **Surface composability — structural.** Primitives are class-based and framework-agnostic (plain CSS); the CLI and a future Expo surface can compose the same primitives. No web-only runtime dependency.
+- **Machine-checkable conformance (the 'structural enforcement' obligation):** the state-binding contract is structurally encoded in the CSS class taxonomy (one class per registry member, dominance via `:has()`, distinct delivery vs liveness primitives) — a surface cannot bind a `CommandState` the registry doesn't name, and the showcase exercises every variant. A formal conformance vector/test that asserts registry↔class correspondence is **not** added this pass; per `docs/UX.md:49` the layer makes the floor 'machine-checkable' in principle, and the locked class taxonomy is the substrate such a test would assert against. Deferred as a reserved follow-on (would file under this feature's review or a sibling hardening item), not a v0.1.0 blocker — the cockpit consumes the CSS primitives directly.
+- **Tests added/removed:** none — the deliverable is mockup artifacts; verification is structural/visual against the registries, not unit-testable code. The showcase (`components.html`) is the executable demonstration that every primitive renders in every state.
+- **Discrepancies from design:** one — the 'identity-before-intent' visual emphasis is inverted in as-built relative to the design body's phrasing (label leads, identity is metadata), but this matches the operator-selected mock `option-2.html`. Reconciled to as-built; see verification note above.
+- **Adjacent issues parked:** none.
+- **Dependency readiness:** `feature-v0-web-server` is `stage: done` — verified via `work-view --scope all --stage done`.
