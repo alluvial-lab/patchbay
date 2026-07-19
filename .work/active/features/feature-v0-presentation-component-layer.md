@@ -41,6 +41,27 @@ Implementation of the layer was deferred at the acceptance-criteria tier; this f
 - `feature-ux-v0-acceptance` (done) — named this seam and deferred its implementation
 - `contracts/ts/` — generated TS bindings (the canonical state types the layer binds)
 
+## Design decisions (re-design pass, 2026-07-19)
+
+Resolved interactively during the bounce-back design checkpoint. These govern the conformance-mechanism re-design.
+
+- **Q1 — Conformance mechanism shape: sibling-but-separate check.** A presentation-specific check (not a `contracts/vectors/*.json` extension). The presentation layer is a UX-floor concern, not a protocol-wire concern — mixing CSS-class↔registry assertions into the protocol vector set would muddy the protocol vectors' wire-behavior semantics. Own check script, own traceability section in `docs/UX.md` (not `docs/VERIFICATION.md`). The property-ids it traces to (`LabelsCannotOverrideIdentity`, `SessionIdentityTuple`, stale-never-live) remain sourced from `docs/VERIFICATION.md`'s registry — the check is separate, the vocabulary is shared.
+- **Q2 — Runtime contract scope: descriptive only.** The layer ships a documented contract (guarantees vs consumer obligations) in the feature body / `docs/UX.md`; the cockpit's review enforces compliance descriptively. No executable runtime-assertion module the cockpit must import — that would over-couple the single v0.1.0 consumer to the layer's internals. The static conformance vector (Q1) is the machine-checkable part; the runtime contract is prose the cockpit's review confirms. Promotion to executable assertions is a reserved seam for when a second surface appears.
+- **Q3 — Accessibility check rigor: full a11y audit harness.** Contrast ratio computation AND an axe-core/pa11y scan of the showcase HTML, run in CI. Catches the keyboard-focus / ARIA-semantics / reduced-motion gaps the discovery flagged — not just the contrast pairs. The layer's safety-adjacent role (it gates the cockpit per UX.md:49) justifies the tooling dependency over the v0.1.0-minimal contrast-only option. The two existing animations (`pb-spin`, `pb-pulse`) also get direct `prefers-reduced-motion` CSS guards as part of the implementation.
+- **Q4 — Review weight pinned: `thorough`.** This feature's implementation review runs the thorough convergence loop (review → adjudicate → fix → verify, repeated until a pass yields no receiver-confirmed material current-cycle blockers), not standard's single pass. The layer is a structural-enforcement seam, not a leaf consumer — `standard` was the wrong default and let a mockup-generated artifact pass with 5 unaddressed blockers. Recorded here so the implementation phase inherits it; CONVENTIONS.md already overrides review routing for safety-claiming items and this extends that posture.
+- **Q5 — Retain inline decisions except genuine 50/50s, which are surfaced for re-opening.** The mockup pass's operator-confirmed decisions (Q1 sibling scope, Q2 pipeline depth, Q4 visual direction, Q5 browser-only operator domain) are retained — the operator made those, not the agent. The design-surface inputs that are registry-derived (connectivity/activity separation) are retained. Genuine 50/50s the pass locked are surfaced below for operator review.
+
+## Inline-decision audit (50/50s to re-open)
+
+Surveying the decisions the mockup pass locked, classified by whether a different reasonable implementer would produce a materially different model:
+
+- **Option C — `working` stays a 3-value protocol axis; thinking-vs-executing is a presentation detail composed from the Observation stream.** This is the one genuine 50/50. It explicitly dispositions a reserved seam: Option B (promote `thinking`/`executing` to the `SessionActivityState` registry — a reversal requiring enum + transition table + proto + model + conformance-vector updates) was available and was declined in favor of keeping the detail ephemeral and Observation-composed. The decision affects the conformance vector's shape (does it assert 3 activity states, or 3 + detail-states?), the `.activity-indicator` binding, and whether thinking-vs-executing is a checked property or uncheckable presentation hint. **Surfaced for re-opening — see question below.**
+- **Dark/Light toggle default = system-follow.** UX decision, not a protocol 50/50; no reserved-seam disposition. Retained.
+- **Skip the `motion` design-system pass.** Scope decision for v0. Q3B now requires reduced-motion guards on the two existing animations, which partially back-fills this — but the motion *language* (easing, duration scale, spring presets) remains undesigned. Retained as v0 scope; the motion pass is a natural v1 follow-on now that Q3B establishes an a11y harness that would validate it.
+- **Plex Mono/Sans hybrid typography.** Visual/UX decision resolving the mobile-markdown-readability tension; no protocol or reserved-seam consequence. Retained.
+
+None of the cockpit-feature design decisions (Q1 two-pane/drill-in, Q2 delivery badge, Q3 chat alignment, Q4 composer shape) are component-layer 50/50s — they are consumer decisions the cockpit's own design owns.
+
 ## Design decisions (operator-confirmed, 2026-07-16)
 
 Resolved interactively during the `feature-v0-web-cockpit` design kickoff (these decisions apply to both features).
