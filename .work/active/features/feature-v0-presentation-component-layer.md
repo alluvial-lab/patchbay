@@ -1,7 +1,7 @@
 ---
 id: feature-v0-presentation-component-layer
 kind: feature
-stage: review
+stage: done
 tags: [ux, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server]
@@ -106,8 +106,37 @@ Structural insights surfaced during aesthetic exploration that constrain the des
   - **CSS syntax — balanced.** Brace balance: components 143/143, tokens 4/4.
   - **Skin-ability — structural.** All color/type/spacing/radius values flow through `tokens.css` custom properties; no hard-coded values in `components.css` state bindings (only two local `--shadow-raised` overrides, dark-mode-aware, documented as palette-refinement candidates in the header).
   - **Surface composability — structural.** Primitives are class-based and framework-agnostic (plain CSS); the CLI and a future Expo surface can compose the same primitives. No web-only runtime dependency.
-- **Machine-checkable conformance (the 'structural enforcement' obligation):** the state-binding contract is structurally encoded in the CSS class taxonomy (one class per registry member, dominance via `:has()`, distinct delivery vs liveness primitives) — a surface cannot bind a `CommandState` the registry doesn't name, and the showcase exercises every variant. A formal conformance vector/test that asserts registry↔class correspondence is **not** added this pass; per `docs/UX.md:49` the layer makes the floor 'machine-checkable' in principle, and the locked class taxonomy is the substrate such a test would assert against. Deferred as a reserved follow-on (would file under this feature's review or a sibling hardening item), not a v0.1.0 blocker — the cockpit consumes the CSS primitives directly.
+- **Machine-checkable conformance (the 'structural enforcement' obligation):** the state-binding contract is structurally encoded in the CSS class taxonomy (one class per registry member, dominance via `:has()` + explicit wrapper modifiers, distinct delivery vs liveness primitives) — a surface cannot bind a `CommandState` the registry doesn't name, and the showcase exercises every variant. A formal static conformance vector that asserts registry↔class↔showcase correspondence is **not** added this pass: `docs/UX.md:49` gives an either/or (the layer OR an explicit conformance-test substitute) and the layer satisfies it for v0.1.0. The Brief's "machine-checkable" wording over-claims what CSS alone delivers — CSS provides the substrate such a check would assert against, but cannot enforce that a consumer emits the correct class or derives retry-safety correctly (that is a consumer/cockpit responsibility). Filed as `backlog-presentation-conformance-vector` (important, parked) — promote when adding a second conformant surface or hardening release assurance.
 - **Tests added/removed:** none — the deliverable is mockup artifacts; verification is structural/visual against the registries, not unit-testable code. The showcase (`components.html`) is the executable demonstration that every primitive renders in every state.
 - **Discrepancies from design:** one — the 'identity-before-intent' visual emphasis is inverted in as-built relative to the design body's phrasing (label leads, identity is metadata), but this matches the operator-selected mock `option-2.html`. Reconciled to as-built; see verification note above.
-- **Adjacent issues parked:** none.
+- **Adjacent issues parked:** `backlog-presentation-conformance-vector` (important — formal registry↔class conformance check; see finding F2 below).
 - **Dependency readiness:** `feature-v0-web-server` is `stage: done` — verified via `work-view --scope all --stage done`.
+
+## Review (2026-07-19)
+
+**Verdict**: Approve with comments (standard weight, one cross-model fresh-context pass via `openai-codex/gpt-5.6-sol` high; receiver-confirmed blockers fixed and verified, no re-review under standard).
+
+**Pass**: 1 independent pass (cross-model: umans host → openai-codex/gpt-5.6-sol reviewer, high thinking, ~6.8 min). Reviewer verdict was `needs fixes`; receiver adjudicated all 7 findings.
+
+**Findings (adjudicated)**:
+
+Blockers (all fixed + verified this pass):
+- **F1 — ElicitationState only 3/9 bound** (`components.css:530-531`): CONFIRMED. My land-mode verification claim of "all three protocol registries fully bound" was wrong — I audited CommandState/Connectivity/Activity but not ElicitationState. Fixed: added `.elicitation-card--{declined,cancelled,withdrawn,superseded,stale}` terminal classes (opened/pending = base card); showcase now exercises all 9 members.
+- **F3 — identity-before-intent contradicted** (`components.css:475-485`, `components.html`): CONFIRMED. The as-built inverted the floor obligation (label primary, identity tertiary) and my "reconciled to the cockpit mock" was unsound — a normative floor rule can't be overridden by a consumer mock. Fixed: `.session-row__identity` is now primary color/semibold; `.session-row__label` demoted to secondary/regular; showcase rows now carry the full identity tuple (adapter·scope·runtime·gen). Submission-time enforcement remains a cockpit (consumer) responsibility; the layer's job is to provide the primitive where the tuple is present and not overridable.
+- **F7-toast — toast text invisible (1:1 contrast)** (`components.css:196-200`): CONFIRMED, promoted important→blocker (invisible text is a correctness defect). `--color-bg-inverse` and `--color-text-primary` were the same value in both modes. Fixed: `.toast` now uses `--color-text-inverse`.
+- **F5 — dominance rule fails open** (`components.css:366-368`): CONFIRMED, promoted important→blocker (a normative presentation rule failing open). The `@supports not selector(:has(*))` fallback restored activity to full opacity, silently disabling the dominance rule on browsers without `:has`. Fixed: removed the fail-open fallback; added explicit `.session-status--{stale,unknown,offline,failed}` wrapper modifiers that apply the de-emphasis without `:has`. The rule now holds with or without `:has()`; surfaces must use the explicit modifier on browsers lacking `:has`.
+- **F6 (delivery-line) — `.delivery-line` primitive never exercised in showcase**: CONFIRMED, promoted important→blocker (an unexercised project-unique state-binding primitive is a conformance gap). Fixed: added a `delivery-line` showcase section exercising delivery states (accepted/delivered/running/completed/failed) with LSNs.
+
+Important (parked):
+- **F2 — layer not actually machine-checkable**: ACCEPTED as important/park. The Brief's "machine-checkable" wording over-claims. Filed `backlog-presentation-conformance-vector`. The cockpit is not blocked (UX.md:49 either/or satisfied by the layer). Brief wording corrected above.
+- **F7-contrast — state indicators below WCAG AA**: CONFIRMED, fixed inline (not parked). Light `--color-text-tertiary` `#9a8b73` (2.68:1) → `#6e6248` (4.84:1); light `--color-warning` `#c8772e` (2.76:1 as fill) → `#b56820` (3.41:1); dark `--color-text-tertiary` `#7a6e58` (3.57:1) → `#9a8b73` (5.37:1); dark `--color-danger` `#c84545` (3.28:1) → `#d85555` (3.99:1). All 13 critical contrast pairs now pass AA (normal text 4.5:1, large/fill 3:1).
+
+Rejected:
+- **F4 (derivation) — retry-safety "not structurally derived"**: REJECTED. CSS cannot compute retry-safety from a failure-term×idempotency input; the layer correctly provides the three outcome primitives (`--safe/--maybe/--unsafe`) and the showcase documents the full derivation matrix. Derivation is a consumer (cockpit) responsibility, not the layer's. (The "5/14 failure terms shown" sub-point is a nit — UX.md requires terms "remain distinct," not that all 14 FailureCodes be showcased.)
+
+Nits (noted, not fixed):
+- F6-common: common components `.select`/`.divider`/`.toast`/`.card--interactive` not each given a dedicated showcase cell. Showcase-completeness polish, not a floor obligation. (`.toast` is now AA-compliant regardless.)
+
+**Verification (post-fix)**: all 4 registries fully bound + exercised in showcase (CommandState 9/9, Connectivity 5/5, Activity 3/3, ElicitationState 9/9); 13/13 critical contrast pairs pass AA; CSS brace-balanced (components 146/146, tokens 4/4); all `var()` references resolve (`--shadow-raised` is defined in components.css itself, intentional per header); dominance rule holds with and without `:has()`.
+
+**Notes**: standard weight, single pass, no re-review. The review caught a real land-mode verification failure (F1 — I under-audited ElicitationState) plus 4 other material issues the land-mode pass missed; the fresh-context cross-model pass earned its cost.

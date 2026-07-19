@@ -395,15 +395,35 @@
     </div>
   </section>
 
+  <!-- ============ DELIVERY LINE ============ -->
+  <section id="delivery-line" class="showcase-section">
+    <h2>delivery-line — command delivery, distinct from message</h2>
+    <p>Liveness ≠ delivery (UX.md floor). <code>delivery-line</code> renders command delivery state distinctly from message content and from session liveness — accepted does not mean completed; delivered does not mean completed.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>Delivery states</h3>
+        <div class="demo demo--col">
+          <div class="delivery-line"><span class="command-step__state" style="color:var(--color-info)">accepted</span> · lsn 142</div>
+          <div class="delivery-line"><span class="command-step__state" style="color:var(--color-info)">delivered</span> · lsn 143</div>
+          <div class="delivery-line"><span class="command-step__state" style="color:var(--color-accent)">running</span> · lsn 144</div>
+          <div class="delivery-line"><span class="command-step__state" style="color:var(--color-success)">completed</span> · lsn 147</div>
+          <div class="delivery-line"><span class="command-step__state" style="color:var(--color-danger)">failed</span> · execution_failed · lsn 148</div>
+        </div>
+        <p class="matrix-note">Delivery state is a compact line distinct from the message body; tap expands full state history + LSNs as debug detail.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ SESSION ROW ============ -->
   <section id="session-row" class="showcase-section">
     <h2>session-row — session list item</h2>
-    <p>Identity-before-intent: the identity tuple (adapter/scope/runtime/gen) is primary; human-readable labels are metadata. "needs you" state foregrounds sessions waiting for a command or with a pending elicitation.</p>
+    <p>Identity-before-intent (UX.md floor): the stable identity tuple (adapter id, deployment scope, runtime session id, generation) is the authoritative target identity — shown as a first-class element. Human-readable labels (project/cwd/name) are metadata. The consumer verifies the identity tuple before allowing submission. "needs you" state foregrounds sessions waiting for a command or with a pending elicitation.</p>
     <div class="showcase-grid">
       <div class="showcase-cell">
         <h3>Default + active + needs-you</h3>
         <div class="demo demo--col">
           <div class="session-row">
+            <span class="session-row__identity">pi-adapter · laptop-scope · sess-7f3a · gen 1</span>
             <span class="session-row__label">pi@laptop</span>
             <span class="session-row__context">patchbay-core</span>
             <div class="session-row__badges">
@@ -414,19 +434,20 @@
             </div>
           </div>
           <div class="session-row session-row--active">
+            <span class="session-row__identity">codex-adapter · vm-scope · sess-2b91 · gen 1</span>
             <span class="session-row__label">codex@vm</span>
             <span class="session-row__context">web-server</span>
             <div class="session-row__badges">
-              <span class="session-status">
+              <span class="session-status session-status--stale">
                 <span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span>
                 <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working<span class="activity-indicator__detail">thinking</span></span>
               </span>
             </div>
           </div>
           <div class="session-row session-row--needs-you">
+            <span class="session-row__identity">pi-adapter · desktop-scope · sess-c4e0 · gen 2</span>
             <span class="session-row__label">pi@desktop</span>
             <span class="session-row__context">pi-adapter</span>
-            <span class="session-row__identity">gen 2 · waiting for command</span>
             <div class="session-row__badges">
               <span class="session-status">
                 <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span>
@@ -434,6 +455,20 @@
               </span>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Dominance rule — explicit wrapper modifier (no :has)</h3>
+        <p class="matrix-note">Bad connectivity de-emphasizes activity. Browsers without <code>:has()</code> use the <code>.session-status--stale/--unknown/--offline/--failed</code> modifier; the rule never fails open.</p>
+        <div class="demo demo--col">
+          <span class="session-status session-status--offline">
+            <span class="connectivity-indicator connectivity-indicator--offline"><span class="connectivity-indicator__dot"></span>offline</span>
+            <span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span>
+          </span>
+          <span class="session-status session-status--unknown">
+            <span class="connectivity-indicator connectivity-indicator--unknown"><span class="connectivity-indicator__dot"></span>unknown</span>
+            <span class="activity-indicator activity-indicator--idle"><span class="activity-indicator__icon"></span>idle</span>
+          </span>
         </div>
       </div>
     </div>
@@ -516,6 +551,47 @@
             <p class="elicitation-card__prompt">Which branch should I target?</p>
           </div>
         </div>
+      </div>
+      <div class="showcase-cell">
+        <h3>Other terminals — declined / cancelled / withdrawn / superseded / stale</h3>
+        <div class="demo demo--col">
+          <div class="elicitation-card elicitation-card--declined">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">approval</span>
+              <span class="elicitation-card__contract">declined</span>
+            </div>
+            <p class="elicitation-card__prompt">Approve tool call: <code>bash: rm -rf /</code></p>
+          </div>
+          <div class="elicitation-card elicitation-card--cancelled">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">question</span>
+              <span class="elicitation-card__contract">cancelled</span>
+            </div>
+            <p class="elicitation-card__prompt">Which branch should I target?</p>
+          </div>
+          <div class="elicitation-card elicitation-card--withdrawn">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">question</span>
+              <span class="elicitation-card__contract">withdrawn</span>
+            </div>
+            <p class="elicitation-card__prompt">Which region should I deploy to?</p>
+          </div>
+          <div class="elicitation-card elicitation-card--superseded">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">approval</span>
+              <span class="elicitation-card__contract">superseded</span>
+            </div>
+            <p class="elicitation-card__prompt">Approve tool call: <code>write_file</code></p>
+          </div>
+          <div class="elicitation-card elicitation-card--stale">
+            <div class="elicitation-card__header">
+              <span class="elicitation-card__kind">question</span>
+              <span class="elicitation-card__contract">stale · opener gen superseded</span>
+            </div>
+            <p class="elicitation-card__prompt">Which branch should I target?</p>
+          </div>
+        </div>
+        <p class="matrix-note">All 9 ElicitationState members exercised: opened/pending (base card) + answered/declined/expired/cancelled/withdrawn/superseded/stale.</p>
       </div>
     </div>
   </section>

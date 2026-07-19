@@ -196,7 +196,7 @@ button { font: inherit; cursor: pointer; }
 .toast {
   padding: var(--space-3) var(--space-4);
   background: var(--color-bg-inverse);
-  color: var(--color-text-primary);
+  color: var(--color-text-inverse);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-raised);
   font-size: var(--font-size-sm);
@@ -356,17 +356,27 @@ button { font: inherit; cursor: pointer; }
   flex-wrap: wrap;
 }
 .session-status .activity-indicator { opacity: 1; transition: opacity 120ms; }
-/* Dominance rule: bad connectivity de-emphasizes activity */
+/* Dominance rule: bad connectivity de-emphasizes activity.
+   Two paths so the normative rule holds with OR without :has():
+   (1) :has() path — automatic when a bad-connectivity indicator is present.
+   (2) explicit wrapper modifier path — the consumer adds --stale/--unknown/
+       --offline/--failed to .session-status when it knows connectivity is bad.
+       This is the fallback for browsers without :has() AND the explicit form
+       a surface may always use. The rule must NEVER fail open (full-opacity
+       activity under bad connectivity would render stale as live). */
 .session-status:has(.connectivity-indicator--stale) .activity-indicator,
 .session-status:has(.connectivity-indicator--unknown) .activity-indicator,
 .session-status:has(.connectivity-indicator--offline) .activity-indicator,
-.session-status:has(.connectivity-indicator--failed) .activity-indicator {
+.session-status:has(.connectivity-indicator--failed) .activity-indicator,
+.session-status--stale .activity-indicator,
+.session-status--unknown .activity-indicator,
+.session-status--offline .activity-indicator,
+.session-status--failed .activity-indicator {
   opacity: 0.55;
 }
-/* Fallback for browsers without :has — activity always at full opacity */
-@supports not selector(:has(*)) {
-  .session-status .activity-indicator { opacity: 1; }
-}
+/* No @supports-not fallback that restores full opacity: a browser without
+   :has() MUST use the explicit wrapper modifier instead. Failing open here
+   would silently render stale/unknown connectivity as live. */
 
 /* ---- command-timeline / command-step — CommandState (9) ---- */
 /* Delivery states rendered distinctly from message content (liveness ≠ delivery). */
@@ -453,7 +463,13 @@ button { font: inherit; cursor: pointer; }
 }
 
 /* ---- session-row — session list item ---- */
-/* Identity-before-intent: identity tuple is primary; labels are metadata. */
+/* Identity-before-intent (UX.md floor): the stable identity tuple
+   (adapter id, deployment scope, runtime session id, generation) is the
+   authoritative target identity and is shown as a first-class element.
+   Human-readable labels (project/cwd/name) are metadata. The consumer
+   (cockpit) must verify the identity tuple before allowing submission;
+   this primitive guarantees the tuple is present and not visually
+   overridden by the label. */
 .session-row {
   display: flex;
   flex-direction: column;
@@ -473,16 +489,16 @@ button { font: inherit; cursor: pointer; }
   border-left-color: var(--color-warning);
 }
 .session-row__label {
-  font: var(--font-weight-medium) var(--font-size-sm)/1.2 var(--font-mono);
-  color: var(--color-text-primary);
+  font: var(--font-weight-regular) var(--font-size-sm)/1.2 var(--font-mono);
+  color: var(--color-text-secondary);
 }
 .session-row__context {
   font: var(--font-size-xs)/1 var(--font-mono);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
 }
 .session-row__identity {
-  font: var(--font-size-xs)/1 var(--font-mono);
-  color: var(--color-text-tertiary);
+  font: var(--font-weight-semibold) var(--font-size-xs)/1.2 var(--font-mono);
+  color: var(--color-text-primary);
 }
 .session-row__badges { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-top: var(--space-1); }
 
@@ -528,7 +544,15 @@ button { font: inherit; cursor: pointer; }
   border-radius: var(--radius-sm);
 }
 .elicitation-card--answered { border-left-color: var(--color-success); opacity: 0.7; }
+.elicitation-card--declined { border-left-color: var(--color-text-secondary); opacity: 0.6; }
 .elicitation-card--expired { border-left-color: var(--color-text-tertiary); opacity: 0.5; }
+.elicitation-card--cancelled { border-left-color: var(--color-text-tertiary); opacity: 0.5; }
+.elicitation-card--withdrawn { border-left-color: var(--color-info); opacity: 0.6; }
+.elicitation-card--superseded { border-left-color: var(--color-info); opacity: 0.5; border-left-style: dashed; }
+.elicitation-card--stale { border-left-color: var(--color-text-tertiary); opacity: 0.45; border-left-style: dashed; }
+/* Non-terminal states (opened/pending) use the base card (amber, full opacity).
+   opened = durably recorded but not yet fanned-out-visible; pending = visible
+   and answerable. Both are live/active — the base amber card represents them. */
 .elicitation-card__header {
   display: flex;
   align-items: center;
