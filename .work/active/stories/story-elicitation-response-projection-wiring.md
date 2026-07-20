@@ -1,7 +1,7 @@
 ---
 id: story-elicitation-response-projection-wiring
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-elicitation-response-contract
 depends_on: [story-elicitation-response-proto-messages, story-elicitation-response-core-validation]
@@ -72,3 +72,19 @@ Full signatures in the feature body Unit 3.
 - A response submitted referencing an Elicitation whose opening event is not
   yet in the projection rejects as `validation_failed` (unknown elicitation) —
   this is correct Fail-Fast behavior, not a bug.
+
+## Implementation notes
+
+Extended `ElicitationRecord` with the opening response contract and expected
+responder actor. Added the locked contract lookup projection, folded it during
+rebuild and catch-up, and passed it through the server submit path. The fold-lag
+invariant test confirms lookup returns `None` before the opening event is
+observed and the real non-terminal contract afterward.
+
+`ResponseContract` is retained as generated `PartialEq` rather than `Eq`
+through the projection because protobuf timestamp-containing fields are not
+`Eq`; this is the same mechanical constraint recorded by the core-validation
+story.
+
+Verification: `cargo test --workspace` and `cargo clippy --workspace
+--all-targets -- -D warnings` pass.

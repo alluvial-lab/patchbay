@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId,
-    ElicitationState, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
-    TypedCorrelation,
+    typed_correlation, ActorId, AuthorityDomainId, CommandId, CommandTransition, Elicitation,
+    ElicitationId, ElicitationState, Lsn, Operation, OperationKind, OperationState,
+    ResponseContract, StoredEventKind, TypedCorrelation,
 };
 use prost::Message;
 
@@ -46,6 +46,10 @@ pub struct ElicitationRecord {
     pub state: ElicitationState,
     /// The LSN of the first transition that terminalized the slot.
     pub terminal_lsn: Option<u64>,
+    /// The response contract carried by the opening Elicitation event.
+    pub contract: Option<ResponseContract>,
+    /// The actor expected to answer this Elicitation, when specified.
+    pub expected_responder_actor: Option<ActorId>,
 }
 
 /// An independent event-log consumer that projects Elicitation-slot state.
@@ -170,6 +174,8 @@ impl ElicitationSlotLayer {
                 elicitation_id,
                 state,
                 terminal_lsn: is_terminal_state(state).then_some(event_lsn),
+                contract: elicitation.response_contract,
+                expected_responder_actor: elicitation.expected_responder_actor,
             },
         );
         Ok(())

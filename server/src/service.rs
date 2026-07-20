@@ -125,6 +125,7 @@ where
             self.state.grant_check(),
             self.state.target_resolver(),
             self.state.state_lookup(),
+            self.state.elicitation_contract_lookup(),
             &issuer,
             operation,
         )

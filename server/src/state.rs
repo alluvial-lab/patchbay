@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use patchbay_contracts::patchbay::{AuthorityDomainId, CommandId, Lsn, OperationKind, TargetScope};
+use patchbay_contracts::patchbay::{
+    AuthorityDomainId, CommandId, ElicitationId, Lsn, OperationKind, TargetScope,
+};
 use patchbay_core::{
     acceptance::{
-        Authorized, CommandIndex, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied,
-        TargetBinding, TargetNotFound, TargetResolver,
+        ActiveElicitation, Authorized, CommandIndex, CommandSnapshot, CommandStateLookup,
+        ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, TargetBinding,
+        TargetNotFound, TargetResolver,
     },
     authority::{AuthorityRegistry, IssuerContext},
     session::SessionRegistry,
@@ -27,6 +30,7 @@ pub struct ProjectionState {
     grant_check: LockedGrantCheck,
     target_resolver: LockedTargetResolver,
     state_lookup: LockedCommandStateLookup,
+    elicitation_slots: LockedElicitationContractLookup,
     last_applied_lsn: Arc<Mutex<u64>>,
     submit_gate: Arc<Mutex<()>>,
 }
@@ -44,6 +48,7 @@ impl ProjectionState {
         let mut authority = AuthorityRegistry::new();
         let mut sessions = SessionRegistry::new();
         let mut commands = CommandIndex::new();
+        let mut elicitation_slots = ElicitationSlotLayer::new();
         let mut last_applied_lsn = 0;
         for event in &events {
             last_applied_lsn = validate_next_event(event, authority_domain_id, last_applied_lsn)?;
@@ -52,12 +57,16 @@ impl ProjectionState {
                 .map_err(|error| error.to_string())?;
             sessions.observe(event).map_err(|error| error.to_string())?;
             commands.apply(event).map_err(|error| error.to_string())?;
+            elicitation_slots
+                .observe(event)
+                .map_err(|error| error.to_string())?;
         }
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
             target_resolver: LockedTargetResolver::new(sessions),
             state_lookup: LockedCommandStateLookup::new(commands),
+            elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             submit_gate: Arc::new(Mutex::new(())),
         })
@@ -76,6 +85,11 @@ impl ProjectionState {
     #[must_use]
     pub fn state_lookup(&self) -> &LockedCommandStateLookup {
         &self.state_lookup
+    }
+
+    #[must_use]
+    pub fn elicitation_contract_lookup(&self) -> &LockedElicitationContractLookup {
+        &self.elicitation_slots
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
@@ -106,6 +120,10 @@ impl ProjectionState {
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.state_lookup
                 .apply(&event)
+                .await
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            self.elicitation_slots
+                .observe(&event)
                 .await
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             *cursor = next_lsn;
@@ -215,6 +233,41 @@ impl TargetResolver for LockedTargetResolver {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct LockedElicitationContractLookup {
+    inner: Arc<Mutex<ElicitationSlotLayer>>,
+}
+
+impl LockedElicitationContractLookup {
+    pub fn new() -> Self {
+        Self::from_layer(ElicitationSlotLayer::new())
+    }
+
+    fn from_layer(layer: ElicitationSlotLayer) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(layer)),
+        }
+    }
+
+    async fn observe(
+        &self,
+        event: &RecordedEvent,
+    ) -> Result<(), patchbay_core::acceptance::AcceptanceError> {
+        self.inner.lock().await.observe(event)
+    }
+}
+
+impl ElicitationContractLookup for LockedElicitationContractLookup {
+    async fn active_contract(&self, elicitation_id: &ElicitationId) -> Option<ActiveElicitation> {
+        let layer = self.inner.lock().await;
+        let record = layer.get_slot(elicitation_id)?;
+        Some(ActiveElicitation {
+            contract: record.contract.clone()?,
+            is_terminal: patchbay_core::acceptance::elicitation::is_terminal_state(record.state),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct LockedCommandStateLookup {
     inner: Arc<Mutex<CommandIndex>>,
@@ -239,5 +292,68 @@ impl CommandStateLookup for LockedCommandStateLookup {
     async fn current_state(&self, command_id: &CommandId) -> Option<CommandSnapshot> {
         let index = self.inner.lock().await;
         CommandStateLookup::current_state(&*index, command_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patchbay_contracts::patchbay::{
+        response_contract, AuthorityDomainId, Elicitation, ElicitationState, EventId,
+        QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
+        StoredEventPayload,
+    };
+    use prost::Message;
+
+    #[tokio::test]
+    async fn fold_lag_invariant_exposes_contract_only_after_opening_event_is_folded() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let elicitation_id = ElicitationId {
+            value: "elicitation-fold-lag".to_owned(),
+        };
+        let contract = ResponseContract {
+            contract_kind: ResponseContractKind::Question as i32,
+            contract_body: Some(response_contract::ContractBody::Question(
+                QuestionContract {
+                    options: vec![ResponseOption {
+                        option_id: "yes".to_owned(),
+                        label: "Yes".to_owned(),
+                    }],
+                    allow_free_text: false,
+                },
+            )),
+            ..ResponseContract::default()
+        };
+        let lookup = LockedElicitationContractLookup::new();
+
+        assert!(lookup.active_contract(&elicitation_id).await.is_none());
+
+        let event = RecordedEvent {
+            event_id: EventId {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                lsn: Some(Lsn { value: 1 }),
+            },
+            payload: StoredEventPayload {
+                kind: StoredEventKind::Elicitation as i32,
+                payload: Elicitation {
+                    elicitation_id: Some(elicitation_id.clone()),
+                    authority_domain_id: Some(authority_domain_id),
+                    response_contract: Some(contract.clone()),
+                    state: ElicitationState::Opened as i32,
+                    ..Elicitation::default()
+                }
+                .encode_to_vec(),
+            },
+        };
+        lookup.observe(&event).await.unwrap();
+
+        let active = lookup
+            .active_contract(&elicitation_id)
+            .await
+            .expect("folded opening event exposes the active contract");
+        assert_eq!(active.contract, contract);
+        assert!(!active.is_terminal);
     }
 }
