@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/elicitations.proto.
  */
 export const file_patchbay_elicitations: GenFile = /*@__PURE__*/
-  fileDesc("ChtwYXRjaGJheS9lbGljaXRhdGlvbnMucHJvdG8SCHBhdGNoYmF5IogFCgtFbGljaXRhdGlvbhIvCg5lbGljaXRhdGlvbl9pZBgBIAEoCzIXLnBhdGNoYmF5LkVsaWNpdGF0aW9uSWQSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgCIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEioKBm9wZW5lchgDIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSMwoYZXhwZWN0ZWRfcmVzcG9uZGVyX2FjdG9yGAQgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBI1ChFyZXNwb25zZV9jb250cmFjdBgFIAEoCzIaLnBhdGNoYmF5LlJlc3BvbnNlQ29udHJhY3QSLQoOdGFyZ2V0X2NvbnRleHQYBiABKAsyFS5wYXRjaGJheS5UYXJnZXRTY29wZRIvCg50aW1lb3V0X3BvbGljeRgHIAEoCzIXLnBhdGNoYmF5LlRpbWVvdXRQb2xpY3kSOQoTY2FuY2VsbGF0aW9uX3BvbGljeRgIIAEoCzIcLnBhdGNoYmF5LkNhbmNlbGxhdGlvblBvbGljeRIwCgxjb3JyZWxhdGlvbnMYCSADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEioKB3BheWxvYWQYCiABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSKQoFc3RhdGUYCyABKA4yGi5wYXRjaGJheS5FbGljaXRhdGlvblN0YXRlEiMKDHJlY29yZGVkX2xzbhgMIAEoCzINLnBhdGNoYmF5LkxzbhItCglvcGVuZWRfYXQYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIssCChBSZXNwb25zZUNvbnRyYWN0EjUKDWNvbnRyYWN0X2tpbmQYASABKA4yHi5wYXRjaGJheS5SZXNwb25zZUNvbnRyYWN0S2luZBISCgpzY2hlbWFfcmVmGAIgASgJEhAKCHVpX2hpbnRzGAMgAygJEi8KDnRpbWVvdXRfcG9saWN5GAQgASgLMhcucGF0Y2hiYXkuVGltZW91dFBvbGljeRJAChdpbnZhbGlkX3Jlc3BvbnNlX3BvbGljeRgFIAEoDjIfLnBhdGNoYmF5LkludmFsaWRSZXNwb25zZVBvbGljeRIzChByZXNwb25kZXJfcG9saWN5GAYgASgLMhkucGF0Y2hiYXkuUmVzcG9uZGVyUG9saWN5EjIKC3NlbnNpdGl2aXR5GAcgASgOMh0ucGF0Y2hiYXkuUmVzcG9uc2VTZW5zaXRpdml0eSJsCg1UaW1lb3V0UG9saWN5Ei4KCmV4cGlyZXNfYXQYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEisKCGR1cmF0aW9uGAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInMKEkNhbmNlbGxhdGlvblBvbGljeRIbChNvcGVuZXJfbWF5X3dpdGhkcmF3GAEgASgIEh0KFXJlc3BvbmRlcl9tYXlfZGVjbGluZRgCIAEoCBIhChljb3JlX29yX3BvbGljeV9tYXlfY2FuY2VsGAMgASgIIncKD1Jlc3BvbmRlclBvbGljeRIzChhleHBlY3RlZF9yZXNwb25kZXJfYWN0b3IYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhYKDmVuZHBvaW50X2NsYXNzGAIgASgJEhcKD2ZhbGxiYWNrX3BvbGljeRgDIAEoCSrSAgoQRWxpY2l0YXRpb25TdGF0ZRIhCh1FTElDSVRBVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEhwKGEVMSUNJVEFUSU9OX1NUQVRFX09QRU5FRBABEh0KGUVMSUNJVEFUSU9OX1NUQVRFX1BFTkRJTkcQAhIeChpFTElDSVRBVElPTl9TVEFURV9BTlNXRVJFRBADEh4KGkVMSUNJVEFUSU9OX1NUQVRFX0RFQ0xJTkVEEAQSHQoZRUxJQ0lUQVRJT05fU1RBVEVfRVhQSVJFRBAFEh8KG0VMSUNJVEFUSU9OX1NUQVRFX0NBTkNFTExFRBAGEh8KG0VMSUNJVEFUSU9OX1NUQVRFX1dJVEhEUkFXThAHEiAKHEVMSUNJVEFUSU9OX1NUQVRFX1NVUEVSU0VERUQQCBIbChdFTElDSVRBVElPTl9TVEFURV9TVEFMRRAJKrgDChRSZXNwb25zZUNvbnRyYWN0S2luZBImCiJSRVNQT05TRV9DT05UUkFDVF9LSU5EX1VOU1BFQ0lGSUVEEAASIwofUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9BUFBST1ZBTBABEiMKH1JFU1BPTlNFX0NPTlRSQUNUX0tJTkRfUVVFU1RJT04QAhIsCihSRVNQT05TRV9DT05UUkFDVF9LSU5EX1JFU0VSVkVEX0ZSRUVGT1JNEGQSKgomUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9SRVNFUlZFRF9TRUNSRVQQZRIzCi9SRVNQT05TRV9DT05UUkFDVF9LSU5EX1JFU0VSVkVEX0ZVTkNUSU9OX1JFU1VMVBBmEjMKL1JFU1BPTlNFX0NPTlRSQUNUX0tJTkRfUkVTRVJWRURfRklMRV9BVFRBQ0hNRU5UEGcSNQoxUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9SRVNFUlZFRF9TVFJVQ1RVUkVEX1NDSEVNQRBoEjMKL1JFU1BPTlNFX0NPTlRSQUNUX0tJTkRfUkVTRVJWRURfU0VSVklDRV9SRVFVRVNUEGkqhQIKFUludmFsaWRSZXNwb25zZVBvbGljeRInCiNJTlZBTElEX1JFU1BPTlNFX1BPTElDWV9VTlNQRUNJRklFRBAAEjMKL0lOVkFMSURfUkVTUE9OU0VfUE9MSUNZX1JFSkVDVF9BTkRfS0VFUF9QRU5ESU5HEAESLQopSU5WQUxJRF9SRVNQT05TRV9QT0xJQ1lfVEVSTUlOQUxfREVDTElORUQQAhIvCitJTlZBTElEX1JFU1BPTlNFX1BPTElDWV9URVJNSU5BTF9TVVBFUlNFREVEEAMSLgoqSU5WQUxJRF9SRVNQT05TRV9QT0xJQ1lfVEVSTUlOQUxfQ0FOQ0VMTEVEEAQq1wEKE1Jlc3BvbnNlU2Vuc2l0aXZpdHkSJAogUkVTUE9OU0VfU0VOU0lUSVZJVFlfVU5TUEVDSUZJRUQQABIhCh1SRVNQT05TRV9TRU5TSVRJVklUWV9MT0dHQUJMRRABEiEKHVJFU1BPTlNFX1NFTlNJVElWSVRZX1JFREFDVEVEEAISIgoeUkVTUE9OU0VfU0VOU0lUSVZJVFlfRU5DUllQVEVEEAMSMAosUkVTUE9OU0VfU0VOU0lUSVZJVFlfTkVWRVJfUEVSU0lTVF9QTEFJTlRFWFQQBGIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_patchbay_common]);
+  fileDesc("ChtwYXRjaGJheS9lbGljaXRhdGlvbnMucHJvdG8SCHBhdGNoYmF5IogFCgtFbGljaXRhdGlvbhIvCg5lbGljaXRhdGlvbl9pZBgBIAEoCzIXLnBhdGNoYmF5LkVsaWNpdGF0aW9uSWQSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgCIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEioKBm9wZW5lchgDIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSMwoYZXhwZWN0ZWRfcmVzcG9uZGVyX2FjdG9yGAQgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBI1ChFyZXNwb25zZV9jb250cmFjdBgFIAEoCzIaLnBhdGNoYmF5LlJlc3BvbnNlQ29udHJhY3QSLQoOdGFyZ2V0X2NvbnRleHQYBiABKAsyFS5wYXRjaGJheS5UYXJnZXRTY29wZRIvCg50aW1lb3V0X3BvbGljeRgHIAEoCzIXLnBhdGNoYmF5LlRpbWVvdXRQb2xpY3kSOQoTY2FuY2VsbGF0aW9uX3BvbGljeRgIIAEoCzIcLnBhdGNoYmF5LkNhbmNlbGxhdGlvblBvbGljeRIwCgxjb3JyZWxhdGlvbnMYCSADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEioKB3BheWxvYWQYCiABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSKQoFc3RhdGUYCyABKA4yGi5wYXRjaGJheS5FbGljaXRhdGlvblN0YXRlEiMKDHJlY29yZGVkX2xzbhgMIAEoCzINLnBhdGNoYmF5LkxzbhItCglvcGVuZWRfYXQYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIowDChBSZXNwb25zZUNvbnRyYWN0EjUKDWNvbnRyYWN0X2tpbmQYASABKA4yHi5wYXRjaGJheS5SZXNwb25zZUNvbnRyYWN0S2luZBISCgpzY2hlbWFfcmVmGAIgASgJEhAKCHVpX2hpbnRzGAMgAygJEi8KDnRpbWVvdXRfcG9saWN5GAQgASgLMhcucGF0Y2hiYXkuVGltZW91dFBvbGljeRJAChdpbnZhbGlkX3Jlc3BvbnNlX3BvbGljeRgFIAEoDjIfLnBhdGNoYmF5LkludmFsaWRSZXNwb25zZVBvbGljeRIzChByZXNwb25kZXJfcG9saWN5GAYgASgLMhkucGF0Y2hiYXkuUmVzcG9uZGVyUG9saWN5EjIKC3NlbnNpdGl2aXR5GAcgASgOMh0ucGF0Y2hiYXkuUmVzcG9uc2VTZW5zaXRpdml0eRIuCghxdWVzdGlvbhgIIAEoCzIaLnBhdGNoYmF5LlF1ZXN0aW9uQ29udHJhY3RIAEIPCg1jb250cmFjdF9ib2R5IjIKDlJlc3BvbnNlT3B0aW9uEhEKCW9wdGlvbl9pZBgBIAEoCRINCgVsYWJlbBgCIAEoCSJWChBRdWVzdGlvbkNvbnRyYWN0EikKB29wdGlvbnMYASADKAsyGC5wYXRjaGJheS5SZXNwb25zZU9wdGlvbhIXCg9hbGxvd19mcmVlX3RleHQYAiABKAgiYgoaRWxpY2l0YXRpb25SZXNwb25zZVBheWxvYWQSGgoSc2VsZWN0ZWRfb3B0aW9uX2lkGAEgASgJEhEKCWZyZWVfdGV4dBgCIAEoCRIVCg1jbGFyaWZpY2F0aW9uGAMgASgJImwKDVRpbWVvdXRQb2xpY3kSLgoKZXhwaXJlc19hdBgBIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIZHVyYXRpb24YAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24icwoSQ2FuY2VsbGF0aW9uUG9saWN5EhsKE29wZW5lcl9tYXlfd2l0aGRyYXcYASABKAgSHQoVcmVzcG9uZGVyX21heV9kZWNsaW5lGAIgASgIEiEKGWNvcmVfb3JfcG9saWN5X21heV9jYW5jZWwYAyABKAgidwoPUmVzcG9uZGVyUG9saWN5EjMKGGV4cGVjdGVkX3Jlc3BvbmRlcl9hY3RvchgBIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSFgoOZW5kcG9pbnRfY2xhc3MYAiABKAkSFwoPZmFsbGJhY2tfcG9saWN5GAMgASgJKtICChBFbGljaXRhdGlvblN0YXRlEiEKHUVMSUNJVEFUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASHAoYRUxJQ0lUQVRJT05fU1RBVEVfT1BFTkVEEAESHQoZRUxJQ0lUQVRJT05fU1RBVEVfUEVORElORxACEh4KGkVMSUNJVEFUSU9OX1NUQVRFX0FOU1dFUkVEEAMSHgoaRUxJQ0lUQVRJT05fU1RBVEVfREVDTElORUQQBBIdChlFTElDSVRBVElPTl9TVEFURV9FWFBJUkVEEAUSHwobRUxJQ0lUQVRJT05fU1RBVEVfQ0FOQ0VMTEVEEAYSHwobRUxJQ0lUQVRJT05fU1RBVEVfV0lUSERSQVdOEAcSIAocRUxJQ0lUQVRJT05fU1RBVEVfU1VQRVJTRURFRBAIEhsKF0VMSUNJVEFUSU9OX1NUQVRFX1NUQUxFEAkquAMKFFJlc3BvbnNlQ29udHJhY3RLaW5kEiYKIlJFU1BPTlNFX0NPTlRSQUNUX0tJTkRfVU5TUEVDSUZJRUQQABIjCh9SRVNQT05TRV9DT05UUkFDVF9LSU5EX0FQUFJPVkFMEAESIwofUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9RVUVTVElPThACEiwKKFJFU1BPTlNFX0NPTlRSQUNUX0tJTkRfUkVTRVJWRURfRlJFRUZPUk0QZBIqCiZSRVNQT05TRV9DT05UUkFDVF9LSU5EX1JFU0VSVkVEX1NFQ1JFVBBlEjMKL1JFU1BPTlNFX0NPTlRSQUNUX0tJTkRfUkVTRVJWRURfRlVOQ1RJT05fUkVTVUxUEGYSMwovUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9SRVNFUlZFRF9GSUxFX0FUVEFDSE1FTlQQZxI1CjFSRVNQT05TRV9DT05UUkFDVF9LSU5EX1JFU0VSVkVEX1NUUlVDVFVSRURfU0NIRU1BEGgSMwovUkVTUE9OU0VfQ09OVFJBQ1RfS0lORF9SRVNFUlZFRF9TRVJWSUNFX1JFUVVFU1QQaSqFAgoVSW52YWxpZFJlc3BvbnNlUG9saWN5EicKI0lOVkFMSURfUkVTUE9OU0VfUE9MSUNZX1VOU1BFQ0lGSUVEEAASMwovSU5WQUxJRF9SRVNQT05TRV9QT0xJQ1lfUkVKRUNUX0FORF9LRUVQX1BFTkRJTkcQARItCilJTlZBTElEX1JFU1BPTlNFX1BPTElDWV9URVJNSU5BTF9ERUNMSU5FRBACEi8KK0lOVkFMSURfUkVTUE9OU0VfUE9MSUNZX1RFUk1JTkFMX1NVUEVSU0VERUQQAxIuCipJTlZBTElEX1JFU1BPTlNFX1BPTElDWV9URVJNSU5BTF9DQU5DRUxMRUQQBCrXAQoTUmVzcG9uc2VTZW5zaXRpdml0eRIkCiBSRVNQT05TRV9TRU5TSVRJVklUWV9VTlNQRUNJRklFRBAAEiEKHVJFU1BPTlNFX1NFTlNJVElWSVRZX0xPR0dBQkxFEAESIQodUkVTUE9OU0VfU0VOU0lUSVZJVFlfUkVEQUNURUQQAhIiCh5SRVNQT05TRV9TRU5TSVRJVklUWV9FTkNSWVBURUQQAxIwCixSRVNQT05TRV9TRU5TSVRJVklUWV9ORVZFUl9QRVJTSVNUX1BMQUlOVEVYVBAEYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_patchbay_common]);
 
 /**
  * @generated from message patchbay.Elicitation
@@ -131,6 +131,20 @@ export type ResponseContract = Message<"patchbay.ResponseContract"> & {
    * @generated from field: patchbay.ResponseSensitivity sensitivity = 7;
    */
   sensitivity: ResponseSensitivity;
+
+  /**
+   * Typed contract body. Present for committed contract kinds with a typed
+   * shape; approval remains binary and carries no typed body in v0.1.0.
+   *
+   * @generated from oneof patchbay.ResponseContract.contract_body
+   */
+  contractBody: {
+    /**
+     * @generated from field: patchbay.QuestionContract question = 8;
+     */
+    value: QuestionContract;
+    case: "question";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -139,6 +153,86 @@ export type ResponseContract = Message<"patchbay.ResponseContract"> & {
  */
 export const ResponseContractSchema: GenMessage<ResponseContract> = /*@__PURE__*/
   messageDesc(file_patchbay_elicitations, 1);
+
+/**
+ * A selectable option within a question contract.
+ *
+ * @generated from message patchbay.ResponseOption
+ */
+export type ResponseOption = Message<"patchbay.ResponseOption"> & {
+  /**
+   * @generated from field: string option_id = 1;
+   */
+  optionId: string;
+
+  /**
+   * @generated from field: string label = 2;
+   */
+  label: string;
+};
+
+/**
+ * Describes the message patchbay.ResponseOption.
+ * Use `create(ResponseOptionSchema)` to create a new message.
+ */
+export const ResponseOptionSchema: GenMessage<ResponseOption> = /*@__PURE__*/
+  messageDesc(file_patchbay_elicitations, 2);
+
+/**
+ * The typed contract body for a `question` contract kind. Each Elicitation is
+ * single-answer; grouped multi-question presentation is a surface concern.
+ *
+ * @generated from message patchbay.QuestionContract
+ */
+export type QuestionContract = Message<"patchbay.QuestionContract"> & {
+  /**
+   * @generated from field: repeated patchbay.ResponseOption options = 1;
+   */
+  options: ResponseOption[];
+
+  /**
+   * @generated from field: bool allow_free_text = 2;
+   */
+  allowFreeText: boolean;
+};
+
+/**
+ * Describes the message patchbay.QuestionContract.
+ * Use `create(QuestionContractSchema)` to create a new message.
+ */
+export const QuestionContractSchema: GenMessage<QuestionContract> = /*@__PURE__*/
+  messageDesc(file_patchbay_elicitations, 3);
+
+/**
+ * The typed response payload carried by an ELICITATION_RESPONSE Operation.
+ * Exactly one of selected_option_id / free_text is the primary answer;
+ * clarification is an optional supplementary answer-and field.
+ *
+ * @generated from message patchbay.ElicitationResponsePayload
+ */
+export type ElicitationResponsePayload = Message<"patchbay.ElicitationResponsePayload"> & {
+  /**
+   * @generated from field: string selected_option_id = 1;
+   */
+  selectedOptionId: string;
+
+  /**
+   * @generated from field: string free_text = 2;
+   */
+  freeText: string;
+
+  /**
+   * @generated from field: string clarification = 3;
+   */
+  clarification: string;
+};
+
+/**
+ * Describes the message patchbay.ElicitationResponsePayload.
+ * Use `create(ElicitationResponsePayloadSchema)` to create a new message.
+ */
+export const ElicitationResponsePayloadSchema: GenMessage<ElicitationResponsePayload> = /*@__PURE__*/
+  messageDesc(file_patchbay_elicitations, 4);
 
 /**
  * @generated from message patchbay.TimeoutPolicy
@@ -160,7 +254,7 @@ export type TimeoutPolicy = Message<"patchbay.TimeoutPolicy"> & {
  * Use `create(TimeoutPolicySchema)` to create a new message.
  */
 export const TimeoutPolicySchema: GenMessage<TimeoutPolicy> = /*@__PURE__*/
-  messageDesc(file_patchbay_elicitations, 2);
+  messageDesc(file_patchbay_elicitations, 5);
 
 /**
  * @generated from message patchbay.CancellationPolicy
@@ -187,7 +281,7 @@ export type CancellationPolicy = Message<"patchbay.CancellationPolicy"> & {
  * Use `create(CancellationPolicySchema)` to create a new message.
  */
 export const CancellationPolicySchema: GenMessage<CancellationPolicy> = /*@__PURE__*/
-  messageDesc(file_patchbay_elicitations, 3);
+  messageDesc(file_patchbay_elicitations, 6);
 
 /**
  * @generated from message patchbay.ResponderPolicy
@@ -214,7 +308,7 @@ export type ResponderPolicy = Message<"patchbay.ResponderPolicy"> & {
  * Use `create(ResponderPolicySchema)` to create a new message.
  */
 export const ResponderPolicySchema: GenMessage<ResponderPolicy> = /*@__PURE__*/
-  messageDesc(file_patchbay_elicitations, 4);
+  messageDesc(file_patchbay_elicitations, 7);
 
 /**
  * @generated from enum patchbay.ElicitationState

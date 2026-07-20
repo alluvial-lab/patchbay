@@ -1140,7 +1140,7 @@ pub struct Elicitation {
     #[prost(message, optional, tag = "13")]
     pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResponseContract {
     #[prost(enumeration = "ResponseContractKind", tag = "1")]
     pub contract_kind: i32,
@@ -1156,6 +1156,49 @@ pub struct ResponseContract {
     pub responder_policy: ::core::option::Option<ResponderPolicy>,
     #[prost(enumeration = "ResponseSensitivity", tag = "7")]
     pub sensitivity: i32,
+    /// Typed contract body. Present for committed contract kinds with a typed
+    /// shape; approval remains binary and carries no typed body in v0.1.0.
+    #[prost(oneof = "response_contract::ContractBody", tags = "8")]
+    pub contract_body: ::core::option::Option<response_contract::ContractBody>,
+}
+/// Nested message and enum types in `ResponseContract`.
+pub mod response_contract {
+    /// Typed contract body. Present for committed contract kinds with a typed
+    /// shape; approval remains binary and carries no typed body in v0.1.0.
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum ContractBody {
+        #[prost(message, tag = "8")]
+        Question(super::QuestionContract),
+    }
+}
+/// A selectable option within a question contract.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResponseOption {
+    #[prost(string, tag = "1")]
+    pub option_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub label: ::prost::alloc::string::String,
+}
+/// The typed contract body for a `question` contract kind. Each Elicitation is
+/// single-answer; grouped multi-question presentation is a surface concern.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuestionContract {
+    #[prost(message, repeated, tag = "1")]
+    pub options: ::prost::alloc::vec::Vec<ResponseOption>,
+    #[prost(bool, tag = "2")]
+    pub allow_free_text: bool,
+}
+/// The typed response payload carried by an ELICITATION_RESPONSE Operation.
+/// Exactly one of selected_option_id / free_text is the primary answer;
+/// clarification is an optional supplementary answer-and field.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ElicitationResponsePayload {
+    #[prost(string, tag = "1")]
+    pub selected_option_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub free_text: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub clarification: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimeoutPolicy {

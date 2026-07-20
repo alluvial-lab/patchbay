@@ -43,6 +43,33 @@ message ResponseContract {
   InvalidResponsePolicy invalid_response_policy = 5;
   ResponderPolicy responder_policy = 6;
   ResponseSensitivity sensitivity = 7;
+  // Typed contract body. Present for committed contract kinds with a typed
+  // shape; approval remains binary and carries no typed body in v0.1.0.
+  oneof contract_body {
+    QuestionContract question = 8;
+  }
+}
+
+// A selectable option within a question contract.
+message ResponseOption {
+  string option_id = 1;
+  string label = 2;
+}
+
+// The typed contract body for a `question` contract kind. Each Elicitation is
+// single-answer; grouped multi-question presentation is a surface concern.
+message QuestionContract {
+  repeated ResponseOption options = 1;
+  bool allow_free_text = 2;
+}
+
+// The typed response payload carried by an ELICITATION_RESPONSE Operation.
+// Exactly one of selected_option_id / free_text is the primary answer;
+// clarification is an optional supplementary answer-and field.
+message ElicitationResponsePayload {
+  string selected_option_id = 1;
+  string free_text = 2;
+  string clarification = 3;
 }
 
 enum ResponseContractKind {

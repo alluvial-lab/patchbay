@@ -1,7 +1,7 @@
 ---
 id: story-elicitation-response-proto-messages
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-elicitation-response-contract
 depends_on: []
@@ -77,3 +77,14 @@ message ElicitationResponsePayload {
   (1–7 used). The new messages start fresh from field 1.
 - `oneof contract_body` is forward-compatible: a future promoted contract kind
   adds a new `oneof` arm, non-breaking. A v0.1.0 reader ignores unknown arms.
+
+## Implementation notes
+
+Added the three typed messages and the `ResponseContract.question` oneof arm.
+Regenerated TypeScript with the canonical `buf generate` target and regenerated
+Rust with the repository's `prost-build` build script after discarding the
+pre-existing alternate buf Rust output. No multi-select field was added.
+
+Verification: `cargo build --workspace --all-targets`, `cd contracts/ts && npm
+run build`, and `npm run check:vectors` all pass. `check:vectors` reports 12
+vectors and no traceability-table change.
