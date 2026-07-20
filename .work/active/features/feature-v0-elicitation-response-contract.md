@@ -1,7 +1,7 @@
 ---
 id: feature-v0-elicitation-response-contract
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-protocol-idl-and-conformance]
@@ -753,4 +753,45 @@ carrying all four stories as checkpoints; Unit 1 is the critical-path head.
   options in one Elicitation/response. D2/D3 + the Unit 1 acceptance
   criterion ("no `repeated selected_option_ids`") guard this. The
   extension-pressure classification records it; review should re-confirm.
+
+## Implementation summary
+
+All four implementation checkpoints are complete in dependency order:
+
+1. `ResponseOption`, `QuestionContract`, and `ElicitationResponsePayload` were
+   added to the proto, with `ResponseContract.question` as oneof field 8;
+   TypeScript and prost-build Rust bindings were regenerated.
+2. The core now exposes `ElicitationContractLookup`/`ActiveElicitation`, runs
+   typed question and approval correspondence validation after structural
+   validation and before grant checks, and has table-driven branch coverage
+   plus a fail-fast no-side-effects regression.
+3. Elicitation projection records retain the typed contract and expected actor;
+   server rebuild/catch-up folds a locked contract lookup and passes it to
+   submit. A fold-lag invariant test covers unknown-before-fold and
+   contract-after-fold behavior.
+4. Seven conformance vectors pin the three accepted response shapes and four
+   rejection classes; `docs/VERIFICATION.md` now traces 19 vectors.
+
+Child commits:
+- `614890e` — `implement: story-elicitation-response-proto-messages`
+- `17c6d5c` — `implement: story-elicitation-response-core-validation`
+- `615a1fb` — `implement: story-elicitation-response-conformance-vectors`
+- `ead73b6` — `implement: story-elicitation-response-projection-wiring`
+
+## Final verification
+
+- `CARGO_HOME=.cargo-cache cargo build --workspace --all-targets`: passed
+- `CARGO_HOME=.cargo-cache cargo test --workspace`: passed (all workspace
+  tests; 19 vector files are checked separately)
+- `CARGO_HOME=.cargo-cache cargo clippy --workspace --all-targets -- -D warnings`:
+  passed
+- `cd contracts/ts && npm run build`: passed
+- `cd contracts/ts && npm run check:vectors`: passed (19 vectors, 0 promoted,
+  0 invariant expectation checks)
+
+The known pre-existing `check:drift` divergence was not run, per the feature
+and environment instructions. No `repeated selected_option_ids` field was
+introduced. The generated protobuf `ResponseContract` is `PartialEq` rather
+than `Eq` because its generated timestamp-containing fields are not `Eq`; the
+projection and lookup preserve the generated type without changing semantics.
 
