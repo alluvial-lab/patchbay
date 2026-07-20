@@ -1,7 +1,7 @@
 ---
 id: feature-v0-elicitation-response-contract
 kind: feature
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-protocol-idl-and-conformance]
