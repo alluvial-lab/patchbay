@@ -8,8 +8,9 @@ use patchbay_contracts::patchbay::{
     TargetScopeKind,
 };
 use patchbay_core::acceptance::{
-    submit, AcceptanceError, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck,
-    GrantDenied, TargetBinding, TargetNotFound, TargetResolver,
+    submit, AcceptanceError, ActiveElicitation, Authorized, CommandSnapshot, CommandStateLookup,
+    ElicitationContractLookup, GrantCheck, GrantDenied, TargetBinding, TargetNotFound,
+    TargetResolver,
 };
 use patchbay_core::{
     authority::IssuerContext,
@@ -49,6 +50,17 @@ impl GrantCheck for TestGrantCheck {
                 target: "session".to_owned(),
             })
         })
+    }
+}
+
+struct NoElicitationContractLookup;
+
+impl ElicitationContractLookup for NoElicitationContractLookup {
+    async fn active_contract(
+        &self,
+        _elicitation_id: &patchbay_contracts::patchbay::ElicitationId,
+    ) -> Option<ActiveElicitation> {
+        None
     }
 }
 
@@ -253,6 +265,7 @@ async fn unknown_and_reserved_operation_kinds_reject_before_grant() {
             &grant,
             &resolver,
             &AlwaysAccepted,
+            &NoElicitationContractLookup,
             &issuer(),
             submitted,
         )
@@ -302,6 +315,7 @@ async fn missing_required_fields_reject_before_grant_without_durable_state() {
             &grant,
             &resolver,
             &AlwaysAccepted,
+            &NoElicitationContractLookup,
             &issuer(),
             submitted,
         )
@@ -317,6 +331,33 @@ async fn missing_required_fields_reject_before_grant_without_durable_state() {
 }
 
 #[tokio::test]
+async fn malformed_response_rejects_before_grant_without_durable_state() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let mut submitted = operation();
+    submitted.kind = OperationKind::ElicitationResponse as i32;
+
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&result), FailureCode::ValidationFailed);
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
 async fn unauthorized_submission_rejects_without_durable_state() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let grant = TestGrantCheck::new(false);
@@ -327,6 +368,7 @@ async fn unauthorized_submission_rejects_without_durable_state() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         operation(),
     )
@@ -352,6 +394,7 @@ async fn unknown_target_rejects_without_durable_state() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         operation(),
     )
@@ -378,6 +421,7 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted.clone(),
     )
@@ -413,6 +457,7 @@ async fn identical_retry_returns_existing_acceptance_without_double_append() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted.clone(),
     )
@@ -423,6 +468,7 @@ async fn identical_retry_returns_existing_acceptance_without_double_append() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted,
     )
@@ -449,6 +495,7 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         original.clone(),
     )
@@ -462,6 +509,7 @@ async fn differing_payload_retry_is_validation_rejection_without_second_append()
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         conflicting,
     )
@@ -505,6 +553,7 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted.clone(),
     )
@@ -519,6 +568,7 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
         &grant,
         &resolver,
         &CompletedLookup,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted,
     )
@@ -553,6 +603,7 @@ async fn retry_with_missing_index_entry_fails_fast() {
         &grant,
         &resolver,
         &AlwaysAccepted,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted.clone(),
     )
@@ -566,6 +617,7 @@ async fn retry_with_missing_index_entry_fails_fast() {
         &grant,
         &resolver,
         &NotFoundLookup,
+        &NoElicitationContractLookup,
         &issuer(),
         submitted,
     )

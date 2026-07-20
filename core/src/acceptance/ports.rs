@@ -5,7 +5,8 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, Generation, GrantId, OperationKind, RuntimeSessionId, TargetScope,
+    AdapterId, AuthorityDomainId, ElicitationId, Generation, GrantId, OperationKind,
+    ResponseContract, RuntimeSessionId, TargetScope,
 };
 
 use crate::authority::IssuerContext;
@@ -33,6 +34,25 @@ pub trait TargetResolver: Send + Sync {
         authority_domain_id: &AuthorityDomainId,
         target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
+}
+
+/// The elicitation-contract seam used to validate a response Operation's
+/// payload against the active contract before durable acceptance.
+///
+/// Implementations perform a side-effect-free read against an in-memory
+/// projection reconciled under the submit gate.
+pub trait ElicitationContractLookup: Send + Sync {
+    fn active_contract(
+        &self,
+        elicitation_id: &ElicitationId,
+    ) -> impl std::future::Future<Output = Option<ActiveElicitation>> + Send;
+}
+
+/// The contract context a response is validated against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveElicitation {
+    pub contract: ResponseContract,
+    pub is_terminal: bool,
 }
 
 /// Evidence that the authority adapter found a matching live grant.

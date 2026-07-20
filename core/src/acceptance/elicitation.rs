@@ -40,7 +40,7 @@ const fn operation_state_is_terminal(state: OperationState) -> bool {
 ///
 /// This record is a derived projection. The durable Elicitation and command
 /// transition events remain authoritative.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ElicitationRecord {
     pub elicitation_id: ElicitationId,
     pub state: ElicitationState,
@@ -54,7 +54,7 @@ pub struct ElicitationRecord {
 /// dependency. Recovery and live-tail callers feed committed events through
 /// [`Self::observe`]. Because the authority-domain log is delivered in LSN
 /// order, the first correlated terminal response transition structurally wins.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ElicitationSlotLayer {
     slots: HashMap<ElicitationId, ElicitationRecord>,
     /// command_id → OperationKind, built from OPERATION events. Used to confirm

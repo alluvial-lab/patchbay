@@ -1,7 +1,7 @@
 ---
 id: story-elicitation-response-core-validation
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-elicitation-response-contract
 depends_on: [story-elicitation-response-proto-messages]
@@ -83,3 +83,22 @@ Pipeline integration:
   signature — every caller and every `acceptance_pipeline.rs` test needs a
   stub. Non-response tests use a `None`-returning stub; the validation branch
   only runs for response kinds. See Risks in the feature body.
+
+## Implementation notes
+
+Added the acceptance port and `ActiveElicitation`, the pure typed response
+validator, and the fail-fast pipeline branch. The validator covers missing,
+unknown, terminal, mismatched, missing-body, primary-answer, option-membership,
+and free-text-policy cases, plus approval, selected-option, free-text, and
+answer-and acceptance cases. Existing submit callers use explicit none-returning
+stubs; a regression test verifies malformed responses do not call grant or
+target resolution and do not append durable state.
+
+Generated `ResponseContract` does not implement `Eq` because its generated
+protobuf fields include non-`Eq` timestamp types, so `ActiveElicitation`,
+`ElicitationRecord`, and the containing slot layer retain `PartialEq` without
+`Eq`; this is a mechanical code-generation constraint and does not alter
+validation semantics.
+
+Verification: `cargo test -p patchbay-core --all-targets` passes (all core unit,
+integration, and property tests).

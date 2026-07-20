@@ -20,8 +20,9 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     acceptance::{
-        submit, Authorized, CommandSnapshot, CommandStateLookup, GrantCheck, GrantDenied,
-        TargetBinding, TargetNotFound, TargetResolver,
+        submit, ActiveElicitation, Authorized, CommandSnapshot, CommandStateLookup,
+        ElicitationContractLookup, GrantCheck, GrantDenied, TargetBinding, TargetNotFound,
+        TargetResolver,
     },
     authority::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
@@ -362,6 +363,15 @@ impl TargetResolver for AlwaysResolvedTarget {
 }
 
 struct AlwaysAcceptedCommandState;
+
+impl ElicitationContractLookup for AlwaysAcceptedCommandState {
+    async fn active_contract(
+        &self,
+        _elicitation_id: &patchbay_contracts::patchbay::ElicitationId,
+    ) -> Option<ActiveElicitation> {
+        None
+    }
+}
 
 impl CommandStateLookup for AlwaysAcceptedCommandState {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
@@ -1470,6 +1480,7 @@ fn compound_issuer_integration_denies_payload_actor_mismatch_through_submit() {
             &registry,
             &AlwaysResolvedTarget,
             &AlwaysAcceptedCommandState,
+            &AlwaysAcceptedCommandState,
             &verified_issuer,
             operation.clone(),
         )
@@ -1493,6 +1504,7 @@ fn compound_issuer_integration_denies_payload_actor_mismatch_through_submit() {
             &storage,
             &registry,
             &AlwaysResolvedTarget,
+            &AlwaysAcceptedCommandState,
             &AlwaysAcceptedCommandState,
             &payload_derived_issuer,
             operation,

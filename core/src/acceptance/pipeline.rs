@@ -12,7 +12,10 @@ use crate::{
     storage::{DedupOutcome, Storage, StorageError, TargetKey},
 };
 
-use super::{AcceptanceError, CommandStateLookup, GrantCheck, TargetResolver};
+use super::{
+    validate_response_payload, AcceptanceError, CommandStateLookup, ElicitationContractLookup,
+    GrantCheck, TargetResolver,
+};
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
 /// not appear here, so adding another generated enum variant remains fail
@@ -47,11 +50,12 @@ struct ValidatedOperation<'a> {
 /// The ordering is protocol-significant: boundary validation, authority check,
 /// target binding, and only then the atomic deduplicating durable append.
 /// Every rejection before that append leaves the command log untouched.
-pub async fn submit<S, G, R, L>(
+pub async fn submit<S, G, R, L, C>(
     storage: &S,
     grant_check: &G,
     target_resolver: &R,
     state_lookup: &L,
+    contract_lookup: &C,
     issuer: &dyn IssuerContext,
     operation: Operation,
 ) -> Result<SubmissionResult, AcceptanceError>
@@ -60,6 +64,7 @@ where
     G: GrantCheck,
     R: TargetResolver,
     L: CommandStateLookup,
+    C: ElicitationContractLookup,
 {
     let validated = match validate_operation(&operation) {
         Ok(validated) => validated,
@@ -71,6 +76,32 @@ where
             ));
         }
     };
+
+    if matches!(
+        validated.operation_kind,
+        OperationKind::ElicitationResponse | OperationKind::ApprovalResponse
+    ) {
+        let elicitation_id =
+            operation.correlations.iter().find_map(|correlation| {
+                match correlation.r#ref.as_ref() {
+                    Some(patchbay_contracts::patchbay::typed_correlation::Ref::ElicitationId(
+                        id,
+                    )) => Some(id),
+                    _ => None,
+                }
+            });
+        let active = match elicitation_id {
+            Some(elicitation_id) => contract_lookup.active_contract(elicitation_id).await,
+            None => None,
+        };
+        if let Err(diagnostic) = validate_response_payload(&operation, active.as_ref()) {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::ValidationFailed,
+                diagnostic,
+            ));
+        }
+    }
 
     let _authorization = match grant_check
         .check(
