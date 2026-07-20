@@ -162,3 +162,82 @@ includes `declined` as a terminal state and `approval` as a contract kind.
 
 <!-- Subsequent sections (Design, Implementation Notes, etc.) accumulate as
 work progresses. -->
+
+## Blocker (2026-07-19) — protocol semantics: is a DENIED approval `Answered` or `Declined`?
+
+Surfaced during feature-design. This is a semantic 50/50 in the *committed
+protocol spec*, not an implementation choice — the protocol text is internally
+tense on whether an operator denial is a satisfied response or a refusal.
+
+### The tension in `docs/PROTOCOL.md`
+
+- **Line 156** (approval-response row): "Completion updates the Elicitation
+  terminal (`answered` or `declined`) only if response validation succeeds."
+  Reads decision-driven: the Completion (OperationState) updates the terminal,
+  and *which* terminal depends on the decision.
+- **Line 276** (`answered` def): "A valid response Operation **satisfied the
+  contract** and first durable terminal commit selected it as the answer."
+- **Line 310**: "`answered` does not imply the underlying tool/action succeeded;
+  it only means the response slot was satisfied."
+- **Line 277** (`declined` def): "The expected responder explicitly
+  refused/rejected/denied the Elicitation **without satisfying it**. Covers
+  question rejection and approval denial when the response contract treats
+  denial as terminal."
+
+### The two defensible readings
+
+- **(A) Decision-driven — DENIED is a satisfied slot that terminalizes `Declined`.**
+  A DENIED approval is a valid response that satisfied the contract by stating
+  a decision; the response Operation reaches `Completed`; the slot reads the
+  decision and selects `Declined`. Supported by 156 + 276 + 310 ("the slot was
+  satisfied"). Under this reading, `Declined` is a *subtype of answer* — the
+  slot was satisfied, the valence of the decision picks the terminal label.
+  Cost: the slot layer (payload-opaque today) gains a kind-gated approval-
+  decision decode; `declined`'s "without satisfying it" wording (277) must be
+  reconciled (a DENIED approval *did* satisfy the contract — it gave a valid
+  decision).
+- **(B) Refusal-driven — DENIED is a refusal that terminalizes `Declined`.**
+  A DENIED approval is the responder refusing to satisfy the contract (per 277's
+  "without satisfying it"); the response Operation does NOT reach `Completed`
+  (it's not a satisfied response); the slot maps the refusal to `Declined`.
+  Supported by 277. Under this reading, `Answered` = "operator said yes (or
+  gave a real answer)"; `Declined` = "operator refused." Cost: a denial is not
+  a `Completed` response, so what OperationState does the denial response
+  reach? `Rejected` conflates with command-rejection (PROTOCOL:110 — "system
+  refused the command"); a new state or a repurposed one is needed. This is
+  where the deferred comment at `elicitation.rs:301` ("denial (Rejected) to
+  Declined") went wrong — it borrowed `Rejected` CommandState for an
+  Elicitation refusal, conflating the two state machines.
+
+### Why this is a blocker, not an implementation call
+
+The choice changes:
+- the proto shape (does the decision live in a `Completed` payload, or is
+  denial a distinct non-`Completed` outcome?);
+- the core terminal mapping (slot decodes the decision, vs. slot maps a
+  refusal-state);
+- what the cockpit renders (is "Denied" an answer or a refusal?);
+- and the `answered`/`declined` definitions in PROTOCOL.md, which must be
+  rolled forward to disambiguate regardless of which is chosen.
+
+It is a protocol-semantics decision affecting a safety-claiming state machine
+and the `answered`/`declined` terminal semantics. Per the harness rule
+(semantic 50/50 ⇒ surface, do not resolve with judgment), this must go to the
+operator. The feature stays at `stage: drafting` until resolved.
+
+### What I need from the operator
+
+Pick (A) or (B). Either is defensible; they produce materially different
+protocol behavior. My lean is **(A)** — it keeps `Completed` as "the response
+delivered a valid decision" (consistent with 310's "slot was satisfied"), and
+`Declined` becomes the terminal for a satisfied-but-negative decision, which
+matches how an operator thinks about a denial (they *did* answer; the answer was
+no). (B) is more literal to 277's "without satisfying it" but forces a new
+non-`Completed` outcome for denials and risks the `Rejected`-conflation the
+deferred comment fell into. But this is your call.
+
+If (A): I'll roll PROTOCOL:277 forward so "without satisfying it" no longer
+contradicts a DENIED approval being a satisfied slot, and the slot layer gains
+the kind-gated decision decode.
+If (B): I'll roll PROTOCOL forward to define the denial response's
+OperationState (not `Rejected`), and the slot layer stays payload-opaque.
