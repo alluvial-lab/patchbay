@@ -1349,8 +1349,14 @@ impl ResponseContractKind {
 pub enum InvalidResponsePolicy {
     Unspecified = 0,
     RejectAndKeepPending = 1,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
     TerminalDeclined = 2,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
     TerminalSuperseded = 3,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
     TerminalCancelled = 4,
 }
 impl InvalidResponsePolicy {

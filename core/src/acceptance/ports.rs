@@ -5,7 +5,7 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, ElicitationId, Generation, GrantId, OperationKind,
+    AdapterId, AuthorityDomainId, ElicitationId, Generation, GrantId, Operation, OperationKind,
     ResponseContract, RuntimeSessionId, TargetScope,
 };
 
@@ -53,6 +53,11 @@ pub trait ElicitationContractLookup: Send + Sync {
 pub struct ActiveElicitation {
     pub contract: ResponseContract,
     pub is_terminal: bool,
+    /// The winning response Operation, when this terminal slot was answered.
+    /// An exact retry is allowed through validation so storage deduplication
+    /// can return the existing command record. Other terminal candidates stay
+    /// rejected before acceptance.
+    pub winning_response: Option<Operation>,
 }
 
 /// Evidence that the authority adapter found a matching live grant.

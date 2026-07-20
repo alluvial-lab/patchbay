@@ -816,3 +816,29 @@ All four Blockers verified against the repository — confirmed real, not phanto
 ### Closure plan (standard weight — no second review pass)
 
 Fix the 4 Blockers + 2 Important in one focused pass; verify (`cargo test`/clippy + `check:vectors`/ts build, with `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache`); advance to `done`. Standard closure: receiver-confirmed blockers fixed + verified → done, no second independent pass.
+
+### Review pass 1 fixes applied
+
+All receiver-confirmed findings were fixed without a second review pass:
+
+- Terminal response retries now retain the winning response Operation in the
+  elicitation projection, exempt that exact retry from terminal validation, and
+  reach storage deduplication; a pipeline regression proves the existing
+  command record is returned.
+- Response payloads enforce the protobuf content-type discriminator, with JSON,
+  binary, and unspecified rejection coverage.
+- Terminal-on-invalid policies are explicitly reserved in v0.1.0 and treated
+  as `REJECT_AND_KEEP_PENDING`, with aligned proto comments, protocol text, and
+  regression coverage.
+- `docs/PROTOCOL.md` now states single-answer question semantics and D8 typed
+  body/schema-ref authority.
+- All seven conformance vectors now carry structurally complete Operations and
+  canonical `SubmissionResult` expectations.
+- The fold-lag test now appends to `RusqliteStorage` and exercises
+  `ProjectionState::catch_up`, including the shared-gate requirement note.
+
+Verification passed:
+`CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo build --workspace --all-targets`,
+`cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`npm run build`, and `npm run check:vectors` (19 vectors, 0 failures).

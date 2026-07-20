@@ -2,10 +2,11 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    FailureCode, Generation, Lsn, Operation, OperationKind, OperationState, PayloadContentType,
-    PayloadEnvelope, RuntimeSessionId, StoredEventKind, SubmissionOutcome, TargetScope,
-    TargetScopeKind,
+    response_contract, typed_correlation, ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId,
+    CommandId, DeviceId, ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode,
+    Generation, Lsn, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
+    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     submit, AcceptanceError, ActiveElicitation, Authorized, CommandSnapshot, CommandStateLookup,
@@ -224,6 +225,57 @@ fn operation() -> Operation {
             schema_ref: "patchbay.test.instruct.v0".to_owned(),
         }),
         ..Operation::default()
+    }
+}
+
+struct TerminalRetryLookup {
+    active: ActiveElicitation,
+}
+
+impl ElicitationContractLookup for TerminalRetryLookup {
+    async fn active_contract(&self, _elicitation_id: &ElicitationId) -> Option<ActiveElicitation> {
+        Some(self.active.clone())
+    }
+}
+
+fn response_operation() -> Operation {
+    let mut operation = operation();
+    operation.kind = OperationKind::ElicitationResponse as i32;
+    operation.idempotency_key = "idempotency-response-1".to_owned();
+    operation.correlations = vec![TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
+            value: "elicitation-1".to_owned(),
+        })),
+    }];
+    operation.payload = Some(PayloadEnvelope {
+        payload: ElicitationResponsePayload {
+            selected_option_id: "yes".to_owned(),
+            ..ElicitationResponsePayload::default()
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        ..PayloadEnvelope::default()
+    });
+    operation
+}
+
+fn active_question() -> ActiveElicitation {
+    ActiveElicitation {
+        contract: ResponseContract {
+            contract_kind: ResponseContractKind::Question as i32,
+            contract_body: Some(response_contract::ContractBody::Question(
+                QuestionContract {
+                    options: vec![ResponseOption {
+                        option_id: "yes".to_owned(),
+                        label: "Yes".to_owned(),
+                    }],
+                    allow_free_text: false,
+                },
+            )),
+            ..ResponseContract::default()
+        },
+        is_terminal: false,
+        winning_response: None,
     }
 }
 
@@ -583,6 +635,52 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
     );
     assert!(retry.deduplicated);
     assert_eq!(retry.command_id, first.command_id);
+}
+
+#[tokio::test]
+async fn terminal_response_retry_returns_existing_command_record() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let submitted = response_operation();
+
+    let first = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &TerminalRetryLookup {
+            active: active_question(),
+        },
+        &issuer(),
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&first), SubmissionOutcome::Accepted);
+
+    let retry = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &TerminalRetryLookup {
+            active: ActiveElicitation {
+                is_terminal: true,
+                winning_response: Some(submitted.clone()),
+                ..active_question()
+            },
+        },
+        &issuer(),
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
+    assert!(retry.deduplicated);
+    assert_eq!(state(&retry), OperationState::Accepted);
+    assert_eq!(durable_events(&storage).await.len(), 1);
 }
 
 #[tokio::test]

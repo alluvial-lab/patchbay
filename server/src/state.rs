@@ -264,6 +264,7 @@ impl ElicitationContractLookup for LockedElicitationContractLookup {
         Some(ActiveElicitation {
             contract: record.contract.clone()?,
             is_terminal: patchbay_core::acceptance::elicitation::is_terminal_state(record.state),
+            winning_response: record.winning_response.clone(),
         })
     }
 }
@@ -299,14 +300,14 @@ impl CommandStateLookup for LockedCommandStateLookup {
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        response_contract, AuthorityDomainId, Elicitation, ElicitationState, EventId,
-        QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
+        response_contract, AuthorityDomainId, Elicitation, ElicitationState, QuestionContract,
+        ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
         StoredEventPayload,
     };
     use prost::Message;
 
     #[tokio::test]
-    async fn fold_lag_invariant_exposes_contract_only_after_opening_event_is_folded() {
+    async fn fold_lag_invariant_exposes_contract_only_after_storage_catch_up() {
         let authority_domain_id = AuthorityDomainId {
             value: "authority-main".to_owned(),
         };
@@ -326,33 +327,47 @@ mod tests {
             )),
             ..ResponseContract::default()
         };
-        let lookup = LockedElicitationContractLookup::new();
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
 
-        assert!(lookup.active_contract(&elicitation_id).await.is_none());
-
-        let event = RecordedEvent {
-            event_id: EventId {
-                authority_domain_id: Some(authority_domain_id.clone()),
-                lsn: Some(Lsn { value: 1 }),
-            },
-            payload: StoredEventPayload {
-                kind: StoredEventKind::Elicitation as i32,
-                payload: Elicitation {
-                    elicitation_id: Some(elicitation_id.clone()),
-                    authority_domain_id: Some(authority_domain_id),
-                    response_contract: Some(contract.clone()),
-                    state: ElicitationState::Opened as i32,
-                    ..Elicitation::default()
-                }
-                .encode_to_vec(),
-            },
-        };
-        lookup.observe(&event).await.unwrap();
-
-        let active = lookup
+        assert!(state
+            .elicitation_contract_lookup()
             .active_contract(&elicitation_id)
             .await
-            .expect("folded opening event exposes the active contract");
+            .is_none());
+
+        storage
+            .append(
+                &authority_domain_id,
+                StoredEventPayload {
+                    kind: StoredEventKind::Elicitation as i32,
+                    payload: Elicitation {
+                        elicitation_id: Some(elicitation_id.clone()),
+                        authority_domain_id: Some(authority_domain_id.clone()),
+                        response_contract: Some(contract.clone()),
+                        state: ElicitationState::Opened as i32,
+                        ..Elicitation::default()
+                    }
+                    .encode_to_vec(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // A future Elicitation-opening producer (the pi adapter) must share
+        // submit_gate so an append-after-read race cannot bypass catch_up.
+        state
+            .catch_up(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+
+        let active = state
+            .elicitation_contract_lookup()
+            .active_contract(&elicitation_id)
+            .await
+            .expect("storage-backed catch_up exposes the active contract");
         assert_eq!(active.contract, contract);
         assert!(!active.is_terminal);
     }

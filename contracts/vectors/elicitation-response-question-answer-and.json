@@ -32,8 +32,21 @@
     "response_operation": {
       "command_id": { "value": "cmd-response-answer-and-001" },
       "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
       "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
       "correlations": [ { "elicitation_id": { "value": "elicitation-question-003" } } ],
+      "target_scope": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": { "value": "pi" },
+        "runtime_session_id": { "value": "sess-003" },
+        "session_generation": { "value": 12 }
+      },
+      "idempotency_key": "idem-response-answer-and-001",
       "payload": {
         "payload": "CgN5ZXMaB2JlY2F1c2U=",
         "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
@@ -42,8 +55,14 @@
     }
   },
   "expected_outcome": {
-    "outcome": "accepted",
-    "failure_code": "FAILURE_CODE_UNSPECIFIED"
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
+      "command_id": { "value": "cmd-response-answer-and-001" },
+      "failure_code": "FAILURE_CODE_UNSPECIFIED",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": true
   },
   "invariant_check": "ElicitationInvalidResponseRejected: clarification supplements, but does not replace, a valid primary selected option."
 }

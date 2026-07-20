@@ -305,7 +305,7 @@ Rules:
 Terminal `ElicitationState` transitions are delivered on the same authorized Elicitation subscription stream as `opened`/`pending` (consistent with the Presence/Subscription model in [`§ Presence and Subscription`](#presence-and-subscription)). A surface that misses the terminal transition (e.g., it was offline when another surface answered) reconciles through cursor replay and/or snapshot repair on reconnect — the terminal state is part of the durable Elicitation record. A late second answer from a lagging surface arrives after the Elicitation is already terminal; it is rejected as a stale late terminal candidate (audited, does not rewrite state), and that rejection plus the terminal transition on the stream is what forces the lagging surface to resync to the `answered` (or other terminal) state.
 
 - A response Operation must reference the `ElicitationId` with a typed correlation, must satisfy the active `response_contract`, and must be issued by an authenticated endpoint for the `expected_responder_actor` in v0.1.0. The responding endpoint is captured in the response Operation audit for debugging.
-- Invalid response behavior: default is **reject the response Operation** (`SubmissionOutcome = rejected` before acceptance, or `OperationState = rejected` after acceptance by policy) and leave the Elicitation `pending`. A contract may explicitly specify terminal-on-invalid policy, but that policy must name the terminal outcome (`declined`, `superseded`, or `cancelled`) and be tested.
+- Invalid response behavior in v0.1.0 is **reject the response Operation** (`SubmissionOutcome = rejected`) and leave the Elicitation `pending`. The terminal-on-invalid policy values (`terminal_declined`, `terminal_superseded`, and `terminal_cancelled`) are reserved seams: v0.1.0 treats them as `reject_and_keep_pending`; a future promotion must define and test the terminal transition.
 - No-answer is not an Operation. It is either continued `pending` or a terminal policy event such as `expired`, `cancelled`, `withdrawn`, or `stale`.
 - `answered` does not imply the underlying tool/action succeeded; it only means the response slot was satisfied. Subsequent work emits Operations/Observations as usual.
 
@@ -318,7 +318,7 @@ A `response_contract` describes what kind of response is semantically required; 
 Required fields:
 
 - `contract_kind` — registry variant below;
-- `schema_ref` or inline schema where structured validation is required;
+- `schema_ref` or inline schema where structured validation is required. For committed v0.1.0 `approval` and `question` kinds, the typed contract body is authoritative and v0.1.0 validation ignores `schema_ref`; `schema_ref` is load-bearing only for the reserved `structured_schema` contract kind;
 - `ui_hints` — optional list such as `select-one`, `select-many`, `free-text`, `secret-input`, `upload`, `draw`, `confirm`, `diff-review`;
 - `timeout_policy`;
 - `invalid_response_policy`;
@@ -328,7 +328,7 @@ Required fields:
 | `contract_kind` | Semantics | v0.1.0 disposition |
 |---|---|---|
 | `approval` | Allow/deny/allow-once/always/policy-amend/modified-input permission response. | Committed v0.1.0. |
-| `question` | Answer one or more questions, possibly with options and freeform text. | Committed v0.1.0. |
+| `question` | Answer a single question with a typed `QuestionContract` (select-one option or free-text); multi-answer accumulation is a reserved seam. | Committed v0.1.0. |
 | `freeform` | Unstructured text response. | Reserved seam. Named in registry, not validatable in v0.1.0; demoted until more than Claude's optional freeform answer is grounded as a genuine Elicitation response surface. |
 | `secret` | Provide sensitive secret/token/input with redaction/no-log policy. | Reserved seam. Named in registry, not validatable in v0.1.0. |
 | `function_result` | Return custom tool/function result to a waiting service/harness. | Reserved seam. Named in registry, not validatable in v0.1.0. |

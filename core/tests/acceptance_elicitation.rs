@@ -169,6 +169,11 @@ async fn terminal_response_transition_terminalizes_the_correlated_slot() {
         .expect("the Elicitation event opens a projected slot");
 
     assert_answered(slot, terminal_lsn);
+    assert_eq!(
+        slot.winning_response,
+        Some(response_operation("response-command-1")),
+        "the projection retains the winning response for exact terminal retries"
+    );
 }
 
 #[tokio::test]

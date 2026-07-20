@@ -50,6 +50,10 @@ pub struct ElicitationRecord {
     pub contract: Option<ResponseContract>,
     /// The actor expected to answer this Elicitation, when specified.
     pub expected_responder_actor: Option<ActorId>,
+    /// The response Operation that won terminalization, when one exists.
+    /// Retained so an exact idempotent retry can pass validation and reach
+    /// storage deduplication without admitting a different late candidate.
+    pub winning_response: Option<Operation>,
 }
 
 /// An independent event-log consumer that projects Elicitation-slot state.
@@ -61,10 +65,10 @@ pub struct ElicitationRecord {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ElicitationSlotLayer {
     slots: HashMap<ElicitationId, ElicitationRecord>,
-    /// command_id → OperationKind, built from OPERATION events. Used to confirm
-    /// a correlated terminal transition belongs to a response Operation
-    /// (ApprovalResponse / ElicitationResponse) before terminalizing a slot.
-    command_kinds: HashMap<CommandId, OperationKind>,
+    /// command_id → Operation, built from OPERATION events. Used to confirm
+    /// a correlated terminal transition belongs to a response Operation and
+    /// to retain the winning Operation for idempotent terminal retries.
+    command_operations: HashMap<CommandId, Operation>,
 }
 
 impl ElicitationSlotLayer {
@@ -176,6 +180,7 @@ impl ElicitationSlotLayer {
                 terminal_lsn: is_terminal_state(state).then_some(event_lsn),
                 contract: elicitation.response_contract,
                 expected_responder_actor: elicitation.expected_responder_actor,
+                winning_response: None,
             },
         );
         Ok(())
@@ -190,12 +195,12 @@ impl ElicitationSlotLayer {
                 "cannot decode operation at LSN {event_lsn}: {error}"
             ))
         })?;
-        let command_id = operation.command_id.ok_or_else(|| {
+        let command_id = operation.command_id.clone().ok_or_else(|| {
             AcceptanceError::CorruptRecord(format!(
                 "operation at LSN {event_lsn} is missing command_id"
             ))
         })?;
-        let kind = OperationKind::try_from(operation.kind).map_err(|_| {
+        OperationKind::try_from(operation.kind).map_err(|_| {
             AcceptanceError::CorruptRecord(format!(
                 "operation for command {:?} at LSN {event_lsn} has unknown kind {}",
                 command_id, operation.kind
@@ -203,7 +208,9 @@ impl ElicitationSlotLayer {
         })?;
         // First-write-wins: a duplicate OPERATION event (should not happen
         // with dedup, but the log is authoritative) is idempotent here.
-        self.command_kinds.entry(command_id).or_insert(kind);
+        self.command_operations
+            .entry(command_id)
+            .or_insert(operation);
         Ok(())
     }
 
@@ -239,10 +246,16 @@ impl ElicitationSlotLayer {
                 elicitation_id
             ))
         })?;
-        let kind = self.command_kinds.get(command_id).copied().ok_or_else(|| {
+        let response_operation = self.command_operations.get(command_id).ok_or_else(|| {
             AcceptanceError::CorruptLog(format!(
                 "transition at LSN {event_lsn} correlates to elicitation {:?} but its command {:?} was not seen as an OPERATION event",
                 elicitation_id, command_id
+            ))
+        })?;
+        let kind = OperationKind::try_from(response_operation.kind).map_err(|_| {
+            AcceptanceError::CorruptLog(format!(
+                "operation for command {:?} has unknown kind {}",
+                command_id, response_operation.kind
             ))
         })?;
         if !matches!(
@@ -254,7 +267,12 @@ impl ElicitationSlotLayer {
             return Ok(());
         }
 
-        self.terminalize_slot(&elicitation_id, to_state, event_lsn)
+        self.terminalize_slot(
+            &elicitation_id,
+            to_state,
+            event_lsn,
+            Some(response_operation.clone()),
+        )
     }
 
     fn terminalize_slot(
@@ -262,6 +280,7 @@ impl ElicitationSlotLayer {
         elicitation_id: &ElicitationId,
         response_state: OperationState,
         event_lsn: u64,
+        response_operation: Option<Operation>,
     ) -> Result<(), AcceptanceError> {
         let slot = self.slots.get_mut(elicitation_id).ok_or_else(|| {
             AcceptanceError::CorruptLog(format!(
@@ -284,6 +303,7 @@ impl ElicitationSlotLayer {
         if response_state == OperationState::Completed {
             slot.state = ElicitationState::Answered;
             slot.terminal_lsn = Some(event_lsn);
+            slot.winning_response = response_operation;
         }
         // Non-Completed terminals leave the slot non-terminal.
         Ok(())

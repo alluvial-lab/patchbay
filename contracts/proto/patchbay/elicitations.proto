@@ -104,8 +104,14 @@ message CancellationPolicy {
 enum InvalidResponsePolicy {
   INVALID_RESPONSE_POLICY_UNSPECIFIED = 0;
   INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING = 1;
+  // reserved, not validatable in v0.1.0; treated as
+  // REJECT_AND_KEEP_PENDING until a future protocol promotion.
   INVALID_RESPONSE_POLICY_TERMINAL_DECLINED = 2;
+  // reserved, not validatable in v0.1.0; treated as
+  // REJECT_AND_KEEP_PENDING until a future protocol promotion.
   INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED = 3;
+  // reserved, not validatable in v0.1.0; treated as
+  // REJECT_AND_KEEP_PENDING until a future protocol promotion.
   INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED = 4;
 }
 

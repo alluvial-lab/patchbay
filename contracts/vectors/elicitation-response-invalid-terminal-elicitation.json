@@ -31,8 +31,21 @@
     "response_operation": {
       "command_id": { "value": "cmd-invalid-terminal-001" },
       "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
       "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
       "correlations": [ { "elicitation_id": { "value": "elicitation-terminal-001" } } ],
+      "target_scope": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": { "value": "pi" },
+        "runtime_session_id": { "value": "sess-terminal-001" },
+        "session_generation": { "value": 12 }
+      },
+      "idempotency_key": "idem-invalid-terminal-001",
       "payload": {
         "payload": "CgN5ZXM=",
         "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
@@ -40,6 +53,15 @@
       }
     }
   },
-  "expected_outcome": { "outcome": "rejected", "failure_code": "validation_failed" },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_REJECTED",
+      "command_id": { "value": "cmd-invalid-terminal-001" },
+      "failure_code": "FAILURE_CODE_VALIDATION_FAILED",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": false
+  },
   "invariant_check": "boundary-validation: terminal Elicitations reject later response Operations before acceptance side effects."
 }

@@ -454,16 +454,25 @@ export enum InvalidResponsePolicy {
   REJECT_AND_KEEP_PENDING = 1,
 
   /**
+   * reserved, not validatable in v0.1.0; treated as
+   * REJECT_AND_KEEP_PENDING until a future protocol promotion.
+   *
    * @generated from enum value: INVALID_RESPONSE_POLICY_TERMINAL_DECLINED = 2;
    */
   TERMINAL_DECLINED = 2,
 
   /**
+   * reserved, not validatable in v0.1.0; treated as
+   * REJECT_AND_KEEP_PENDING until a future protocol promotion.
+   *
    * @generated from enum value: INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED = 3;
    */
   TERMINAL_SUPERSEDED = 3,
 
   /**
+   * reserved, not validatable in v0.1.0; treated as
+   * REJECT_AND_KEEP_PENDING until a future protocol promotion.
+   *
    * @generated from enum value: INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED = 4;
    */
   TERMINAL_CANCELLED = 4,
