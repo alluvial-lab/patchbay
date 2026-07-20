@@ -308,7 +308,8 @@ async fn non_response_command_does_not_terminalize_the_slot() {
 async fn failed_response_leaves_the_slot_pending() {
     // A response Operation that fails (Rejected/Failed) does NOT answer the
     // Elicitation. The slot stays pending — another surface may answer.
-    // (Mapping denial/Rejected to Declined is a v0.x response-contract concern.)
+    // Operator denial is a completed typed `DENIED` decision (→ Declined),
+    // not a machine Rejected/Failed response; those never terminalize the slot.
     let storage = RusqliteStorage::open_in_memory().unwrap();
     append_elicitation(&storage, ElicitationState::Opened).await;
     append_response_op_and_transition(&storage, "response-command-1", OperationState::Failed).await;

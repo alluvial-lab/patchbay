@@ -1,7 +1,7 @@
 ---
 id: feature-v0-approval-response-contract
 kind: feature
-stage: review
+stage: done
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-elicitation-response-contract]
@@ -614,3 +614,23 @@ Integrated verification passed:
 - `cd pi-adapter && npm run build && npm test` (6 tests)
 
 Execution capability was direct inline feature ownership: shared context across the five ordered checkpoints reduced handoff risk. Effective review weight is standard (project default); the feature is now at `stage: review` for the caller's review lane. The known pre-existing `check:drift` generator divergence was not run, per the feature contract. No unrelated files were changed.
+
+## Review record
+
+**Effective weight:** standard (project default). **Pass count:** 1. **Reviewer:** fresh-context `openai-codex/gpt-5.6-sol` (different model class from the umans orchestrator — satisfies cross-model advisory review). **Closure:** receiver-confirmed blockers fixed + verified; advanced `review → done` without a second pass (standard policy).
+
+**Verdict:** Approve (after fixes).
+
+The reviewer verified the load-bearing behavior is genuinely earned, not asserted: the DENIED→`Declined` test uses serialized generated `DENIED` input with a hard-coded `Declined` oracle — changing the mapping, swapping decisions, or mapping machine rejection to decline would fail it. Core correctness confirmed: content_type checked before decode; missing/corrupt/unspecified/reserved/unknown/kind-mismatched payloads fail closed; only `ApprovalResponse + Completed` decodes the decision; question responses stay payload-opaque; `Rejected` does not terminalize; corrupt terminal payloads return `CorruptRecord` without mutating the slot; exact terminal approval retry clears validation and composes with the existing pipeline dedup regression.
+
+**Findings adjudicated:**
+
+- **Blocker (fixed): PROTOCOL.md approval row + extension-seams registry drift.** The `approval` contract-kind row (`docs/PROTOCOL.md:332`) presented all six decisions (allow/deny/allow-once/always/policy-amend/modified-input) as committed v0.1.0, contradicting the implemented binary-only contract (APPROVED/DENIED committed; the four richer decisions reserved). The consolidated extension-seams registry also omitted the four reserved `ApprovalDecision` values and the surface-reject seam despite claiming to be the single view of what v0.1.0 leaves open. **Fix:** rewrote the `approval` row to distinguish committed binary decisions from the four reserved; added the reserved approval decisions + surface-reject to both the "Reserved extension seams" prose summary and the extension-seams-registry table. Receiver-confirmed — a genuine foundation-doc contradiction (assertion drift, not omission).
+
+- **Important (fixed): stale test comment retained the rejected conflation.** `core/tests/acceptance_elicitation.rs:311` said "Mapping denial/Rejected to Declined is a v0.x response-contract concern" — now false and directly contradicting the feature's safety decision. **Fix:** replaced with the settled rule (operator denial is a completed typed `DENIED` decision → `Declined`; `Rejected`/`Failed` response Operations never terminalize the slot).
+
+- **Rejected proposals:** (a) require a promoted vector executor in this feature — the vector checker is intentionally envelope/traceability-only and that limitation is documented; the Rust mapping/validation tests are the executable evidence and are not self-defining; (b) require the Pi adapter to open approval Elicitations — producer-side opening is explicitly out of scope; (c) require `Rejected`→`Declined` — would recreate the state-machine conflation the feature correctly removes.
+
+**Post-fix verification:** `cargo test --workspace` (all pass), `npm run check:vectors` (24 vectors) — both green. The fixes are doc + comment only; no behavior change.
+
+**Review-fix commit:** `review-fix: feature-v0-approval-response-contract` (this commit).
