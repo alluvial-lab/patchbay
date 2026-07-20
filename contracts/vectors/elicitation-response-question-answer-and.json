@@ -1,0 +1,49 @@
+{
+  "vector_id": "elicitation-response-question-answer-and",
+  "property_id": "ElicitationInvalidResponseRejected",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.ResponseContract.question",
+    "patchbay.QuestionContract.options",
+    "patchbay.QuestionContract.allow_free_text",
+    "patchbay.ResponseOption.option_id",
+    "patchbay.ElicitationResponsePayload.selected_option_id",
+    "patchbay.ElicitationResponsePayload.free_text",
+    "patchbay.ElicitationResponsePayload.clarification"
+  ],
+  "description": "A question response accepts a declared selected option plus a supplementary EC2 clarification.",
+  "input": {
+    "elicitation_type": "patchbay.Elicitation",
+    "elicitation": {
+      "elicitation_id": { "value": "elicitation-question-003" },
+      "authority_domain_id": { "value": "auth-main" },
+      "opener": { "actor_id": { "value": "agent-runner" }, "endpoint_id": { "value": "pi-1" } },
+      "expected_responder_actor": { "value": "operator-alice" },
+      "response_contract": {
+        "contract_kind": "RESPONSE_CONTRACT_KIND_QUESTION",
+        "question": {
+          "options": [ { "option_id": "yes", "label": "Yes" } ],
+          "allow_free_text": false
+        }
+      },
+      "state": "ELICITATION_STATE_OPENED"
+    },
+    "response_operation_type": "patchbay.Operation",
+    "response_operation": {
+      "command_id": { "value": "cmd-response-answer-and-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
+      "correlations": [ { "elicitation_id": { "value": "elicitation-question-003" } } ],
+      "payload": {
+        "payload": "CgN5ZXMaB2JlY2F1c2U=",
+        "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
+        "schema_ref": "patchbay.ElicitationResponsePayload"
+      }
+    }
+  },
+  "expected_outcome": {
+    "outcome": "accepted",
+    "failure_code": "FAILURE_CODE_UNSPECIFIED"
+  },
+  "invariant_check": "ElicitationInvalidResponseRejected: clarification supplements, but does not replace, a valid primary selected option."
+}

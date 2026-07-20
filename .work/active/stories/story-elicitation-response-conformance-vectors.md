@@ -1,7 +1,7 @@
 ---
 id: story-elicitation-response-conformance-vectors
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-elicitation-response-contract
 depends_on: [story-elicitation-response-proto-messages]
@@ -80,3 +80,12 @@ formal property):
   registry); rejection vectors reference the descriptive `boundary-validation`
   id (draft-only, per the registry) since fine-grained rejection rules are
   boundary validation, not a named formal property.
+
+## Implementation notes
+
+Added the three accepted-shape and four rejection vectors with full typed
+Elicitation and response Operation inputs. Every vector constrains the Unit 1
+fields, and the generated `docs/VERIFICATION.md` traceability table now reports
+19 total vectors with the seven new entries.
+
+Verification: `cd contracts/ts && npm run check:vectors` passes.

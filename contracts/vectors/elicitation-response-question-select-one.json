@@ -1,0 +1,52 @@
+{
+  "vector_id": "elicitation-response-question-select-one",
+  "property_id": "ElicitationInvalidResponseRejected",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.ResponseContract.question",
+    "patchbay.QuestionContract.options",
+    "patchbay.QuestionContract.allow_free_text",
+    "patchbay.ResponseOption.option_id",
+    "patchbay.ElicitationResponsePayload.selected_option_id",
+    "patchbay.ElicitationResponsePayload.free_text",
+    "patchbay.ElicitationResponsePayload.clarification"
+  ],
+  "description": "A question elicitation accepts one selected option declared by its typed contract.",
+  "input": {
+    "elicitation_type": "patchbay.Elicitation",
+    "elicitation": {
+      "elicitation_id": { "value": "elicitation-question-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "opener": { "actor_id": { "value": "agent-runner" }, "endpoint_id": { "value": "pi-1" } },
+      "expected_responder_actor": { "value": "operator-alice" },
+      "response_contract": {
+        "contract_kind": "RESPONSE_CONTRACT_KIND_QUESTION",
+        "question": {
+          "options": [
+            { "option_id": "yes", "label": "Yes" },
+            { "option_id": "no", "label": "No" }
+          ],
+          "allow_free_text": false
+        }
+      },
+      "state": "ELICITATION_STATE_OPENED"
+    },
+    "response_operation_type": "patchbay.Operation",
+    "response_operation": {
+      "command_id": { "value": "cmd-response-select-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
+      "correlations": [ { "elicitation_id": { "value": "elicitation-question-001" } } ],
+      "payload": {
+        "payload": "CgN5ZXM=",
+        "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
+        "schema_ref": "patchbay.ElicitationResponsePayload"
+      }
+    }
+  },
+  "expected_outcome": {
+    "outcome": "accepted",
+    "failure_code": "FAILURE_CODE_UNSPECIFIED"
+  },
+  "invariant_check": "ElicitationInvalidResponseRejected: a response selecting a declared option is not rejected by typed question-contract validation."
+}

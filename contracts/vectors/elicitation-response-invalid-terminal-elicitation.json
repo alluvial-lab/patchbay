@@ -1,0 +1,45 @@
+{
+  "vector_id": "elicitation-response-invalid-terminal-elicitation",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.ResponseContract.question",
+    "patchbay.QuestionContract.options",
+    "patchbay.QuestionContract.allow_free_text",
+    "patchbay.ResponseOption.option_id",
+    "patchbay.ElicitationResponsePayload.selected_option_id",
+    "patchbay.ElicitationResponsePayload.free_text",
+    "patchbay.ElicitationResponsePayload.clarification"
+  ],
+  "description": "A response targeting an already answered elicitation is rejected as a terminal-slot validation failure.",
+  "input": {
+    "elicitation_type": "patchbay.Elicitation",
+    "elicitation": {
+      "elicitation_id": { "value": "elicitation-terminal-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "expected_responder_actor": { "value": "operator-alice" },
+      "response_contract": {
+        "contract_kind": "RESPONSE_CONTRACT_KIND_QUESTION",
+        "question": {
+          "options": [ { "option_id": "yes", "label": "Yes" } ],
+          "allow_free_text": false
+        }
+      },
+      "state": "ELICITATION_STATE_ANSWERED"
+    },
+    "response_operation_type": "patchbay.Operation",
+    "response_operation": {
+      "command_id": { "value": "cmd-invalid-terminal-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "kind": "OPERATION_KIND_ELICITATION_RESPONSE",
+      "correlations": [ { "elicitation_id": { "value": "elicitation-terminal-001" } } ],
+      "payload": {
+        "payload": "CgN5ZXM=",
+        "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
+        "schema_ref": "patchbay.ElicitationResponsePayload"
+      }
+    }
+  },
+  "expected_outcome": { "outcome": "rejected", "failure_code": "validation_failed" },
+  "invariant_check": "boundary-validation: terminal Elicitations reject later response Operations before acceptance side effects."
+}
