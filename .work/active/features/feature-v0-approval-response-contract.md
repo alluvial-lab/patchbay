@@ -1,7 +1,7 @@
 ---
 id: feature-v0-approval-response-contract
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, verification, foundation]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-elicitation-response-contract]
@@ -588,3 +588,29 @@ checkpoints.
   regression (status quo), but a known v0.1.0 limitation.
 - **`check:drift`** reports the pre-existing adapter-proto divergence
   regardless of correctness; not run in CI. TS build is the real check.
+
+## Implementation summary
+
+All five child-story checkpoints completed in dependency order:
+
+1. `ApprovalDecision` and `ApprovalResponsePayload` landed in the proto with regenerated canonical Rust and TypeScript bindings.
+2. Core boundary validation now accepts only APPROVED/DENIED, rejects unspecified/reserved/wrong-content/kind-mismatch inputs, and the kind-gated slot projection maps completed APPROVED→`Answered` and completed DENIED→`Declined` while machine rejection leaves the slot open.
+3. The Pi adapter decodes approval decisions and resolves a pending approval gate; APPROVED allows and DENIED blocks the tool, reserved decisions remain `unsupported_command`, and question-response delivery remains deferred.
+4. Five approval-response vectors bring the suite to 24 and explicitly pin the load-bearing DENIED→`Declined` outcome; `docs/VERIFICATION.md` traceability was regenerated.
+5. `docs/PROTOCOL.md` now describes decision-driven completion, distinguishes operator decline from machine rejection, and names the surface-reject reserved seam.
+
+Child commits:
+- `3301432` — `implement: story-approval-response-proto-message`
+- `6464c59` — `implement: story-approval-response-core-validation`
+- `761f200` — `implement: story-approval-response-adapter-delivery`
+- `f2c6ac5` — `implement: story-approval-response-conformance-vectors`
+- `bd0431f` — `implement: story-approval-response-foundation-doc`
+
+Integrated verification passed:
+- `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo build --workspace --all-targets`
+- `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo test --workspace`
+- `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo clippy --workspace --all-targets -- -D warnings`
+- `cd contracts/ts && npm run build && npm run check:vectors` (24 vectors)
+- `cd pi-adapter && npm run build && npm test` (6 tests)
+
+Execution capability was direct inline feature ownership: shared context across the five ordered checkpoints reduced handoff risk. Effective review weight is standard (project default); the feature is now at `stage: review` for the caller's review lane. The known pre-existing `check:drift` generator divergence was not run, per the feature contract. No unrelated files were changed.
