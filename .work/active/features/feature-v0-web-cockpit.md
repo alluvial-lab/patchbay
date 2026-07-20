@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
@@ -110,14 +110,20 @@ export class Reconciler {
       }
     }
   }
-  private async reconcile(domainId): Promise<void> { /* LoadSnapshot at-or-before cursor; fold; mark unreconciled stale */ }
+  // LoadSnapshot returns snapshot_payload as opaque bytes — deserialize to
+  // SessionSnapshot via SessionSnapshotSchema. Replace the model from the
+  // snapshot (never merge); advance cursor to snapshot_lsn. Unreconciled
+  // axes render stale/unknown until the live stream catches up.
+  private async reconcile(domainId: AuthorityDomainId): Promise<void> { /* fromBinary(SessionSnapshotSchema, res.snapshotPayload) → replace model */ }
 }
 ```
 
 **Implementation Notes**:
 - Cursor is the last *folded* LSN, advanced only after the presentation model applies the event. Reconnect resumes from there.
 - A gap (missed events) is detected when the stream resumes at an LSN > cursor+1; reconcile via `LoadSnapshot` rather than synthesizing state.
+- `LoadSnapshotResponse.snapshot_payload` is opaque `bytes` (not a typed message) — the cockpit must `fromBinary(SessionSnapshotSchema, …)` it. `SessionSnapshot` carries `sessions[]` + `snapshot_lsn`; the fold replaces the model from it (snapshot is authority, the old model is never merged).
 - Unreconciled state is marked stale/unknown per the degraded-behavior rules — never rendered as live.
+- The web-server's `rpc.ts` already proxies all three RPCs over gRPC-Web with operator-session auth (CSRF required on `Submit`, relaxed on `Subscribe`/`LoadSnapshot`). The cockpit speaks Connect-Web to `/` (same-origin).
 
 **Acceptance Criteria**:
 - [ ] Subscribe folds events into the presentation model; cursor advances on fold
@@ -149,13 +155,18 @@ export interface PresentationModel {
   commands: Map<CommandId, CommandView>;
   elicitations: Map<ElicitationId, ElicitationView>;
 }
-export function fold(model: PresentationModel, ev: StoredEventPayload): PresentationModel { /* pure fold */ }
+// fold switches on StoredEventPayload.kind and deserializes each variant's
+// bytes via its Schema (OperationSchema, ObservationSchema, ElicitationSchema,
+// CommandTransitionSchema, SessionStateEventSchema). Authority-family kinds
+// (GRANT/DESCENDANT_GRANT/REVOCATION) are ignored by the cockpit in v0.1.0.
+export function fold(model: PresentationModel, ev: StoredEventPayload): PresentationModel { /* pure fold over kind-discriminated payload */ }
 ```
 
 **Implementation Notes**:
 - The fold mirrors the core's projection semantics (registry observe + command-index observe) but is read-only — it never writes back. Reconnect reconciliation replaces the model from a snapshot.
+- `StoredEventPayload` is kind-discriminated bytes (`kind: StoredEventKind`, `payload: bytes`). The fold switches on `kind` and deserializes each variant via its `*Schema`: `OPERATION`→`Operation` (registers a command; may open an elicitation via its payload), `OBSERVATION`→`Observation` (agent messages/tool calls/lifecycle facts), `ELICITATION`→`Elicitation` (state + contract), `COMMAND_TRANSITION`→`CommandTransition` (advances `CommandView.state`/`failure_code`), `SESSION_STATE`→`SessionStateEvent` (connectivity/activity/label/generation). `GRANT`/`DESCENDANT_GRANT`/`REVOCATION` are authority-family events the cockpit ignores in v0.1.0 (no operator-facing surface yet).
 - `activityDetail` (Option C) is composed from the Observation stream (`tool_call`, `tool_execution_start/end`, `message_update`, `agent_end`, `turn_start/end`) — an ephemeral presentation hint, not a durable state. The durable `activity` stays `working`/`idle`.
-- `needsYou` is derived: a session is needs-you if its last command is terminal-and-awaiting-input OR it has a pending elicitation.
+- `needsYou` is derived: a session is needs-you if its last command is terminal-and-awaiting-input OR it has a pending (`OPENED`/`PENDING`) elicitation.
 
 **Acceptance Criteria**:
 - [ ] fold is a pure function over (model, event) → model
@@ -235,7 +246,7 @@ The responsive shell: desktop two-pane (list + live detail), mobile drill-in (li
 
 - **Markdown renderer choice** — must be small + safe + streaming-friendly. A heavy parser bloats the bundle; an unsafe one is an XSS vector despite source authentication. Spike the choice in Unit 3.
 - **Reconnect correctness** — the snapshot-correctness rule is load-bearing. If the reconciler ever renders an unreconciled snapshot as live, that's a conformance-floor violation. Property-test the reconcile path.
-- **Elicitation payload shapes (EC1–EC3)** — these are new response-contract shapes not yet in the proto. Implementation must extend the `elicitation-response` Operation payload schema; coordinate with the contracts crate. If the proto extension is non-trivial, surface as a blocker (semantic 50/50 per the harness rule).
+- **Elicitation payload shapes (EC1–EC3 + approval)** — RESOLVED. The typed contracts shipped (`feature-v0-elicitation-response-contract` + `feature-v0-approval-response-contract`, both `done`): `QuestionContract`/`ResponseOption`/`ElicitationResponsePayload`/`ApprovalResponsePayload`/`ApprovalDecision` all exist in `contracts/proto/patchbay/elicitations.proto`. The cockpit binds to generated TS from `@patchbay/contracts`; no proto extension is needed. No blocker remains.
 
 ## Simplification
 
@@ -254,3 +265,13 @@ Implementation returned to `drafting` before code was written because Unit 4's b
 - `pi-adapter/src/delivery.ts` currently reports both approval-response and elicitation-response as `unsupported_command`, so an ad-hoc browser-only payload convention would not gain an authoritative consumer at the adapter boundary.
 
 This is a protocol/safety design gap, not a mechanical TypeScript choice. Resolving it requires a contract decision for the binary approval decision (and corresponding core validation/terminal mapping and adapter delivery), or an explicit scope change that removes Deny from v0.1.0. Those options produce materially different protocol behavior, so the implementation worker did not choose between them silently.
+
+### Resolution (2026-07-20): blocker cleared — design refreshed against shipped contracts
+
+`feature-v0-approval-response-contract` shipped (`stage: done`, commit `b326067`), resolving the blocker. The typed contracts now exist exactly as EC1–EC3 + the approval contract specified:
+
+- `ApprovalResponsePayload { ApprovalDecision decision }` with `APPROVED`/`DENIED` committed (four richer decisions reserved).
+- `QuestionContract { repeated ResponseOption options; bool allow_free_text }` + `ResponseOption { option_id; label }` + `ElicitationResponsePayload { selected_option_id; free_text; clarification }` — covers EC1 (free-text option via `allow_free_text`), EC2 (answer-and via `clarification`), EC3 (grouping stays a presentation concern; the payload is single-answer).
+- Core validation: `DENIED` → `ElicitationState::Declined` (the load-bearing terminal mapping); question responses → `Answered`. Adapter delivery splits `APPROVAL_RESPONSE` from `ELICITATION_RESPONSE`. 5 conformance vectors pin the approval side (suite now 24).
+
+Unit 4's binary approval is now buildable as a typed, boundary-valid Operation (`OperationKind.APPROVAL_RESPONSE` + `ApprovalResponsePayload`). The cockpit's `ElicitationView.contract` binds to the real `ResponseContract.contract_body` oneof (`question: QuestionContract`); `options?` is no longer a phantom field — it is `contract.question.options`. The design above is verified accurate against the shipped proto (`contracts/proto/patchbay/elicitations.proto`, `operations.proto`, `control.proto`). No semantic 50/50 remains open. Stage advanced `drafting → implementing`.
