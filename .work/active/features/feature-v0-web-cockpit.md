@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: implementing
+stage: drafting
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract]
@@ -242,3 +242,15 @@ The responsive shell: desktop two-pane (list + live detail), mobile drill-in (li
 - Dropped the standalone detail mock — folded into the shell (one coherent product mock, no competing paths).
 - Deferred the Attention destination — elicitations surface inline + via needs-you badge; the cross-session inbox is a future promotion.
 - No composer-level OperationKind selector — actions surface contextually where relevant, keeping the composer simple.
+
+## Implementation discovery (2026-07-19)
+
+Implementation returned to `drafting` before code was written because Unit 4's binary approval requirement cannot be represented by the current generated contract and core semantics.
+
+- The shipped question-response work is usable: `QuestionContract`, `ResponseOption`, and `ElicitationResponsePayload` can represent select-one/free-text plus optional clarification.
+- No `ApprovalResponsePayload` exists in `contracts/proto/patchbay/`, the generated TypeScript bindings, or the generated Rust bindings. The completed dependency's design body refers to an “existing” `ApprovalResponsePayload`, but repository-wide search finds that name only in that prose.
+- `core/src/acceptance/elicitation_response.rs` accepts any `APPROVAL_RESPONSE` matched to an approval contract without decoding a decision payload. Therefore Approve and Deny cannot be built as distinct, boundary-valid Operations.
+- `core/src/acceptance/elicitation.rs` maps every completed response Operation to `ElicitationState::Answered`; its own comment says mapping approval denial to `Declined` is deferred. Sending an ad-hoc text/JSON decision from the cockpit would be unvalidated and would not produce the required denial lifecycle semantics.
+- `pi-adapter/src/delivery.ts` currently reports both approval-response and elicitation-response as `unsupported_command`, so an ad-hoc browser-only payload convention would not gain an authoritative consumer at the adapter boundary.
+
+This is a protocol/safety design gap, not a mechanical TypeScript choice. Resolving it requires a contract decision for the binary approval decision (and corresponding core validation/terminal mapping and adapter delivery), or an explicit scope change that removes Deny from v0.1.0. Those options produce materially different protocol behavior, so the implementation worker did not choose between them silently.
