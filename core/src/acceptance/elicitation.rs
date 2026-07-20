@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, ActorId, AuthorityDomainId, CommandId, CommandTransition, Elicitation,
-    ElicitationId, ElicitationState, Lsn, Operation, OperationKind, OperationState,
-    ResponseContract, StoredEventKind, TypedCorrelation,
+    typed_correlation, ActorId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId,
+    CommandId, CommandTransition, Elicitation, ElicitationId, ElicitationState, Lsn, Operation,
+    OperationKind, OperationState, PayloadContentType, ResponseContract, StoredEventKind,
+    TypedCorrelation,
 };
 use prost::Message;
 
@@ -269,18 +270,20 @@ impl ElicitationSlotLayer {
 
         self.terminalize_slot(
             &elicitation_id,
+            kind,
             to_state,
             event_lsn,
-            Some(response_operation.clone()),
+            response_operation.clone(),
         )
     }
 
     fn terminalize_slot(
         &mut self,
         elicitation_id: &ElicitationId,
+        kind: OperationKind,
         response_state: OperationState,
         event_lsn: u64,
-        response_operation: Option<Operation>,
+        response_operation: Operation,
     ) -> Result<(), AcceptanceError> {
         let slot = self.slots.get_mut(elicitation_id).ok_or_else(|| {
             AcceptanceError::CorruptLog(format!(
@@ -295,19 +298,57 @@ impl ElicitationSlotLayer {
             return Ok(());
         }
 
-        // Only a Completed response terminalizes the slot as Answered. A
+        // Only a Completed response terminalizes the slot. A
         // Rejected/Failed/Expired/Cancelled/Superseded response means the
-        // response itself failed — the slot stays pending (the protocol allows
-        // another surface to answer). Mapping denial (Rejected) to Declined is
-        // a response-contract validation concern, deferred to v0.x.
+        // response itself failed, so the slot stays pending and another
+        // surface may answer. For a completed approval response, the typed
+        // operator decision selects the terminal's valence.
         if response_state == OperationState::Completed {
-            slot.state = ElicitationState::Answered;
+            slot.state = if kind == OperationKind::ApprovalResponse {
+                match decode_approval_decision(&response_operation)? {
+                    ApprovalDecision::Approved => ElicitationState::Answered,
+                    ApprovalDecision::Denied => ElicitationState::Declined,
+                    decision => {
+                        return Err(AcceptanceError::CorruptRecord(format!(
+                            "approval response terminal transition carried non-committed decision {decision:?}"
+                        )))
+                    }
+                }
+            } else {
+                ElicitationState::Answered
+            };
             slot.terminal_lsn = Some(event_lsn);
-            slot.winning_response = response_operation;
+            slot.winning_response = Some(response_operation);
         }
         // Non-Completed terminals leave the slot non-terminal.
         Ok(())
     }
+}
+
+fn decode_approval_decision(operation: &Operation) -> Result<ApprovalDecision, AcceptanceError> {
+    let envelope = operation.payload.as_ref().ok_or_else(|| {
+        AcceptanceError::CorruptRecord(
+            "completed approval response Operation is missing its payload".to_owned(),
+        )
+    })?;
+    if envelope.content_type != PayloadContentType::Protobuf as i32 {
+        return Err(AcceptanceError::CorruptRecord(
+            "completed approval response payload content_type is not PAYLOAD_CONTENT_TYPE_PROTOBUF"
+                .to_owned(),
+        ));
+    }
+    let payload =
+        ApprovalResponsePayload::decode(envelope.payload.as_slice()).map_err(|error| {
+            AcceptanceError::CorruptRecord(format!(
+                "cannot decode completed ApprovalResponsePayload: {error}"
+            ))
+        })?;
+    ApprovalDecision::try_from(payload.decision).map_err(|_| {
+        AcceptanceError::CorruptRecord(format!(
+            "completed approval response has unknown decision {}",
+            payload.decision
+        ))
+    })
 }
 
 /// Rebuild an Elicitation-slot projection by replaying one authority domain.
@@ -383,4 +424,139 @@ fn event_identity(event: &RecordedEvent) -> Result<(&AuthorityDomainId, u64), Ac
         .as_ref()
         .ok_or_else(|| AcceptanceError::CorruptRecord("event has no LSN".to_owned()))?;
     Ok((authority_domain_id, lsn.value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patchbay_contracts::patchbay::PayloadEnvelope;
+
+    fn elicitation_id() -> ElicitationId {
+        ElicitationId {
+            value: "elicitation-approval-1".to_owned(),
+        }
+    }
+
+    fn layer_with_open_slot() -> ElicitationSlotLayer {
+        let id = elicitation_id();
+        ElicitationSlotLayer {
+            slots: HashMap::from([(
+                id.clone(),
+                ElicitationRecord {
+                    elicitation_id: id,
+                    state: ElicitationState::Opened,
+                    terminal_lsn: None,
+                    contract: None,
+                    expected_responder_actor: None,
+                    winning_response: None,
+                },
+            )]),
+            command_operations: HashMap::new(),
+        }
+    }
+
+    fn approval_operation(decision: ApprovalDecision) -> Operation {
+        Operation {
+            kind: OperationKind::ApprovalResponse as i32,
+            payload: Some(PayloadEnvelope {
+                payload: ApprovalResponsePayload {
+                    decision: decision as i32,
+                }
+                .encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                ..PayloadEnvelope::default()
+            }),
+            ..Operation::default()
+        }
+    }
+
+    #[test]
+    fn terminalize_slot_maps_completed_responses_by_kind_and_decision() {
+        let cases = [
+            (
+                "completed approval APPROVED",
+                OperationKind::ApprovalResponse,
+                approval_operation(ApprovalDecision::Approved),
+                OperationState::Completed,
+                ElicitationState::Answered,
+                true,
+            ),
+            (
+                "completed approval DENIED (load-bearing decision mapping)",
+                OperationKind::ApprovalResponse,
+                approval_operation(ApprovalDecision::Denied),
+                OperationState::Completed,
+                ElicitationState::Declined,
+                true,
+            ),
+            (
+                "completed question remains payload-opaque",
+                OperationKind::ElicitationResponse,
+                Operation {
+                    kind: OperationKind::ElicitationResponse as i32,
+                    ..Operation::default()
+                },
+                OperationState::Completed,
+                ElicitationState::Answered,
+                true,
+            ),
+            (
+                "machine rejection does not terminalize",
+                OperationKind::ApprovalResponse,
+                approval_operation(ApprovalDecision::Denied),
+                OperationState::Rejected,
+                ElicitationState::Opened,
+                false,
+            ),
+        ];
+
+        for (name, kind, operation, response_state, expected_state, terminalized) in cases {
+            let mut layer = layer_with_open_slot();
+            layer
+                .terminalize_slot(
+                    &elicitation_id(),
+                    kind,
+                    response_state,
+                    42,
+                    operation.clone(),
+                )
+                .unwrap();
+            let slot = layer.get_slot(&elicitation_id()).unwrap();
+            assert_eq!(slot.state, expected_state, "case {name}");
+            assert_eq!(slot.terminal_lsn, terminalized.then_some(42), "case {name}");
+            assert_eq!(
+                slot.winning_response,
+                terminalized.then_some(operation),
+                "case {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn completed_approval_with_corrupt_payload_fails_closed() {
+        let mut layer = layer_with_open_slot();
+        let operation = Operation {
+            kind: OperationKind::ApprovalResponse as i32,
+            payload: Some(PayloadEnvelope {
+                payload: vec![0xff],
+                content_type: PayloadContentType::Protobuf as i32,
+                ..PayloadEnvelope::default()
+            }),
+            ..Operation::default()
+        };
+
+        let error = layer
+            .terminalize_slot(
+                &elicitation_id(),
+                OperationKind::ApprovalResponse,
+                OperationState::Completed,
+                42,
+                operation,
+            )
+            .expect_err("corrupt approval payload must not select a terminal state");
+        assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
+        let slot = layer.get_slot(&elicitation_id()).unwrap();
+        assert_eq!(slot.state, ElicitationState::Opened);
+        assert_eq!(slot.terminal_lsn, None);
+    }
 }

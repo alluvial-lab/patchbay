@@ -1,8 +1,8 @@
 //! Fail-fast validation for typed elicitation response payloads.
 
 use patchbay_contracts::patchbay::{
-    response_contract, typed_correlation, ElicitationResponsePayload, Operation, OperationKind,
-    ResponseContractKind,
+    response_contract, typed_correlation, ApprovalDecision, ApprovalResponsePayload,
+    ElicitationResponsePayload, Operation, OperationKind, ResponseContractKind,
 };
 use prost::Message;
 
@@ -45,7 +45,29 @@ pub fn validate_response_payload(
 
     match (operation_kind, contract_kind) {
         (OperationKind::ElicitationResponse, ResponseContractKind::Question) => {}
-        (OperationKind::ApprovalResponse, ResponseContractKind::Approval) => return Ok(()),
+        (OperationKind::ApprovalResponse, ResponseContractKind::Approval) => {
+            let payload = decode_approval_payload(operation)?;
+            let decision = ApprovalDecision::try_from(payload.decision).map_err(|_| {
+                format!(
+                    "approval response has unknown decision {}",
+                    payload.decision
+                )
+            })?;
+            match decision {
+                ApprovalDecision::Approved | ApprovalDecision::Denied => return Ok(()),
+                ApprovalDecision::Unspecified => {
+                    return Err("approval response has an unspecified decision".to_owned())
+                }
+                ApprovalDecision::ReservedAllowOnce
+                | ApprovalDecision::ReservedAlways
+                | ApprovalDecision::ReservedPolicyAmend
+                | ApprovalDecision::ReservedModifiedInput => {
+                    return Err(format!(
+                        "approval decision {decision:?} is reserved and not validatable in v0.1.0"
+                    ))
+                }
+            }
+        }
         (kind, contract_kind) => {
             return Err(format!(
                 "response kind {kind:?} does not match contract kind {contract_kind:?}"
@@ -103,6 +125,21 @@ pub fn validate_response_payload(
     Ok(())
 }
 
+fn decode_approval_payload(operation: &Operation) -> Result<ApprovalResponsePayload, String> {
+    let envelope = operation
+        .payload
+        .as_ref()
+        .ok_or_else(|| "approval-response Operation is missing its payload".to_owned())?;
+    if envelope.content_type != patchbay_contracts::patchbay::PayloadContentType::Protobuf as i32 {
+        return Err(
+            "approval-response Operation payload content_type must be PAYLOAD_CONTENT_TYPE_PROTOBUF"
+                .to_owned(),
+        );
+    }
+    ApprovalResponsePayload::decode(envelope.payload.as_slice())
+        .map_err(|error| format!("cannot decode ApprovalResponsePayload: {error}"))
+}
+
 fn decode_response_payload(operation: &Operation) -> Result<ElicitationResponsePayload, String> {
     let envelope = operation
         .payload
@@ -148,6 +185,22 @@ mod tests {
         }
     }
 
+    fn approval_operation(decision: ApprovalDecision) -> Operation {
+        Operation {
+            kind: OperationKind::ApprovalResponse as i32,
+            correlations: vec![correlation()],
+            payload: Some(PayloadEnvelope {
+                payload: ApprovalResponsePayload {
+                    decision: decision as i32,
+                }
+                .encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                ..PayloadEnvelope::default()
+            }),
+            ..Operation::default()
+        }
+    }
+
     fn active_question(allow_free_text: bool) -> ActiveElicitation {
         ActiveElicitation {
             contract: ResponseContract {
@@ -161,6 +214,17 @@ mod tests {
                         allow_free_text,
                     },
                 )),
+                ..ResponseContract::default()
+            },
+            is_terminal: false,
+            winning_response: None,
+        }
+    }
+
+    fn active_approval() -> ActiveElicitation {
+        ActiveElicitation {
+            contract: ResponseContract {
+                contract_kind: ResponseContractKind::Approval as i32,
                 ..ResponseContract::default()
             },
             is_terminal: false,
@@ -210,18 +274,8 @@ mod tests {
             ),
             (
                 "approval",
-                operation(
-                    OperationKind::ApprovalResponse,
-                    ElicitationResponsePayload::default(),
-                ),
-                Some(ActiveElicitation {
-                    contract: ResponseContract {
-                        contract_kind: ResponseContractKind::Approval as i32,
-                        ..ResponseContract::default()
-                    },
-                    is_terminal: false,
-                    winning_response: None,
-                }),
+                approval_operation(ApprovalDecision::Approved),
+                Some(active_approval()),
                 true,
             ),
         ];
@@ -353,6 +407,56 @@ mod tests {
     }
 
     #[test]
+    fn approval_response_validation_covers_committed_and_reserved_decisions() {
+        for decision in [ApprovalDecision::Approved, ApprovalDecision::Denied] {
+            let operation = approval_operation(decision);
+            assert!(
+                validate_response_payload(&operation, Some(&active_approval())).is_ok(),
+                "committed decision {decision:?} must be accepted"
+            );
+        }
+
+        let rejected = [
+            (
+                ApprovalDecision::Unspecified,
+                "approval response has an unspecified decision",
+            ),
+            (
+                ApprovalDecision::ReservedAllowOnce,
+                "reserved and not validatable in v0.1.0",
+            ),
+            (
+                ApprovalDecision::ReservedAlways,
+                "reserved and not validatable in v0.1.0",
+            ),
+            (
+                ApprovalDecision::ReservedPolicyAmend,
+                "reserved and not validatable in v0.1.0",
+            ),
+            (
+                ApprovalDecision::ReservedModifiedInput,
+                "reserved and not validatable in v0.1.0",
+            ),
+        ];
+        for (decision, expected_diagnostic) in rejected {
+            let operation = approval_operation(decision);
+            let diagnostic = validate_response_payload(&operation, Some(&active_approval()))
+                .expect_err("non-committed approval decision must be rejected");
+            assert!(
+                diagnostic.contains(expected_diagnostic),
+                "decision {decision:?} produced unexpected diagnostic {diagnostic:?}"
+            );
+        }
+
+        let mut wrong_content_type = approval_operation(ApprovalDecision::Approved);
+        wrong_content_type.payload.as_mut().unwrap().content_type = PayloadContentType::Json as i32;
+        assert!(validate_response_payload(&wrong_content_type, Some(&active_approval())).is_err());
+
+        let kind_mismatch = approval_operation(ApprovalDecision::Approved);
+        assert!(validate_response_payload(&kind_mismatch, Some(&active_question(false))).is_err());
+    }
+
+    #[test]
     fn wrong_payload_content_types_are_rejected_before_decode() {
         for content_type in [
             PayloadContentType::Json,
@@ -402,6 +506,18 @@ mod tests {
             is_terminal: true,
             winning_response: Some(operation.clone()),
             ..active_question(false)
+        };
+
+        assert!(validate_response_payload(&operation, Some(&active)).is_ok());
+    }
+
+    #[test]
+    fn exact_terminal_approval_retry_passes_validation_for_storage_deduplication() {
+        let operation = approval_operation(ApprovalDecision::Denied);
+        let active = ActiveElicitation {
+            is_terminal: true,
+            winning_response: Some(operation.clone()),
+            ..active_approval()
         };
 
         assert!(validate_response_payload(&operation, Some(&active)).is_ok());

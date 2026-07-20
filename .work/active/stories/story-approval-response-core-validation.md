@@ -1,7 +1,7 @@
 ---
 id: story-approval-response-core-validation
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: [story-approval-response-proto-message]
@@ -84,3 +84,14 @@ Full signatures + the kind-gating rationale in the feature body Unit 2.
   decision decode reads `response_operation.payload`.
 - The idempotent-retry path is unchanged: `winning_response == Some(operation)`
   exempts the exact retry before the terminal mapping runs.
+
+## Implementation notes
+
+- Execution capability: direct inline implementation; this load-bearing core change was cohesive across the boundary validator and its event-log projection.
+- Review weight: standard (project default); review is deferred to the feature boundary because this is a child-story checkpoint.
+- Files changed: `core/src/acceptance/elicitation_response.rs`, `core/src/acceptance/elicitation.rs`.
+- Tests added/removed: table-driven approval validation for both committed decisions, all four reserved decisions, unspecified, wrong content type, and kind mismatch; table-driven terminal mapping for APPROVED, DENIED, question, and machine rejection; corrupt-record fail-closed coverage; exact terminal approval retry coverage. No tests removed.
+- Simplification: removed the stale Rejected-to-Declined deferred comment and narrowed terminal payload awareness to completed approval responses only. The private terminalizer now receives the concrete response Operation rather than an unnecessary `Option`.
+- Discrepancies from design: prost stores enum fields as `i32`, so validation and projection explicitly convert with `ApprovalDecision::try_from`; unknown numeric decisions fail fast in addition to the specified reserved values. The approval-specific retry regression proves it clears validation, while the existing pipeline regression proves that this exemption reaches storage dedup and returns the existing command record.
+- Adjacent issues parked: none.
+- Verification: `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` passed.
