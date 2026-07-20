@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { create } from "@bufbuild/protobuf";
+import { OperationKind, OperationSchema, type Operation } from "@patchbay/contracts";
 import {
   AuthStorage,
   ModelRegistry,
@@ -85,15 +87,23 @@ test("real AgentSession prompt emits transcript events and honors the approval g
   const observed: TranscriptEvent[] = [];
   pi.onTranscript((event) => observed.push(event));
   let approvals = 0;
+  let denialGateStarted!: () => void;
+  const denialGate = new Promise<void>((resolve) => {
+    denialGateStarted = resolve;
+  });
   pi.setApprovalHandler((request) => {
     approvals += 1;
     assert.equal(request.toolCallId, "tool-1");
     assert.equal(request.tool, "read");
-    return false;
+    denialGateStarted();
+    return new Promise<boolean>(() => undefined);
   });
 
   try {
-    await pi.prompt("exercise the approval gate");
+    const deniedRun = pi.prompt("exercise the approval gate");
+    await denialGate;
+    pi.resolveApproval(approvalOperation(), false);
+    await deniedRun;
     assert.equal(approvals, 1);
     assert.ok(observed.some((event) => event.kind === "user_confirmed"));
     assert.ok(
@@ -106,6 +116,12 @@ test("real AgentSession prompt emits transcript events and honors the approval g
         (event) => event.kind === "assistant_committed" && event.text === "approval was enforced",
       ),
     );
+    assert.ok(
+      observed.some(
+        (event) => event.kind === "tool_finished" && event.toolCallId === "tool-1" && event.error,
+      ),
+      "a delivered DENIED decision blocks the pending tool call",
+    );
     faux.appendResponses([
       fauxAssistantMessage(
         fauxToolCall("read", { path: "../docs/VISION.md" }, { id: "tool-2" }),
@@ -113,12 +129,27 @@ test("real AgentSession prompt emits transcript events and honors the approval g
       ),
       fauxAssistantMessage("approved tool completed", { timestamp: 13 }),
     ]);
-    pi.setApprovalHandler(() => true);
-    await pi.prompt("approve this read");
+    let approvalGateStarted!: () => void;
+    const approvalGate = new Promise<void>((resolve) => {
+      approvalGateStarted = resolve;
+    });
+    pi.setApprovalHandler((request) => {
+      approvals += 1;
+      assert.equal(request.toolCallId, "tool-2");
+      assert.equal(request.tool, "read");
+      approvalGateStarted();
+      return new Promise<boolean>(() => undefined);
+    });
+    const approvedRun = pi.prompt("approve this read");
+    await approvalGate;
+    pi.resolveApproval(approvalOperation(), true);
+    await approvedRun;
+    assert.equal(approvals, 2);
     assert.ok(
       observed.some(
         (event) => event.kind === "tool_finished" && event.toolCallId === "tool-2" && !event.error,
       ),
+      "a delivered APPROVED decision allows the pending tool call",
     );
 
     assert.equal(pi.getState().idle, true);
@@ -156,6 +187,10 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     await pi.dispose();
   }
 });
+
+function approvalOperation(): Operation {
+  return create(OperationSchema, { kind: OperationKind.APPROVAL_RESPONSE });
+}
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { create } from "@bufbuild/protobuf";
+import { create, toBinary } from "@bufbuild/protobuf";
 import {
+  ApprovalDecision,
+  ApprovalResponsePayloadSchema,
   OperationKind,
   OperationSchema,
   type Operation,
@@ -37,6 +39,30 @@ test("DeliveryTranslator maps instruct/cancel/session-new and rejects spawn", as
   assert.equal(replaced.sessionGenerationChanged, true);
   await assert.rejects(
     translator.deliver(operation(OperationKind.SPAWN), session),
+    UnsupportedCommandError,
+  );
+});
+
+test("DeliveryTranslator resolves committed approval decisions and rejects reserved/question responses", async () => {
+  const resolutions: boolean[] = [];
+  const session = {
+    resolveApproval: async (_operation: Operation, approved: boolean) => {
+      resolutions.push(approved);
+    },
+  } as unknown as PiSession;
+  const translator = new DeliveryTranslator();
+
+  await translator.deliver(approvalOperation(ApprovalDecision.APPROVED), session);
+  await translator.deliver(approvalOperation(ApprovalDecision.DENIED), session);
+  assert.deepEqual(resolutions, [true, false]);
+
+  await assert.rejects(
+    translator.deliver(approvalOperation(ApprovalDecision.RESERVED_ALLOW_ONCE), session),
+    (error: unknown) =>
+      error instanceof UnsupportedCommandError && error.failureCode === "unsupported_command",
+  );
+  await assert.rejects(
+    translator.deliver(operation(OperationKind.ELICITATION_RESPONSE), session),
     UnsupportedCommandError,
   );
 });
@@ -82,6 +108,19 @@ function operation(kind: OperationKind, payload = ""): Operation {
     payload: create(PayloadEnvelopeSchema, {
       payload: encoder.encode(payload),
       contentType: PayloadContentType.TEXT_UTF8,
+    }),
+  });
+}
+
+function approvalOperation(decision: ApprovalDecision): Operation {
+  return create(OperationSchema, {
+    kind: OperationKind.APPROVAL_RESPONSE,
+    payload: create(PayloadEnvelopeSchema, {
+      payload: toBinary(
+        ApprovalResponsePayloadSchema,
+        create(ApprovalResponsePayloadSchema, { decision }),
+      ),
+      contentType: PayloadContentType.PROTOBUF,
     }),
   });
 }

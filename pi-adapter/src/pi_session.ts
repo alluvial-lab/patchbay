@@ -1,3 +1,4 @@
+import { OperationKind, type Operation } from "@patchbay/contracts";
 import {
   createAgentSession,
   createAgentSessionRuntime,
@@ -63,6 +64,10 @@ interface SessionBinding {
   unsubscribe: (() => void) | undefined;
 }
 
+interface PendingApproval {
+  resolve: (approved: boolean) => void;
+}
+
 /** Direct in-process host for one replaceable Pi AgentSession runtime. */
 export class PiSession {
   readonly #runtime: AgentSessionRuntime;
@@ -74,6 +79,7 @@ export class PiSession {
   #turnSequence = 0;
   #promptSequence = 0;
   #approvalHandler: ApprovalHandler = () => true;
+  #pendingApproval: PendingApproval | undefined;
   #binding: SessionBinding | undefined;
   #pendingGeneration: number | undefined;
   #disposed = false;
@@ -166,6 +172,15 @@ export class PiSession {
 
   setApprovalHandler(handler: ApprovalHandler): void {
     this.#approvalHandler = handler;
+  }
+
+  resolveApproval(operation: Operation, approved: boolean): void {
+    if (operation.kind !== OperationKind.APPROVAL_RESPONSE) {
+      throw new Error(`cannot resolve approval from OperationKind ${operation.kind}`);
+    }
+    const pending = this.#pendingApproval;
+    if (!pending) throw new Error("Pi session has no pending approval gate");
+    pending.resolve(approved);
   }
 
   onTranscript(listener: (event: TranscriptEvent) => void): () => void {
@@ -317,12 +332,30 @@ export class PiSession {
         tool: toolCall.name,
         args: asRecord(args),
       });
-      const approved = await this.#approvalHandler(request);
+      const approved = await this.#awaitApproval(request);
       return approved ? undefined : { block: true, reason: "Blocked by Patchbay approval policy" };
     };
     binding.unsubscribe = session.subscribe((event) => {
       if (this.#isLive(binding)) this.#handleEvent(event, generation);
     });
+  }
+
+  async #awaitApproval(request: ApprovalRequest): Promise<boolean> {
+    if (this.#pendingApproval) {
+      throw new Error("Pi session already has a pending approval gate");
+    }
+
+    let resolveDelivered!: (approved: boolean) => void;
+    const delivered = new Promise<boolean>((resolve) => {
+      resolveDelivered = resolve;
+    });
+    const pending: PendingApproval = { resolve: resolveDelivered };
+    this.#pendingApproval = pending;
+    try {
+      return await Promise.race([Promise.resolve(this.#approvalHandler(request)), delivered]);
+    } finally {
+      if (this.#pendingApproval === pending) this.#pendingApproval = undefined;
+    }
   }
 
   #invalidateBinding(): void {
@@ -331,6 +364,8 @@ export class PiSession {
     binding.active = false;
     binding.unsubscribe?.();
     binding.unsubscribe = undefined;
+    this.#pendingApproval?.resolve(false);
+    this.#pendingApproval = undefined;
     if (this.#binding === binding) this.#binding = undefined;
   }
 

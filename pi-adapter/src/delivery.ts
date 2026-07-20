@@ -1,4 +1,11 @@
-import { OperationKind, type Operation } from "@patchbay/contracts";
+import { fromBinary } from "@bufbuild/protobuf";
+import {
+  ApprovalDecision,
+  ApprovalResponsePayloadSchema,
+  OperationKind,
+  PayloadContentType,
+  type Operation,
+} from "@patchbay/contracts";
 import type { PiSession } from "./pi_session.js";
 
 const decoder = new TextDecoder();
@@ -32,10 +39,23 @@ export class DeliveryTranslator {
         return this.#manageSession(operation, session);
       case OperationKind.SPAWN:
         throw new UnsupportedCommandError("Pi spawn is unsupported in v0.1.0");
-      case OperationKind.APPROVAL_RESPONSE:
+      case OperationKind.APPROVAL_RESPONSE: {
+        const payload = approvalPayload(operation);
+        if (payload.decision === ApprovalDecision.APPROVED) {
+          await session.resolveApproval(operation, true);
+          return {};
+        }
+        if (payload.decision === ApprovalDecision.DENIED) {
+          await session.resolveApproval(operation, false);
+          return {};
+        }
+        throw new UnsupportedCommandError(
+          `approval decision ${payload.decision} is not deliverable in v0.1.0`,
+        );
+      }
       case OperationKind.ELICITATION_RESPONSE:
         throw new UnsupportedCommandError(
-          "approval Elicitation delivery is an explicit minimal-slice follow-on",
+          "question Elicitation delivery is an explicit minimal-slice follow-on",
         );
       case OperationKind.ATTACH:
       case OperationKind.RESERVED_ADAPTER_UTILITY_EXEC:
@@ -90,6 +110,22 @@ export class DeliveryTranslator {
       return {};
     }
     throw new UnsupportedCommandError(`unknown Pi session action: ${action}`);
+  }
+}
+
+function approvalPayload(operation: Operation) {
+  const envelope = operation.payload;
+  if (!envelope || envelope.contentType !== PayloadContentType.PROTOBUF) {
+    throw new UnsupportedCommandError(
+      "approval response payload content_type must be PAYLOAD_CONTENT_TYPE_PROTOBUF",
+    );
+  }
+  try {
+    return fromBinary(ApprovalResponsePayloadSchema, envelope.payload);
+  } catch (error) {
+    throw new UnsupportedCommandError(
+      `cannot decode ApprovalResponsePayload: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

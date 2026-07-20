@@ -1,7 +1,7 @@
 ---
 id: story-approval-response-adapter-delivery
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: [story-approval-response-proto-message, story-approval-response-core-validation]
@@ -66,3 +66,14 @@ tool calls arriving with no open approval gate (unchanged).
 - The response Operation's terminal state is `Completed` either way (it
   delivered a valid decision); the *tool* is blocked on DENIED, not the
   response. The Elicitation terminal is what differs (`Answered` vs `Declined`).
+
+## Implementation notes
+
+- Execution capability: direct inline implementation; generated TypeScript types made the delivery decoder and session resolution path bounded to two adapter files.
+- Review weight: standard (project default); review is deferred to the feature boundary because this is a child-story checkpoint.
+- Files changed: `pi-adapter/src/delivery.ts`, `pi-adapter/src/pi_session.ts`, `pi-adapter/tests/delivery.test.ts`, `pi-adapter/tests/pi_session.test.ts`.
+- Tests added/removed: translator coverage for APPROVED, DENIED, reserved decisions, and the still-unsupported question response; real `AgentSession` coverage proving delivered DENIED blocks and delivered APPROVED allows a pending tool call. No tests removed.
+- Simplification: split the combined unsupported response arm; protobuf decoding uses generated `ApprovalResponsePayloadSchema` rather than a handwritten payload shape.
+- Discrepancies from design: the producer side remains absent as designed. A custom asynchronous `ApprovalHandler` represents the open gate and races the delivered decision; the default synchronous `() => true` still auto-approves when no real gate is open. PiSession fail-fast permits one unresolved approval gate at a time rather than guessing how to route an uncorrelated concurrent decision.
+- Adjacent issues parked: none; approval-Elicitation production and question-response delivery remain the explicit follow-ons already named by the feature.
+- Verification: `cd pi-adapter && npm run build && npm test` passed (6 tests).
