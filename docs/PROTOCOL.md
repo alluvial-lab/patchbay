@@ -153,7 +153,7 @@ One registry owns kinds, lifecycle policy, authority matching, adapter capabilit
 | `cancel` | Request cancellation of a target Operation/turn/session action. | Full lifecycle by refinement; the target Operation's terminal race is governed by first durable terminal commit, and cancellation completion does not rewrite an already-terminal target. | Committed v0.1.0. |
 | `interrupt` | Request immediate stop/interrupt of active execution. | Same as `cancel`; reserved distinction for adapters that expose softer cancel vs harder interrupt. | Committed v0.1.0. |
 | `query` | Read status, snapshot, capabilities, lists, history, metadata, or diagnostics. | Full lifecycle by refinement. Reads may skip `running`, but no v0.1.0 read uses a no-delivery direct-to-completed shortcut. A no-lifecycle read variant is reserved if polling volume warrants it later. | Committed v0.1.0. |
-| `approval-response` | Respond to a permission/tool approval Elicitation. | Full lifecycle by refinement. Completion updates the Elicitation terminal (`answered` or `declined`) only if response validation succeeds and first-terminal rules allow. | Committed v0.1.0. |
+| `approval-response` | Respond to a permission/tool approval Elicitation. | Full lifecycle by refinement. On `completed`, the core decodes the typed `ApprovalResponsePayload.decision`: `APPROVED` selects `answered` and `DENIED` selects `declined`, only after response validation succeeds and first-terminal rules allow. | Committed v0.1.0. |
 | `elicitation-response` | Respond to non-approval Elicitations. | Full lifecycle by refinement. Invalid response Operation is rejected unless explicit Elicitation policy terminalizes the slot. | Committed v0.1.0 for `question` contracts; reserved for `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, and `service_request` contracts. |
 | `reconfigure` | Change model, reasoning/thinking level, permission mode, tools/MCP, agent mode, workspace, or adapter config. | Full lifecycle by refinement; `running` only for adapters with long reconfiguration. | Committed v0.1.0. |
 | `session-management` | Resume, fork, compact, clear, archive/delete, revert, share/unshare, remove messages, checkpoint restore, disconnect/retire existing sessions/resources. | Full lifecycle by refinement because compaction/archive/delete can be long-running; quick local actions may skip `running`. | Committed v0.1.0. |
@@ -274,12 +274,14 @@ Derived UI labels such as “Live idle”, “Working”, “Stale working”, o
 | `opened` | no | Core durably recorded the Elicitation, but it may not yet be visible through subscription fan-out to the expected responder actor's subscribed surfaces. |
 | `pending` | no | The Elicitation is visible on one or more subscribed surfaces for the expected responder actor and can accept a valid response Operation from any authenticated endpoint for that actor. |
 | `answered` | yes | A valid response Operation satisfied the contract and first durable terminal commit selected it as the answer, terminalizing the slot for all surfaces. |
-| `declined` | yes | The expected responder explicitly refused/rejected/denied the Elicitation without satisfying it. Covers question rejection and approval denial when the response contract treats denial as terminal. |
+| `declined` | yes | The expected responder answered with a valid declining decision: the response slot was satisfied with negative valence. Covers approval denial when the response contract treats denial as terminal. |
 | `expired` | yes | The response window closed before another terminal state won. |
 | `cancelled` | yes | Core/operator/policy cancelled the pending slot from the responder/control-plane side. |
 | `withdrawn` | yes | The opener withdrew the solicitation before it was answered, e.g. the tool call was no longer needed. |
 | `superseded` | yes | A newer Elicitation or policy explicitly replaced this one. |
 | `stale` | yes | The target/session/generation/opener context became stale or orphaned; responses must no longer mutate live state. |
+
+Operator `ElicitationState = declined` is an answer to the response slot; it is distinct from machine-level `CommandState = rejected`, where Patchbay or an adapter refuses a command. A rejected response Operation never terminalizes an Elicitation: the response itself failed and the slot remains available for another valid response.
 
 Allowed transitions:
 
@@ -309,7 +311,7 @@ Terminal `ElicitationState` transitions are delivered on the same authorized Eli
 - No-answer is not an Operation. It is either continued `pending` or a terminal policy event such as `expired`, `cancelled`, `withdrawn`, or `stale`.
 - `answered` does not imply the underlying tool/action succeeded; it only means the response slot was satisfied. Subsequent work emits Operations/Observations as usual.
 
-Reserved future Elicitation shapes: multi-responder quorum Elicitations; multi-answer accumulation; tighter responder binding to a specific endpoint, endpoint class, or fallback chain; delegated responder policy; escalation from one expected responder actor to another; cryptographic secret-entry envelopes; large file/attachment upload protocol; drawing/region-selection UI hints.
+Reserved future Elicitation shapes: multi-responder quorum Elicitations; multi-answer accumulation; tighter responder binding to a specific endpoint, endpoint class, or fallback chain; delegated responder policy; escalation from one expected responder actor to another; surface-reject (an operator surface signals that it cannot handle an Elicitation), distinct from operator approve/decline and from machine command rejection — v0.1.0 leaves an unrenderable Elicitation pending until timeout or withdrawal; cryptographic secret-entry envelopes; large file/attachment upload protocol; drawing/region-selection UI hints.
 
 ### `response_contract` registry
 

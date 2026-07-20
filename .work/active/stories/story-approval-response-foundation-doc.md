@@ -1,7 +1,7 @@
 ---
 id: story-approval-response-foundation-doc
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: [story-approval-response-core-validation]
@@ -55,3 +55,14 @@ prose):
   the audit trail.
 - This story depends on Unit 2 (core-validation) because the doc must reflect
   the settled decision-driven semantics, not precede them.
+
+## Implementation notes
+
+- Execution capability: direct inline implementation; this was a bounded rolling-foundation correction to already-settled semantics.
+- Review weight: standard (project default); review is deferred to the feature boundary because this is a child-story checkpoint.
+- Files changed: `docs/PROTOCOL.md`.
+- Tests added/removed: none; the protocol vector gate was rerun after the prose update.
+- Simplification: replaced the contradictory "without satisfying it" definition and removed any conceptual path from machine command rejection to operator decline.
+- Discrepancies from design: none. The approval-response registry row now names the typed payload and both decision-selected terminals; the reserved surface-reject seam states current v0.1.0 pending behavior.
+- Adjacent issues parked: none.
+- Verification: proofread in context and `cd contracts/ts && npm run check:vectors` passed (24 vectors).
