@@ -1,0 +1,61 @@
+{
+  "vector_id": "approval-response-invalid-wrong-content-type",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.ApprovalDecision",
+    "patchbay.ApprovalResponsePayload.decision",
+    "patchbay.Operation.payload",
+    "patchbay.PayloadEnvelope.content_type"
+  ],
+  "description": "Valid ApprovalResponsePayload bytes declared as JSON are rejected before protobuf decoding.",
+  "input": {
+    "elicitation_type": "patchbay.Elicitation",
+    "elicitation": {
+      "elicitation_id": { "value": "elicitation-approval-wrong-content-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "opener": { "actor_id": { "value": "agent-runner" }, "endpoint_id": { "value": "pi-1" } },
+      "expected_responder_actor": { "value": "operator-alice" },
+      "response_contract": {
+        "contract_kind": "RESPONSE_CONTRACT_KIND_APPROVAL"
+      },
+      "state": "ELICITATION_STATE_OPENED"
+    },
+    "response_operation_type": "patchbay.Operation",
+    "response_operation": {
+      "command_id": { "value": "cmd-approval-wrong-content-001" },
+      "authority_domain_id": { "value": "auth-main" },
+      "sender": {
+        "actor_id": { "value": "operator-alice" },
+        "endpoint_id": { "value": "web-1" },
+        "device_id": { "value": "device-browser" },
+        "endpoint_generation": { "value": 7 }
+      },
+      "kind": "OPERATION_KIND_APPROVAL_RESPONSE",
+      "correlations": [ { "elicitation_id": { "value": "elicitation-approval-wrong-content-001" } } ],
+      "target_scope": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": { "value": "pi" },
+        "runtime_session_id": { "value": "sess-approval-invalid-003" },
+        "session_generation": { "value": 12 }
+      },
+      "idempotency_key": "idem-approval-wrong-content-001",
+      "payload": {
+        "payload": "CAE=",
+        "content_type": "PAYLOAD_CONTENT_TYPE_JSON",
+        "schema_ref": "patchbay.ApprovalResponsePayload"
+      }
+    }
+  },
+  "expected_outcome": {
+    "result_type": "patchbay.SubmissionResult",
+    "submission_result": {
+      "outcome": "SUBMISSION_OUTCOME_REJECTED",
+      "command_id": { "value": "cmd-approval-wrong-content-001" },
+      "failure_code": "FAILURE_CODE_VALIDATION_FAILED",
+      "deduplicated": false
+    },
+    "durable_acceptance_record_created": false
+  },
+  "invariant_check": "boundary-validation: an approval response must declare PAYLOAD_CONTENT_TYPE_PROTOBUF before ApprovalResponsePayload decoding."
+}

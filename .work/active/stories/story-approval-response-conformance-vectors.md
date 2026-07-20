@@ -1,7 +1,7 @@
 ---
 id: story-approval-response-conformance-vectors
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: [story-approval-response-proto-message]
@@ -57,3 +57,14 @@ exercise the valid side):
   `ElicitationInvalidResponseRejected` (already in the `check-vectors`
   registry); rejection vectors reference the descriptive `boundary-validation`
   id (draft-only).
+
+## Implementation notes
+
+- Execution capability: direct inline implementation; the five vector envelopes mirrored the reviewed question-response fixtures and required no new checker behavior.
+- Review weight: standard (project default); review is deferred to the feature boundary because this is a child-story checkpoint.
+- Files changed: five `contracts/vectors/approval-response-*.json` files and the generated conformance traceability block in `docs/VERIFICATION.md`.
+- Tests added/removed: five draft vectors covering APPROVED, DENIED, unspecified, reserved ALLOW_ONCE, and wrong content type. No vectors removed.
+- Simplification: approval contracts carry only `contract_kind`; no question body or handwritten approval contract body was added. The wrong-content vector reuses valid protobuf bytes and changes only the discriminator, isolating that boundary rule.
+- Discrepancies from design: none. Accepted outcomes add the explicit `elicitation_terminal_state` field so APPROVED→Answered and the load-bearing DENIED→Declined mapping are reviewable in the vector itself.
+- Adjacent issues parked: none; the known envelope-only vector checker limitation remains documented by the feature.
+- Verification: `cd contracts/ts && npm run check:vectors` passed (24 vectors), and direct generated-schema decoding confirmed payload bytes map to decisions 1, 2, 0, and 100 as intended.
