@@ -72,6 +72,28 @@ message ElicitationResponsePayload {
   string clarification = 3;
 }
 
+// The operator's binary decision on an approval Elicitation. v0.1.0 commits
+// APPROVED and DENIED. The richer decisions are named reserved seams and are
+// not validatable until promotion.
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_APPROVED = 1;
+  APPROVAL_DECISION_DENIED = 2;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  APPROVAL_DECISION_RESERVED_ALLOW_ONCE = 100;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  APPROVAL_DECISION_RESERVED_ALWAYS = 101;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  APPROVAL_DECISION_RESERVED_POLICY_AMEND = 102;
+  // reserved, not validatable in v0; submissions reject with validation_failed.
+  APPROVAL_DECISION_RESERVED_MODIFIED_INPUT = 103;
+}
+
+// The typed response payload carried by an APPROVAL_RESPONSE Operation.
+message ApprovalResponsePayload {
+  ApprovalDecision decision = 1;
+}
+
 enum ResponseContractKind {
   RESPONSE_CONTRACT_KIND_UNSPECIFIED = 0;
   RESPONSE_CONTRACT_KIND_APPROVAL = 1;

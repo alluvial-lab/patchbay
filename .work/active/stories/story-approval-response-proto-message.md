@@ -1,7 +1,7 @@
 ---
 id: story-approval-response-proto-message
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: []
@@ -76,3 +76,14 @@ bytes are a serialized `ApprovalResponsePayload`.
   is the real check.
 - Enum values follow the `RESPONSE_CONTRACT_KIND_RESERVED_*` pattern (committed
   low, reserved at 100+).
+
+## Implementation notes
+
+- Execution capability: direct inline implementation; the generated-contract change was bounded and the required regeneration procedure was fully specified.
+- Review weight: standard (project default); review is deferred to the feature boundary because this is a child-story checkpoint.
+- Files changed: `contracts/proto/patchbay/elicitations.proto`, generated Rust and TypeScript bindings.
+- Tests added/removed: none; generated bindings were verified through the workspace build, TypeScript compiler, and existing vector gate.
+- Simplification: no approval contract-body arm or parallel handwritten DTO was introduced; the decision remains response-payload-only.
+- Discrepancies from design: Rust generation writes the consolidated `contracts/rust/src/gen/patchbay/patchbay.rs` file rather than the older split path named in the story; generation otherwise followed the specified canonical procedure.
+- Adjacent issues parked: none. The known `check:drift` generator divergence was intentionally not run or changed.
+- Verification: `CARGO_HOME=/home/agent/projects/patchbay/.cargo-cache cargo build --workspace --all-targets`, `cd contracts/ts && npm run build`, and `npm run check:vectors` passed (19 vectors).

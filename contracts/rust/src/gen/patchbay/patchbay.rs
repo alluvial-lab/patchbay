@@ -1200,6 +1200,12 @@ pub struct ElicitationResponsePayload {
     #[prost(string, tag = "3")]
     pub clarification: ::prost::alloc::string::String,
 }
+/// The typed response payload carried by an APPROVAL_RESPONSE Operation.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ApprovalResponsePayload {
+    #[prost(enumeration = "ApprovalDecision", tag = "1")]
+    pub decision: i32,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimeoutPolicy {
     #[prost(message, optional, tag = "1")]
@@ -1271,6 +1277,56 @@ impl ElicitationState {
             "ELICITATION_STATE_WITHDRAWN" => Some(Self::Withdrawn),
             "ELICITATION_STATE_SUPERSEDED" => Some(Self::Superseded),
             "ELICITATION_STATE_STALE" => Some(Self::Stale),
+            _ => None,
+        }
+    }
+}
+/// The operator's binary decision on an approval Elicitation. v0.1.0 commits
+/// APPROVED and DENIED. The richer decisions are named reserved seams and are
+/// not validatable until promotion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ApprovalDecision {
+    Unspecified = 0,
+    Approved = 1,
+    Denied = 2,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedAllowOnce = 100,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedAlways = 101,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedPolicyAmend = 102,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedModifiedInput = 103,
+}
+impl ApprovalDecision {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "APPROVAL_DECISION_UNSPECIFIED",
+            Self::Approved => "APPROVAL_DECISION_APPROVED",
+            Self::Denied => "APPROVAL_DECISION_DENIED",
+            Self::ReservedAllowOnce => "APPROVAL_DECISION_RESERVED_ALLOW_ONCE",
+            Self::ReservedAlways => "APPROVAL_DECISION_RESERVED_ALWAYS",
+            Self::ReservedPolicyAmend => "APPROVAL_DECISION_RESERVED_POLICY_AMEND",
+            Self::ReservedModifiedInput => "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "APPROVAL_DECISION_UNSPECIFIED" => Some(Self::Unspecified),
+            "APPROVAL_DECISION_APPROVED" => Some(Self::Approved),
+            "APPROVAL_DECISION_DENIED" => Some(Self::Denied),
+            "APPROVAL_DECISION_RESERVED_ALLOW_ONCE" => Some(Self::ReservedAllowOnce),
+            "APPROVAL_DECISION_RESERVED_ALWAYS" => Some(Self::ReservedAlways),
+            "APPROVAL_DECISION_RESERVED_POLICY_AMEND" => Some(Self::ReservedPolicyAmend),
+            "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT" => {
+                Some(Self::ReservedModifiedInput)
+            }
             _ => None,
         }
     }
