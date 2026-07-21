@@ -64,7 +64,7 @@ Resolved interactively during the mockup pass; pinned here so implementation doe
 
 These three touch `response_contract` validation semantics and were grounded against `docs/PROTOCOL.md` before deciding.
 
-- **EC1 — Free-text option within a `question` contract: v0.1.0 committed.** A `select-one`/`select-many` question may append a free-text option ("or type your own answer"). The response Operation carries the free-text string instead of a selected option id. This is a `free-text` ui_hint within the committed `question` contract_kind — no contract-kind promotion. The control shape matches the `ui_hint` (radio for select-one including the free-text alternative, checkbox for select-many).
+- **EC1 — Free-text option within a `question` contract: v0.1.0 committed.** A `select-one` question may append a free-text option ("or type your own answer"). The response Operation carries the free-text string instead of a selected option id. This is a `free-text` ui_hint within the committed `question` contract_kind — no contract-kind promotion. The control shape is **select-one radio** (including the free-text alternative). `select-many` is a reserved ui_hint (D2 of `feature-v0-elicitation-response-contract`): the `question` contract is single-answer in v0.1.0 (`ElicitationResponsePayload.selected_option_id` is singular), and per `docs/PROTOCOL.md` ui_hints are non-authoritative — so a `select-many` hint does not change the single-answer control shape; the cockpit renders it as select-one (the contract is authoritative), not as a multi-select checkbox group.
 - **EC2 — "Answer-and" composed response (structured selection + free-text clarification): v0.1.0 committed.** A question response may carry a selected option *plus* an appended free-text clarification in one Operation (the "And..." field). This is a response-payload shape on the `question` contract, not a new contract_kind. The clarification is supplementary context; the structured selection remains the primary answer.
 - **EC3 — Grouped multi-question (N independent single-answer Elicitations as one visual card): v0.1.0 committed as the grouping; the multi-answer contract is reserved.** Claude's nested multi-question maps to N independent Elicitations opened as a batch, rendered as one visual card, each independently single-answer and independently terminal. This keeps every Elicitation single-answer (committed v0.1.0). A true multi-answer contract (one Elicitation carrying multiple questions) is a reserved seam ("multi-answer accumulation", PROTOCOL:312) — promotion is a clean reserved-seam reversal, not a quiet gap.
 - **EC4 — Attention destination deferred from v0.1.0.** Elicitations surface inline in the session detail + via the `needs-you` badge. The cross-session Attention destination is deferred; its mock is preserved. Promotion is additive when monitoring many sessions.
@@ -196,12 +196,12 @@ Renders agent Observation payloads (markdown) into the message timeline with exc
 
 **File**: `web-cockpit/src/ui/elicitation.ts`
 
-Implements the three elicitation shapes (EC1–EC3) and the mobile bottom-sheet. Binary approval = direct buttons; multi-option question = radio/checkbox + free-text option (EC1) + answer-and clarification (EC2); grouped multi-question = N independent single-answer Elicitations as one card (EC3).
+Implements the three elicitation shapes (EC1–EC3) and the mobile bottom-sheet. Binary approval = direct buttons; multi-option question = radio + free-text option (EC1) + answer-and clarification (EC2); grouped multi-question = N independent single-answer Elicitations as one card (EC3). All `question` contracts render select-one (radio) — `select-many` is a reserved, non-authoritative hint that renders as select-one in v0.1.0.
 
 **Implementation Notes**:
 - The response Operation is built from the selected option (or free-text) + optional clarification, correlated to the `ElicitationId`. First-answer-wins is enforced core-side; the UI disables the controls once the elicitation terminalizes (answered/declined/expired) and shows the terminal state.
 - The mobile bottom sheet clones the tapped card's content (per the locked mock behavior) and force-shows the options/actions that the inline-teaser CSS hides.
-- Control shape matches `ui_hint`: radio for select-one (including the free-text alternative), checkbox for select-many. Never mix in one elicitation.
+- Control shape is **select-one radio** for all `question` contracts (including the free-text alternative when `allow_free_text`). A `select-many` ui_hint is non-authoritative (`docs/PROTOCOL.md` § ui_hints) and the `question` contract is single-answer in v0.1.0 (D2); it renders as select-one, never as a multi-select checkbox group.
 
 **Acceptance Criteria**:
 - [ ] Binary approval submits Deny/Approve directly (no select-then-submit)
@@ -239,7 +239,7 @@ The responsive shell: desktop two-pane (list + live detail), mobile drill-in (li
 
 - **Interface tests**: the fold (Unit 2) is a pure function — property-test it against event sequences (generation monotonicity, stale-never-live, reconnect reconciliation). The protocol client (Unit 1) — reconnect/resume behavior against a fake transport.
 - **Regression tests**: markdown rendering on a 360px viewport (the differentiator); elicitation submission shapes (EC1 free-text, EC2 answer-and, EC3 grouped).
-- **Unit tests**: elicitation control-shape matching ui_hint (radio vs checkbox); needs-you derivation.
+- **Unit tests**: elicitation control-shape is select-one radio for all `question` contracts (a `select-many` hint renders as select-one, not checkbox); needs-you derivation.
 - **Test removal**: none anticipated — greenfield.
 
 ## Risks

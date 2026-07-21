@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-elicitation-handling
 kind: story
-stage: drafting
+stage: implementing
 tags: [ux, protocol]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-presentation-model-fold]
@@ -43,9 +43,13 @@ The typed contracts the cockpit binds to (from `contracts/proto/patchbay/`):
 
 `QuestionContract.allow_free_text = true` → the UI appends a free-text option
 ("or type your own answer"). The response Operation carries `free_text`
-instead of `selected_option_id`. Control shape: radio for `select-one`
-(including the free-text alternative), checkbox for `select-many`. Never mix
-in one elicitation.
+instead of `selected_option_id`. Control shape: **select-one radio** for all
+`question` contracts (including the free-text alternative when
+`allow_free_text`). `select-many` is a reserved, non-authoritative ui_hint
+(D2 of `feature-v0-elicitation-response-contract`; `docs/PROTOCOL.md` § ui_hints):
+the `question` contract is single-answer in v0.1.0
+(`selected_option_id` is singular), so a `select-many` hint renders as
+select-one, never as a multi-select checkbox group.
 
 ### EC2 — answer-and composed response (committed)
 
@@ -97,13 +101,15 @@ v0.1.0; its mock (`attention/attention.html`) is preserved on disk, not wired.
   independently (N independent single-answer Elicitations — no multi-answer
   payload)
 - [ ] Once terminal, the elicitation controls disable and show the terminal
-  state (control shape matches `ui_hint`/contract_kind throughout)
-- [ ] No silent promotion of the reserved multi-answer seam
+  state (control shape is select-one radio throughout)
+- [ ] No silent promotion of the reserved multi-answer seam; a `select-many`
+  ui_hint renders as select-one (non-authoritative hint; contract is authoritative)
 
 ## Verification evidence
 
-- Unit tests: elicitation control-shape matching (radio vs checkbox by
-  contract_kind/select-one vs select-many); needs-you derivation.
+- Unit tests: elicitation control-shape is select-one radio for all
+  `question` contracts (a `select-many` hint renders as select-one, not
+  checkbox); needs-you derivation.
 - Regression tests: the three submission shapes (EC1 free-text, EC2
   answer-and, EC3 grouped) produce the correct `Operation` payload.
 - Conformance note: the cockpit's elicitation handling is a *consumer* of the
@@ -112,41 +118,37 @@ v0.1.0; its mock (`attention/attention.html`) is preserved on disk, not wired.
   payload convention (that was the failure mode the approval-response arc
   existed to prevent).
 
-## Implementation discovery (2026-07-20)
+## Implementation discovery (2026-07-20) — RESOLVED by operator
 
 Implementation stopped before Unit 4 code because the story's `select-many`
-control requirement contradicts the shipped, operator-chosen v0.1.0 contract.
-This is a reserved-seam disposition, not a mechanical browser choice.
+control requirement contradicted the shipped, operator-chosen v0.1.0 contract.
+This was a reserved-seam disposition, not a mechanical browser choice.
 
 - `feature-v0-elicitation-response-contract` D2 explicitly settles
-  **`select-many` as reserved for v0.1.0** and says the cockpit's locked mock is
+  **`select-many` as reserved for v0.1.0** and the cockpit's locked mock is
   select-one-only. A `select-many` `ui_hint` may be wire-present because hints
   are non-authoritative/open, but multiple selections have no typed response
   home and reject until future promotion.
 - The generated `ElicitationResponsePayload` carries singular
   `selected_option_id`, and core validation requires exactly one of that
   singular field or `free_text`. There is no `repeated selected_option_ids`.
-- This story nevertheless requires "checkbox for select-many" and says control
-  shape must match that hint, while simultaneously forbidding silent promotion
-  of multi-answer. A checkbox group semantically permits multiple selections;
-  serializing only one would be misleading, and serializing several is
-  impossible without an ad-hoc payload or protocol promotion.
+- The story's original "checkbox for select-many" clause contradicted D2.
 
-Two defensible resolutions produce materially different protocol/surface
-behavior:
+### Resolution (operator, 2026-07-20): option 1 — align to shipped v0.1.0
 
-1. **Align the cockpit to shipped v0.1.0 (matches prior operator decision):**
-   render committed question contracts as select-one/free-text only; treat a
-   reserved `select-many` hint as unsupported/unrenderable and leave the
-   Elicitation pending under the existing reserved surface-reject posture.
-   Remove the checkbox requirement from this story and the parent feature.
-2. **Promote multi-answer:** add a typed repeated-selection payload, core
-   validation, vectors, adapter handling, and UI checkbox semantics through a
-   protocol-change ceremony. This crosses the cockpit's forbidden write scope
-   and reverses the reserved v0.1.0 decision.
+The operator confirmed **option 1**: the cockpit renders all committed
+`question` contracts as select-one (radio + optional free-text). A
+`select-many` ui_hint is non-authoritative (`docs/PROTOCOL.md` § ui_hints:
+"changing a prompt from select-one to free-text does not change the protocol
+contract kind") and renders as select-one — the contract is authoritative, not
+the hint. This does not reduce a committed guarantee (`select-many` was never
+committed for v0.1.0); it removes a contradictory clause from the design body.
 
-Rendering checkboxes while allowing only one checked value is not a third
-resolution: it presents radio semantics with the wrong accessible control and
-would claim capability the boundary cannot accept. Per the design-flaw escape
-hatch, this item returns to `drafting`; Units 4 and 5 are not implemented until
-the operator/design lane resolves the contradiction.
+**Proto promotion (option 2) is out of scope** — it would be a reserved-seam
+reversal (protocol-change ceremony) crossing the cockpit's forbidden write
+scope. Rendering checkboxes while allowing only one checked value was rejected:
+it presents radio semantics with the wrong accessible control and claims
+capability the boundary cannot accept.
+
+The feature body's EC1 and Unit 4 clauses are corrected (this commit). Story
+returned to `stage: implementing`; Units 4 and 5 may now proceed.
