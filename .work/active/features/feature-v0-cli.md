@@ -1,7 +1,7 @@
 ---
 id: feature-v0-cli
 kind: feature
-stage: implementing
+stage: drafting
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam]
@@ -195,3 +195,19 @@ The CLI is a first-class control surface that speaks gRPC directly to the core (
 - `setup` remains the bootstrap channel (SECURITY:77-78, 208: first operator via CLI/local-console; the channel distinction from routine web login is load-bearing for lockdown exit).
 
 Option 2 is explicitly rejected for v0.1.0 (it would be a new, weaker posture not in the foundation docs; promotion would be a reversal with a protocol-change ceremony).
+
+## Implementation discovery (2026-07-21) — bootstrap/session transport prerequisite
+
+Implementation stopped before scaffolding Unit 1 because the shipped core boundary cannot realize the resolved auth posture or Unit 2 within the CLI-only write scope:
+
+- `ControlService` exposes only `Submit`, `Subscribe`, and `LoadSnapshot`. It has no operator bootstrap, operator-session enrollment, setup-secret consumption, or grant-administration RPC.
+- Every `Submit` passes through the existing live-grant check before acceptance. Although `Grant` is a generated contract and the core has an internal `ingest_grant` function, no control-service method exposes that function. The first grant therefore cannot be created by submitting an Operation; doing so would require the grant being bootstrapped.
+- The web server does not read an operator record created by another component. It requires `PATCHBAY_OPERATOR_ID` and `PATCHBAY_OPERATOR_PASSWORD_HASH` at startup and keeps operator sessions in its own in-memory `SessionStore`. A CLI-local password record would not become the record the web server verifies.
+- No shipped component stores, expires, or consumes the one-time setup secret required by SECURITY § Enrollment and authentication.
+- The core does not independently verify the forwarded operator session. After the shared core-secret interceptor succeeds, `MetadataIssuerContext` accepts any non-empty operator-id and operator-session-id metadata. It also hard-codes the verified endpoint to `patchbay-web-server` and supplies no device or endpoint generation, so a direct CLI request cannot be represented as its own full transport principal.
+
+This is not a mechanical CLI implementation choice. Proceeding would require one of two materially different security designs: (1) add the missing bootstrap/operator-session/control-surface-principal contract and core/server implementation, then build the CLI against it; or (2) weaken the resolved posture to trust the shared core secret plus self-supplied identity/configuration, which is the already explicitly rejected option 2. A CLI-only implementation cannot create the first operator/grant, enforce setup-secret expiry, or establish a core-verifiable CLI session without pretending those security claims are satisfied.
+
+### Blocker
+
+A prerequisite must first define and implement the bootstrap and CLI-principal boundary across `contracts/`, `core/`, and `server/` (and define how the resulting password record is consumed by `web-server/`). That work is outside this feature's allowed write scope. Per the design-flaw escape hatch, this feature returns to `drafting`; no `cli/` files were created.
