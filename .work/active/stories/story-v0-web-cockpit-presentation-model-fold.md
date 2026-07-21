@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-presentation-model-fold
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-protocol-client-reconcile]
@@ -75,14 +75,14 @@ presentation-component layer primitives for rendering.
 
 ## Acceptance criteria
 
-- [ ] `fold` is a pure function over (model, event) → model
-- [ ] Stale/unknown connectivity never renders as live (dominance rule enforced
+- [x] `fold` is a pure function over (model, event) → model
+- [x] Stale/unknown connectivity never renders as live (dominance rule enforced
   in the view binding, not just present in data)
-- [ ] `activityDetail` composes from Observations but does not mutate durable
+- [x] `activityDetail` composes from Observations but does not mutate durable
   `activity` state
-- [ ] Reconnect replaces the model from a snapshot; the old model is never
+- [x] Reconnect replaces the model from a snapshot; the old model is never
   rendered as live during reconciliation
-- [ ] A superseded session generation does not render as live
+- [x] A superseded session generation does not render as live
 
 ## Verification evidence
 
@@ -94,3 +94,18 @@ presentation-component layer primitives for rendering.
   conformance-floor properties (identity-before-submission, stale-never-live,
   first-answer-wins derives from the core, but the fold must preserve it in
   projection).
+
+## Implementation notes
+
+- Execution capability: inline feature owner; Unit 2 shares the reconnect contract and remains in the feature owner's context.
+- Review weight: standard (project/default); child checkpoint closes directly, integrated review remains feature-level.
+- Files changed: `web-cockpit/src/domain/model.ts`, `web-cockpit/tests/model.test.ts`.
+- Tests added: pure-fold/non-mutation, stale dominance, 100-run generation-monotonicity property, Observation activity-detail composition, first-durable-terminal preservation, snapshot replacement, and needs-you derivation tests.
+- Simplification: one canonical `sessionKey` and one `PresentationProjection` adapter connect the pure fold to Unit 1; no parallel browser DTOs or state enum copies were introduced.
+- Discrepancies from design: `fold` consumes the generated `SubscribeEvent`, not a bare `StoredEventPayload`, because domain/LSN are required for ordering and command history. `needsYou` derives from pending Elicitations or the Pi transcript's authoritative `turn_finished` projection (`waiting for command`); no unsupported protocol state was invented.
+- Adjacent issues parked: none.
+
+## Verification result
+
+- `cd web-cockpit && npm test` — pass (9 tests total; 200 generated property runs across reconcile + model).
+- Mutation checks: removing stale marking makes stale-never-live fail; allowing the old generation to remain non-tombstoned fails generation tests; permitting terminal overwrite changes the completed-state assertion to cancelled and fails.
