@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-elicitation-handling
 kind: story
-stage: implementing
+stage: drafting
 tags: [ux, protocol]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-presentation-model-fold]
@@ -111,3 +111,42 @@ v0.1.0; its mock (`attention/attention.html`) is preserved on disk, not wired.
   shape the proto doesn't carry, surface it — do not invent an ad-hoc browser
   payload convention (that was the failure mode the approval-response arc
   existed to prevent).
+
+## Implementation discovery (2026-07-20)
+
+Implementation stopped before Unit 4 code because the story's `select-many`
+control requirement contradicts the shipped, operator-chosen v0.1.0 contract.
+This is a reserved-seam disposition, not a mechanical browser choice.
+
+- `feature-v0-elicitation-response-contract` D2 explicitly settles
+  **`select-many` as reserved for v0.1.0** and says the cockpit's locked mock is
+  select-one-only. A `select-many` `ui_hint` may be wire-present because hints
+  are non-authoritative/open, but multiple selections have no typed response
+  home and reject until future promotion.
+- The generated `ElicitationResponsePayload` carries singular
+  `selected_option_id`, and core validation requires exactly one of that
+  singular field or `free_text`. There is no `repeated selected_option_ids`.
+- This story nevertheless requires "checkbox for select-many" and says control
+  shape must match that hint, while simultaneously forbidding silent promotion
+  of multi-answer. A checkbox group semantically permits multiple selections;
+  serializing only one would be misleading, and serializing several is
+  impossible without an ad-hoc payload or protocol promotion.
+
+Two defensible resolutions produce materially different protocol/surface
+behavior:
+
+1. **Align the cockpit to shipped v0.1.0 (matches prior operator decision):**
+   render committed question contracts as select-one/free-text only; treat a
+   reserved `select-many` hint as unsupported/unrenderable and leave the
+   Elicitation pending under the existing reserved surface-reject posture.
+   Remove the checkbox requirement from this story and the parent feature.
+2. **Promote multi-answer:** add a typed repeated-selection payload, core
+   validation, vectors, adapter handling, and UI checkbox semantics through a
+   protocol-change ceremony. This crosses the cockpit's forbidden write scope
+   and reverses the reserved v0.1.0 decision.
+
+Rendering checkboxes while allowing only one checked value is not a third
+resolution: it presents radio semantics with the wrong accessible control and
+would claim capability the boundary cannot accept. Per the design-flaw escape
+hatch, this item returns to `drafting`; Units 4 and 5 are not implemented until
+the operator/design lane resolves the contradiction.
