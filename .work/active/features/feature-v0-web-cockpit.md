@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
@@ -126,10 +126,10 @@ export class Reconciler {
 - The web-server's `rpc.ts` already proxies all three RPCs over gRPC-Web with operator-session auth (CSRF required on `Submit`, relaxed on `Subscribe`/`LoadSnapshot`). The cockpit speaks Connect-Web to `/` (same-origin).
 
 **Acceptance Criteria**:
-- [ ] Subscribe folds events into the presentation model; cursor advances on fold
-- [ ] Reconnect after a stream break re-subscribes from the last cursor without losing applied state
-- [ ] A snapshot gap is reconciled via LoadSnapshot; unreconciled axes render stale/unknown
-- [ ] Optimistic UI state is never authority for the cursor or the presentation model
+- [x] Subscribe folds events into the presentation model; cursor advances on fold
+- [x] Reconnect after a stream break re-subscribes from the last cursor without losing applied state
+- [x] A snapshot gap is reconciled via LoadSnapshot; unreconciled axes render stale/unknown
+- [x] Optimistic UI state is never authority for the cursor or the presentation model
 
 ### Unit 2: Presentation model — the session/command/elicitation projections
 
@@ -169,10 +169,10 @@ export function fold(model: PresentationModel, ev: StoredEventPayload): Presenta
 - `needsYou` is derived: a session is needs-you if its last command is terminal-and-awaiting-input OR it has a pending (`OPENED`/`PENDING`) elicitation.
 
 **Acceptance Criteria**:
-- [ ] fold is a pure function over (model, event) → model
-- [ ] stale/unknown connectivity never renders as live (dominance rule enforced in the view binding)
-- [ ] activityDetail composes from Observations but does not mutate durable activity state
-- [ ] Reconnect replaces the model from a snapshot; the old model is never rendered as live during reconciliation
+- [x] fold is a pure function over (model, event) → model
+- [x] stale/unknown connectivity never renders as live (dominance rule enforced in the view binding)
+- [x] activityDetail composes from Observations but does not mutate durable activity state
+- [x] Reconnect replaces the model from a snapshot; the old model is never rendered as live during reconciliation
 
 ### Unit 3: Markdown rendering (the mobile-readability differentiator)
 
@@ -187,10 +187,10 @@ Renders agent Observation payloads (markdown) into the message timeline with exc
 - Typography uses the locked Plex Sans body face (from tokens.css); code uses Plex Mono.
 
 **Acceptance Criteria**:
-- [ ] Markdown renders headings, lists, code blocks, tables, blockquotes, inline code on a 360px viewport without horizontal page-scroll
-- [ ] Code blocks scroll internally, not the page
-- [ ] Rendered output is sanitized (no unescaped HTML injection)
-- [ ] Long content does not break the chat column width
+- [x] Markdown renders headings, lists, code blocks, tables, blockquotes, inline code on a 360px viewport without horizontal page-scroll
+- [x] Code blocks scroll internally, not the page
+- [x] Rendered output is sanitized (no unescaped HTML injection)
+- [x] Long content does not break the chat column width
 
 ### Unit 4: Elicitation handling (the three shapes + mobile sheet)
 
@@ -204,11 +204,11 @@ Implements the three elicitation shapes (EC1–EC3) and the mobile bottom-sheet.
 - Control shape is **select-one radio** for all `question` contracts (including the free-text alternative when `allow_free_text`). A `select-many` ui_hint is non-authoritative (`docs/PROTOCOL.md` § ui_hints) and the `question` contract is single-answer in v0.1.0 (D2); it renders as select-one, never as a multi-select checkbox group.
 
 **Acceptance Criteria**:
-- [ ] Binary approval submits Deny/Approve directly (no select-then-submit)
-- [ ] Question with free-text option submits either a selected option id or a free-text string
-- [ ] Answer-and submits a selected option + appended clarification in one Operation
-- [ ] Grouped multi-question renders N questions as one card; each answers independently
-- [ ] Once terminal, the elicitation controls disable and show the terminal state
+- [x] Binary approval submits Deny/Approve directly (no select-then-submit)
+- [x] Question with free-text option submits either a selected option id or a free-text string
+- [x] Answer-and submits a selected option + appended clarification in one Operation
+- [x] Grouped multi-question renders N questions as one card; each answers independently
+- [x] Once terminal, the elicitation controls disable and show the terminal state
 
 ### Unit 5: Shell + session list + responsive layout
 
@@ -222,10 +222,10 @@ The responsive shell: desktop two-pane (list + live detail), mobile drill-in (li
 - Composer: textarea + attach + send; contextual actions (Cancel/Interrupt) appear near running commands.
 
 **Acceptance Criteria**:
-- [ ] Desktop: list + detail side-by-side; selecting a session fills the detail pane
-- [ ] Mobile: list is home; tap drills into full-screen detail; back returns to list
-- [ ] Session rows show identity tuple + connectivity/activity (separate channels) + needs-you state
-- [ ] All state-binding uses the presentation-component layer primitives
+- [x] Desktop: list + detail side-by-side; selecting a session fills the detail pane
+- [x] Mobile: list is home; tap drills into full-screen detail; back returns to list
+- [x] Session rows show identity tuple + connectivity/activity (separate channels) + needs-you state
+- [x] All state-binding uses the presentation-component layer primitives
 
 ## Implementation Order
 
@@ -275,3 +275,44 @@ This is a protocol/safety design gap, not a mechanical TypeScript choice. Resolv
 - Core validation: `DENIED` → `ElicitationState::Declined` (the load-bearing terminal mapping); question responses → `Answered`. Adapter delivery splits `APPROVAL_RESPONSE` from `ELICITATION_RESPONSE`. 5 conformance vectors pin the approval side (suite now 24).
 
 Unit 4's binary approval is now buildable as a typed, boundary-valid Operation (`OperationKind.APPROVAL_RESPONSE` + `ApprovalResponsePayload`). The cockpit's `ElicitationView.contract` binds to the real `ResponseContract.contract_body` oneof (`question: QuestionContract`); `options?` is no longer a phantom field — it is `contract.question.options`. The design above is verified accurate against the shipped proto (`contracts/proto/patchbay/elicitations.proto`, `operations.proto`, `control.proto`). No semantic 50/50 remains open. Stage advanced `drafting → implementing`.
+
+## Implementation summary (2026-07-20)
+
+- Execution capability: one feature-owning inline worker carried the five-unit
+  dependency chain; Units 1–3 were resumed from their green commits and Units
+  4–5 landed as `64f6217` and `ceb1e4d`.
+- Review weight: standard (project/default). The feature is intentionally left
+  at `stage: review` for the independent feature-review lane.
+- Delivered surfaces: typed Connect-Web/CSRF client and snapshot reconciler;
+  pure presentation fold; sanitized mobile-safe markdown; typed approval and
+  single-answer question handling (including EC1–EC3); responsive session shell,
+  list, shared detail, compact delivery disclosure, and gated composer.
+- Generated-contract boundary: the cockpit imports `@patchbay/contracts` and
+  encodes response payloads with Protobuf-ES; no contract, core, adapter,
+  web-server, generated artifact, or locked design-system file changed.
+- Presentation boundary: `shell.css` contains surface-only responsive/chat/sheet
+  layout. Canonical protocol states remain bound only through the locked
+  component classes and modifiers.
+- Checkable guarantees: reconnect/generation properties from Units 1–2 remain
+  green; U4 tests pin select-one despite `select-many` hints and all response
+  payload shapes; U5 property tests cover 100 generated target identities for
+  identity-before-submission and 100 generated reconciliation/state cases for
+  stale-never-live.
+- Simplification: desktop and mobile share one detail component; grouped
+  questions reuse N independent response builders; native `<details>` owns
+  delivery-history disclosure; no composer OperationKind selector or parallel
+  UI state machine was introduced.
+- Discrepancies from design: none semantic. `shell.css` is the required
+  surface-layout artifact beyond the three named TypeScript modules and does
+  not rebind protocol states.
+- Adjacent issues parked: none.
+
+## Integrated verification (2026-07-20)
+
+- `cd web-cockpit && npm test` — PASS (25 tests).
+- `cd contracts/ts && npm run check:presentation` — PASS (4 registries;
+  contrast and axe-core pass).
+- `cd contracts/ts && npm run build && npm run check:vectors` — PASS (24
+  vectors).
+- `check:drift` was not run, per the known repository gap and implementation
+  brief.
