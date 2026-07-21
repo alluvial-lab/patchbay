@@ -1,13 +1,15 @@
 import {
+  FailureCode,
+  LocalSubmissionState,
   OperationKind,
   OperationState,
   PayloadContentType,
+  type SubmissionResult,
 } from "@patchbay/contracts";
 
 import {
   sessionKey,
   stableTarget,
-  type CommandHistoryEntry,
   type CommandView,
   type ElicitationView,
   type ObservationView,
@@ -17,6 +19,7 @@ import {
 } from "../domain/model.js";
 import {
   renderElicitation,
+  renderElicitationGroup,
   type ElicitationRenderOptions,
 } from "./elicitation.js";
 import type { MarkdownRenderer } from "./markdown.js";
@@ -29,10 +32,17 @@ export interface SessionDetailActions {
   interrupt?(command: CommandView): void | Promise<void>;
 }
 
+export interface SubmissionFeedback {
+  state: LocalSubmissionState;
+  result?: SubmissionResult;
+  error?: string;
+}
+
 export interface SessionDetailOptions {
   markdown: MarkdownRenderer;
   actions?: SessionDetailActions;
   elicitation?: ElicitationRenderOptions;
+  submission?: SubmissionFeedback;
   onBack?(): void;
 }
 
@@ -60,7 +70,12 @@ export function renderSessionDetail(
   timeline.className = "timeline";
   timeline.setAttribute("aria-live", "polite");
   renderTimeline(document, timeline, model, session, options);
-  const { composer, input, send } = renderComposer(document, session, options.actions);
+  const { composer, input, send } = renderComposer(
+    document,
+    session,
+    options.actions,
+    options.submission,
+  );
   detail.append(header, timeline, composer);
 
   return {
@@ -124,8 +139,24 @@ function renderTimeline(
   for (const command of commands) {
     if (!associatedCommands.has(command.id)) entries.push({ lsn: command.lsn, type: "command", command });
   }
+  const groupedIds = new Set<string>();
+  const batches = new Map<string, ElicitationView[]>();
   for (const elicitation of elicitations) {
-    entries.push({ lsn: elicitation.lsn, type: "elicitation", elicitation });
+    if (!elicitation.groupingKey || elicitation.kind !== "question") continue;
+    const batch = batches.get(elicitation.groupingKey) ?? [];
+    batch.push(elicitation);
+    batches.set(elicitation.groupingKey, batch);
+  }
+  for (const batch of batches.values()) {
+    if (batch.length < 2) continue;
+    batch.sort((left, right) => left.lsn < right.lsn ? -1 : left.lsn > right.lsn ? 1 : 0);
+    for (const elicitation of batch) groupedIds.add(elicitation.id);
+    entries.push({ lsn: batch[0]!.lsn, type: "elicitation-group", elicitations: batch });
+  }
+  for (const elicitation of elicitations) {
+    if (!groupedIds.has(elicitation.id)) {
+      entries.push({ lsn: elicitation.lsn, type: "elicitation", elicitation });
+    }
   }
   entries.sort((left, right) => left.lsn < right.lsn ? -1 : left.lsn > right.lsn ? 1 : 0);
 
@@ -139,9 +170,14 @@ function renderTimeline(
       timeline.append(renderObservation(document, entry.observation, entry.command, options));
     } else if (entry.type === "command") {
       timeline.append(renderCommandMessage(document, entry.command, options.actions));
-    } else {
+    } else if (entry.type === "elicitation") {
       if (!options.elicitation) continue;
       const card = renderElicitation(document, entry.elicitation, options.elicitation);
+      if (!stableTarget(session)) disableSubmission(card, document);
+      timeline.append(card);
+    } else {
+      if (!options.elicitation) continue;
+      const card = renderElicitationGroup(document, entry.elicitations, options.elicitation);
       if (!stableTarget(session)) disableSubmission(card, document);
       timeline.append(card);
     }
@@ -151,7 +187,8 @@ function renderTimeline(
 type TimelineEntry =
   | { lsn: bigint; type: "observation"; observation: ObservationView; command?: CommandView }
   | { lsn: bigint; type: "command"; command: CommandView }
-  | { lsn: bigint; type: "elicitation"; elicitation: ElicitationView };
+  | { lsn: bigint; type: "elicitation"; elicitation: ElicitationView }
+  | { lsn: bigint; type: "elicitation-group"; elicitations: ElicitationView[] };
 
 function renderObservation(
   document: Document,
@@ -196,21 +233,28 @@ function renderDelivery(
 ): HTMLElement {
   const wrapper = document.createElement("div");
   wrapper.className = "delivery-line";
-  const details = document.createElement("details");
-  details.dataset.commandId = command.id;
+  wrapper.dataset.commandId = command.id;
   const current = commandStateName(command.state);
-  const summary = document.createElement("summary");
-  summary.className = `command-step command-step--${current}`;
-  summary.append(textElement(document, "span", "command-step__marker", ""));
-  summary.append(textElement(document, "span", "command-step__state", current));
-  details.append(summary);
+  const step = document.createElement("div");
+  step.className = `command-step command-step--${current}`;
+  step.append(textElement(document, "span", "command-step__marker", ""));
+  step.append(textElement(document, "span", "command-step__state", current));
+  wrapper.append(step);
 
-  const history = document.createElement("div");
-  history.className = "command-timeline";
-  for (const entry of command.history) history.append(renderHistoryEntry(document, entry));
-  if (command.race) history.append(textElement(document, "span", "command-step__race", command.race));
-  details.append(history);
-  wrapper.append(details);
+  const last = command.history.at(-1);
+  const previous = command.history.at(-2);
+  if (last) {
+    const transition = previous
+      ? `Last transition: ${commandStateName(previous.state)} → ${commandStateName(last.state)}`
+      : `Last transition: ${commandStateName(last.state)}`;
+    wrapper.append(textElement(document, "span", "command-step__race", transition));
+  }
+  if (command.race) wrapper.append(textElement(document, "span", "command-step__race", command.race));
+
+  // Full history + LSN disclosure is a reserved post-v0.1.0 seam.
+  if (command.failureCode !== undefined) {
+    wrapper.append(renderFailureBanner(document, command.failureCode));
+  }
 
   if (command.state === OperationState.RUNNING && (actions?.cancel || actions?.interrupt)) {
     const contextual = document.createElement("div");
@@ -222,21 +266,11 @@ function renderDelivery(
   return wrapper;
 }
 
-function renderHistoryEntry(document: Document, entry: CommandHistoryEntry): HTMLElement {
-  const name = commandStateName(entry.state);
-  const step = document.createElement("div");
-  step.className = `command-step command-step--${name}`;
-  step.append(textElement(document, "span", "command-step__marker", ""));
-  step.append(textElement(document, "span", "command-step__state", name));
-  step.append(textElement(document, "span", "command-step__lsn", `LSN ${entry.lsn}`));
-  if (entry.race) step.append(textElement(document, "span", "command-step__race", entry.race));
-  return step;
-}
-
 function renderComposer(
   document: Document,
   session: SessionView | undefined,
   actions: SessionDetailActions | undefined,
+  submission: SubmissionFeedback | undefined,
 ): { composer: HTMLElement; input: HTMLTextAreaElement; send: HTMLButtonElement } {
   const composer = document.createElement("form");
   composer.className = "composer";
@@ -281,7 +315,100 @@ function renderComposer(
       ),
     );
   }
+  if (submission) renderSubmissionFeedback(document, composer, submission);
   return { composer, input, send };
+}
+
+function renderSubmissionFeedback(
+  document: Document,
+  composer: HTMLElement,
+  submission: SubmissionFeedback,
+): void {
+  if (submission.state === LocalSubmissionState.SUBMITTING) {
+    composer.append(
+      textElement(document, "span", "composer__idempotency", "Submitting durable Operation…"),
+    );
+  } else if (submission.state === LocalSubmissionState.SUBMIT_FAILED) {
+    composer.append(renderFailureText(document, "submit_failed", submission.error ?? "Submission failed before an outcome was confirmed."));
+  } else if (submission.state === LocalSubmissionState.UNKNOWN) {
+    composer.append(renderFailureText(document, "unknown", submission.error ?? "Acceptance is unknown; reconcile before claiming success or retrying."));
+  }
+
+  const result = submission.result;
+  if (!result) return;
+  if (result.failureCode !== FailureCode.UNSPECIFIED) {
+    composer.append(renderFailureBanner(document, result.failureCode, result.diagnosticMessage));
+  }
+  if (result.deduplicated) {
+    const indicator = textElement(
+      document,
+      "span",
+      "retry-safety-indicator retry-safety-indicator--safe",
+      "Already in flight — existing command returned; no duplicate submitted",
+    );
+    indicator.setAttribute("role", "status");
+    composer.append(indicator);
+  }
+}
+
+function renderFailureBanner(
+  document: Document,
+  failureCode: FailureCode,
+  diagnostic?: string,
+): HTMLElement {
+  const term = failureCodeName(failureCode);
+  return renderFailureText(document, term, diagnostic || failureMessage(failureCode));
+}
+
+function renderFailureText(document: Document, term: string, message: string): HTMLElement {
+  const banner = document.createElement("div");
+  banner.className = "failure-banner";
+  banner.setAttribute("role", "alert");
+  banner.append(textElement(document, "span", "failure-banner__term", term));
+  banner.append(textElement(document, "p", "failure-banner__message", message));
+  return banner;
+}
+
+export function failureCodeName(code: FailureCode): string {
+  switch (code) {
+    case FailureCode.VALIDATION_FAILED: return "validation_failed";
+    case FailureCode.AUTHORIZATION_DENIED: return "authorization_denied";
+    case FailureCode.TARGET_NOT_FOUND: return "target_not_found";
+    case FailureCode.UNSUPPORTED_COMMAND: return "unsupported_command";
+    case FailureCode.TARGET_OFFLINE: return "target_offline";
+    case FailureCode.ADAPTER_UNAVAILABLE: return "adapter_unavailable";
+    case FailureCode.TRANSPORT_TIMEOUT: return "transport_timeout";
+    case FailureCode.DELIVERY_REJECTED: return "delivery_rejected";
+    case FailureCode.EXECUTION_FAILED: return "execution_failed";
+    case FailureCode.EXPIRED: return "expired";
+    case FailureCode.CANCELLED: return "cancelled";
+    case FailureCode.SUPERSEDED: return "superseded";
+    case FailureCode.STALE_EVENT: return "stale_event";
+    case FailureCode.EXECUTION_OUTCOME_UNKNOWN: return "execution_outcome_unknown";
+    case FailureCode.UNSPECIFIED:
+    default: throw new Error(`unsupported failure code ${code}`);
+  }
+}
+
+function failureMessage(code: FailureCode): string {
+  switch (code) {
+    case FailureCode.VALIDATION_FAILED: return "The Operation failed boundary validation before acceptance.";
+    case FailureCode.AUTHORIZATION_DENIED: return "The verified operator endpoint lacks authority for this target.";
+    case FailureCode.TARGET_NOT_FOUND: return "The addressed target identity could not be resolved.";
+    case FailureCode.UNSUPPORTED_COMMAND: return "The target adapter does not support this Operation kind.";
+    case FailureCode.TARGET_OFFLINE: return "The target is authoritatively offline.";
+    case FailureCode.ADAPTER_UNAVAILABLE: return "The adapter required for delivery is unavailable.";
+    case FailureCode.TRANSPORT_TIMEOUT: return "The transport timed out; acceptance or execution must not be inferred.";
+    case FailureCode.DELIVERY_REJECTED: return "The adapter received the Operation but refused delivery responsibility.";
+    case FailureCode.EXECUTION_FAILED: return "Execution began or was accepted, then the target reported failure.";
+    case FailureCode.EXPIRED: return "The Operation validity window expired.";
+    case FailureCode.CANCELLED: return "Cancellation became the authoritative terminal outcome.";
+    case FailureCode.SUPERSEDED: return "A newer Operation or policy superseded this one.";
+    case FailureCode.STALE_EVENT: return "A late event was retained for audit and did not rewrite live state.";
+    case FailureCode.EXECUTION_OUTCOME_UNKNOWN: return "Execution may have occurred; evaluate adapter idempotency before retrying.";
+    case FailureCode.UNSPECIFIED:
+    default: throw new Error(`unsupported failure code ${code}`);
+  }
 }
 
 function contextButton(

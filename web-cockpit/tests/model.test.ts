@@ -3,11 +3,14 @@ import test from "node:test";
 
 import { create, toBinary, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import {
+  ActorEndpointRefSchema,
+  ActorIdSchema,
   AdapterIdSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
   CommandTransitionSchema,
   ElicitationIdSchema,
+  ElicitationResponsePayloadSchema,
   ElicitationSchema,
   ElicitationState,
   EventIdSchema,
@@ -20,8 +23,10 @@ import {
   OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  QuestionContractSchema,
   ResponseContractKind,
   ResponseContractSchema,
+  ResponseOptionSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -35,6 +40,7 @@ import {
   SubscribeEventSchema,
   TargetScopeKind,
   TargetScopeSchema,
+  TypedCorrelationSchema,
   type SubscribeEvent,
 } from "@patchbay/contracts";
 import fc from "fast-check";
@@ -154,14 +160,49 @@ test("snapshot replacement discards the old projection and pending elicitations 
   projection.replaceFromSnapshot(
     create(SessionSnapshotSchema, {
       authorityDomainId: DOMAIN,
-      snapshotLsn: create(LsnSchema, { value: 5n }),
+      snapshotLsn: create(LsnSchema, { value: 0n }),
       sessions: [],
     }),
+    [],
   );
   assert.equal(projection.model.sessions.size, 0);
   assert.equal(projection.model.elicitations.size, 0);
   assert.equal(projection.model.commands.size, 0);
-  assert.equal(projection.model.cursor, 5n);
+  assert.equal(projection.model.cursor, 0n);
+});
+
+test("a late Elicitation event cannot rewrite the first terminal state", () => {
+  let model = fold(emptyPresentationModel(), questionElicitationEvent(1n, "elicitation-1", ElicitationState.PENDING));
+  model = fold(model, questionElicitationEvent(2n, "elicitation-1", ElicitationState.ANSWERED));
+  model = fold(model, questionElicitationEvent(3n, "elicitation-1", ElicitationState.PENDING));
+
+  assert.equal(model.elicitations.get("elicitation-1")!.state, ElicitationState.ANSWERED);
+  assert.equal(model.elicitations.get("elicitation-1")!.lsn, 2n);
+});
+
+test("a second completed response cannot overwrite the first answer", () => {
+  let model = fold(emptyPresentationModel(), questionElicitationEvent(1n, "elicitation-1", ElicitationState.PENDING));
+  model = fold(model, responseOperationEvent(2n, "response-1", "main"));
+  model = fold(model, transitionEvent(3n, "response-1", OperationState.ACCEPTED, OperationState.DELIVERED));
+  model = fold(model, transitionEvent(4n, "response-1", OperationState.DELIVERED, OperationState.COMPLETED));
+  model = fold(model, responseOperationEvent(5n, "response-2", "feature"));
+  model = fold(model, transitionEvent(6n, "response-2", OperationState.ACCEPTED, OperationState.DELIVERED));
+  model = fold(model, transitionEvent(7n, "response-2", OperationState.DELIVERED, OperationState.COMPLETED));
+
+  const elicitation = model.elicitations.get("elicitation-1")!;
+  assert.equal(elicitation.state, ElicitationState.ANSWERED);
+  assert.equal(elicitation.answer?.selectedOptionId, "main");
+  assert.equal(elicitation.lsn, 4n);
+});
+
+test("question Elicitations preserve same-opener batch correlation as a grouping key", () => {
+  let model = fold(emptyPresentationModel(), questionElicitationEvent(1n, "question-1", ElicitationState.PENDING, "batch-command"));
+  model = fold(model, questionElicitationEvent(2n, "question-2", ElicitationState.PENDING, "batch-command"));
+
+  const first = model.elicitations.get("question-1")!;
+  const second = model.elicitations.get("question-2")!;
+  assert.ok(first.groupingKey);
+  assert.equal(first.groupingKey, second.groupingKey);
 });
 
 function registration(lsn: bigint, generation: bigint): SubscribeEvent {
@@ -267,22 +308,83 @@ function transitionEvent(
 }
 
 function elicitationEvent(lsn: bigint): SubscribeEvent {
+  return questionElicitationEvent(lsn, "elicitation-1", ElicitationState.PENDING);
+}
+
+function questionElicitationEvent(
+  lsn: bigint,
+  id: string,
+  state: ElicitationState,
+  batchCommandId?: string,
+): SubscribeEvent {
   return stored(
     lsn,
     StoredEventKind.ELICITATION,
     ElicitationSchema,
     create(ElicitationSchema, {
-      elicitationId: create(ElicitationIdSchema, { value: "elicitation-1" }),
+      elicitationId: create(ElicitationIdSchema, { value: id }),
       authorityDomainId: DOMAIN,
+      opener: create(ActorEndpointRefSchema, {
+        actorId: create(ActorIdSchema, { value: "pi-agent" }),
+      }),
       targetContext: sessionTarget(1n),
+      correlations: batchCommandId
+        ? [
+            create(TypedCorrelationSchema, {
+              ref: {
+                case: "commandId",
+                value: create(CommandIdSchema, { value: batchCommandId }),
+              },
+            }),
+          ]
+        : [],
       responseContract: create(ResponseContractSchema, {
         contractKind: ResponseContractKind.QUESTION,
-        contractBody: { case: undefined },
+        contractBody: {
+          case: "question",
+          value: create(QuestionContractSchema, {
+            options: [
+              create(ResponseOptionSchema, { optionId: "main", label: "main" }),
+              create(ResponseOptionSchema, { optionId: "feature", label: "feature" }),
+            ],
+          }),
+        },
       }),
-      state: ElicitationState.PENDING,
+      state,
       payload: create(PayloadEnvelopeSchema, {
         contentType: PayloadContentType.TEXT_UTF8,
         payload: encoder.encode("Which path?"),
+      }),
+    }),
+  );
+}
+
+function responseOperationEvent(lsn: bigint, commandId: string, selectedOptionId: string): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.OPERATION,
+    OperationSchema,
+    create(OperationSchema, {
+      commandId: create(CommandIdSchema, { value: commandId }),
+      authorityDomainId: DOMAIN,
+      kind: OperationKind.ELICITATION_RESPONSE,
+      targetScope: sessionTarget(1n),
+      idempotencyKey: `${commandId}-key`,
+      correlations: [
+        create(TypedCorrelationSchema, {
+          ref: {
+            case: "elicitationId",
+            value: create(ElicitationIdSchema, { value: "elicitation-1" }),
+          },
+        }),
+      ],
+      payload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: "patchbay.ElicitationResponsePayload",
+        payload: toBinary(
+          ElicitationResponsePayloadSchema,
+          create(ElicitationResponsePayloadSchema, { selectedOptionId }),
+        ),
       }),
     }),
   );

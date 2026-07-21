@@ -81,6 +81,8 @@ export interface ElicitationView {
   contract: ResponseContract;
   prompt: string;
   target?: SessionIdentity;
+  /** Same opener + authoritative correlation identifies one visual question batch. */
+  groupingKey?: string;
   lsn: bigint;
   answer?: ElicitationAnswer;
 }
@@ -161,24 +163,60 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
   return next;
 }
 
-/** Replaces the entire projection from the authoritative SessionSnapshot. */
-export function replaceFromSnapshot(snapshot: SessionSnapshot): PresentationModel {
+/**
+ * Rebuilds the projection atomically. SessionSnapshot owns the session baseline;
+ * the durable prefix owns commands, Observations, and Elicitations because the
+ * snapshot wire shape does not contain those axes.
+ */
+export function replaceFromSnapshot(
+  snapshot: SessionSnapshot,
+  replayEvents: readonly SubscribeEvent[],
+): PresentationModel {
   const authorityDomainId = required(snapshot.authorityDomainId?.value, "snapshot authority domain");
-  const cursor = requiredBigint(snapshot.snapshotLsn?.value, "snapshot LSN");
+  const snapshotLsn = requiredBigint(snapshot.snapshotLsn?.value, "snapshot LSN");
   const sessions = new Map<string, SessionView>();
   for (const session of snapshot.sessions) {
-    const view = sessionFromSnapshot(session, cursor);
-    sessions.set(sessionKey(view.identity), view);
+    const view = sessionFromSnapshot(session, snapshotLsn);
+    sessions.set(sessionKey(view.identity), { ...view, reconciled: false });
   }
-  const model: PresentationModel = {
+  let model: PresentationModel = {
     authorityDomainId,
-    cursor,
-    reconciled: true,
+    cursor: 0n,
+    reconciled: false,
     sessions,
     commands: new Map(),
     elicitations: new Map(),
     observations: [],
   };
+
+  for (const event of replayEvents) {
+    const lsn = requiredBigint(event.eventId?.lsn?.value, "replay event LSN");
+    const eventDomain = required(event.eventId?.authorityDomainId?.value, "replay event authority domain");
+    if (eventDomain !== authorityDomainId) throw new Error("cross-domain replay event rejected");
+    if (lsn !== model.cursor + 1n || lsn > snapshotLsn) {
+      throw new Error(`snapshot replay is not a complete prefix at LSN ${lsn}`);
+    }
+    if (!event.payload) throw new Error("snapshot replay event payload is missing");
+
+    if (event.payload.kind === StoredEventKind.SESSION_STATE) {
+      // The snapshot is the newer authority for sessions at snapshot_lsn.
+      model = { ...model, cursor: lsn };
+    } else {
+      model = fold(model, event);
+      model.reconciled = false;
+      model.sessions = new Map(
+        [...model.sessions].map(([key, session]) => [key, { ...session, reconciled: false }]),
+      );
+    }
+  }
+  if (model.cursor !== snapshotLsn) {
+    throw new Error(`snapshot replay ended at LSN ${model.cursor}, expected ${snapshotLsn}`);
+  }
+
+  model.reconciled = true;
+  model.sessions = new Map(
+    [...model.sessions].map(([key, session]) => [key, { ...session, reconciled: true }]),
+  );
   deriveNeedsYou(model);
   return model;
 }
@@ -213,8 +251,8 @@ export class PresentationProjection implements ReconcileProjection {
     this.model = markUnreconciled(this.model);
   }
 
-  replaceFromSnapshot(snapshot: SessionSnapshot): void {
-    this.model = replaceFromSnapshot(snapshot);
+  replaceFromSnapshot(snapshot: SessionSnapshot, replayEvents: readonly SubscribeEvent[]): void {
+    this.model = replaceFromSnapshot(snapshot, replayEvents);
   }
 
   foldEvent(event: SubscribeEvent): void {
@@ -320,6 +358,7 @@ function foldElicitation(model: PresentationModel, elicitation: Elicitation, lsn
     contract,
     prompt: elicitationPrompt(elicitation),
     target: identityFromTarget(elicitation.targetContext),
+    groupingKey: elicitationGroupingKey(elicitation) ?? existing?.groupingKey,
     lsn,
     answer: existing?.answer,
   });
@@ -557,6 +596,36 @@ function contractKind(value: ResponseContractKind): "approval" | "question" {
   if (value === ResponseContractKind.APPROVAL) return "approval";
   if (value === ResponseContractKind.QUESTION) return "question";
   throw new Error(`unsupported response contract kind ${value}`);
+}
+
+function elicitationGroupingKey(elicitation: Elicitation): string | undefined {
+  const opener = elicitation.opener;
+  const actorId = opener?.actorId?.value;
+  const correlations = elicitation.correlations
+    .map(correlationKey)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  if (!actorId || correlations.length === 0) return undefined;
+  const endpoint = opener?.endpointId?.value ?? "";
+  const generation = opener?.endpointGeneration?.value ?? 0n;
+  return [actorId, endpoint, generation.toString(), ...correlations]
+    .map((part) => `${part.length}:${part}`)
+    .join("|");
+}
+
+function correlationKey(correlation: Elicitation["correlations"][number]): string | undefined {
+  switch (correlation.ref.case) {
+    case "commandId": return `command:${correlation.ref.value.value}`;
+    case "messageId": return `message:${correlation.ref.value.value}`;
+    case "replyId": return `reply:${correlation.ref.value.value}`;
+    case "elicitationId": return `elicitation:${correlation.ref.value.value}`;
+    case "eventId": {
+      const domain = correlation.ref.value.authorityDomainId?.value;
+      const lsn = correlation.ref.value.lsn?.value;
+      return domain && lsn !== undefined ? `event:${domain}:${lsn}` : undefined;
+    }
+    case undefined: return undefined;
+  }
 }
 
 function elicitationPrompt(elicitation: Elicitation): string {

@@ -20,7 +20,10 @@ export interface ReconcileClient {
 /** Port implemented by the pure presentation projection in model.ts. */
 export interface ReconcileProjection {
   markUnreconciled(reason: "stream-break" | "event-gap"): void;
-  replaceFromSnapshot(snapshot: SessionSnapshot): void | Promise<void>;
+  replaceFromSnapshot(
+    snapshot: SessionSnapshot,
+    replayEvents: readonly SubscribeEvent[],
+  ): void | Promise<void>;
   foldEvent(event: SubscribeEvent): void | Promise<void>;
 }
 
@@ -126,8 +129,39 @@ export class Reconciler {
       throw new Error("snapshot exceeds requested reconciliation boundary");
     }
 
-    await this.projection.replaceFromSnapshot(snapshot);
+    // SessionSnapshot is authoritative only for the session registry. Rebuild
+    // every other presentation axis from the durable prefix instead of merging
+    // cached browser state or skipping events hidden behind snapshot_lsn.
+    const replayEvents = await this.replayThrough(authorityDomainId, snapshotLsn);
+    await this.projection.replaceFromSnapshot(snapshot, replayEvents);
     this.cursor = snapshotLsn;
+  }
+
+  private async replayThrough(
+    authorityDomainId: AuthorityDomainId,
+    snapshotLsn: bigint,
+  ): Promise<SubscribeEvent[]> {
+    if (snapshotLsn === 0n) return [];
+
+    const replayEvents: SubscribeEvent[] = [];
+    let expectedLsn = 1n;
+    const request = create(SubscribeRequestSchema, {
+      authorityDomainId,
+      cursor: create(LsnSchema, { value: 0n }),
+    });
+    for await (const event of this.client.subscribe(request)) {
+      const lsn = eventLsn(event, authorityDomainId.value);
+      if (lsn !== expectedLsn) {
+        throw new Error(`snapshot replay cannot bridge LSN ${expectedLsn}`);
+      }
+      replayEvents.push(event);
+      if (lsn === snapshotLsn) return replayEvents;
+      if (lsn > snapshotLsn) {
+        throw new Error(`snapshot replay exceeded LSN ${snapshotLsn}`);
+      }
+      expectedLsn += 1n;
+    }
+    throw new Error(`snapshot replay ended before LSN ${snapshotLsn}`);
   }
 }
 

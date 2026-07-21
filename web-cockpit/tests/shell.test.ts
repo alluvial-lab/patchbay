@@ -8,7 +8,9 @@ import {
   AuthorityDomainIdSchema,
   CommandIdSchema,
   ElicitationState,
+  FailureCode,
   GenerationSchema,
+  LocalSubmissionState,
   OperationKind,
   OperationSchema,
   OperationState,
@@ -21,6 +23,8 @@ import {
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
+  SubmissionOutcome,
+  SubmissionResultSchema,
   TargetScopeKind,
   TargetScopeSchema,
 } from "@patchbay/contracts";
@@ -186,12 +190,14 @@ test("stale-never-live binding holds across generated reconciliation states", as
   );
 });
 
-test("detail integrates markdown, compact delivery history, contextual actions, and elicitation cards", () => {
+test("detail integrates markdown, current plus last delivery, failures, contextual actions, and elicitations", () => {
   const dom = new JSDOM();
   const view = session("session-1");
   const model = withSessions(view);
   const command = runningCommand(view.identity);
   model.commands.set(command.id, command);
+  const failed = failedCommand(view.identity);
+  model.commands.set(failed.id, failed);
   model.observations.push(
     {
       id: "operator-1",
@@ -232,11 +238,13 @@ test("detail integrates markdown, compact delivery history, contextual actions, 
   dom.window.document.body.append(detail.element);
 
   assert.ok(detail.element.querySelector(".msg--agent .markdown-body h2"));
-  const delivery = detail.element.querySelector<HTMLDetailsElement>(".delivery-line details")!;
-  assert.equal(delivery.open, false);
-  assert.match(delivery.querySelector("summary")!.textContent!, /running/);
-  assert.match(delivery.querySelector(".command-timeline")!.textContent!, /LSN 1/);
-  assert.equal(delivery.querySelector("summary")!.textContent!.includes("LSN"), false);
+  const delivery = detail.element.querySelector<HTMLElement>('[data-command-id="command-1"]')!;
+  assert.match(delivery.textContent!, /running/);
+  assert.match(delivery.textContent!, /Last transition: accepted → running/);
+  assert.equal(delivery.textContent!.includes("LSN"), false);
+  assert.equal(delivery.querySelector("details"), null);
+  const failure = detail.element.querySelector<HTMLElement>('[data-command-id="command-failed"] .failure-banner')!;
+  assert.match(failure.textContent!, /execution_failed/);
   assert.ok(detail.element.querySelector(".elicitation-card"));
   assert.equal(detail.composer.querySelector("select"), null);
 
@@ -246,6 +254,81 @@ test("detail integrates markdown, compact delivery history, contextual actions, 
   contextual[1]!.click();
   assert.equal(cancelled, 1);
   assert.equal(interrupted, 1);
+});
+
+test("same-correlation questions render as one integrated session-detail card", () => {
+  const dom = new JSDOM();
+  const view = session("session-1");
+  const model = withSessions(view);
+  const first = question(view.identity);
+  first.id = "question-1";
+  first.groupingKey = "pi-agent:batch-command";
+  const second = question(view.identity);
+  second.id = "question-2";
+  second.groupingKey = first.groupingKey;
+  second.lsn = 6n;
+  model.elicitations.set(first.id, first);
+  model.elicitations.set(second.id, second);
+
+  const detail = renderSessionDetail(dom.window.document, model, view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    elicitation: {
+      operationContext: () => { throw new Error("not submitted"); },
+      submit: () => undefined,
+    },
+  });
+  dom.window.document.body.append(detail.element);
+
+  const cards = detail.element.querySelectorAll(":scope > .timeline > .elicitation-card");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0]!.getAttribute("data-elicitation-group"), "true");
+  assert.equal(cards[0]!.querySelectorAll("[data-elicitation-id]").length, 2);
+});
+
+test("shell surfaces reconnect and offline state with locked banner primitives", () => {
+  const dom = new JSDOM();
+  const view = session("session-1");
+  const model = withSessions(view);
+  model.reconciled = false;
+  view.reconciled = false;
+  view.connectivity = SessionConnectivityState.STALE;
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+  });
+  dom.window.document.body.append(shell.element);
+
+  let banner = shell.element.querySelector<HTMLElement>(":scope > .alert")!;
+  assert.match(banner.textContent!, /Reconnecting/);
+  assert.ok(banner.querySelector(".connectivity-indicator--stale"));
+
+  model.reconciled = true;
+  view.reconciled = true;
+  view.connectivity = SessionConnectivityState.OFFLINE;
+  shell.update(model);
+  banner = shell.element.querySelector<HTMLElement>(":scope > .alert")!;
+  assert.match(banner.textContent!, /Session offline/);
+  assert.ok(banner.querySelector(".connectivity-indicator--offline"));
+});
+
+test("deduplicated submission is visible as already in flight", () => {
+  const dom = new JSDOM();
+  const view = session("session-1");
+  const result = create(SubmissionResultSchema, {
+    outcome: SubmissionOutcome.ACCEPTED,
+    operationState: OperationState.RUNNING,
+    deduplicated: true,
+  });
+  const shell = createCockpitShell(dom.window.document, withSessions(view), {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+    submission: () => ({ state: LocalSubmissionState.DRAFT, result }),
+  });
+  dom.window.document.body.append(shell.element);
+
+  const indicator = shell.element.querySelector<HTMLElement>(".retry-safety-indicator")!;
+  assert.match(indicator.textContent!, /Already in flight/);
+  assert.match(indicator.textContent!, /no duplicate submitted/);
 });
 
 function session(
@@ -297,6 +380,27 @@ function runningCommand(identity: SessionIdentity): CommandView {
     history: [
       { state: OperationState.ACCEPTED, lsn: 1n },
       { state: OperationState.RUNNING, lsn: 2n },
+    ],
+  };
+}
+
+function failedCommand(identity: SessionIdentity): CommandView {
+  const command = runningCommand(identity);
+  return {
+    ...command,
+    id: "command-failed",
+    state: OperationState.FAILED,
+    lsn: 6n,
+    failureCode: FailureCode.EXECUTION_FAILED,
+    operation: create(OperationSchema, {
+      ...command.operation,
+      commandId: create(CommandIdSchema, { value: "command-failed" }),
+      idempotencyKey: "idem-command-failed",
+    }),
+    history: [
+      { state: OperationState.ACCEPTED, lsn: 1n },
+      { state: OperationState.DELIVERED, lsn: 2n },
+      { state: OperationState.FAILED, lsn: 6n, failureCode: FailureCode.EXECUTION_FAILED },
     ],
   };
 }

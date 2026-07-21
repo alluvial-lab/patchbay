@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
@@ -410,3 +410,75 @@ verified.
   reconciled-identity gate failed 1 (identity-before-submission earned);
   removing terminal-command finality failed 1 (first-durable-terminal earned).
   Those properties are real; Blocker 5 is about the two that are NOT yet real.
+
+## Review-fix pass (2026-07-20)
+
+All 6 receiver-confirmed blockers were corrected in one feature-owned stride.
+The effective review weight remains `standard`; this is the adjudicated fix and
+verification pass after the single independent review, so the feature returns
+to `review` for receiver closure without another independent pass.
+
+### Fixes
+
+1. **Snapshot-correct reconnect:** `SessionSnapshot` now remains authority for
+   the session baseline while reconciliation replays the complete durable prefix
+   from cursor 0 for commands, Observations, and Elicitations. Replacement is
+   atomic, cached UI state is never merged, the cursor advances to
+   `snapshot_lsn` only after replay folding succeeds, and an unbridgeable replay
+   leaves the existing projection explicitly unreconciled.
+2. **Runnable cockpit:** added `web-cockpit/src/main.ts`, `index.html`, and an
+   esbuild browser bundle. The entry composes CSRF acquisition, Connect-Web,
+   `PresentationProjection`, `Reconciler`, the shell, real instruct/cancel/
+   interrupt Operation builders, and typed Elicitation response submission.
+   `web-server/src/main.ts` now serves the fixed cockpit asset allowlist without
+   changing login, session, CSRF, or RPC behavior.
+3. **Failure/retry/degraded surfaces:** canonical `FailureCode` values render
+   through `failure-banner`; local submission state is visible; deduplicated
+   `SubmissionResult`s render `retry-safety-indicator` with “Already in flight”;
+   and reconnect/stale/offline/failed connectivity renders through locked
+   `alert` + `session-status` primitives.
+4. **EC3 integrated grouping:** the projection derives a grouping key from the
+   authoritative opener + typed correlations, and session detail renders N
+   same-batch question Elicitations through one `renderElicitationGroup` card.
+   Each child retains its independent typed response and terminal state.
+5. **Earned tests:** added a fold-throw cursor test, late-terminal Elicitation
+   test, and second-completed-response test. Each is an independent oracle over
+   observable cursor/state/answer facts rather than the implementation guard.
+6. **v0.1.0 delivery scope:** removed the expandable history + LSN UI. The badge
+   now shows current `CommandState` + last transition only; full history remains
+   in the projection as the reserved post-v0.1.0 seam.
+
+### Verification evidence
+
+- `cd web-cockpit && npm test` — PASS (36 tests).
+- `cd web-cockpit && npm run build` — PASS; emits `dist/index.html`, bundled
+  `dist/assets/cockpit.js`, and the consumed locked/style assets.
+- Integrated static-host probe — PASS: web server returned `200 text/html` for
+  `/` and `200 text/javascript` for `/assets/cockpit.js` from the built cockpit.
+- `cd web-server && npm test` — PASS (19 tests); auth/CSRF/RPC behavior remains
+  green after the asset-only host change.
+- `cd contracts/ts && npm run check:presentation` — PASS (4 registries,
+  contrast, and axe-core).
+- `cd contracts/ts && npm run build && npm run check:vectors` — PASS (24
+  vectors).
+- `check:drift` was not run, per the known repository gap and task brief.
+
+### Mutation-survival evidence (Blocker 5)
+
+The required production mutations were applied one at a time, the named test
+was run, failure was observed, and the mutation was reverted before final green
+verification:
+
+- Moved `this.cursor = lsn` before `await projection.foldEvent(event)`:
+  `the cursor does not advance when projection folding throws` failed with
+  actual cursor `1n` vs expected `0n`.
+- Removed the terminal guard in `foldElicitation`:
+  `a late Elicitation event cannot rewrite the first terminal state` failed
+  with actual `PENDING` vs expected `ANSWERED`.
+- Removed the already-terminal guard in `applyCompletedResponse`:
+  `a second completed response cannot overwrite the first answer` failed with
+  actual answer `feature` vs expected `main`.
+
+Execution capability: focused inline feature-owner corrective pass; no nested
+or peer delegation. Discrepancies from the adjudicated fix directions: none.
+Adjacent issues parked: none.

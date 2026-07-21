@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-shell-session-list-detail
 kind: story
-stage: implementing
+stage: done
 tags: [ux]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-markdown-rendering, story-v0-web-cockpit-elicitation-handling]
@@ -97,7 +97,7 @@ fixed composer, page scroll. Teaser previews on mobile: clamped prompt +
   is selected (identity-before-submission)
 - [x] The mobile drill-in and desktop two-pane share one `session-detail`
   component (the reserved-B seam is a container swap, not a fork)
-- [ ] Delivery badges render the compact current `CommandState` + last
+- [x] Delivery badges render the compact current `CommandState` + last
   transition only (a full expandable per-command delivery trace is a reserved
   seam, deferred per `docs/SPEC.md` § observability — v0.1.0 does not carry a
   trace-timeline UI)
@@ -153,3 +153,17 @@ is a liability.
 - Acceptance walk: desktop two-pane, mobile drill-in/back, identity-first rows,
   separate connectivity/activity, one detail component, compact delivery
   disclosure, contextual actions, and composer gating all pass.
+
+## Review-fix completion (2026-07-20)
+
+- Replaced the expandable full-history/LSN disclosure with the committed
+  current `CommandState` + last-transition-only badge; the full trace remains a
+  reserved seam.
+- Integrated same-correlation question groups into session detail as one
+  `elicitation-card`, while preserving independent single-answer forms and
+  terminal state per Elicitation.
+- Added locked-primitive failure, deduplication/retry-safety, reconnect, stale,
+  and offline surfaces.
+- Verification: `cd web-cockpit && npm test` PASS (36 tests), including the
+  integrated grouped-card, reduced-delivery, failure, deduplication, and
+  degraded-banner assertions.

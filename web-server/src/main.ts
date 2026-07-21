@@ -1,6 +1,8 @@
 import cookie from "@fastify/cookie";
 import Fastify, { type FastifyInstance } from "fastify";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { makeCoreClient, type CoreClient } from "./core-client.js";
@@ -32,6 +34,7 @@ export interface AppOptions {
   sessions?: SessionStore;
   loginLimiter?: LoginLimiter;
   passwordVerifier?: PasswordVerifier;
+  cockpitAssetsDir?: string;
   logger?: boolean;
 }
 
@@ -97,9 +100,40 @@ export function buildApp(options: AppOptions): FastifyInstance {
   );
   registerCsrfTokenRoute(app);
   registerRpcRoutes(app, options.config.coreSecret);
+  registerCockpitAssets(
+    app,
+    options.cockpitAssetsDir ?? fileURLToPath(new URL("../../../web-cockpit/dist/", import.meta.url)),
+  );
 
   app.get("/healthz", async () => ({ status: "ok" }));
   return app;
+}
+
+function registerCockpitAssets(app: FastifyInstance, root: string): void {
+  const assets = new Map<string, { file: string; contentType: string }>([
+    ["/", { file: "index.html", contentType: "text/html; charset=utf-8" }],
+    ["/assets/cockpit.js", { file: "assets/cockpit.js", contentType: "text/javascript; charset=utf-8" }],
+    ["/assets/tokens.css", { file: "assets/tokens.css", contentType: "text/css; charset=utf-8" }],
+    ["/assets/components.css", { file: "assets/components.css", contentType: "text/css; charset=utf-8" }],
+    ["/assets/markdown.css", { file: "assets/markdown.css", contentType: "text/css; charset=utf-8" }],
+    ["/assets/shell.css", { file: "assets/shell.css", contentType: "text/css; charset=utf-8" }],
+  ]);
+  for (const [route, asset] of assets) {
+    app.get(route, async (_request, reply) => {
+      try {
+        const body = await readFile(join(root, asset.file));
+        return reply
+          .header("content-type", asset.contentType)
+          .header("x-content-type-options", "nosniff")
+          .send(body);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return reply.code(503).send({ error: "cockpit_assets_unavailable" });
+        }
+        throw error;
+      }
+    });
+  }
 }
 
 export async function run(env: NodeJS.ProcessEnv = process.env): Promise<void> {

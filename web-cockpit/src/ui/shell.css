@@ -1,11 +1,22 @@
 /* Cockpit instance layout. Protocol-state styling stays in the locked components.css layer. */
 .cockpit {
   display: flex;
+  flex-direction: column;
   width: 100%;
   min-height: 100dvh;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
+}
+
+.cockpit .cockpit__content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.cockpit > .alert {
+  flex-shrink: 0;
 }
 
 .cockpit .sidebar {
@@ -98,13 +109,8 @@
   flex-wrap: wrap;
 }
 
-.cockpit .delivery-line details {
-  min-width: min(280px, 100%);
-}
-
-.cockpit .delivery-line summary {
-  cursor: pointer;
-  list-style-position: outside;
+.cockpit .delivery-line .failure-banner {
+  flex-basis: 100%;
 }
 
 .cockpit .timeline > .elicitation-card {
@@ -200,6 +206,10 @@
   .cockpit {
     display: block;
     min-height: 100dvh;
+  }
+
+  .cockpit .cockpit__content {
+    display: block;
   }
 
   .cockpit .sidebar,

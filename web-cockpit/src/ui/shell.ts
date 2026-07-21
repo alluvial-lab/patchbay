@@ -1,3 +1,5 @@
+import { SessionConnectivityState } from "@patchbay/contracts";
+
 import {
   sessionKey,
   stableTarget,
@@ -8,8 +10,9 @@ import {
   renderSessionDetail,
   type SessionDetailActions,
   type SessionDetailComponent,
+  type SubmissionFeedback,
 } from "./session-detail.js";
-import { renderSessionList } from "./session-list.js";
+import { renderSessionList, renderSessionStatus } from "./session-list.js";
 import type { ElicitationRenderOptions } from "./elicitation.js";
 import type { MarkdownRenderer } from "./markdown.js";
 
@@ -17,6 +20,7 @@ export interface CockpitShellOptions {
   markdown: MarkdownRenderer;
   actions?: SessionDetailActions;
   elicitation?: ElicitationRenderOptions;
+  submission?: () => SubmissionFeedback | undefined;
   isMobile?: () => boolean;
 }
 
@@ -58,6 +62,8 @@ export function createCockpitShell(
 
   function render(): void {
     root.replaceChildren();
+    const content = document.createElement("div");
+    content.className = "cockpit__content";
     const sidebar = renderSidebar(document, model, selectedKey, filter, {
       select(session) {
         selectedKey = sessionKey(session.identity);
@@ -75,13 +81,17 @@ export function createCockpitShell(
       markdown: options.markdown,
       actions: options.actions,
       elicitation: options.elicitation,
+      submission: options.submission?.(),
       onBack() {
         mobileDetailOpen = false;
         applyLayout();
       },
     });
     main.append(detail.element);
-    root.append(sidebar, main);
+    content.append(sidebar, main);
+    const degraded = renderDegradedBanner(document, model, selectedSession());
+    if (degraded) root.append(degraded);
+    root.append(content);
     if (options.elicitation?.mobileSheet) {
       root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
     }
@@ -182,6 +192,57 @@ function renderSidebar(
     }),
   );
   return sidebar;
+}
+
+function renderDegradedBanner(
+  document: Document,
+  model: PresentationModel,
+  session: SessionView | undefined,
+): HTMLElement | undefined {
+  if (!model.reconciled) {
+    const banner = alertBanner(
+      document,
+      "Reconnecting",
+      "The projection is unreconciled. Cached session state remains stale until snapshot replay and the live stream catch up.",
+      "warning",
+    );
+    if (session) banner.append(renderSessionStatus(document, session));
+    return banner;
+  }
+  if (!session || session.connectivity === SessionConnectivityState.LIVE) return undefined;
+
+  const names: Record<number, string> = {
+    [SessionConnectivityState.STALE]: "Stale session",
+    [SessionConnectivityState.OFFLINE]: "Session offline",
+    [SessionConnectivityState.UNKNOWN]: "Session connectivity unknown",
+    [SessionConnectivityState.FAILED]: "Session connection failed",
+  };
+  const title = names[session.connectivity];
+  if (!title) return undefined;
+  const banner = alertBanner(
+    document,
+    title,
+    "The current connectivity state is authoritative; delivery may be unavailable or delayed.",
+    session.connectivity === SessionConnectivityState.FAILED ? "danger" : "warning",
+  );
+  banner.append(renderSessionStatus(document, session));
+  return banner;
+}
+
+function alertBanner(
+  document: Document,
+  title: string,
+  body: string,
+  tone: "warning" | "danger",
+): HTMLElement {
+  const banner = document.createElement("div");
+  banner.className = `alert alert--${tone}`;
+  banner.setAttribute("role", "status");
+  const copy = document.createElement("div");
+  copy.append(textElement(document, "p", "alert__title", title));
+  copy.append(textElement(document, "p", "alert__body", body));
+  banner.append(copy);
+  return banner;
 }
 
 function preferredSessionKey(model: PresentationModel): string | undefined {
