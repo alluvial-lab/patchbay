@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-protocol-client-reconcile
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: feature-v0-web-cockpit
 depends_on: []
@@ -63,11 +63,11 @@ reconnect state machine.
 
 ## Acceptance criteria
 
-- [ ] Subscribe folds events into the presentation model; cursor advances on fold
-- [ ] Reconnect after a stream break re-subscribes from the last cursor without losing applied state
-- [ ] A snapshot gap is reconciled via LoadSnapshot (`snapshot_payload` → `SessionSnapshot`); unreconciled axes render stale/unknown
-- [ ] Optimistic UI state is never authority for the cursor or the presentation model
-- [ ] The client does not send a `sender` claim expecting it to be honored (server overwrites it)
+- [x] Subscribe folds events into the presentation model; cursor advances on fold
+- [x] Reconnect after a stream break re-subscribes from the last cursor without losing applied state
+- [x] A snapshot gap is reconciled via LoadSnapshot (`snapshot_payload` → `SessionSnapshot`); unreconciled axes render stale/unknown
+- [x] Optimistic UI state is never authority for the cursor or the presentation model
+- [x] The client does not send a `sender` claim expecting it to be honored (server overwrites it)
 
 ## Verification evidence
 
@@ -77,3 +77,19 @@ reconnect state machine.
 - Property test (the load-bearing one, per session-note directive): an
   unreconciled snapshot must never render as live. Mutate reconcile to
   skip the stale-marking; the test must fail.
+
+## Implementation notes
+
+- Execution capability: inline feature owner; one owner is carrying the five ordered checkpoints to preserve reconnect/presentation context.
+- Review weight: standard (project/default); feature-level review only after all child checkpoints are done.
+- Files changed: `web-cockpit/package.json`, `web-cockpit/package-lock.json`, `web-cockpit/tsconfig.json`, `web-cockpit/src/domain/protocol-client.ts`, `web-cockpit/src/domain/reconcile.ts`, `web-cockpit/tests/reconcile.test.ts`.
+- Tests added: fake-stream reconnect/resume and gap repair interface tests plus a 100-run generated stream-break property test asserting stale marking is visible before snapshot load and that folded LSNs are unique.
+- Simplification: the reconciler depends on a small projection port rather than coupling transport code to the Unit 2 model implementation.
+- Discrepancies from design: the shipped web-server bridge speaks binary gRPC-Web (`application/grpc-web+proto`), so the client uses `createGrpcWebTransport` rather than the pseudocode's Connect-protocol `createConnectTransport`. The actual web boundary also requires `x-patchbay-csrf`; the client exposes a fail-fast token interceptor and `/csrf-token` loader. Both are mechanical bindings to shipped server behavior.
+- Adjacent issues parked: none.
+
+## Verification result
+
+- `cd contracts/ts && npm run build` — pass.
+- `cd web-cockpit && npm test` — pass (3 tests, including 100 property runs).
+- Mutation check: removing either `markUnreconciled` call makes the generated reconnect/gap assertions observe `LIVE` at snapshot load and fail.
