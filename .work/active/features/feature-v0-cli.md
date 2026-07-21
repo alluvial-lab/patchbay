@@ -100,42 +100,36 @@ export function makeCoreClient(coreAddr: string, coreSecret: string) {
 - [ ] `login` establishes the CLI credential store for the auth interceptor
 - [ ] A one-time setup secret expires after use or timeout (SECURITY:78)
 
-### Unit 3: Diagnostic commands (`audit-query`, `inspect-command`, `session-health`, `adapter-status`)
+### Unit 3a: `session-health` (buildable now via LoadSnapshot)
 
-**File**: `cli/src/commands/audit-query.ts`, `cli/src/commands/inspect-command.ts`, `cli/src/commands/session-health.ts`, `cli/src/commands/adapter-status.ts`
+**File**: `cli/src/commands/session-health.ts`
 
-The four read-only diagnostic commands. Each issues a `query` Operation via `Submit` (or calls `LoadSnapshot` for `session-health`), awaits the result, and prints filtered/structured output. All read-only; no new storage/write path. Redaction is enforced at the core boundary (the CLI inherits it; `adapter-status` never shows raw `attachment_method.descriptor`).
-
-```typescript
-// cli/src/commands/audit-query.ts — shape of a diagnostic command
-import { create, toBinary } from "@bufbuild/protobuf";
-import { OperationSchema, OperationKindSchema, /* ... */ } from "@patchbay/contracts";
-
-export async function auditQuery(client: CoreClient, filters: AuditFilters): Promise<AuditRecord[]> {
-  const operation = create(OperationSchema, {
-    kind: OperationKind.QUERY,
-    // payload: a query-spec envelope describing the audit filter
-    // (the exact query-payload schema is a design detail resolved in Unit 3)
-    // ...
-  });
-  const result = await client.submit({ operation });
-  // decode + return the projected audit records
-}
-```
+`session-health` prints the session connectivity × activity axes for one or all sessions. Unlike the other three diagnostic commands, it does NOT need a `query` Operation projection — it calls `LoadSnapshot` (which exists and returns `SessionSnapshot` carrying `sessions[]` with connectivity/activity states) and prints the axes directly.
 
 **Implementation Notes**:
-- The `query` Operation's payload envelope carries the query specification (filter by actor/command/target/time/outcome for `audit-query`; by command id/correlation id for `inspect-command`; session-id or all for `session-health`; adapter-id or all for `adapter-status`). The exact query-payload schema (a typed `QuerySpec` message vs. a JSON envelope) is a design detail resolved in Unit 3 — prefer a typed proto message if the core already projects one, else a bounded `PayloadContentType.JSON` envelope.
-- `inspect-command` surfaces lifecycle state + timestamps + LSNs + audit-trail entries — NOT prompt bodies or sensitive payload (SECURITY:240). The delivery trace is a projection, not authoritative `CommandState` (UX.md).
-- `session-health` prints the full canonical registries: `SessionConnectivityState` × `SessionActivityState` (live/stale/offline/unknown/failed × idle/working/unknown).
-- Output: human-readable tables by default; `--json` for scripting. Exit 0 with results; non-zero for no-results / error.
+- Prints the full canonical registries: `SessionConnectivityState` (`live`/`stale`/`offline`/`unknown`/`failed`) × `SessionActivityState` (`idle`/`working`/`unknown`) — the same axes the cockpit binds.
+- Output: human-readable table by default; `--json` for scripting. Exit 0 with results; non-zero for no-sessions / error.
 
 **Acceptance Criteria**:
-- [ ] `audit-query --actor=X --outcome=denied` filters audit records and prints them
-- [ ] `inspect-command <id>` prints the full lifecycle + audit trail with timestamps + LSNs
-- [ ] `session-health [session-id]` prints the connectivity × activity axes
-- [ ] `adapter-status` prints adapters + capability manifests, excluding raw `attachment_method.descriptor`
-- [ ] All four are read-only (no storage write); `--json` output is machine-readable
-- [ ] `inspect-command` never surfaces prompt bodies or sensitive payload content
+- [ ] `session-health [session-id]` prints the connectivity × activity axes for one or all sessions
+- [ ] `--json` output is machine-readable
+- [ ] Read-only (uses `LoadSnapshot`; no `query` Operation, no storage write)
+
+### Unit 3b: `audit-query`, `inspect-command`, `adapter-status` — BLOCKED on a core-diagnostics prerequisite
+
+**Files**: `cli/src/commands/audit-query.ts`, `cli/src/commands/inspect-command.ts`, `cli/src/commands/adapter-status.ts`
+
+**Status (2026-07-20): blocked, not implemented in this feature.** These three commands require a core-side diagnostic projection surface that does not yet exist and that the CLI cannot build (it lives in `core/` + `contracts/`, outside the CLI's write scope). Specifically:
+
+- The core **accepts** `OperationKind.QUERY` into its lifecycle (it's in the allowed-kinds set, `core/src/acceptance/pipeline.rs:29`), but there is **no query-payload schema** (`QuerySpec`/`QueryResult`/`AuditRecord` — none exist in `contracts/proto/patchbay/`), **no query handler** in the core that decodes a query and projects results, and **no audit-log storage** as a queryable projection (the authority projection is grant-only).
+- `ControlService.Submit` returns only `SubmissionResult` — nothing carries diagnostic results back to the caller. `audit-query`/`inspect-command`/`adapter-status` all need a query-result RPC + a core-side projection of audit records / command lifecycle traces / adapter manifests.
+- `PROTOCOL.md:623` commits these three commands to v0.1.0 observability ("v0.1.0 observability = audit log + CLI `audit-query`/`inspect-command`/`session-health`/`adapter-status`"). The audit log + the query projections are committed but not yet built — they are a prerequisite feature, not the CLI's job to backfill.
+
+**Scope decision (operator, 2026-07-20): option 1** — ship the CLI with what is genuinely buildable now (Units 1, 2, 3a, 4) and surface the diagnostic-projection prerequisite as a separate feature (`feature-v0-core-diagnostics` or similar) that builds the `QuerySpec`/`QueryResult`/`AuditRecord` schema + the core's query-result projection + the audit-log storage. The three blocked commands are stubbed with a clear "requires core-diagnostics (not yet implemented)" message + non-zero exit, so the CLI's command surface is honest about what is and isn't available; they wire up when the prerequisite lands. This keeps the CLI's write scope clean (`cli/` only) and avoids either ballooning the CLI into a cross-cutting feature or silently shrinking v0.1.0 by dropping the commands entirely.
+
+**What this means for v0.1.0**: the cockpit (done) provides live session control; the CLI ships the **load-bearing bootstrap channel** (`setup`/`login` — the first-operator creation the cockpit needs to exist at all, plus the lockdown-exit channel), the **scripting commands** (`instruct`/`cancel`/`interrupt`), and **`session-health`**. The three deep-debug commands land when core-diagnostics does. This is an honest partial v0.1.0 CLI; the committed-but-unbuilt diagnostic projections are tracked as a prerequisite, not silently dropped.
+
+**When unblocked**, these commands issue a `query` Operation via `Submit` (or the new query-result RPC), filter by actor/command/target/time/outcome (`audit-query`), command id/correlation id (`inspect-command`), or adapter-id/all (`adapter-status`), and print structured output. Redaction is enforced at the core boundary (the CLI inherits it; `adapter-status` never shows raw `attachment_method.descriptor`; `inspect-command` never surfaces prompt bodies — SECURITY:236,240). `inspect-command`'s delivery trace is a projection, not authoritative `CommandState` (UX.md).
 
 ### Unit 4: Scripting commands (`instruct`, `cancel`, `interrupt`) + output contract
 
@@ -158,29 +152,31 @@ The command-submission commands for scripting: `instruct <target> <prompt>` (Sub
 
 ## Implementation Order
 
-1. Unit 1 (scaffold + core client + auth) — once the auth Blocker is resolved
+1. Unit 1 (scaffold + core client + auth) — the foundation
 2. Unit 2 (`setup` + `login`) — depends on Unit 1's auth posture
-3. Unit 3 (diagnostic commands) — depends on Unit 1
-4. Unit 4 (scripting commands + output) — depends on Unit 1; can parallelize with 3
+3. Unit 3a (`session-health`) — depends on Unit 1; uses LoadSnapshot
+4. Unit 4 (scripting commands + output) — depends on Unit 1; can parallelize with 3a
+5. Unit 3b (`audit-query`/`inspect-command`/`adapter-status`) — BLOCKED; stubbed now, implemented when core-diagnostics lands
 
 ## Testing
 
 - **Interface tests:** the core client reaches the core (smoke); each command builds a valid `Operation` and decodes the result.
-- **Regression tests:** redaction (`adapter-status` excludes `attachment_method.descriptor`; `inspect-command` excludes prompt bodies); identity-before-intent on `instruct`.
-- **Unit tests:** output formatting (human + `--json`); exit-code mapping for `SubmissionOutcome`.
+- **Regression tests:** identity-before-intent on `instruct`; the credential store is 0600 + never logs the secret.
+- **Unit tests:** output formatting (human + `--json`); exit-code mapping for `SubmissionOutcome`; the three blocked commands stub cleanly with a non-zero exit.
 - **Test data:** a fixture operator record + grant for the core-client smoke test.
 
 ## Risks
 
-- **Auth posture (the Blocker):** see below — this must be resolved before Unit 1/2.
-- **Query-payload schema:** the `query` Operation's payload shape for the four diagnostic commands. Prefer a typed proto message if the core already projects query results; else a bounded JSON envelope. If a proto extension is needed (a new `QuerySpec`/`QueryResult` message), that crosses into `contracts/` (the CLI's forbidden write scope) — surface as a blocker, do not invent an ad-hoc convention.
-- **CLI credential store security:** whatever shape the auth posture takes, the credential store must be file-permission-locked (0600) and never log the secret. SECURITY:93 (session ids high-entropy, meaningless client-side).
+- **Auth posture:** RESOLVED (option 1, 2026-07-20 — see the Blocker section below).
+- **Core-diagnostics prerequisite (Unit 3b):** the three deep-debug commands need a core-side query-result projection + audit-log storage + `QuerySpec`/`QueryResult`/`AuditRecord` schema that does not yet exist (`core/` + `contracts/`, outside the CLI's write scope). Surfaces as a separate prerequisite feature; the three commands are stubbed honestly in this feature.
+- **CLI credential store security:** the credential store must be file-permission-locked (0600) and never log the secret. SECURITY:93 (session ids high-entropy, meaningless client-side).
 
 ## Simplification
 
 - No browser presentation model / reconnect state machine — the CLI is synchronous command-response.
 - No heavy command framework — small fixed command set, hand-rolled dispatch.
-- No new storage/write path — all diagnostics are read-only `query` projections.
+- No new storage/write path — `session-health` is read-only via `LoadSnapshot`; the scripting commands submit Operations the core already handles.
+- The three deep-debug commands are stubbed, not implemented — they depend on a prerequisite that doesn't exist; shipping them half-built would be dishonest.
 
 ## Blocker (2026-07-20) — CLI auth posture — RESOLVED (option 1)
 
