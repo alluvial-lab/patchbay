@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-shell-session-list-detail
 kind: story
-stage: implementing
+stage: done
 tags: [ux]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-markdown-rendering, story-v0-web-cockpit-elicitation-handling]
@@ -85,17 +85,17 @@ fixed composer, page scroll. Teaser previews on mobile: clamped prompt +
 
 ## Acceptance criteria
 
-- [ ] Desktop: list + detail side-by-side; selecting a session fills the detail pane
-- [ ] Mobile: list is home; tap drills into full-screen detail; back returns to list
-- [ ] Session rows show identity tuple + connectivity/activity (separate channels)
+- [x] Desktop: list + detail side-by-side; selecting a session fills the detail pane
+- [x] Mobile: list is home; tap drills into full-screen detail; back returns to list
+- [x] Session rows show identity tuple + connectivity/activity (separate channels)
   + needs-you state
-- [ ] All state-binding uses the presentation-component layer primitives (no
+- [x] All state-binding uses the presentation-component layer primitives (no
   bespoke protocol-state CSS)
-- [ ] Composer does not enable Send until stable, non-superseded target identity
+- [x] Composer does not enable Send until stable, non-superseded target identity
   is selected (identity-before-submission)
-- [ ] The mobile drill-in and desktop two-pane share one `session-detail`
+- [x] The mobile drill-in and desktop two-pane share one `session-detail`
   component (the reserved-B seam is a container swap, not a fork)
-- [ ] Delivery badges render the compact `CommandState`; LSNs are hidden by
+- [x] Delivery badges render the compact `CommandState`; LSNs are hidden by
   default and expandable as debug detail
 
 ## Verification evidence
@@ -117,3 +117,35 @@ layer's locked primitives don't cover, that is a conformance-floor gap —
 surface it (extend the component layer, do not bypass it). The component-layer
 arc's lesson applies forward: a claimed-but-not-enforced conformance surface
 is a liability.
+
+## Implementation completion notes (2026-07-20)
+
+- Execution capability: inline feature-owning worker; the three UI modules share
+  one projection and one responsive container policy, so keeping ownership
+  together reduced integration risk.
+- Review weight: standard (project/default); child story closes on green
+  verification and receives no independent review.
+- Files changed: `web-cockpit/src/ui/shell.ts`, `session-list.ts`,
+  `session-detail.ts`, `shell.css`, and `web-cockpit/tests/shell.test.ts`.
+- Tests added: 6 shell/interface tests covering desktop composition, mobile
+  drill-in/container reuse, generated identity-before-submission cases,
+  generated stale-never-live cases, markdown/delivery/action/Elicitation
+  integration, and CSS non-rebinding.
+- Simplification: desktop and mobile use the same `session-detail` instance;
+  native `<details>` provides compact-by-default delivery history without a
+  second disclosure state machine; contextual command actions stay out of the
+  composer.
+- Discrepancies from design: added `shell.css` for surface-only responsive and
+  chat layout. It consumes locked tokens/primitives and deliberately contains no
+  connectivity, activity, command, or Elicitation protocol-state bindings.
+- Adjacent issues parked: none.
+
+## Verification result (2026-07-20)
+
+- `cd web-cockpit && npm test` — PASS (25 tests).
+- Property evidence: 100 generated target-shape cases enforce
+  identity-before-submission; 100 generated reconciliation/state cases enforce
+  stale-never-live at the session-row binding.
+- Acceptance walk: desktop two-pane, mobile drill-in/back, identity-first rows,
+  separate connectivity/activity, one detail component, compact delivery
+  disclosure, contextual actions, and composer gating all pass.

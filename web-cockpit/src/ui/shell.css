@@ -1,0 +1,248 @@
+/* Cockpit instance layout. Protocol-state styling stays in the locked components.css layer. */
+.cockpit {
+  display: flex;
+  width: 100%;
+  min-height: 100dvh;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.cockpit .sidebar {
+  display: flex;
+  flex: 0 0 340px;
+  flex-direction: column;
+  min-width: 0;
+  max-height: 100dvh;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  border-right: 1px solid var(--color-border);
+}
+
+.cockpit .sidebar > .field {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cockpit .session-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.cockpit .main,
+.cockpit .session-detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cockpit .session-detail {
+  height: 100dvh;
+}
+
+.cockpit .session-detail__header[hidden] {
+  display: none;
+}
+
+.cockpit .timeline {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: var(--space-6);
+  overflow-y: auto;
+}
+
+.cockpit .msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 78%;
+}
+
+.cockpit .msg--operator {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.cockpit .msg--agent {
+  align-self: flex-start;
+  width: min(560px, 100%);
+}
+
+.cockpit .msg__body {
+  max-width: 100%;
+  padding: var(--space-3) var(--space-4);
+  overflow-wrap: anywhere;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.cockpit .msg--operator .msg__body {
+  background: var(--color-accent-muted);
+}
+
+.cockpit .msg__footer {
+  font: var(--font-size-xs)/1.4 var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.cockpit .delivery-line {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.cockpit .delivery-line details {
+  min-width: min(280px, 100%);
+}
+
+.cockpit .delivery-line summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.cockpit .timeline > .elicitation-card {
+  align-self: flex-start;
+  width: min(560px, 78%);
+}
+
+.cockpit .elicitation-card__options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cockpit .elicitation-card__options > .field,
+.cockpit .elicitation-card__options > .field__label {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.cockpit .composer {
+  flex-wrap: wrap;
+}
+
+.cockpit .composer__idempotency {
+  flex-basis: 100%;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.sheet {
+  position: fixed;
+  z-index: 50;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 88dvh;
+  padding: var(--space-4);
+  overflow: hidden;
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -4px 24px rgb(0 0 0 / 0.2);
+}
+
+.sheet[hidden],
+.sheet-backdrop[hidden] {
+  display: none;
+}
+
+.sheet__handle {
+  width: 40px;
+  height: 4px;
+  margin: 0 auto var(--space-4);
+  background: var(--color-border-strong);
+  border-radius: 2px;
+}
+
+.sheet__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.sheet__kind {
+  font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono);
+  text-transform: uppercase;
+  color: var(--color-warning);
+}
+
+.sheet__close {
+  margin-left: auto;
+  padding: var(--space-2);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+}
+
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  .cockpit {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  .cockpit .sidebar,
+  .cockpit .main,
+  .cockpit .session-detail {
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
+  }
+
+  .cockpit .sidebar {
+    border-right: 0;
+  }
+
+  .cockpit .timeline {
+    padding: var(--space-3);
+  }
+
+  .cockpit .msg,
+  .cockpit .timeline > .elicitation-card {
+    width: 100%;
+    max-width: 88%;
+  }
+
+  .cockpit .composer {
+    position: sticky;
+    bottom: 0;
+  }
+
+  .cockpit .elicitation-card--inline-teaser {
+    cursor: pointer;
+  }
+
+  .cockpit .elicitation-card--inline-teaser .elicitation-card__options,
+  .cockpit .elicitation-card--inline-teaser .elicitation-card__actions {
+    display: none;
+  }
+
+  .cockpit .elicitation-card--inline-teaser .elicitation-card__prompt {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
