@@ -1,7 +1,7 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: review
+stage: done
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
@@ -482,3 +482,61 @@ verification:
 Execution capability: focused inline feature-owner corrective pass; no nested
 or peer delegation. Discrepancies from the adjudicated fix directions: none.
 Adjacent issues parked: none.
+
+## Review closure (2026-07-20) — receiver adjudication → done
+
+Standard-weight closure: one independent review pass returned Request changes
+with 6 receiver-confirmed material current-cycle blockers. The receiver
+(orchestrator) adjudicated all 6 against repository context, confirmed them
+material, and recorded the operator decision on Blocker 6 (reduce the UX
+decision to a reserved seam; keep v0.1.0 as SPEC described). A focused fix
+stride addressed all 6 in one pass.
+
+### Receiver verification (independent re-check, 2026-07-20)
+
+The receiver independently re-ran the Blocker 5 mutation checks (the
+load-bearing self-defining-test finding) rather than trusting the worker's
+claim:
+
+- Mutated `this.cursor = lsn` before `await projection.foldEvent(event)` →
+  `the cursor does not advance when projection folding throws` FAILED
+  (cursor advanced to 1n vs expected 0n). Earned.
+- Mutated the `applyCompletedResponse` terminal guard (removed
+  `isTerminalElicitation` check, kept null check) →
+  `a second completed response cannot overwrite the first answer` FAILED
+  (answer overwritten with `feature` vs expected `main`). Earned.
+- (The worker additionally recorded the `foldElicitation` guard mutation
+  → `a late Elicitation event cannot rewrite the first terminal state`
+  FAILED. Three earned mutation tests now pin first-answer-wins +
+  cursor-after-fold.)
+
+All three mutation tests genuinely fail on the mutated implementation. This
+is the "earned not asserted" standard the component-layer arc set; the
+self-defining-test finding is resolved.
+
+### Final integrated verification
+
+- `cd web-cockpit && npm test` — PASS (36 tests).
+- `cd contracts/ts && npm run check:presentation` — PASS.
+- `cd contracts/ts && npm run check:vectors` — PASS (24 vectors).
+- `cd web-server && npm test` — PASS (19 tests; asset serving did not break
+  the auth/CSRF/RPC surface).
+
+### Closure
+
+All 6 receiver-confirmed blockers fixed and verified. No second independent
+review pass (standard contract: one pass, fix receiver-confirmed blockers,
+verify, close). Feature advanced `review → done`.
+
+### Operator decisions recorded this cycle
+
+- **Blocker 6 (delivery-trace scope):** reduce the Q2 UX decision to a
+  reserved seam. v0.1.0 shows current `CommandState` + last transition only;
+  the full expandable per-command delivery trace is deferred to post-v0.1.0
+  (alongside the per-command delivery-trace timeline UI SPEC already defers).
+  `docs/SPEC.md` is the source of truth and is unchanged. Q2 revised above; Q2
+  promotion is additive, not a quiet widening.
+- **select-many (earlier this cycle):** the cockpit renders all `question`
+  contracts as select-one radio; a `select-many` ui_hint is non-authoritative
+  and renders as select-one. D2 of `feature-v0-elicitation-response-contract`
+  reserves select-many for v0.1.0; the cockpit honors it.
