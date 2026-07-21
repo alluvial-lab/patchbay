@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-markdown-rendering
 kind: story
-stage: implementing
+stage: done
 tags: [ux]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-presentation-model-fold]
@@ -45,12 +45,12 @@ layout-breaking).
 
 ## Acceptance criteria
 
-- [ ] Markdown renders headings, lists, code blocks, tables, blockquotes,
+- [x] Markdown renders headings, lists, code blocks, tables, blockquotes,
   inline code on a 360px viewport without horizontal page-scroll
-- [ ] Code blocks scroll internally, not the page
-- [ ] Rendered output is sanitized (no unescaped HTML injection) — verified
+- [x] Code blocks scroll internally, not the page
+- [x] Rendered output is sanitized (no unescaped HTML injection) — verified
   with a payload containing `<script>` and `javascript:` hrefs
-- [ ] Long content does not break the chat column width (860px desktop / 100vw
+- [x] Long content does not break the chat column width (860px desktop / 100vw
   mobile cap holds)
 
 ## Verification evidence
@@ -68,3 +68,20 @@ The renderer choice is the spike. A heavy parser bloats the bundle; an unsafe
 one is an XSS vector despite source authentication. If the spike finds no
 satisfactory option, surface as a blocker — do not silently ship an unsafe or
 bloated choice.
+
+## Implementation notes
+
+- Execution capability: inline feature owner; bounded renderer spike and implementation stayed local.
+- Review weight: standard (project/default); child checkpoint closes directly, integrated review remains feature-level.
+- Renderer spike: selected `marked@18.0.7` + `DOMPurify@3.4.12`. Installed browser ESM artifacts measure 41,878 B / 12,794 B gzip (`marked`) and 117,877 B / 33,576 B gzip (DOMPurify), about 46.4 KiB gzip combined before tree-shaking. This is a small, maintained parser/sanitizer boundary with stateless accumulated-text re-rendering suitable for streamed message updates; no unsafe custom sanitizer was introduced.
+- Files changed: `web-cockpit/package.json`, `web-cockpit/package-lock.json`, `web-cockpit/src/ui/markdown.ts`, `web-cockpit/src/ui/markdown.css`, `web-cockpit/tests/markdown.test.ts`.
+- Tests added: representative 360px-column structure test, wide-table/code containment assertions, malicious HTML/URL/handler sanitization, and accumulated streaming re-render regression.
+- Simplification: one renderer factory owns parsing, sanitization, and table wrapping; layout CSS uses locked tokens and no protocol-state bindings.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+
+## Verification result
+
+- `cd web-cockpit && npm test` — pass (12 tests total).
+- Security payloads containing `<script>`, `javascript:` href, `onerror`, inline style, form, and input are removed or neutralized.
+- Narrow-layout regression asserts every table is placed in an accessible horizontal-scroll region, code blocks use internal `overflow-x: auto`, and the markdown root remains `max-width: 100%` with no hidden overflow.

@@ -11,11 +11,15 @@
     "@bufbuild/protobuf": "2.12.1",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",
-    "@patchbay/contracts": "file:../contracts/ts"
+    "@patchbay/contracts": "file:../contracts/ts",
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.7"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/node": "24.10.1",
     "fast-check": "4.3.0",
+    "jsdom": "^26.1.0",
     "typescript": "5.9.3"
   },
   "engines": {

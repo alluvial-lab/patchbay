@@ -1,0 +1,79 @@
+/* Layout-only markdown treatment. Protocol-state presentation remains in components.css. */
+.markdown-body {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--color-text-primary);
+  font: var(--font-size-base)/var(--line-height-base) var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: var(--space-6) 0 var(--space-2);
+  line-height: var(--line-height-tight);
+}
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-table-scroll {
+  margin: 0 0 var(--space-4);
+}
+.markdown-body ul,
+.markdown-body ol { padding-inline-start: var(--space-6); }
+.markdown-body blockquote {
+  padding-inline-start: var(--space-4);
+  border-inline-start: var(--space-1) solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+}
+.markdown-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: var(--space-3);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overscroll-behavior-inline: contain;
+}
+.markdown-body pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 0;
+  background: transparent;
+  overflow-wrap: normal;
+}
+.markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+.markdown-body table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+.markdown-body th,
+.markdown-body td {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  text-align: start;
+  vertical-align: top;
+}
+.markdown-body a {
+  color: var(--color-text-link);
+  overflow-wrap: anywhere;
+}
