@@ -1,7 +1,7 @@
 ---
 id: story-v0-web-cockpit-elicitation-handling
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-presentation-model-fold]
@@ -92,17 +92,17 @@ v0.1.0; its mock (`attention/attention.html`) is preserved on disk, not wired.
 
 ## Acceptance criteria
 
-- [ ] Binary approval submits Deny/Approve directly (no select-then-submit);
+- [x] Binary approval submits Deny/Approve directly (no select-then-submit);
   payload is `ApprovalResponsePayload { decision }`
-- [ ] Question with free-text option (`allow_free_text`) submits either a
+- [x] Question with free-text option (`allow_free_text`) submits either a
   selected `option_id` or a `free_text` string
-- [ ] Answer-and submits a selected option + `clarification` in one Operation
-- [ ] Grouped multi-question renders N questions as one card; each answers
+- [x] Answer-and submits a selected option + `clarification` in one Operation
+- [x] Grouped multi-question renders N questions as one card; each answers
   independently (N independent single-answer Elicitations — no multi-answer
   payload)
-- [ ] Once terminal, the elicitation controls disable and show the terminal
+- [x] Once terminal, the elicitation controls disable and show the terminal
   state (control shape is select-one radio throughout)
-- [ ] No silent promotion of the reserved multi-answer seam; a `select-many`
+- [x] No silent promotion of the reserved multi-answer seam; a `select-many`
   ui_hint renders as select-one (non-authoritative hint; contract is authoritative)
 
 ## Verification evidence
@@ -152,3 +152,29 @@ capability the boundary cannot accept.
 
 The feature body's EC1 and Unit 4 clauses are corrected (this commit). Story
 returned to `stage: implementing`; Units 4 and 5 may now proceed.
+
+## Implementation completion notes (2026-07-20)
+
+- Execution capability: inline feature-owning worker; one typed boundary module
+  plus DOM-interface tests was cohesive and did not warrant delegation.
+- Review weight: standard (project/default); child story closes on green
+  verification and receives no independent review.
+- Files changed: `web-cockpit/src/ui/elicitation.ts`,
+  `web-cockpit/tests/elicitation.test.ts`.
+- Tests added: 7 interface/regression tests covering direct approval decisions,
+  select-one/free-text/answer-and payloads, non-authoritative `select-many`
+  hints, terminal disabling/state modifiers, independent grouped responses, and
+  the live-control mobile clone.
+- Simplification: one response-Operation builder path owns correlation,
+  protobuf envelope, schema reference, and command identity for both response
+  kinds; grouping reuses the same independent question renderer rather than
+  inventing a multi-answer browser payload.
+- Discrepancies from design: none. Mobile sheet classes are layout-only; every
+  protocol-state binding uses the locked `.elicitation-card` modifiers.
+- Adjacent issues parked: none.
+
+## Verification result (2026-07-20)
+
+- `cd web-cockpit && npm test` — PASS (19 tests).
+- Acceptance walk: direct approval, EC1, EC2, EC3, terminal first-answer UI,
+  select-one-only control shape, and typed proto consumption all pass.
