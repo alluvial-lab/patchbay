@@ -1,14 +1,14 @@
 ---
 id: feature-v0-web-cockpit
 kind: feature
-stage: review
+stage: implementing
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-20
+updated: 2026-07-21
 ---
 
 # Feature: Responsive web cockpit
@@ -30,7 +30,7 @@ The cockpit is the first conformant instance of the conformance floor. Mockups a
   - **Responsive IA (committed A / reserved B):** desktop is two-pane (list + live session-detail side-by-side); mobile is drill-in (list is the home, tap a session → full-screen detail with back button). B (drill-in) is both the reserved seam AND the natural mobile mode — promotion to desktop drill-in is additive (container change), not a rebuild.
   - Detail-pane header hidden on desktop (redundant with the active sidebar row); kept on mobile (drill-in needs back button + which-session context).
   - option-2.html is self-contained (inlined tokens+components) and interactive (mobile drill-in works via tap/back).
-  - **Session detail (folded into the shell's right pane):** chat-aligned timeline (operator right / agent left, capped 560px left-side content width), markdown rendering in agent bubbles (the mobile-readability differentiator), delivery state as a compact badge below each message (tap to expand full state history + LSNs as debug detail), binary approval = direct buttons (no option-list), multi-option question = select-one radio + free-text option + answer-and clarification, grouped multi-question card (N independent single-answer Elicitations as one visual card — v0.1.0-compatible; multi-answer contract is a reserved seam). Mobile: bottom-sheet for elicitations (clones the tapped card's real content), fixed composer, page scroll. Teaser previews on mobile: clamped prompt + 'Tap to answer' affordance; multi-question shows header + first question + count hint.
+  - **Session detail (folded into the shell's right pane):** chat-aligned timeline (operator right / agent left, capped 560px left-side content width), markdown rendering in agent bubbles (the mobile-readability differentiator), delivery state as a compact badge below each message showing the current `CommandState` and last transition (v0.1.0 scope per `docs/SPEC.md` § observability — a full expandable per-command delivery trace is a reserved seam; see Q2 revision below), binary approval = direct buttons (no option-list), multi-option question = select-one radio + free-text option + answer-and clarification, grouped multi-question card (N independent single-answer Elicitations as one visual card — v0.1.0-compatible; multi-answer contract is a reserved seam). Mobile: bottom-sheet for elicitations (clones the tapped card's real content), fixed composer, page scroll. Teaser previews on mobile: clamped prompt + 'Tap to answer' affordance; multi-question shows header + first question + count hint.
 
 ## Epic context
 
@@ -56,7 +56,7 @@ The cockpit consumes the locked presentation-component layer (`feature-v0-presen
 Resolved interactively during the mockup pass; pinned here so implementation does not re-litigate them.
 
 - **Q1 — Two-pane desktop / drill-in mobile (committed A / reserved B).** Desktop is two-pane (list + live detail side-by-side); mobile is drill-in (list home, tap → full-screen detail + back). B (drill-in) is both the reserved seam and the natural mobile mode; desktop drill-in promotion is additive.
-- **Q2 — Delivery state as a compact badge below the message.** Not a separate timeline strip and not above the message. The badge shows current `CommandState` compactly; tap expands the full state history + LSNs as a debug detail (LSNs hidden by default — not conversational noise). Terminal-race explanations render as UI labels, not protocol states.
+- **Q2 — Delivery state as a compact badge below the message.** Not a separate timeline strip and not above the message. The badge shows the current `CommandState` compactly plus the last transition. **Revised (2026-07-20, review):** the v0.1.0 cockpit shows current `CommandState` + last transition only, per `docs/SPEC.md` § observability ("it does not carry a trace-timeline UI in v0.1.0"). A full expandable per-command delivery trace (state history + LSNs) is a **reserved seam** — deferred to post-v0.1.0 alongside the per-command delivery-trace timeline UI SPEC already defers. The earlier Q2 clause ("tap expands the full state history + LSNs") is retracted as contradicting SPEC's v0.1.0 observability scope; promotion is additive (a future expandable-trace UI), not a quiet widening. Terminal-race explanations render as UI labels, not protocol states.
 - **Q3 — Chat alignment (operator right / agent left).** Conventional chat-app affordance; position carries most of the speaker signal, the `who` label is secondary. Conversation column capped at 860px centered; left-side content capped at 560px for a clean right edge.
 - **Q4 — Composer is text-first + contextual actions.** Default input is a prompt textarea (instruct). Attach button for files/images (the `file_attachment` reserved-contract surface). Cancel/Interrupt appear inline near a running command; Approve/Deny and question-answer surface inline as elicitation cards where the agent opened them. No composer-level OperationKind selector — actions appear where relevant.
 
@@ -316,3 +316,97 @@ Unit 4's binary approval is now buildable as a typed, boundary-valid Operation (
   vectors).
 - `check:drift` was not run, per the known repository gap and implementation
   brief.
+
+## Review outcome (2026-07-20) — Request changes → implementing
+
+Standard-weight feature review (fresh-context `gpt-5.6-sol`, same model class
+as the implementation worker — same-harness, NOT cross-model vs the implementer;
+cross-model vs the umans orchestrator per the global AGENTS.md advisory-review
+slot). One independent pass returned **Request changes** with 6
+receiver-confirmed material current-cycle blockers. Feature bounced
+`review → implementing`; not re-advanced until the blockers are fixed and
+verified.
+
+### Blockers (all receiver-confirmed after adjudication against repo context)
+
+1. **Reconnect snapshot permanently skips non-session state**
+   (`web-cockpit/src/domain/reconcile.ts:106`, `model.ts:165`): on a stream
+   break, `replaceFromSnapshot` builds a model with only `sessions` (empty
+   `commands`/`elicitations`/`observations`) and `reconcile()` advances
+   `cursor = snapshotLsn`. A break after LSN 1 with a snapshot at LSN 3 resumes
+   at cursor 3, permanently skipping events 2–3. Violates the load-bearing
+   snapshot-correctness rule (the session-note directive). Fix: reconcile must
+   replay events after the snapshot boundary (the snapshot establishes a
+   session baseline, not a complete projection); do NOT solve by merging
+   cached UI state.
+2. **No runnable integrated cockpit** (`web-cockpit/package.json`,
+   `src/domain/protocol-client.ts:25`): the package builds library modules +
+   tests only — no browser entry composing client + CSRF acquisition +
+   projection + reconciler + shell + real submission handlers; the web server
+   serves RPC/health but no cockpit assets. The epic's contract is "running
+   code is the output" and the cockpit is the phone-usable critical path; a
+   library-only cockpit is not a product center. Fix: add the browser
+   composition root + asset serving path + an integrated bridge test. (This is
+   in-scope for the feature, not a separate item: the web-server is built as
+   the cockpit's host.)
+3. **Failure/retry/degraded surfaces absent** (`session-detail.ts:203,225`,
+   `shell.ts:84`): the model records `failureCode` but the renderer never
+   displays it through `failure-banner`; there is no reconnect/stale/offline
+   banner, no local submission state, no retry-safety indicator, no cockpit
+   reference to `SubmissionResult.deduplicated`. Fails the conformance floor's
+   failure-vocabulary separation + retry-safety requirements (the Brief
+   explicitly requires "command delivery timeline with failure states, and
+   reconnect/stale/offline banners"). Fix: wire `failureCode` →
+   `failure-banner`, `SubmissionResult.deduplicated` → retry-safety indicator,
+   and add the reconnect/stale/offline banners using the locked component
+   primitives.
+4. **EC3 grouped questions only as an isolated helper**
+   (`session-detail.ts:144`, `elicitation.ts:138`): `renderElicitationGroup`
+   exists but `session-detail` only calls `renderElicitation` per-entry —
+   never the group renderer, and the model has no grouping key. The isolated
+   test does not earn EC3 in the integrated feature. Fix: preserve
+   authoritative batch/correlation grouping in the projection and make
+   session-detail render grouped elicitations as one card.
+5. **Two load-bearing tests are mutation-survivable (self-defining)**
+   (`reconcile.test.ts:52`, `model.ts:312,442`): advancing the reconciler
+   cursor before `foldEvent` still passes all 25 tests ("cursor is last folded
+   LSN" not earned); removing either first-answer guard independently passes
+   all 25 (first-answer-wins not earned). This is exactly the
+   self-defining-test failure mode the component-layer arc existed to prevent
+   (the session-note directive: claimed properties must be checkable, not
+   asserted). Fix: add a fold-failure/reconnect test proving the cursor stays
+   unchanged until fold, and a late-terminal/second-completed-response test
+   proving first-answer-wins.
+6. **Expanded delivery trace contradicts `docs/SPEC.md:117`**
+   (`session-detail.ts:208` vs `docs/SPEC.md` § observability): SPEC says
+   v0.1.0 "does not carry a trace-timeline UI"; the cockpit renders the full
+   command-history transition + LSNs on tap (Q2's "tap expands the full state
+   history + LSNs"). **Operator decision (2026-07-20): reduce the UX decision
+   to a reserved seam; keep v0.1.0 as SPEC described.** The v0.1.0 cockpit
+   shows current `CommandState` + last transition only; the full expandable
+   per-command delivery trace is a reserved seam (deferred alongside the
+   per-command delivery-trace timeline UI SPEC already defers). Q2 revised
+   accordingly above; Unit 5 acceptance + story updated. Promotion is
+   additive (a future expandable-trace UI), not a quiet widening.
+
+### Rejected proposals (reviewer — sound)
+- Render `select-many` as checkboxes — correctly rejected (ui_hints
+  non-authoritative; question payload singular).
+- Expose richer approval decisions — correctly rejected (only APPROVED/DENIED
+  committed).
+- Treat `shell.css` as bespoke protocol-state rebinding — correctly rejected
+  (it is layout/typography; the actual issue is no runnable surface links the
+  stylesheets — Blocker 2).
+
+### Notes
+- Effective weight: standard (one pass; receiver adjudicates + fixes
+  receiver-confirmed blockers + verifies + closes without re-review).
+- The self-defining-test finding (Blocker 5) is the most important: it is the
+  exact failure mode this verification program exists to prevent, and the
+  reviewer earned it by adversarial mutation. The fix must make the tests
+  genuinely fail on the mutated implementation.
+- Two findings earned their keep as genuine verification: removing production
+  stale-marking failed 2 tests (stale-never-live earned); removing the
+  reconciled-identity gate failed 1 (identity-before-submission earned);
+  removing terminal-command finality failed 1 (first-durable-terminal earned).
+  Those properties are real; Blocker 5 is about the two that are NOT yet real.

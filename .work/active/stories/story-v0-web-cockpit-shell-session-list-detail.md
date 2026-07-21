@@ -1,12 +1,12 @@
 ---
 id: story-v0-web-cockpit-shell-session-list-detail
 kind: story
-stage: done
+stage: implementing
 tags: [ux]
 parent: feature-v0-web-cockpit
 depends_on: [story-v0-web-cockpit-markdown-rendering, story-v0-web-cockpit-elicitation-handling]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-21
 release_binding: null
 gate_origin: null
 ---
@@ -56,8 +56,10 @@ inline + via `needs-you` badge.
 Chat-aligned timeline (operator right / agent left, capped 860px column,
 560px left-side content width), markdown rendering in agent bubbles (the
 mobile-readability differentiator — Unit 3), delivery state as a compact
-badge below each message (tap to expand full state history + LSNs as debug
-detail; LSNs hidden by default), binary approval = direct buttons,
+badge below each message showing the current `CommandState` and last
+transition (v0.1.0 scope per `docs/SPEC.md` § observability — a full
+expandable per-command delivery trace is a reserved seam; see the feature
+body's Q2 revision), binary approval = direct buttons,
 multi-option question = radio + free-text option (EC1) + answer-and (EC2),
 grouped multi-question card (EC3). Mobile: bottom-sheet for elicitations,
 fixed composer, page scroll. Teaser previews on mobile: clamped prompt +
@@ -95,8 +97,10 @@ fixed composer, page scroll. Teaser previews on mobile: clamped prompt +
   is selected (identity-before-submission)
 - [x] The mobile drill-in and desktop two-pane share one `session-detail`
   component (the reserved-B seam is a container swap, not a fork)
-- [x] Delivery badges render the compact `CommandState`; LSNs are hidden by
-  default and expandable as debug detail
+- [ ] Delivery badges render the compact current `CommandState` + last
+  transition only (a full expandable per-command delivery trace is a reserved
+  seam, deferred per `docs/SPEC.md` § observability — v0.1.0 does not carry a
+  trace-timeline UI)
 
 ## Verification evidence
 
