@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 
 use crate::{
-    identity::{issue_operator_session_id, issue_principal, now_timestamp, random_token},
+    identity::{issue_principal, now_timestamp, random_token},
     rpc::admin_service_server::AdminService,
     service::{map_operator_error_to_status, map_storage_error_to_status, ControlServiceImpl},
 };
@@ -170,10 +170,11 @@ where
             .await
             .map_err(map_storage_error_to_status)?;
 
+        let session_id = self.control.state.issue_operator_session(actor_id).await;
         setup.consumed = true;
         Ok(Response::new(BootstrapResult {
             grant_id: Some(grant_id),
-            session_id: Some(issue_operator_session_id()),
+            session_id: Some(session_id),
             principal: Some(principal_credential),
         }))
     }

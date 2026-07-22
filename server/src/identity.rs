@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, ControlSurfacePrincipalRecord, OperatorSessionId,
-    PrincipalCredential, PrincipalEnrollment,
+    ActorId, AuthorityDomainId, ControlSurfacePrincipalRecord, PrincipalCredential,
+    PrincipalEnrollment,
 };
 use patchbay_core::authority::hash_principal_credential;
 use prost_types::Timestamp;
@@ -52,13 +52,6 @@ pub fn issue_principal(
         endpoint_generation: Some(endpoint_generation),
     };
     Ok((record, credential))
-}
-
-#[must_use]
-pub fn issue_operator_session_id() -> OperatorSessionId {
-    OperatorSessionId {
-        value: format!("operator-session-{}", random_token()),
-    }
 }
 
 pub fn now_timestamp() -> Result<Timestamp, Status> {

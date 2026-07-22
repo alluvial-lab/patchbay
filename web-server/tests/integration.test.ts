@@ -11,6 +11,7 @@ import {
   SubscribeEventSchema,
   VerifyOperatorPasswordResultSchema,
   EnrollControlSurfacePrincipalResultSchema,
+  RevokeOperatorSessionResultSchema,
 } from "@patchbay/contracts";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -25,7 +26,7 @@ import { buildApp, type WebServerConfig } from "../src/main.js";
 import { hashPassword, SessionStore } from "../src/sessions.js";
 
 interface CoreCall {
-  method: "submit" | "subscribe" | "loadSnapshot" | "verifyOperatorPassword";
+  method: "submit" | "subscribe" | "loadSnapshot" | "verifyOperatorPassword" | "revokeOperatorSession";
   request: unknown;
   headers: Headers;
 }
@@ -61,6 +62,25 @@ test("login verifies the core-owned operator record and installs the web princip
   assert.equal(
     fixture.calls.filter((call) => call.method === "verifyOperatorPassword").length,
     2,
+  );
+  const setCookie = login.headers["set-cookie"];
+  const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(";", 1)[0];
+  assert.ok(cookie);
+  const command = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/Submit",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie,
+      [CSRF_HEADER_NAME]: login.json<{ csrfToken: string }>().csrfToken,
+    },
+    payload: submitFrame("browser-claim"),
+  });
+  assert.equal(command.statusCode, 200);
+  const submitted = fixture.calls.find((call) => call.method === "submit");
+  assert.equal(
+    submitted?.headers.get("x-patchbay-operator-session-id"),
+    "core-issued-session",
   );
   await fixture.app.close();
 });
@@ -127,7 +147,7 @@ test("RevokedSessionCannotCommand: a recognized revoked session returns 403 befo
 
 test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps server identity", async () => {
   const fixture = makeFixture();
-  const session = fixture.sessions.create(operatorActorId);
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
   const { client, close } = await listen(fixture);
 
   try {
@@ -149,7 +169,7 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
     assert.equal(call.headers.get("x-patchbay-principal-id"), "web-principal");
     assert.equal(call.headers.get("x-patchbay-principal-secret"), "web-principal-secret");
     assert.equal(call.headers.get("x-patchbay-operator-id"), operatorActorId);
-    assert.equal(call.headers.get("x-patchbay-operator-session-id"), session.sessionId);
+    assert.equal(call.headers.get("x-patchbay-operator-session-id"), "core-issued-session");
     const forwarded = call.request as {
       operation?: { sender?: { actorId?: { value: string } } };
     };
@@ -161,7 +181,7 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
 
 test("Connect-Web Subscribe streams frames and reconnects from the supplied cursor", async () => {
   const fixture = makeFixture();
-  const session = fixture.sessions.create(operatorActorId);
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
   const { client, close } = await listen(fixture);
   const headers = { cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}` };
 
@@ -194,7 +214,7 @@ test("Connect-Web Subscribe streams frames and reconnects from the supplied curs
 
 test("CSRF token issuance and LoadSnapshot are authenticated reads without CSRF", async () => {
   const fixture = makeFixture();
-  const session = fixture.sessions.create(operatorActorId);
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
   const cookie = `${SESSION_COOKIE_NAME}=${session.sessionId}`;
 
   const noSession = await fixture.app.inject({ method: "GET", url: "/csrf-token" });
@@ -260,6 +280,14 @@ function makeFixture(): {
           endpointGeneration: { value: 1n },
         },
       });
+    },
+    async revokeOperatorSession(_request, options) {
+      calls.push({
+        method: "revokeOperatorSession",
+        request: {},
+        headers: callHeaders(options),
+      });
+      return create(RevokeOperatorSessionResultSchema, { revoked: true });
     },
     async enrollControlSurfacePrincipal() {
       return create(EnrollControlSurfacePrincipalResultSchema);

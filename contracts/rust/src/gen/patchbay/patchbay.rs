@@ -1877,6 +1877,13 @@ pub struct VerifyOperatorPasswordResult {
     #[prost(message, optional, tag = "2")]
     pub principal: ::core::option::Option<PrincipalCredential>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeOperatorSessionRequest {}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeOperatorSessionResult {
+    #[prost(bool, tag = "1")]
+    pub revoked: bool,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnrollControlSurfacePrincipalRequest {
     #[prost(message, optional, tag = "1")]

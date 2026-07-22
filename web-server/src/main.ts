@@ -15,6 +15,7 @@ import { LoginLimiter } from "./login-limiter.js";
 import { registerCsrfTokenRoute } from "./routes/csrf-token.js";
 import {
   type OperatorAuthenticator,
+  type OperatorSessionRevoker,
   type PasswordVerifier,
   registerSessionRoutes,
 } from "./routes/login.js";
@@ -123,6 +124,11 @@ export function buildApp(options: AppOptions): FastifyInstance {
         (options.passwordVerifier
           ? undefined
           : coreOperatorAuthenticator(options.config, coreClient, corePrincipals)),
+      operatorSessionRevoker: coreOperatorSessionRevoker(
+        options.config,
+        coreClient,
+        corePrincipals,
+      ),
     },
   );
   registerCsrfTokenRoute(app);
@@ -185,16 +191,37 @@ function coreOperatorAuthenticator(
           endpointGeneration: { value: config.principalGeneration ?? 1n },
         },
       });
-      if (!result.principal) {
-        throw new Error("core password verification returned no principal credential");
+      if (!result.principal || !result.operatorSessionId?.value) {
+        throw new Error("core password verification returned incomplete principal/session evidence");
       }
       principals.set(result.principal);
-      return result.principal.operatorActorId?.value ?? null;
+      const actorId = result.principal.operatorActorId?.value;
+      return actorId
+        ? { actorId, coreSessionId: result.operatorSessionId.value }
+        : null;
     } catch (error) {
       const rpcError = ConnectError.from(error, Code.Internal);
       if (rpcError.code === Code.Unauthenticated) return null;
       throw error;
     }
+  };
+}
+
+function coreOperatorSessionRevoker(
+  config: WebServerConfig,
+  coreClient: CoreClient,
+  principals: CorePrincipalStore,
+): OperatorSessionRevoker {
+  return async (coreSessionId) => {
+    const principal = principals.get();
+    if (!principal) throw new Error("control-surface principal enrollment is required");
+    const headers = new Headers();
+    headers.set("x-patchbay-core-secret", config.coreSecret);
+    headers.set("x-patchbay-principal-id", principal.principalId);
+    headers.set("x-patchbay-principal-secret", principal.secret);
+    headers.set("x-patchbay-operator-id", principal.operatorActorId?.value ?? config.operatorId);
+    headers.set("x-patchbay-operator-session-id", coreSessionId);
+    await coreClient.revokeOperatorSession({}, { headers });
   };
 }
 

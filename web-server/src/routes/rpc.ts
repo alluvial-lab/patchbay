@@ -119,7 +119,7 @@ function coreHeaders(
   headers.set("x-patchbay-operator-id", verified(request.verifiedOperator, "operator actor"));
   headers.set(
     "x-patchbay-operator-session-id",
-    verified(request.verifiedSessionId, "operator session"),
+    verified(request.verifiedCoreSessionId, "core operator session"),
   );
   return headers;
 }

@@ -1,11 +1,15 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, BootstrapRequest, CommandId, DeviceId,
     EnrollControlSurfacePrincipalRequest, Generation, Lsn, Operation, OperationKind,
-    PrincipalCredential, PrincipalEnrollment, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionState, StoredEventKind, SubmissionOutcome,
-    SubmitRequest, TargetScope, TargetScopeKind, VerifyOperatorPasswordRequest,
+    PrincipalCredential, PrincipalEnrollment, RevokeOperatorSessionRequest, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
+    StoredEventKind, SubmissionOutcome, SubmitRequest, SubscribeRequest, TargetScope,
+    TargetScopeKind, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     session::events as session_events,
@@ -16,6 +20,7 @@ use patchbay_core_server::{
     issuer::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
+    login_security::{LoginAuditEvent, LoginAuditSink, LoginLimitConfig, LoginLimiter},
     rpc::{
         admin_service_client::AdminServiceClient, admin_service_server::AdminService,
         admin_service_server::AdminServiceServer, control_service_client::ControlServiceClient,
@@ -32,6 +37,17 @@ const SETUP_SECRET: &str = "one-time-setup-secret";
 const OPERATOR_ID: &str = "operator-primary";
 const PASSWORD: &str = "correct-password";
 const PASSWORD_HASH: &str = "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g";
+
+#[derive(Default)]
+struct RecordingLoginAudit {
+    events: Mutex<Vec<LoginAuditEvent>>,
+}
+
+impl LoginAuditSink for RecordingLoginAudit {
+    fn record(&self, event: LoginAuditEvent) {
+        self.events.lock().unwrap().push(event);
+    }
+}
 
 struct DualServer {
     network: ControlServiceClient<Channel>,
@@ -85,7 +101,11 @@ async fn bootstrap_is_local_first_run_only_and_establishes_distinct_principals()
         web_principal.endpoint_id.as_ref().unwrap().value,
         "web-server"
     );
-    assert!(!bootstrap.session_id.unwrap().value.is_empty());
+    let web_session = bootstrap
+        .session_id
+        .clone()
+        .expect("bootstrap returns a core-owned operator session");
+    assert!(!web_session.value.is_empty());
 
     let second = server
         .admin
@@ -138,7 +158,7 @@ async fn bootstrap_is_local_first_run_only_and_establishes_distinct_principals()
             },
             &web_principal,
             "another-operator",
-            "web-session",
+            &web_session.value,
         ))
         .await
         .expect_err("the actor claim must match the verified principal binding");
@@ -157,11 +177,25 @@ async fn bootstrap_is_local_first_run_only_and_establishes_distinct_principals()
             },
             &wrong_credential,
             OPERATOR_ID,
-            "web-session",
+            &web_session.value,
         ))
         .await
         .expect_err("a principal id without its credential must fail closed");
     assert_eq!(rejected_credential.code(), Code::Unauthenticated);
+
+    let invented_session = server
+        .network
+        .submit(principal_request(
+            SubmitRequest {
+                operation: Some(operation("invented-session", "invented-session-key")),
+            },
+            &web_principal,
+            OPERATOR_ID,
+            "invented-session",
+        ))
+        .await
+        .expect_err("an arbitrary forwarded session id is not core-verifiable evidence");
+    assert_eq!(invented_session.code(), Code::Unauthenticated);
 
     let web_result = server
         .network
@@ -171,10 +205,10 @@ async fn bootstrap_is_local_first_run_only_and_establishes_distinct_principals()
             },
             &web_principal,
             OPERATOR_ID,
-            "web-session",
+            &web_session.value,
         ))
         .await
-        .expect("the verified web principal must submit")
+        .expect("the verified web principal and core session must submit")
         .into_inner();
     assert_eq!(web_result.outcome, SubmissionOutcome::Accepted as i32);
 
@@ -209,6 +243,220 @@ async fn bootstrap_is_local_first_run_only_and_establishes_distinct_principals()
     assert!(kinds.contains(&StoredEventKind::Grant));
     assert!(kinds.contains(&StoredEventKind::OperatorRecord));
     assert!(kinds.contains(&StoredEventKind::ControlSurfacePrincipal));
+}
+
+#[tokio::test]
+async fn revoked_core_session_cannot_be_reused() {
+    let mut server = serve_dual(SetupSecret::new(
+        SETUP_SECRET.to_owned(),
+        Duration::from_secs(60),
+    ))
+    .await;
+    let bootstrap = server
+        .admin
+        .bootstrap_operator(Request::new(bootstrap_request(SETUP_SECRET, "web-server")))
+        .await
+        .unwrap()
+        .into_inner();
+    let principal = bootstrap.principal.unwrap();
+    let session = bootstrap.session_id.unwrap();
+
+    let revoked = server
+        .network
+        .revoke_operator_session(principal_request(
+            RevokeOperatorSessionRequest {},
+            &principal,
+            OPERATOR_ID,
+            &session.value,
+        ))
+        .await
+        .expect("the current core-owned session can revoke itself")
+        .into_inner();
+    assert!(revoked.revoked);
+
+    let error = server
+        .network
+        .submit(principal_request(
+            SubmitRequest {
+                operation: Some(operation("revoked-session", "revoked-session-key")),
+            },
+            &principal,
+            OPERATOR_ID,
+            &session.value,
+        ))
+        .await
+        .expect_err("a revoked core session must fail compound-issuer verification");
+    assert_eq!(error.code(), Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn subscribe_excludes_authentication_and_authority_records() {
+    let mut server = serve_dual(SetupSecret::new(
+        SETUP_SECRET.to_owned(),
+        Duration::from_secs(60),
+    ))
+    .await;
+    let bootstrap = server
+        .admin
+        .bootstrap_operator(Request::new(bootstrap_request(SETUP_SECRET, "web-server")))
+        .await
+        .unwrap()
+        .into_inner();
+    let principal = bootstrap.principal.unwrap();
+    let session = bootstrap.session_id.unwrap();
+    let accepted = server
+        .network
+        .submit(principal_request(
+            SubmitRequest {
+                operation: Some(operation("subscribed-command", "subscribed-command-key")),
+            },
+            &principal,
+            OPERATOR_ID,
+            &session.value,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let accepted_lsn = accepted.accepted_lsn.unwrap().value;
+
+    let mut stream = server
+        .network
+        .subscribe(principal_request(
+            SubscribeRequest {
+                authority_domain_id: Some(domain()),
+                cursor: Some(Lsn { value: 1 }),
+            },
+            &principal,
+            OPERATOR_ID,
+            &session.value,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut events = Vec::new();
+    while let Some(event) = stream.message().await.unwrap() {
+        events.push(event);
+    }
+
+    assert!(
+        !events.is_empty(),
+        "operator-facing command state remains visible"
+    );
+    assert_eq!(
+        events[0]
+            .event_id
+            .as_ref()
+            .unwrap()
+            .lsn
+            .as_ref()
+            .unwrap()
+            .value,
+        accepted_lsn,
+        "filtered security records keep their durable LSNs as cursor gaps"
+    );
+    assert!(
+        accepted_lsn > 2,
+        "security records precede the visible command"
+    );
+    for event in events {
+        let payload = event.payload.expect("subscription event has payload");
+        let kind = StoredEventKind::try_from(payload.kind).unwrap();
+        assert!(!matches!(
+            kind,
+            StoredEventKind::OperatorRecord
+                | StoredEventKind::ControlSurfacePrincipal
+                | StoredEventKind::Grant
+                | StoredEventKind::DescendantGrant
+                | StoredEventKind::Revocation
+        ));
+        assert!(
+            !payload
+                .payload
+                .windows(PASSWORD_HASH.len())
+                .any(|window| window == PASSWORD_HASH.as_bytes()),
+            "subscription payload must not contain the stored password verifier"
+        );
+    }
+}
+
+#[tokio::test]
+async fn password_rpc_throttles_before_a_correct_password_and_recovers_after_decay() {
+    let audit = Arc::new(RecordingLoginAudit::default());
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let limiter_clock = clock.clone();
+    let limiter = LoginLimiter::new_with_clock(
+        LoginLimitConfig {
+            window: Duration::from_secs(60),
+            account_max_failures: 2,
+            network_max_failures: 2,
+            max_concurrent_verifications: 2,
+            max_tracked_accounts: 16,
+            max_tracked_networks: 16,
+        },
+        move || *limiter_clock.lock().unwrap(),
+    )
+    .unwrap();
+    let mut server = serve_dual_with_security(
+        SetupSecret::new(SETUP_SECRET.to_owned(), Duration::from_secs(60)),
+        Duration::from_secs(60),
+        limiter,
+        audit.clone(),
+    )
+    .await;
+    server
+        .admin
+        .bootstrap_operator(Request::new(bootstrap_request(SETUP_SECRET, "web-server")))
+        .await
+        .unwrap();
+
+    for attempt in 0..2 {
+        let error = server
+            .network
+            .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+                operator_actor_id: Some(actor()),
+                password: format!("wrong-{attempt}"),
+                principal: Some(enrollment("cli-throttled", "cli-device", 1)),
+            }))
+            .await
+            .expect_err("failed passwords must accumulate against account and network");
+        assert_eq!(error.code(), Code::Unauthenticated);
+    }
+
+    let throttled = server
+        .network
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(actor()),
+            password: PASSWORD.to_owned(),
+            principal: Some(enrollment("cli-throttled", "cli-device", 1)),
+        }))
+        .await
+        .expect_err("the limiter must reject before checking even a correct password");
+    assert_eq!(throttled.code(), Code::ResourceExhausted);
+
+    *clock.lock().unwrap() += Duration::from_secs(61);
+    let recovered = server
+        .network
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(actor()),
+            password: PASSWORD.to_owned(),
+            principal: Some(enrollment("cli-after-decay", "cli-device", 1)),
+        }))
+        .await
+        .expect("decayed account and network windows permit a successful login")
+        .into_inner();
+    assert!(recovered.operator_session_id.is_some());
+
+    let events = audit.events.lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.reason == "invalid_credentials"));
+    assert!(events.iter().any(|event| event.reason == "login_throttled"));
+    assert!(events.iter().any(|event| event.reason == "authenticated"));
+    for event in events.iter() {
+        let line = event.redacted_line();
+        assert!(!line.contains(PASSWORD));
+        assert!(!line.contains(PASSWORD_HASH));
+    }
 }
 
 #[tokio::test]
@@ -285,6 +533,7 @@ async fn authenticated_principal_can_enroll_another_endpoint() {
         .unwrap()
         .into_inner();
     let web = bootstrap.principal.unwrap();
+    let web_session = bootstrap.session_id.unwrap();
     let enrolled = server
         .network
         .enroll_control_surface_principal(principal_request(
@@ -293,7 +542,7 @@ async fn authenticated_principal_can_enroll_another_endpoint() {
             },
             &web,
             OPERATOR_ID,
-            "web-session",
+            &web_session.value,
         ))
         .await
         .expect("an existing compound issuer may enroll another endpoint")
@@ -305,10 +554,31 @@ async fn authenticated_principal_can_enroll_another_endpoint() {
 }
 
 async fn serve_dual(setup_secret: SetupSecret) -> DualServer {
+    serve_dual_with_security(
+        setup_secret,
+        Duration::from_secs(8 * 60 * 60),
+        LoginLimiter::default(),
+        Arc::new(RecordingLoginAudit::default()),
+    )
+    .await
+}
+
+async fn serve_dual_with_security(
+    setup_secret: SetupSecret,
+    operator_session_ttl: Duration,
+    login_limiter: LoginLimiter,
+    login_audit: Arc<dyn LoginAuditSink>,
+) -> DualServer {
     let storage = seeded_storage().await;
-    let control = ControlServiceImpl::new(storage.clone(), domain())
-        .await
-        .unwrap();
+    let control = ControlServiceImpl::new_with_security(
+        storage.clone(),
+        domain(),
+        operator_session_ttl,
+        login_limiter,
+        login_audit,
+    )
+    .await
+    .unwrap();
     let admin = AdminServiceImpl::new(control.clone(), setup_secret);
 
     let network_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

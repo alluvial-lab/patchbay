@@ -219,3 +219,30 @@ Thorough-weight feature review (fresh-context `gpt-5.6-sol`, same model class as
 ### Notes
 - Effective weight: thorough (multi-pass convergence; re-review after fixes until no receiver-confirmed material blockers).
 - The credential verification (Blocker 1's prerequisite) is genuinely earned — the reviewer's independent mutation test confirmed it. The 3 blockers are about the *rest* of the compound-issuer promise (session evidence), a real leak path (password hash via Subscribe), and a missing control (throttle/audit).
+
+## Review-fix pass (thorough, 2026-07-21)
+
+All three receiver-confirmed material blockers from thorough pass 1 were fixed; the feature is re-advanced to `review` for the required convergence pass.
+
+### Fixes
+
+1. **Core-verifiable operator sessions:** selected a core-issued opaque token backed by a process-local core session registry. The registry records the bound operator actor, expiry, and revocation state; a core restart invalidates all sessions (fail-closed). `MetadataIssuerContext` now verifies that the presented session exists, is active/unexpired, and is bound to the verified transport principal's operator actor. Bootstrap and `VerifyOperatorPassword` issue registered sessions; the web server stores the core token inside its server-side browser-session record and forwards that token rather than its independently generated browser cookie id. `RevokeOperatorSession` lets logout revoke the current core session. Tests reject invented, expired, revoked, and actor-mismatched sessions.
+2. **No authentication material in Subscribe:** changed the subscription projection to a fail-closed operator-facing whitelist (`Operation`, `Observation`, `Elicitation`, `SessionState`, `CommandTransition`). Authority/authentication records (`OperatorRecord`, `ControlSurfacePrincipal`, `Grant`, `DescendantGrant`, `Revocation`) are never yielded. Visible events retain their durable event ids/LSNs, so filtered records appear only as cursor gaps; the test decodes every returned payload and asserts that neither an auth kind nor the stored `password_hash` bytes are present.
+3. **Authoritative RPC throttle + redacted audit:** added a core-side in-memory limiter at `VerifyOperatorPassword`, before scrypt, with per-actor account and per-caller-network windows, bounded tracked-key maps, decay, and a concurrent-verification cap. Throttle rejection is `RESOURCE_EXHAUSTED` with retry metadata. Success, credential failure, throttling, verification failure, and enrollment failure emit structured redacted audit lines containing actor id, direct caller address, outcome, reason, and blocked dimensions only—never passwords or hashes. A recording sink proves emission/redaction in tests; production wires the stderr sink in `main.rs`. The previously recorded core-diagnostics/audit-ingest prerequisite remains the follow-on for durable audit storage because this repository still has no `AuditRecord` schema or audit-ingest port; this pass did not invent an incompatible persistence side channel.
+
+### Verification
+
+- `CARGO_HOME=/home/agent/projects/patchbay/.cargo-home PATH="/home/agent/.cargo/bin:$PATH" cargo test --workspace` — passed, including 7 trust-boundary integration tests and the new issuer/limiter unit tests.
+- `CARGO_HOME=/home/agent/projects/patchbay/.cargo-home PATH="/home/agent/.cargo/bin:$PATH" cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd web-server && npm test` — passed 20/20, including all four load-bearing `csrf_browser.qnt`-traced properties; the login integration test proves the core-issued session token is forwarded.
+- `cd contracts/ts && npm run build && npm run check:vectors && npm run check:presentation` — passed (24 vectors; 4 presentation registries; axe/contrast passed).
+- `cargo fmt --all -- --check` and `git diff --check` — passed. `check:drift` was not run per the known repository gap.
+- **Mutation 1 (session verification):** temporarily bypassed `ProjectionState::verify_operator_session`; `bootstrap_is_local_first_run_only_and_establishes_distinct_principals` failed because the invented `"invented-session"` request was accepted. Reverted; all 7 trust-boundary tests passed.
+- **Mutation 2 (subscription leak):** temporarily re-added `StoredEventKind::OperatorRecord` to the subscription whitelist; `subscribe_excludes_authentication_and_authority_records` failed on the decoded `OperatorRecord`. Reverted; the strengthened cursor-gap/leak test passed.
+- **Mutation 3 (RPC throttle):** temporarily disabled both limiter block predicates; `password_rpc_throttles_before_a_correct_password_and_recovers_after_decay` failed because the correct-password request reached scrypt/enrollment and succeeded instead of returning `RESOURCE_EXHAUSTED`. Reverted; the burst, pre-scrypt rejection, decay recovery, and audit assertions passed.
+
+### Scope notes
+
+- Mechanical choice logged: process-local opaque session records were chosen over signed self-contained tokens because lookup makes expiry/revocation/actor binding explicit, minimizes cryptographic surface, and fails closed on restart; reauthentication restores a session.
+- Foundation drift surfaced but not edited per the corrective write boundary: `docs/SECURITY.md` §143 still says the operator-session wire/evidence shape is deferred even though this feature now implements it.
+- Effective review weight remains `thorough`; this pass stops at `stage: review` for orchestrator re-review and does not self-advance to `done`.

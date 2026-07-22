@@ -16,6 +16,8 @@ service ControlService {
   // Password verification stays in the core so password hashes never cross
   // from the durable operator record to a control surface.
   rpc VerifyOperatorPassword(VerifyOperatorPasswordRequest) returns (VerifyOperatorPasswordResult);
+  // Revocation is authorized by, and applies to, the verified current session.
+  rpc RevokeOperatorSession(RevokeOperatorSessionRequest) returns (RevokeOperatorSessionResult);
   // An already verified compound issuer may enroll another endpoint.
   rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
 }
@@ -54,6 +56,12 @@ message VerifyOperatorPasswordRequest {
 message VerifyOperatorPasswordResult {
   patchbay.OperatorSessionId operator_session_id = 1;
   patchbay.PrincipalCredential principal = 2;
+}
+
+message RevokeOperatorSessionRequest {}
+
+message RevokeOperatorSessionResult {
+  bool revoked = 1;
 }
 
 message EnrollControlSurfacePrincipalRequest {

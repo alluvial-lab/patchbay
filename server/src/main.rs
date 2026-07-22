@@ -1,10 +1,12 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::AuthorityDomainId;
 use patchbay_core::storage::RusqliteStorage;
 use patchbay_core_server::{
     adapter_service::{AdapterControlServiceImpl, AdapterEvidenceVerifier},
     admin_service::{AdminServiceImpl, SetupSecret},
+    login_security::{LoginLimiter, StderrLoginAuditSink},
+    operator_session::DEFAULT_OPERATOR_SESSION_TTL,
     rpc::{
         adapter_control_service_server::AdapterControlServiceServer,
         admin_service_server::AdminServiceServer, control_service_server::ControlServiceServer,
@@ -50,8 +52,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let storage = RusqliteStorage::open(&database_path)?;
-    let control_service =
-        ControlServiceImpl::new(storage.clone(), authority_domain_id.clone()).await?;
+    let control_service = ControlServiceImpl::new_with_security(
+        storage.clone(),
+        authority_domain_id.clone(),
+        DEFAULT_OPERATOR_SESSION_TTL,
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+    )
+    .await?;
     let bootstrapped = control_service.is_bootstrapped().await;
     let (setup_secret, setup_secret_value) = SetupSecret::generate(setup_ttl);
     let admin_service = AdminServiceImpl::new(control_service.clone(), setup_secret);

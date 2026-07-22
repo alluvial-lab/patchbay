@@ -1,23 +1,29 @@
-use std::{pin::Pin, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
     EnrollControlSurfacePrincipalResult, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
-    SubmissionOutcome, SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
+    RevokeOperatorSessionRequest, RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome,
+    SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
     authority::{IssuerContext, OperatorError},
-    storage::{Storage, StorageError},
+    storage::{RecordedEvent, Storage, StorageError},
 };
 use tokio_stream::{self as stream, Stream};
 use tonic::{service::Interceptor, Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
-    identity::{issue_operator_session_id, issue_principal},
+    identity::issue_principal,
     issuer::MetadataIssuerContext,
+    login_security::{
+        LoginAuditEvent, LoginAuditOutcome, LoginAuditSink, LoginLimitDimension, LoginLimiter,
+        StderrLoginAuditSink,
+    },
+    operator_session::DEFAULT_OPERATOR_SESSION_TTL,
     rpc::control_service_server::ControlService,
     state::ProjectionState,
 };
@@ -74,18 +80,44 @@ pub struct ControlServiceImpl<S> {
     pub(crate) storage: S,
     pub(crate) state: ProjectionState,
     pub(crate) authority_domain_id: AuthorityDomainId,
+    login_limiter: LoginLimiter,
+    login_audit: Arc<dyn LoginAuditSink>,
 }
 
 impl<S: Storage> ControlServiceImpl<S> {
     pub async fn new(storage: S, authority_domain_id: AuthorityDomainId) -> Result<Self, String> {
+        Self::new_with_security(
+            storage,
+            authority_domain_id,
+            DEFAULT_OPERATOR_SESSION_TTL,
+            LoginLimiter::default(),
+            Arc::new(StderrLoginAuditSink),
+        )
+        .await
+    }
+
+    pub async fn new_with_security(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        operator_session_ttl: Duration,
+        login_limiter: LoginLimiter,
+        login_audit: Arc<dyn LoginAuditSink>,
+    ) -> Result<Self, String> {
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".to_owned());
         }
-        let state = ProjectionState::rebuild(&storage, &authority_domain_id).await?;
+        let state = ProjectionState::rebuild_with_session_ttl(
+            &storage,
+            &authority_domain_id,
+            operator_session_ttl,
+        )
+        .await?;
         Ok(Self {
             storage,
             state,
             authority_domain_id,
+            login_limiter,
+            login_audit,
         })
     }
 
@@ -169,12 +201,10 @@ where
             .read_after(&authority_domain_id, cursor)
             .await
             .map_err(map_storage_error_to_status)?;
-        let events = events.into_iter().map(|event| {
-            Ok(SubscribeEvent {
-                event_id: Some(event.event_id),
-                payload: Some(event.payload),
-            })
-        });
+        let events = events
+            .into_iter()
+            .filter_map(operator_facing_subscribe_event)
+            .map(Ok);
         Ok(Response::new(Box::pin(stream::iter(events))))
     }
 
@@ -211,37 +241,170 @@ where
         &self,
         request: Request<VerifyOperatorPasswordRequest>,
     ) -> Result<Response<VerifyOperatorPasswordResult>, Status> {
+        let network_address = caller_network_address(&request);
         let request = request.into_inner();
         let actor_id = required_actor(request.operator_actor_id)?;
         if request.password.is_empty() {
+            self.audit_login(
+                &actor_id,
+                &network_address,
+                LoginAuditOutcome::Failure,
+                "password_required",
+                Vec::new(),
+            );
             return Err(Status::invalid_argument("password must not be empty"));
         }
-        let verified = self
+        let attempt = match self
+            .login_limiter
+            .begin_attempt(&actor_id.value, &network_address)
+        {
+            Ok(attempt) => attempt,
+            Err(limit) => {
+                self.audit_login(
+                    &actor_id,
+                    &network_address,
+                    LoginAuditOutcome::Failure,
+                    "login_throttled",
+                    limit.blocked_dimensions,
+                );
+                return Err(Status::with_error_details(
+                    Code::ResourceExhausted,
+                    "operator password verification is throttled",
+                    ErrorDetails::with_retry_info(Some(limit.retry_after)),
+                ));
+            }
+        };
+        let verified = match self
             .state
             .verify_password(&actor_id, &request.password)
             .await
-            .map_err(map_operator_error_to_status)?;
+        {
+            Ok(verified) => verified,
+            Err(error) => {
+                attempt.failure();
+                self.audit_login(
+                    &actor_id,
+                    &network_address,
+                    LoginAuditOutcome::Failure,
+                    "verification_error",
+                    Vec::new(),
+                );
+                return Err(map_operator_error_to_status(error));
+            }
+        };
         if !verified {
+            attempt.failure();
+            self.audit_login(
+                &actor_id,
+                &network_address,
+                LoginAuditOutcome::Failure,
+                "invalid_credentials",
+                Vec::new(),
+            );
             return Err(Status::unauthenticated("invalid operator credentials"));
         }
-        let enrollment = request
-            .principal
-            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
-        let (record, credential) =
-            issue_principal(actor_id, enrollment, self.authority_domain_id.clone())?;
+        let enrollment = match request.principal {
+            Some(enrollment) => enrollment,
+            None => {
+                attempt.failure();
+                self.audit_login(
+                    &actor_id,
+                    &network_address,
+                    LoginAuditOutcome::Failure,
+                    "principal_enrollment_required",
+                    Vec::new(),
+                );
+                return Err(Status::invalid_argument("principal enrollment is required"));
+            }
+        };
+        let (record, credential) = match issue_principal(
+            actor_id.clone(),
+            enrollment,
+            self.authority_domain_id.clone(),
+        ) {
+            Ok(issued) => issued,
+            Err(error) => {
+                attempt.failure();
+                self.audit_login(
+                    &actor_id,
+                    &network_address,
+                    LoginAuditOutcome::Failure,
+                    "principal_enrollment_invalid",
+                    Vec::new(),
+                );
+                return Err(error);
+            }
+        };
         let _submit_guard = self.state.submit_guard().await;
-        self.state
+        if let Err(error) = self
+            .state
             .ingest_principal(&self.storage, &self.authority_domain_id, record)
             .await
-            .map_err(map_operator_error_to_status)?;
-        self.state
+        {
+            attempt.failure();
+            self.audit_login(
+                &actor_id,
+                &network_address,
+                LoginAuditOutcome::Failure,
+                "principal_enrollment_failed",
+                Vec::new(),
+            );
+            return Err(map_operator_error_to_status(error));
+        }
+        if let Err(error) = self
+            .state
             .catch_up(&self.storage, &self.authority_domain_id)
             .await
-            .map_err(map_storage_error_to_status)?;
+        {
+            attempt.failure();
+            self.audit_login(
+                &actor_id,
+                &network_address,
+                LoginAuditOutcome::Failure,
+                "projection_catch_up_failed",
+                Vec::new(),
+            );
+            return Err(map_storage_error_to_status(error));
+        }
+        let operator_session_id = self.state.issue_operator_session(actor_id.clone()).await;
+        attempt.success();
+        self.audit_login(
+            &actor_id,
+            &network_address,
+            LoginAuditOutcome::Success,
+            "authenticated",
+            Vec::new(),
+        );
         Ok(Response::new(VerifyOperatorPasswordResult {
-            operator_session_id: Some(issue_operator_session_id()),
+            operator_session_id: Some(operator_session_id),
             principal: Some(credential),
         }))
+    }
+
+    async fn revoke_operator_session(
+        &self,
+        request: Request<RevokeOperatorSessionRequest>,
+    ) -> Result<Response<RevokeOperatorSessionResult>, Status> {
+        let issuer = MetadataIssuerContext::from_request(
+            &request,
+            self.authority_domain_id.clone(),
+            &self.state,
+        )
+        .await?;
+        let actor_id = issuer
+            .verified_actor()
+            .cloned()
+            .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
+        let revoked = self
+            .state
+            .revoke_operator_session(issuer.operator_session_id(), &actor_id)
+            .await;
+        if !revoked {
+            return Err(Status::failed_precondition(
+                "operator session is no longer active",
+            ));
+        }
+        Ok(Response::new(RevokeOperatorSessionResult { revoked }))
     }
 
     async fn enroll_control_surface_principal(
@@ -280,6 +443,23 @@ where
 }
 
 impl<S> ControlServiceImpl<S> {
+    fn audit_login(
+        &self,
+        actor_id: &ActorId,
+        network_address: &str,
+        outcome: LoginAuditOutcome,
+        reason: &'static str,
+        blocked_dimensions: Vec<LoginLimitDimension>,
+    ) {
+        self.login_audit.record(LoginAuditEvent {
+            operator_actor_id: actor_id.value.clone(),
+            direct_socket_address: network_address.to_owned(),
+            outcome,
+            reason,
+            blocked_dimensions,
+        });
+    }
+
     pub(crate) fn require_configured_domain(
         &self,
         actual: &AuthorityDomainId,
@@ -291,6 +471,29 @@ impl<S> ControlServiceImpl<S> {
         }
         Ok(())
     }
+}
+
+fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEvent> {
+    let kind = StoredEventKind::try_from(event.payload.kind).ok()?;
+    matches!(
+        kind,
+        StoredEventKind::Operation
+            | StoredEventKind::Observation
+            | StoredEventKind::Elicitation
+            | StoredEventKind::SessionState
+            | StoredEventKind::CommandTransition
+    )
+    .then_some(SubscribeEvent {
+        event_id: Some(event.event_id),
+        payload: Some(event.payload),
+    })
+}
+
+fn caller_network_address<T>(request: &Request<T>) -> String {
+    request
+        .remote_addr()
+        .map(|address| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 fn required_actor(actor: Option<ActorId>) -> Result<ActorId, Status> {

@@ -10,9 +10,10 @@ use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
     ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, Generation, Grant, GrantId,
     GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn, Operation,
-    OperationKind, OperationState, OperatorRecord, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionState, StoredEventKind, StoredEventPayload,
-    SubmissionOutcome, SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind,
+    OperationKind, OperationState, OperatorRecord, PrincipalEnrollment, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, SubscribeRequest,
+    TargetScope, TargetScopeKind, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
@@ -40,7 +41,6 @@ use tonic::{transport::Channel, Code, Request};
 use tonic_types::StatusExt;
 
 const SECRET: &str = "test-core-secret";
-const OPERATOR_SESSION: &str = "opaque-session-32fb8181";
 const OPERATOR_ACTOR: &str = "operator-primary";
 const PRINCIPAL_ID: &str = "web-principal";
 const PRINCIPAL_SECRET: &str = "web-principal-secret";
@@ -127,6 +127,7 @@ struct TestServer {
     client: ControlServiceClient<Channel>,
     storage: RusqliteStorage,
     task: JoinHandle<()>,
+    operator_session: String,
     _directory: TempDir,
 }
 
@@ -147,6 +148,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 operation: Some(operation("unauthorized", "unauthorized")),
             },
             "wrong-secret",
+            &server.operator_session,
         ))
         .await
         .expect_err("an invalid core secret must fail closed");
@@ -157,6 +159,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
             operation: Some(operation("missing-actor", "missing-actor")),
         },
         SECRET,
+        &server.operator_session,
     );
     missing_actor.metadata_mut().remove(OPERATOR_ID_HEADER);
     let missing_actor = server
@@ -173,6 +176,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 operation: Some(operation("command-1", "key-1")),
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("authorized submit must complete")
@@ -194,6 +198,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 cursor: Some(Lsn { value: 0 }),
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("subscribe must establish")
@@ -220,6 +225,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 cursor: accepted.accepted_lsn,
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("cursor resume must establish")
@@ -241,6 +247,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 at_or_before: None,
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("snapshot lookup must complete")
@@ -265,6 +272,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                 at_or_before: None,
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("latest snapshot lookup must complete")
@@ -275,8 +283,8 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
 
 #[tokio::test]
 async fn grant_subject_uses_verified_actor_not_operator_session() {
-    assert_ne!(OPERATOR_SESSION, OPERATOR_ACTOR);
     let mut server = start_server().await;
+    assert_ne!(server.operator_session, OPERATOR_ACTOR);
 
     let result = server
         .client
@@ -285,6 +293,7 @@ async fn grant_subject_uses_verified_actor_not_operator_session() {
                 operation: Some(operation("actor-bound-command", "actor-bound-key")),
             },
             SECRET,
+            &server.operator_session,
         ))
         .await
         .expect("a grant bound to the verified actor must authorize the opaque session")
@@ -302,7 +311,7 @@ async fn retry_reconciles_a_commit_after_post_append_catch_up_failure() {
         .expect("test storage must open");
     seed_authority_and_session(&inner).await;
     let storage = FailPostAppendReadOnceStorage::new(inner.clone());
-    let (mut client, task) = serve(storage).await;
+    let (mut client, task, operator_session) = serve(storage).await;
 
     let first = client
         .submit(authenticated_request(
@@ -310,6 +319,7 @@ async fn retry_reconciles_a_commit_after_post_append_catch_up_failure() {
                 operation: Some(operation("recoverable-command", "recoverable-key")),
             },
             SECRET,
+            &operator_session,
         ))
         .await
         .expect_err("the injected post-append read failure must fail the first response");
@@ -322,6 +332,7 @@ async fn retry_reconciles_a_commit_after_post_append_catch_up_failure() {
                 operation: Some(operation("recoverable-command", "recoverable-key")),
             },
             SECRET,
+            &operator_session,
         ))
         .await
         .expect("retry must reconcile the durable append before dedup lookup")
@@ -348,6 +359,7 @@ async fn concurrent_submits_complete_without_deadlock() {
     let mut tasks = Vec::with_capacity(CONCURRENT_SUBMISSIONS);
     for index in 0..CONCURRENT_SUBMISSIONS {
         let mut client = server.client.clone();
+        let operator_session = server.operator_session.clone();
         tasks.push(tokio::spawn(async move {
             client
                 .submit(authenticated_request(
@@ -358,6 +370,7 @@ async fn concurrent_submits_complete_without_deadlock() {
                         )),
                     },
                     SECRET,
+                    &operator_session,
                 ))
                 .await
                 .map(|response| response.into_inner())
@@ -417,17 +430,18 @@ async fn start_server() -> TestServer {
     let storage = RusqliteStorage::open(database_path.to_str().expect("UTF-8 test path"))
         .expect("test storage must open");
     seed_authority_and_session(&storage).await;
-    let (client, task) = serve(storage.clone()).await;
+    let (client, task, operator_session) = serve(storage.clone()).await;
 
     TestServer {
         client,
         storage,
         task,
+        operator_session,
         _directory: directory,
     }
 }
 
-async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>)
+async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>, String)
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
@@ -448,10 +462,33 @@ where
             .await
             .expect("test server must run");
     });
-    let client = ControlServiceClient::connect(format!("http://{address}"))
+    let mut client = ControlServiceClient::connect(format!("http://{address}"))
         .await
         .expect("test client must connect");
-    (client, task)
+    let login = client
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            }),
+            password: "correct-password".to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId {
+                    value: "grpc-smoke-login".to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "grpc-smoke-host".to_owned(),
+                }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .expect("test login must issue a core-owned session")
+        .into_inner();
+    let operator_session = login
+        .operator_session_id
+        .expect("test login returns a session")
+        .value;
+    (client, task, operator_session)
 }
 
 async fn seed_authority_and_session(storage: &RusqliteStorage) {
@@ -549,7 +586,16 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .expect("session fixture must append");
 }
 
-fn authenticated_request<T>(message: T, secret: &str) -> Request<T> {
+fn core_request<T>(message: T) -> Request<T> {
+    let mut request = Request::new(message);
+    request.metadata_mut().insert(
+        CORE_SECRET_HEADER,
+        SECRET.parse().expect("test secret is valid metadata"),
+    );
+    request
+}
+
+fn authenticated_request<T>(message: T, secret: &str, operator_session: &str) -> Request<T> {
     let mut request = Request::new(message);
     request.metadata_mut().insert(
         CORE_SECRET_HEADER,
@@ -557,7 +603,7 @@ fn authenticated_request<T>(message: T, secret: &str) -> Request<T> {
     );
     request.metadata_mut().insert(
         OPERATOR_SESSION_HEADER,
-        OPERATOR_SESSION
+        operator_session
             .parse()
             .expect("test operator session is valid metadata"),
     );

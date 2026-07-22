@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
@@ -20,6 +20,8 @@ use patchbay_core::{
 };
 use tokio::sync::{Mutex, MutexGuard};
 
+use crate::operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL};
+
 /// Server-owned concurrency boundary around core projections.
 ///
 /// The canonical acquisition order is storage -> grant check -> target
@@ -37,6 +39,7 @@ pub struct ProjectionState {
     state_lookup: LockedCommandStateLookup,
     elicitation_slots: LockedElicitationContractLookup,
     operators: Arc<Mutex<OperatorRegistry>>,
+    operator_sessions: OperatorSessionRegistry,
     last_applied_lsn: Arc<Mutex<u64>>,
     submit_gate: Arc<Mutex<()>>,
 }
@@ -45,6 +48,15 @@ impl ProjectionState {
     pub async fn rebuild<S: Storage>(
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
+    ) -> Result<Self, String> {
+        Self::rebuild_with_session_ttl(storage, authority_domain_id, DEFAULT_OPERATOR_SESSION_TTL)
+            .await
+    }
+
+    pub async fn rebuild_with_session_ttl<S: Storage>(
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        operator_session_ttl: Duration,
     ) -> Result<Self, String> {
         let events = storage
             .read_after(authority_domain_id, Lsn { value: 0 })
@@ -78,6 +90,7 @@ impl ProjectionState {
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             operators: Arc::new(Mutex::new(operators)),
+            operator_sessions: OperatorSessionRegistry::new(operator_session_ttl)?,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             submit_gate: Arc::new(Mutex::new(())),
         })
@@ -171,6 +184,29 @@ impl ProjectionState {
             .lock()
             .await
             .verify_principal(principal_id, credential)
+    }
+
+    pub async fn issue_operator_session(
+        &self,
+        actor_id: ActorId,
+    ) -> patchbay_contracts::patchbay::OperatorSessionId {
+        self.operator_sessions.issue(actor_id).await
+    }
+
+    pub async fn verify_operator_session(
+        &self,
+        session_id: &patchbay_contracts::patchbay::OperatorSessionId,
+        actor_id: &ActorId,
+    ) -> bool {
+        self.operator_sessions.verify(session_id, actor_id).await
+    }
+
+    pub async fn revoke_operator_session(
+        &self,
+        session_id: &patchbay_contracts::patchbay::OperatorSessionId,
+        actor_id: &ActorId,
+    ) -> bool {
+        self.operator_sessions.revoke(session_id, actor_id).await
     }
 
     pub async fn grant(&self, grant_id: &GrantId) -> Option<GrantRecord> {

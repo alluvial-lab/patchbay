@@ -11,6 +11,7 @@ export type SessionStatus = "active" | "revoked" | "expired";
 export interface OperatorSession {
   sessionId: string;
   operatorActorId: string;
+  coreSessionId?: string;
   status: SessionStatus;
   csrfSecret: string;
   createdAt: number;
@@ -44,7 +45,7 @@ export class SessionStore {
     }
   }
 
-  create(operatorActorId: string): OperatorSession {
+  create(operatorActorId: string, coreSessionId?: string): OperatorSession {
     if (operatorActorId.length === 0) {
       throw new Error("operator actor id must not be empty");
     }
@@ -56,6 +57,7 @@ export class SessionStore {
     const session: OperatorSession = {
       sessionId,
       operatorActorId,
+      ...(coreSessionId ? { coreSessionId } : {}),
       status: "active",
       csrfSecret: this.#randomToken(),
       createdAt: now,

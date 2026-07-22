@@ -65,6 +65,14 @@ impl MetadataIssuerContext {
                 "operator actor is not bound to the verified transport principal",
             ));
         }
+        if !state
+            .verify_operator_session(&operator_session_id, &verified_actor)
+            .await
+        {
+            return Err(Status::unauthenticated(
+                "invalid, expired, revoked, or actor-mismatched operator session",
+            ));
+        }
         let verified_endpoint = principal
             .endpoint_id
             .ok_or_else(|| Status::internal("verified transport principal has no endpoint"))?;
@@ -195,11 +203,12 @@ mod tests {
                 .unwrap();
         }
 
-        let web = verified_request("web-principal", "web-secret");
+        let session = state.issue_operator_session(actor_id.clone()).await;
+        let web = verified_request("web-principal", "web-secret", &session.value);
         let web = MetadataIssuerContext::from_request(&web, authority_domain_id.clone(), &state)
             .await
             .unwrap();
-        let cli = verified_request("cli-principal", "cli-secret");
+        let cli = verified_request("cli-principal", "cli-secret", &session.value);
         let cli = MetadataIssuerContext::from_request(&cli, authority_domain_id, &state)
             .await
             .unwrap();
@@ -214,7 +223,11 @@ mod tests {
         assert_eq!(cli.endpoint_generation(), Some(Generation { value: 7 }));
     }
 
-    fn verified_request(principal_id: &str, principal_secret: &str) -> Request<()> {
+    fn verified_request(
+        principal_id: &str,
+        principal_secret: &str,
+        operator_session_id: &str,
+    ) -> Request<()> {
         let mut request = Request::new(());
         request
             .metadata_mut()
@@ -225,10 +238,116 @@ mod tests {
         request
             .metadata_mut()
             .insert(OPERATOR_ID_HEADER, "operator-primary".parse().unwrap());
+        request.metadata_mut().insert(
+            OPERATOR_SESSION_HEADER,
+            operator_session_id.parse().unwrap(),
+        );
         request
-            .metadata_mut()
-            .insert(OPERATOR_SESSION_HEADER, "operator-session".parse().unwrap());
-        request
+    }
+
+    #[tokio::test]
+    async fn operator_session_must_be_core_issued_active_and_actor_bound() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let actor_id = ActorId {
+            value: "operator-primary".to_owned(),
+        };
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let state = ProjectionState::rebuild_with_session_ttl(
+            &storage,
+            &authority_domain_id,
+            std::time::Duration::from_millis(2),
+        )
+        .await
+        .unwrap();
+        state
+            .ingest_operator(
+                &storage,
+                &authority_domain_id,
+                OperatorRecord {
+                    actor_id: Some(actor_id.clone()),
+                    password_hash: "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g".to_owned(),
+                    created_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                },
+            )
+            .await
+            .unwrap();
+        state
+            .ingest_principal(
+                &storage,
+                &authority_domain_id,
+                ControlSurfacePrincipalRecord {
+                    principal_id: "web-principal".to_owned(),
+                    operator_actor_id: Some(actor_id.clone()),
+                    endpoint_id: Some(EndpointId {
+                        value: "web".to_owned(),
+                    }),
+                    device_id: Some(DeviceId {
+                        value: "web-host".to_owned(),
+                    }),
+                    endpoint_generation: Some(Generation { value: 1 }),
+                    credential_hash: hash_principal_credential("web-secret"),
+                    created_at: Some(Timestamp {
+                        seconds: 2,
+                        nanos: 0,
+                    }),
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                },
+            )
+            .await
+            .unwrap();
+
+        let invented = verified_request("web-principal", "web-secret", "invented-session");
+        assert_eq!(
+            MetadataIssuerContext::from_request(&invented, authority_domain_id.clone(), &state,)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+
+        let other_actor_session = state
+            .issue_operator_session(ActorId {
+                value: "another-operator".to_owned(),
+            })
+            .await;
+        let mismatched =
+            verified_request("web-principal", "web-secret", &other_actor_session.value);
+        assert_eq!(
+            MetadataIssuerContext::from_request(&mismatched, authority_domain_id.clone(), &state,)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+
+        let revoked_session = state.issue_operator_session(actor_id.clone()).await;
+        assert!(
+            state
+                .revoke_operator_session(&revoked_session, &actor_id)
+                .await
+        );
+        let revoked = verified_request("web-principal", "web-secret", &revoked_session.value);
+        assert_eq!(
+            MetadataIssuerContext::from_request(&revoked, authority_domain_id.clone(), &state,)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+
+        let expired_session = state.issue_operator_session(actor_id).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let expired = verified_request("web-principal", "web-secret", &expired_session.value);
+        assert_eq!(
+            MetadataIssuerContext::from_request(&expired, authority_domain_id, &state)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
     }
 
     proptest! {

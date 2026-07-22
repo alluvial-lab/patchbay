@@ -69,11 +69,13 @@ function safeTokenEqual(actual: string, expected: string): boolean {
 function setVerifiedSession(request: FastifyRequest, session: OperatorSession): void {
   request.verifiedOperator = session.operatorActorId;
   request.verifiedSessionId = session.sessionId;
+  request.verifiedCoreSessionId = session.coreSessionId;
 }
 
 declare module "fastify" {
   interface FastifyRequest {
     verifiedOperator?: string;
     verifiedSessionId?: string;
+    verifiedCoreSessionId?: string;
   }
 }
