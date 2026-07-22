@@ -1,7 +1,7 @@
 ---
 id: feature-v0-cli
 kind: feature
-stage: drafting
+stage: implementing
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]
@@ -54,51 +54,80 @@ Output: human-readable by default; `--json` for machine-readable (scripting). Ex
 
 ### Unit 1: CLI scaffold + core client + auth
 
-**File**: `cli/package.json`, `cli/tsconfig.json`, `cli/src/main.ts`, `cli/src/core-client.ts`, `cli/src/auth.ts`
+**File**: `cli/package.json`, `cli/tsconfig.json`, `cli/src/main.ts`, `cli/src/core-client.ts`, `cli/src/auth.ts`, `cli/src/credentials.ts`
 
-The `patchbay-cli` Node package + a Connect gRPC client to `ControlService` (mirroring `web-server/src/core-client.ts`: `createGrpcTransport` + `x-patchbay-core-secret` interceptor). Config from env (`PATCHBAY_CORE_ADDR`, `PATCHBAY_CORE_SECRET`) + a CLI-local credential store (the operator-session token / operator identity — see the Blocker below for the exact v0.1.0 auth posture). `main.ts` is the entry: arg dispatch → command handler → print → exit.
+The `patchbay-cli` Node package + Connect gRPC clients to the shipped trust-boundary surface. Two clients: a `ControlService` client (network listener, for Submit/Subscribe/LoadSnapshot/VerifyOperatorPassword/EnrollControlSurfacePrincipal/RevokeOperatorSession) and an `AdminService` client (local-console listener, for BootstrapOperator). Both mirror `web-server/src/core-client.ts` (`createGrpcTransport` + `x-patchbay-core-secret` interceptor).
 
 ```typescript
-// cli/src/core-client.ts — reuses the web-server's exact pattern
+// cli/src/core-client.ts — mirrors web-server/src/core-client.ts
 import { createClient, type Interceptor } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
-import { ControlService } from "@patchbay/contracts";
+import { ControlService, AdminService } from "@patchbay/contracts";
 
-export function makeCoreClient(coreAddr: string, coreSecret: string) {
-  const authenticateCorePrincipal: Interceptor = (next) => async (request) => {
+function coreSecretInterceptor(coreSecret: string): Interceptor {
+  return (next) => async (request) => {
     request.header.set("x-patchbay-core-secret", coreSecret);
     return next(request);
   };
-  return createClient(
-    ControlService,
-    createGrpcTransport({ baseUrl: coreAddr, interceptors: [authenticateCorePrincipal] }),
-  );
+}
+
+export function makeControlClient(coreAddr: string, coreSecret: string) {
+  return createClient(ControlService,
+    createGrpcTransport({ baseUrl: coreAddr, interceptors: [coreSecretInterceptor(coreSecret)] }));
+}
+export function makeAdminClient(adminAddr: string, coreSecret: string) {
+  return createClient(AdminService,
+    createGrpcTransport({ baseUrl: adminAddr, interceptors: [coreSecretInterceptor(coreSecret)] }));
+}
+```
+
+```typescript
+// cli/src/auth.ts — the auth interceptor reading the credential store
+// The credential store (cli/src/credentials.ts) holds the PrincipalCredential
+// (principal_id + secret) + OperatorSessionId returned by setup/login.
+// Every state-changing Submit adds: x-patchbay-principal-id, x-patchbay-principal-secret,
+// x-patchbay-operator-id, x-patchbay-operator-session-id — exactly the headers
+// the shipped MetadataIssuerContext verifies (server/src/issuer.rs).
+export function authInterceptor(creds: CliCredentials): Interceptor {
+  return (next) => async (request) => {
+    request.header.set("x-patchbay-principal-id", creds.principal.principalId);
+    request.header.set("x-patchbay-principal-secret", creds.principal.secret);
+    request.header.set("x-patchbay-operator-id", creds.operatorActorId);
+    request.header.set("x-patchbay-operator-session-id", creds.sessionId);
+    return next(request);
+  };
 }
 ```
 
 **Implementation Notes**:
-- The operator-identity headers (`x-patchbay-operator-id`, `x-patchbay-operator-session-id`) are added by an auth interceptor populated from the CLI credential store. The exact shape of that store is the open Blocker below.
-- Fail fast: refuse to run if `PATCHBAY_CORE_SECRET` is unset; refuse state-changing commands if no operator identity is established.
+- The credential store (`cli/src/credentials.ts`) holds a `PrincipalCredential { principal_id, secret, operator_actor_id, endpoint_id, device_id, endpoint_generation }` + `OperatorSessionId`, written 0600 to a CLI-local file (e.g. `~/.patchbay/cli-credentials.json`). Populated by `login`/`setup`; read by the auth interceptor. SECURITY:93 (high-entropy, meaningless client-side) applies; the secret is a bearer credential — file perms 0600, never logged.
+- Fail fast: refuse state-changing commands if no credential store exists (direct the operator to `patchbay-cli login`); refuse to run without `PATCHBAY_CORE_SECRET`.
+- The CLI is a full transport principal: each `login` enrolls a distinct CLI endpoint (its own `EndpointId`/`DeviceId`/`Generation`), verified by the core against the durable `ControlSurfacePrincipalRecord`.
 
 **Acceptance Criteria**:
 - [ ] `patchbay-cli` runs, parses args, dispatches to a command handler, prints output, exits with the right code
-- [ ] The core client reaches a running `patchbay-core-server` (health probe)
-- [ ] Refuses to run without `PATCHBAY_CORE_SECRET`
+- [ ] The control client reaches a running `patchbay-core-server` (health probe)
+- [ ] Refuses to run without `PATCHBAY_CORE_SECRET`; refuses state-changing commands without a credential store
+- [ ] The auth interceptor adds all four verified headers; a request without them is rejected by the core (verified)
 
-### Unit 2: `setup` + `login` (operator bootstrap + enrollment)
+### Unit 2: `setup` + `login` + `logout` (operator bootstrap + enrollment)
 
-**File**: `cli/src/commands/setup.ts`, `cli/src/commands/login.ts`
+**File**: `cli/src/commands/setup.ts`, `cli/src/commands/login.ts`, `cli/src/commands/logout.ts`
 
-`setup` creates the first operator (SECURITY:77-78: first operator via CLI/local-console bootstrap, NOT an unauthenticated web page). It establishes the operator record (the `scrypt$<salt>$<hash>` password hash the web-server later verifies) + the operator's authority grant in the core, producing a one-time setup secret that expires (SECURITY:78). `login` enrolls a CLI endpoint via local setup credentials or an existing authenticated operator session (SECURITY:81), establishing the CLI credential store the auth interceptor reads.
+`setup` runs against the **local-console `AdminService`** (loopback listener, `PATCHBAY_CORE_ADMIN_ADDR`): `BootstrapOperator(BootstrapRequest{ setup_secret, operator_actor_id, password_hash, principal })` → `BootstrapResult{ grant_id, session_id, principal: PrincipalCredential }`. It creates the first operator record + authority grant + the CLI's first principal, writing the `PrincipalCredential` + `OperatorSessionId` to the 0600 credential store. The setup secret is one-time (expires after use/timeout — the core enforces this; SECURITY:78). `login` runs against the **network `ControlService`**: `VerifyOperatorPassword(VerifyOperatorPasswordRequest{ operator_actor_id, password, principal })` → `VerifyOperatorPasswordResult{ operator_session_id, principal: PrincipalCredential }` (the core does the scrypt check, throttled per SECURITY:85, and enrolls a new CLI endpoint). `logout` calls `RevokeOperatorSession`.
 
 **Implementation Notes**:
-- `setup` is the bootstrap channel (SECURITY:208: local CLI/console/SSH/trusted device — distinct from routine web login; this channel distinction is load-bearing for lockdown exit).
-- The credential store shape is the open Blocker. Whatever it is, `login` populates it and the auth interceptor reads it.
+- `setup` is the bootstrap channel (SECURITY:208: local CLI/console — distinct from routine web login; this channel distinction is load-bearing for lockdown exit). It speaks to the local listener, NOT the network listener.
+- The `password_hash` in `BootstrapRequest` is the `scrypt$<salt>$<hash>` format (mirror `web-server/src/sessions.ts:hashPassword`). The CLI hashes the operator-chosen password locally before sending it to the local AdminService; OR the AdminService accepts a plaintext password and hashes it — verify which the shipped `AdminService.BootstrapOperator` expects (check `server/src/admin_service.rs`) and match it. Prefer the core doing the hash (single hashing site), but match what shipped.
+- `VerifyOperatorPassword` returns a fresh `PrincipalCredential` for the CLI endpoint on success — the CLI stores it. The operator actor id comes from the existing operator record (created by `setup`).
+- The credential store is written 0600; the bearer `PrincipalCredential.secret` is never logged.
 
 **Acceptance Criteria**:
-- [ ] `setup` creates the first operator record + authority grant; the web-server can subsequently verify the password
-- [ ] `login` establishes the CLI credential store for the auth interceptor
-- [ ] A one-time setup secret expires after use or timeout (SECURITY:78)
+- [ ] `setup` calls the local `AdminService.BootstrapOperator`, creates the operator record + grant + first principal, writes the credential store
+- [ ] `login` calls the network `ControlService.VerifyOperatorPassword` with a new CLI endpoint enrollment, stores the returned `PrincipalCredential` + `OperatorSessionId`
+- [ ] `logout` calls `RevokeOperatorSession`; subsequent state-changing commands are rejected (no valid session)
+- [ ] The credential store is 0600; the secret is never logged
+- [ ] `setup` speaks to the local listener only (not the network listener)
 
 ### Unit 3a: `session-health` (buildable now via LoadSnapshot)
 
@@ -152,8 +181,8 @@ The command-submission commands for scripting: `instruct <target> <prompt>` (Sub
 
 ## Implementation Order
 
-1. Unit 1 (scaffold + core client + auth) — the foundation
-2. Unit 2 (`setup` + `login`) — depends on Unit 1's auth posture
+1. Unit 1 (scaffold + core client + admin client + auth) — the foundation
+2. Unit 2 (`setup` + `login` + `logout`) — depends on Unit 1; setup uses AdminService, login uses VerifyOperatorPassword
 3. Unit 3a (`session-health`) — depends on Unit 1; uses LoadSnapshot
 4. Unit 4 (scripting commands + output) — depends on Unit 1; can parallelize with 3a
 5. Unit 3b (`audit-query`/`inspect-command`/`adapter-status`) — BLOCKED; stubbed now, implemented when core-diagnostics lands
