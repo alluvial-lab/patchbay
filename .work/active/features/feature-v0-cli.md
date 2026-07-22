@@ -271,3 +271,20 @@ Rather than weaken the CLI to the rejected option 2, the operator chose to scope
 - `cd contracts/ts && npm run check:presentation` — PASS.
 - `cd contracts/ts && npm run build && npm run check:vectors` — PASS (24 vectors; no contract changes).
 - Acceptance walkthrough: every implemented Unit 1/2/3a/4 criterion is covered by executable evidence above; Unit 3b is intentionally and visibly stubbed per the resolved scope decision. No forbidden package, contract, core, server, adapter, web, mockup, or foundation-doc source was changed.
+
+## Review outcome (2026-07-22) — Request changes → implementing (standard pass 1)
+
+Standard-weight feature review (fresh-context `gpt-5.6-sol`, same model class as the implementation worker — same-harness, NOT cross-model vs the implementer; cross-model vs the umans orchestrator per the global AGENTS.md advisory-review slot). The reviewer confirmed the functional verification passes and the auth-header completeness is genuinely earned (the real-core smoke proves the four headers — a mutation omitting any fails the smoke). Two would-be findings correctly rejected (the auth-header unit test is earned by the smoke; the Unit 3b stubs are honest, not contradictory). But the pass returned **Request changes** with 2 receiver-confirmed material blockers. Feature bounced `review → implementing`.
+
+### Blockers (both receiver-confirmed after adjudication)
+
+1. **Identity-before-intent test is not mutation-sensitive (self-defining)** (`cli/tests/scripting-commands.test.ts:79`): the test only checks `startsWith("adapter=pi-adapter")`. A mutation reducing the displayed identity to adapter+generation (omitting scope + runtime session id) would still pass. The ordering (identity before submit) is earned; the full-identity composition is not. Fix: tighten the test to assert the EXACT emitted identity tuple (`adapter=<id>;scope=<id>;runtime=<id>;generation=<n>` or whatever production emits); verify production is complete first; mutate-to-reduce must FAIL.
+2. **Credential writes chmod an arbitrary configured parent directory to 0700** (`cli/src/credentials.ts:62-64`): every write unconditionally `chmod(dirname(path), 0o700)`. For `/tmp/patchbay.json` that would chmod `/tmp`; reproduced (an existing 0755 temp dir became 0700). Fix: preserve the 0600 file mode without mutating an existing parent directory's mode; only harden a directory the CLI creates. Add a regression proving a custom existing parent retains its mode.
+
+### Rejected proposals (reviewer — sound)
+- Auth-header unit test is self-defining because it imports `AUTH_HEADERS` — rejected: `tests/core-smoke.mjs` does authenticated `LoadSnapshot` + logout against the real verifier; changing/omitting any of the four headers fails the smoke. Header completeness is genuinely earned by the aggregate evidence.
+- Unit 3b stubs contradict committed observability — rejected: their explicit non-zero prerequisite message matches the operator-approved partial scope; they neither silently drop nor falsely implement the commands.
+
+### Notes
+- Effective weight: standard (one pass; receiver adjudicates + fixes receiver-confirmed blockers + verifies + closes without re-review).
+- The self-defining-test finding (Blocker 1) is the same failure mode the cockpit's review caught (mutation-survivable property tests) — the standard the prior arcs set applies forward.
