@@ -60,8 +60,10 @@ export class CredentialStore implements CredentialReader {
   async write(credentials: CliCredentials): Promise<void> {
     const validated = validateCredentials(credentials, this.path);
     const directory = dirname(this.path);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    const createdDirectory = await mkdir(directory, { recursive: true, mode: 0o700 });
+    if (createdDirectory !== undefined) {
+      await chmod(directory, 0o700);
+    }
 
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     try {

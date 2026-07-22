@@ -76,7 +76,10 @@ test("instruct prints stable identity before submission and keeps JSON output se
     0,
   );
 
-  assert.equal(events[0]?.startsWith("stderr:{\"target\":\"adapter=pi-adapter"), true);
+  assert.equal(
+    events[0],
+    'stderr:{"target":"adapter=pi-adapter;scope=machine-a;runtime=runtime-1;generation=3"}',
+  );
   assert.equal(events[1], "submit");
   assert.equal(submitted?.kind, OperationKind.INSTRUCT);
   assert.equal(new TextDecoder().decode(submitted?.payload?.payload), "Run the checks");

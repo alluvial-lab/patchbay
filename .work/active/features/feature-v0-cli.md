@@ -272,6 +272,15 @@ Rather than weaken the CLI to the rejected option 2, the operator chose to scope
 - `cd contracts/ts && npm run build && npm run check:vectors` — PASS (24 vectors; no contract changes).
 - Acceptance walkthrough: every implemented Unit 1/2/3a/4 criterion is covered by executable evidence above; Unit 3b is intentionally and visibly stubbed per the resolved scope decision. No forbidden package, contract, core, server, adapter, web, mockup, or foundation-doc source was changed.
 
+## Review-fix pass (standard, 2026-07-21)
+
+- Blocker 1: verified that `canonicalSessionIdentity` already emits the complete stable tuple (`adapter`, `scope`, `runtime`, `generation`) and tightened `cli/tests/scripting-commands.test.ts` to require the exact emitted JSON identity before the `submit` event. No production identity change was needed.
+- Blocker 2: credential writes now harden a parent directory to 0700 only when the recursive `mkdir` call created it. Existing configured parent directories retain their permissions, while the atomic credential file remains 0600. Added a regression test using an existing 0755 custom parent.
+- Mutation evidence for Blocker 1: temporarily reduced the production canonical identity to adapter + generation; the focused scripting test failed with the reduced actual identity against the complete expected tuple. Reverted the mutation and confirmed the focused tests green.
+- Regression evidence for Blocker 2: before the production fix, the new custom-parent test failed because the existing directory changed from expected 0755 to actual 0700. After the fix, the test preserves 0755 and confirms the credential file is 0600.
+- Final verification: `cd cli && npm test` — PASS (16/16); `cd cli && npm run test:core-smoke` — PASS (setup → login → authenticated `LoadSnapshot` → logout/rejection).
+- Lifecycle: completed the corrective implementation pass and returned `feature-v0-cli` to `stage: review`; the standard-weight dispatching orchestrator owns adjudication and closure.
+
 ## Review outcome (2026-07-22) — Request changes → implementing (standard pass 1)
 
 Standard-weight feature review (fresh-context `gpt-5.6-sol`, same model class as the implementation worker — same-harness, NOT cross-model vs the implementer; cross-model vs the umans orchestrator per the global AGENTS.md advisory-review slot). The reviewer confirmed the functional verification passes and the auth-header completeness is genuinely earned (the real-core smoke proves the four headers — a mutation omitting any fails the smoke). Two would-be findings correctly rejected (the auth-header unit test is earned by the smoke; the Unit 3b stubs are honest, not contradictory). But the pass returned **Request changes** with 2 receiver-confirmed material blockers. Feature bounced `review → implementing`.

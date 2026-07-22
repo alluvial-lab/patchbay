@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { chmod, mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,17 @@ test("credential store is atomically written with owner-only permissions", async
   assert.equal((await stat(store.path)).mode & 0o777, 0o600);
   assert.deepEqual(await store.readRequired(), expected);
   assert.equal((await stat(directory)).mode & 0o777, 0o700);
+});
+
+test("credential writes preserve an existing custom parent directory mode", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "patchbay-cli-custom-parent-"));
+  await chmod(directory, 0o755);
+  const store = new CredentialStore(join(directory, "credentials.json"));
+
+  await store.write(credentials());
+
+  assert.equal((await stat(directory)).mode & 0o777, 0o755);
+  assert.equal((await stat(store.path)).mode & 0o777, 0o600);
 });
 
 test("auth interceptor reads the store and adds all four verifier headers", async () => {
