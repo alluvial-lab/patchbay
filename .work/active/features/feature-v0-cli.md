@@ -4,7 +4,7 @@ kind: feature
 stage: drafting
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
-depends_on: [feature-v0-protocol-seam]
+depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
@@ -211,3 +211,9 @@ This is not a mechanical CLI implementation choice. Proceeding would require one
 ### Blocker
 
 A prerequisite must first define and implement the bootstrap and CLI-principal boundary across `contracts/`, `core/`, and `server/` (and define how the resulting password record is consumed by `web-server/`). That work is outside this feature's allowed write scope. Per the design-flaw escape hatch, this feature returns to `drafting`; no `cli/` files were created.
+
+### Resolution (operator, 2026-07-21): scope the prerequisite as `feature-v0-control-surface-trust-boundary` (option 1 at the epic level)
+
+Rather than weaken the CLI to the rejected option 2, the operator chose to scope a new prerequisite feature that builds the real control-surface trust boundary the docs promise: the bootstrap + grant-admin RPC, the real transport-principal verifier (distinguishing the web-server principal from the CLI principal, rejecting self-asserted identity), the shared operator record, and the setup-secret lifecycle. That feature lives at `.work/active/features/feature-v0-control-surface-trust-boundary.md` (stage: drafting) and spans `contracts/` + `core/` + `server/` + the operator-record contract `web-server/` consumes.
+
+`feature-v0-cli` now `depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]`. The CLI stays at `stage: drafting` (returned here by the implementation-discovery escape hatch) until the trust-boundary feature lands; its resolved option-1 auth posture becomes realizable then. The discovery findings that motivated the prerequisite are preserved above.
