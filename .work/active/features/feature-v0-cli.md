@@ -1,7 +1,7 @@
 ---
 id: feature-v0-cli
 kind: feature
-stage: review
+stage: done
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]
@@ -297,3 +297,31 @@ Standard-weight feature review (fresh-context `gpt-5.6-sol`, same model class as
 ### Notes
 - Effective weight: standard (one pass; receiver adjudicates + fixes receiver-confirmed blockers + verifies + closes without re-review).
 - The self-defining-test finding (Blocker 1) is the same failure mode the cockpit's review caught (mutation-survivable property tests) — the standard the prior arcs set applies forward.
+
+## Review closure (2026-07-22) — receiver adjudication → done
+
+Standard-weight closure: one independent review pass found 2 receiver-confirmed material blockers; a focused fix stride addressed both; the receiver (orchestrator) independently re-verified each with an adversarial mutation test rather than trusting the worker's claim:
+
+- **Blocker 1 (identity-before-intent):** mutated `canonicalSessionIdentity` (sessions.ts:78) to drop scope+runtime (emit `adapter=<id>;generation=<n>` only) → `instruct prints stable identity before submission and keeps JSON output secret-free` FAILED (actual `adapter=pi-adapter;generation=3` vs expected full tuple). Earned.
+- **Blocker 2 (parent-dir chmod):** reverted the conditional-chmod fix to the unconditional `chmod(directory, 0o700)` → `credential writes preserve an existing custom parent directory mode` FAILED (actual mode 0o700/448 vs expected 0o755/493). Earned.
+
+Both mutation tests genuinely fail on the mutated implementation. The "earned not asserted" standard is met — the same bar the cockpit, component-layer, and trust-boundary arcs set.
+
+### Final integrated verification
+
+- `cd cli && npm test` — PASS (16/16).
+- `cd cli && npm run test:core-smoke` — PASS (real-process: setup → login → authenticated LoadSnapshot → logout/rejection).
+- `cd contracts/ts && npm run check:presentation && npm run check:vectors` — PASS (untouched).
+
+### Closure
+
+All 2 receiver-confirmed blockers fixed and independently mutation-verified by the receiver. No second independent review pass (standard contract: one pass, fix receiver-confirmed blockers, verify, close). Feature advanced `review → done`.
+
+### v0.1.0 CLI scope (honest partial)
+
+- **Shipped:** setup/login/logout (the load-bearing bootstrap channel + operator-session enrollment), session-health (via LoadSnapshot), scripting commands (instruct/cancel/interrupt with identity-before-intent + idempotency + exit codes), the four-header auth interceptor, the 0600 credential store.
+- **Stubbed (blocked on a separate prerequisite):** audit-query, inspect-command, adapter-status — each prints a non-zero "requires core-diagnostics (not yet implemented)" exit. These are committed in PROTOCOL.md:623 to v0.1.0 observability but need a `feature-v0-core-diagnostics` (or similar) that builds the `QuerySpec`/`QueryResult`/`AuditRecord` schema + the core's query-result projection + audit-log storage. They land when that feature does; they are not silently dropped.
+
+### What this completes
+
+This is the last v0.1.0 implementation layer. With the CLI done, all 9 epic child features are done; `epic-v0-1-0-implementation` is ready for its deeper aggregate review.
