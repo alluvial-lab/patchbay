@@ -44,31 +44,55 @@ Scope spans the four packages the boundary crosses: `contracts/` (the bootstrap 
 
 ## Architectural choice
 
-(Detailed in the `feature-design` pass — this section is the seed.)
-
 A real transport-principal model where each control surface (web-server, CLI) is a distinct, core-verifiable principal with its own endpoint/device/generation, plus a bootstrap RPC that creates the first operator + authority grant via the local-console channel, and a shared operator record (password hash + actor id) that both the web-server and the CLI verify against. The core's `IssuerContext` becomes a real verifier that distinguishes principals and rejects unverified identity, not a metadata-passthrough.
+
+The good news from grounding: the core already has a validated, durable `ingest_grant` function (`core/src/authority/ingest.rs:20`) that validates + appends + projects a grant. It is simply not exposed via a control-service RPC. So the bootstrap unit is largely "expose `ingest_grant` via a bootstrap RPC, gated by the local-console/setup-secret channel" — not a from-scratch grant engine. Similarly, `MetadataIssuerContext::from_request` (`server/src/issuer.rs:21`) already extracts operator-id + operator-session-id from metadata; it just doesn't *verify* them or distinguish principals. The verifier unit is "make that extraction a real verification + add principal identity," not a from-scratch auth system.
+
+## Design decisions (to resolve — semantic 50/50s, operator input required)
+
+Two security-bearing choices the foundation docs do not pin. Per the harness rule, these surface as questions rather than being resolved with judgment.
+
+### D1 — Operator-record sharing mechanism
+
+The bootstrap creates an operator record (actor id + `scrypt$<salt>$<hash>` password hash). The web-server must verify operator passwords against it; the CLI must verify against the same record (option-1 auth). How is the record shared?
+
+1. **Core as source-of-truth, read via RPC.** The operator record lives in the core's durable store; the web-server and CLI call a read RPC at login to verify the password (the core does the scrypt check, or returns the hash for the surface to check). Single source of truth; no shared file; the core owns all operator state. Cost: a new read RPC + the core doing (or serving) password verification.
+2. **Shared config artifact (file).** Bootstrap writes the operator record to a known file path (e.g. `~/.patchbay/operator.json`, 0600) that both the web-server and CLI read. Simple; no new RPC; matches the current env-only posture generalized to a file. Cost: a shared file is a new trust artifact; file-permission hygiene is load-bearing; the record can drift between the file and the core's grant.
+3. **Hybrid:** the core owns the durable operator record (the grant subject); the password hash is a shared config artifact the surfaces read. Splits "who the operator is" (core) from "how they authenticate" (shared file).
+
+**This is a semantic 50/50** (it affects the security model: who is authority for the operator record, and whether password verification is centralized or distributed). The docs commit the *requirement* (the operator record is verified) but not the mechanism.
+
+### D2 — Bootstrap channel shape
+
+The bootstrap RPC (create first operator + grant) must be reachable only via the local-console channel (SECURITY:77-78, 208 — distinct from routine web login, load-bearing for lockdown exit). What shape?
+
+1. **Dedicated local-console RPC, local-listener only.** The core binds a separate local-only listener (loopback/unix socket) for bootstrap; the setup secret is presented there. Routinely unreachable from the network. Strongest channel separation.
+2. **Setup-secret-gated RPC on the existing listener.** The existing `ControlService` (or a new admin service on the same listener) gains a bootstrap RPC gated by a one-time setup secret; the secret expires after use/timeout (SECURITY:78). Simpler (no second listener); the channel distinction is the setup-secret lifecycle, not a separate socket. The docs say "CLI, local console output, or a one-time bootstrap secret" (SECURITY:122) — a setup-secret-gated RPC is a defensible reading; a separate local listener is the stronger reading.
+
+**This is a semantic 50/50** (it affects the lockdown-exit channel's strength: a separate local listener is a stronger channel distinction than a secret-gated RPC on the network listener). SECURITY:208 warns that "if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection" — so the channel distinction's *strength* is load-bearing.
 
 ## Implementation Units
 
-(Detailed in the `feature-design` pass. Likely units, to be refined against the shipped code:)
+(Detailed once D1/D2 are resolved. Likely units:)
 
 ### Unit 1: Bootstrap + grant-admin RPC + setup-secret lifecycle
-The `ControlService` (or a new admin service) gains a bootstrap RPC that creates the first operator + authority grant. It is reachable only via the local-console / setup-secret channel (SECURITY:77-78, 208), not the routine network path. The setup secret expires after use or timeout. The operator record (actor id + `scrypt$<salt>$<hash>` password hash) becomes a shared artifact the web-server consumes (not env-only).
+Expose the core's existing `ingest_grant` via a bootstrap RPC gated by the local-console channel (per D2). Creates the first operator + authority grant. The setup secret expires after use or timeout (SECURITY:78). Establishes the operator record (per D1).
 
 ### Unit 2: Real transport-principal verifier
-`server/src/issuer.rs`'s `MetadataIssuerContext` becomes a real verifier: each control surface presents a distinct, verifiable principal identity (endpoint/device/generation), the core distinguishes the web-server principal from the CLI principal, and self-asserted operator identity is rejected (or bound to verified principal evidence). The deferred "real operator-session and transport-principal verifier" from the protocol-seam decision lands here.
+`server/src/issuer.rs`'s `MetadataIssuerContext` becomes a real verifier: each control surface presents a distinct, verifiable principal identity (endpoint/device/generation); the core distinguishes the web-server principal from the CLI principal; self-asserted operator identity is rejected (bound to verified principal evidence). The deferred "real operator-session and transport-principal verifier" from the protocol-seam decision lands here. Must be genuinely enforced (testable, not asserted).
 
-### Unit 3: Operator-record sharing + web-server consumption
-The operator record created by bootstrap flows to the web-server (not env-only). The web-server verifies operator passwords against the shared record. The CLI verifies the same record. (Whether this is a durable store in the core, a shared config artifact, or an RPC the web-server calls at startup is a design decision for the pass.)
+### Unit 3: Operator-record sharing + web-server/CLI consumption
+The operator record (per D1) flows to the web-server and CLI; both verify operator passwords against it. The web-server's env-only posture (`PATCHBAY_OPERATOR_ID`/`PATCHBAY_OPERATOR_PASSWORD_HASH`) is replaced or backed by the shared record.
 
-### Unit 4: CLI-principal enrollment
-The CLI enrolls as a transport principal (its own endpoint/device/generation) via the bootstrap/session channel, establishing the credential store `feature-v0-cli`'s option-1 auth posture requires. (This may live in the CLI feature itself once Units 1-3 land; the boundary is decided in the design pass.)
+### Unit 4: CLI-principal enrollment (may fold into feature-v0-cli)
+The CLI enrolls as a transport principal (its own endpoint/device/generation) via the bootstrap/session channel, establishing the credential store `feature-v0-cli`'s option-1 auth posture requires. This may live in the CLI feature itself once Units 1-3 land; the boundary is decided after D1/D2.
 
 ## Risks
 
-- This is a security-bearing cross-cutting change. The compound-issuer verification must be genuinely enforced (testable, not asserted — the standard the cockpit/component-layer arcs set). A verifier that accepts any input is not a verifier.
-- The bootstrap channel must remain distinct from routine web login (SECURITY:208 — load-bearing for lockdown exit). Do not collapse them.
-- Crosses four packages; the write scope is unusual for a single feature. May warrant child stories per package boundary.
+- This is a security-bearing cross-cutting change. The compound-issuer verification must be genuinely enforced (testable, not asserted — the standard the cockpit/component-layer arcs set). A verifier that accepts any input is not a verifier; the current `MetadataIssuerContext` accepts any non-empty operator-id, which is exactly the failure mode to eliminate.
+- The bootstrap channel must remain distinct from routine web login (SECURITY:208 — load-bearing for lockdown exit). D2's strength determines whether lockdown-exit is real.
+- Crosses four packages; the write scope is unusual for a single feature. Will likely warrant child stories per package boundary (contracts/core/server/web-server).
+- The web-server's current env-only operator record is a working (if unergonomic) posture; replacing it must not regress the web-server's 4 csrf_browser.qnt properties (those are load-bearing, done, and tested).
 
 ## Implementation discovery (origin)
 
