@@ -1,14 +1,14 @@
 ---
 id: feature-v0-cli
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]
 release_binding: null
 gate_origin: null
 created: 2026-07-11
-updated: 2026-07-21
+updated: 2026-07-22
 ---
 
 # Feature: CLI
@@ -246,3 +246,28 @@ A prerequisite must first define and implement the bootstrap and CLI-principal b
 Rather than weaken the CLI to the rejected option 2, the operator chose to scope a new prerequisite feature that builds the real control-surface trust boundary the docs promise: the bootstrap + grant-admin RPC, the real transport-principal verifier (distinguishing the web-server principal from the CLI principal, rejecting self-asserted identity), the shared operator record, and the setup-secret lifecycle. That feature lives at `.work/active/features/feature-v0-control-surface-trust-boundary.md` (stage: drafting) and spans `contracts/` + `core/` + `server/` + the operator-record contract `web-server/` consumes.
 
 `feature-v0-cli` now `depends_on: [feature-v0-protocol-seam, feature-v0-control-surface-trust-boundary]`. The CLI stays at `stage: drafting` (returned here by the implementation-discovery escape hatch) until the trust-boundary feature lands; its resolved option-1 auth posture becomes realizable then. The discovery findings that motivated the prerequisite are preserved above.
+
+## Implementation notes (2026-07-22)
+
+- Execution capability: one feature-owning implementation worker, direct-read only. The CLI is one cohesive security-bearing package and keeping Units 1–4 in one context avoided credential/auth/output handoff gaps; no child stories or delegation were needed.
+- Review weight: `standard` (caller-specified stop at feature review; the dispatching agent owns the independent review).
+- Files changed: new `cli/` package with the prescribed `src/{main.ts,core-client.ts,auth.ts,credentials.ts,output.ts,commands/}` layout, package manifest/lockfile/tsconfig, unit/interface tests, and an opt-in real-core smoke test.
+- Tests added: 15 Node tests covering the four auth headers, fail-closed configuration, loopback-only admin addressing, setup/login/logout, 0600 credential permissions, bearer-secret output exclusion, snapshot decoding and session-health axes, identity-before-intent ordering, scripting Operation construction/correlation/idempotency, SubmissionOutcome exit codes, and honest Unit 3b stubs. `tests/core-smoke.mjs` additionally boots the shipped core and proves setup → login → authenticated `LoadSnapshot` → logout → missing-credential rejection over the real listeners.
+- Simplification: hand-rolled fixed command dispatch; no browser presentation/reconnect model, no heavy CLI framework, no CLI storage beyond the credential file, and no false deep-diagnostic implementation.
+- Adjacent issues parked: none. Unit 3b remains the already-recorded core-diagnostics prerequisite and is represented only by the required non-zero stubs.
+
+### Checkpoint evidence
+
+1. **Unit 1 — scaffold/client/auth/credentials:** `PATCHBAY_CORE_SECRET` is mandatory; network and loopback clients use Connect gRPC; authenticated calls read the credential store at request time and add the principal id, principal secret, operator id, and core-issued session id. Credential writes are atomic, directory mode 0700, file mode 0600.
+2. **Unit 2 — setup/login/logout:** `setup` hashes locally into the `scrypt$<salt>$<hash>` shape required by `AdminService` and can address only a loopback admin URL. `login` consumes the throttled `VerifyOperatorPassword` RPC and enrolls a fresh endpoint. `logout` revokes at the core before deleting the local credential.
+3. **Unit 3a — session-health:** decodes the generated `SessionSnapshot` bytes returned by `LoadSnapshot`, checks domain/LSN consistency, and emits canonical connectivity × activity values as a table or JSON.
+4. **Unit 4 — scripting/output:** `instruct` resolves aliases through the authoritative snapshot, emits stable adapter/scope/runtime/generation identity to stderr before calling `Submit`, and supports prompt stdin. `cancel`/`interrupt` recover the original runtime target from the finite authorized command-record subscription because the shipped Operation contract requires a runtime target while the designed CLI syntax supplies only command id. A supplied idempotency key deterministically derives the command id from key + target (or accepts `--command-id`) so retries reuse both protocol identities. Submission outcomes map to stable non-zero codes and `unknown` directs reconciliation through core command records.
+5. **Unit 3b — stubs:** `audit-query`, `inspect-command`, and `adapter-status` print the exact core-diagnostics prerequisite message and exit non-zero.
+
+### Integrated verification
+
+- `cd cli && npm test` — PASS (15/15).
+- `cd cli && npm run test:core-smoke` — PASS against `patchbay-core-server`; real setup/login/authenticated snapshot/logout path.
+- `cd contracts/ts && npm run check:presentation` — PASS.
+- `cd contracts/ts && npm run build && npm run check:vectors` — PASS (24 vectors; no contract changes).
+- Acceptance walkthrough: every implemented Unit 1/2/3a/4 criterion is covered by executable evidence above; Unit 3b is intentionally and visibly stubbed per the resolved scope decision. No forbidden package, contract, core, server, adapter, web, mockup, or foundation-doc source was changed.
