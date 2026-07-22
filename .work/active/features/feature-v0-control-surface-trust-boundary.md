@@ -1,7 +1,7 @@
 ---
 id: feature-v0-control-surface-trust-boundary
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-core-authority, feature-v0-web-server]
@@ -246,3 +246,32 @@ All three receiver-confirmed material blockers from thorough pass 1 were fixed; 
 - Mechanical choice logged: process-local opaque session records were chosen over signed self-contained tokens because lookup makes expiry/revocation/actor binding explicit, minimizes cryptographic surface, and fails closed on restart; reauthentication restores a session.
 - Foundation drift surfaced but not edited per the corrective write boundary: `docs/SECURITY.md` §143 still says the operator-session wire/evidence shape is deferred even though this feature now implements it.
 - Effective review weight remains `thorough`; this pass stops at `stage: review` for orchestrator re-review and does not self-advance to `done`.
+
+## Review closure (2026-07-21) — receiver adjudication → done (thorough converged)
+
+Thorough-weight closure: the first independent review pass found 3 receiver-confirmed material security blockers; a focused fix stride addressed all 3; the receiver (orchestrator) independently re-verified each with an adversarial mutation test rather than trusting the worker's claim:
+
+- **Blocker 1 (session verification):** mutated `verify_operator_session` to always pass (`|| true`) → `bootstrap_is_local_first_run_only_and_establishes_distinct_principals`, `revoked_core_session_cannot_be_reused`, `subscribe_excludes_authentication_and_authority_records`, and `authenticated_principal_can_enroll_another_endpoint` all FAILED. Earned.
+- **Blocker 2 (Subscribe leak):** mutated `operator_facing_subscribe_event` to yield all events (re-include `OperatorRecord`/password_hash) → `subscribe_excludes_authentication_and_authority_records` FAILED ("filtered security records keep their durable LSNs as cursor gaps"). Earned.
+- **Blocker 3 (throttle):** mutated `login_security.rs` to force `account_blocked = false` + `network_blocked = false` → `password_rpc_throttles_before_a_correct_password_and_recovers_after_decay` FAILED (correct-password request reached scrypt instead of returning `RESOURCE_EXHAUSTED`). Earned.
+
+All three mutation tests genuinely fail on the mutated implementation. The "earned not asserted" standard is met for all three blockers — the same bar the component-layer arc (7-pass thorough) and the cockpit (mutation-tested conformance properties) set.
+
+### Final integrated verification
+
+- `cargo test --workspace` — passed (7 trust-boundary integration tests + issuer/limiter unit tests).
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd web-server && npm test` — 20/20, including the 4 load-bearing `csrf_browser.qnt` properties (no regression).
+- `cd contracts/ts && npm run build && npm run check:vectors && npm run check:presentation` — passed (24 vectors; 4 presentation registries).
+
+### Closure
+
+All 3 receiver-confirmed blockers fixed and independently mutation-verified by the receiver. Thorough weight converged: this pass has no receiver-confirmed material current-cycle blockers. Feature advanced `review → done`.
+
+### Foundation-doc drift surfaced (not a blocker; rolling-foundation note)
+
+`docs/SECURITY.md` §143 still says the operator-session wire/evidence shape is "deferred to `feature-web-core-protocol-seam`" — but this feature now implements it (core-verifiable session evidence). This is a stale deferral note, not a false claim. It should be rolled forward in a foundation-doc pass (the deferral is now resolved), but it does not block this feature's completion. Tracked as a follow-on; the implementation is the source of truth.
+
+### What this unblocks
+
+`feature-v0-cli` (at `drafting`, depends on this feature) is now unblocked — its resolved option-1 auth posture (CLI as a full transport principal with its own operator-session bootstrap) is realizable against the shipped core boundary. The CLI's `login` obtains a core-issued session token; its `setup` uses the local-console bootstrap; its credential store holds the principal credential + session token. The CLI feature can now advance to implementation.
