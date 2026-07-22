@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: implementing
+stage: review
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
