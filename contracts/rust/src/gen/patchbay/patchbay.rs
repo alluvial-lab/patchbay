@@ -274,6 +274,10 @@ pub enum StoredEventKind {
     /// Added by feature-v0-core-acceptance: one event per real transition;
     /// late terminal candidates are stale_event Observations, not transitions.
     CommandTransition = 8,
+    /// Core-owned operator authentication record (admin.proto).
+    OperatorRecord = 9,
+    /// Enrolled, credential-backed control-surface principal (admin.proto).
+    ControlSurfacePrincipal = 10,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -291,6 +295,10 @@ impl StoredEventKind {
             Self::Revocation => "STORED_EVENT_KIND_REVOCATION",
             Self::SessionState => "STORED_EVENT_KIND_SESSION_STATE",
             Self::CommandTransition => "STORED_EVENT_KIND_COMMAND_TRANSITION",
+            Self::OperatorRecord => "STORED_EVENT_KIND_OPERATOR_RECORD",
+            Self::ControlSurfacePrincipal => {
+                "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL"
+            }
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -305,6 +313,10 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_REVOCATION" => Some(Self::Revocation),
             "STORED_EVENT_KIND_SESSION_STATE" => Some(Self::SessionState),
             "STORED_EVENT_KIND_COMMAND_TRANSITION" => Some(Self::CommandTransition),
+            "STORED_EVENT_KIND_OPERATOR_RECORD" => Some(Self::OperatorRecord),
+            "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL" => {
+                Some(Self::ControlSurfacePrincipal)
+            }
             _ => None,
         }
     }
@@ -1732,6 +1744,88 @@ impl AdapterSnapshotSupport {
         }
     }
 }
+/// The core-owned durable operator authentication record. Password hashes use
+/// the v0.1.0 scrypt$<base64url-salt>$<base64url-hash> format.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperatorRecord {
+    #[prost(message, optional, tag = "1")]
+    pub actor_id: ::core::option::Option<ActorId>,
+    #[prost(string, tag = "2")]
+    pub password_hash: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "4")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+}
+/// Public identity requested when a control-surface process enrolls. The core
+/// generates the principal id and credential; callers cannot self-assert them.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PrincipalEnrollment {
+    #[prost(message, optional, tag = "1")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "2")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "3")]
+    pub endpoint_generation: ::core::option::Option<Generation>,
+}
+/// Durable verifier-side principal record. Only a one-way credential hash is
+/// stored; the bearer credential is returned exactly once at enrollment.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlSurfacePrincipalRecord {
+    #[prost(string, tag = "1")]
+    pub principal_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub operator_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "3")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "4")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "5")]
+    pub endpoint_generation: ::core::option::Option<Generation>,
+    #[prost(bytes = "vec", tag = "6")]
+    pub credential_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "7")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "8")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+}
+/// Secret-bearing enrollment result. Control surfaces store this outside the
+/// durable event/audit log and present it as transport metadata.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PrincipalCredential {
+    #[prost(string, tag = "1")]
+    pub principal_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub secret: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub operator_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "4")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "5")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "6")]
+    pub endpoint_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BootstrapRequest {
+    #[prost(string, tag = "1")]
+    pub setup_secret: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub operator_actor_id: ::core::option::Option<ActorId>,
+    #[prost(string, tag = "3")]
+    pub password_hash: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub principal: ::core::option::Option<PrincipalEnrollment>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BootstrapResult {
+    #[prost(message, optional, tag = "1")]
+    pub grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag = "2")]
+    pub session_id: ::core::option::Option<OperatorSessionId>,
+    #[prost(message, optional, tag = "3")]
+    pub principal: ::core::option::Option<PrincipalCredential>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubmitRequest {
     #[prost(message, optional, tag = "1")]
@@ -1766,6 +1860,32 @@ pub struct LoadSnapshotResponse {
     pub event_id: ::core::option::Option<EventId>,
     #[prost(bytes = "vec", tag = "3")]
     pub snapshot_payload: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct VerifyOperatorPasswordRequest {
+    #[prost(message, optional, tag = "1")]
+    pub operator_actor_id: ::core::option::Option<ActorId>,
+    #[prost(string, tag = "2")]
+    pub password: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub principal: ::core::option::Option<PrincipalEnrollment>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct VerifyOperatorPasswordResult {
+    #[prost(message, optional, tag = "1")]
+    pub operator_session_id: ::core::option::Option<OperatorSessionId>,
+    #[prost(message, optional, tag = "2")]
+    pub principal: ::core::option::Option<PrincipalCredential>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EnrollControlSurfacePrincipalRequest {
+    #[prost(message, optional, tag = "1")]
+    pub principal: ::core::option::Option<PrincipalEnrollment>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EnrollControlSurfacePrincipalResult {
+    #[prost(message, optional, tag = "1")]
+    pub principal: ::core::option::Option<PrincipalCredential>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AttachRequest {

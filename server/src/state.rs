@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, CommandId, ElicitationId, Lsn, OperationKind, TargetScope,
+    ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
+    Grant, GrantId, Lsn, OperationKind, OperatorRecord, TargetScope,
 };
 use patchbay_core::{
     acceptance::{
@@ -9,7 +10,11 @@ use patchbay_core::{
         ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, TargetBinding,
         TargetNotFound, TargetResolver,
     },
-    authority::{AuthorityRegistry, IssuerContext},
+    authority::{
+        ingest_control_surface_principal, ingest_grant as ingest_authority_grant,
+        ingest_operator_record, AuthorityError, AuthorityRegistry, GrantRecord, IssuerContext,
+        OperatorError, OperatorRegistry,
+    },
     session::SessionRegistry,
     storage::{RecordedEvent, Storage, StorageError},
 };
@@ -31,6 +36,7 @@ pub struct ProjectionState {
     target_resolver: LockedTargetResolver,
     state_lookup: LockedCommandStateLookup,
     elicitation_slots: LockedElicitationContractLookup,
+    operators: Arc<Mutex<OperatorRegistry>>,
     last_applied_lsn: Arc<Mutex<u64>>,
     submit_gate: Arc<Mutex<()>>,
 }
@@ -49,6 +55,7 @@ impl ProjectionState {
         let mut sessions = SessionRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
+        let mut operators = OperatorRegistry::new();
         let mut last_applied_lsn = 0;
         for event in &events {
             last_applied_lsn = validate_next_event(event, authority_domain_id, last_applied_lsn)?;
@@ -60,6 +67,9 @@ impl ProjectionState {
             elicitation_slots
                 .observe(event)
                 .map_err(|error| error.to_string())?;
+            operators
+                .observe(event)
+                .map_err(|error| error.to_string())?;
         }
 
         Ok(Self {
@@ -67,6 +77,7 @@ impl ProjectionState {
             target_resolver: LockedTargetResolver::new(sessions),
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
+            operators: Arc::new(Mutex::new(operators)),
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             submit_gate: Arc::new(Mutex::new(())),
         })
@@ -126,9 +137,94 @@ impl ProjectionState {
                 .observe(&event)
                 .await
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            self.operators
+                .lock()
+                .await
+                .observe(&event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             *cursor = next_lsn;
         }
         Ok(())
+    }
+
+    pub async fn operator_exists(&self) -> bool {
+        self.operators.lock().await.operator_record().is_some()
+    }
+
+    pub async fn verify_password(
+        &self,
+        actor_id: &ActorId,
+        password: &str,
+    ) -> Result<bool, OperatorError> {
+        self.operators
+            .lock()
+            .await
+            .verify_password(actor_id, password)
+    }
+
+    pub async fn verify_principal(
+        &self,
+        principal_id: &str,
+        credential: &str,
+    ) -> Option<ControlSurfacePrincipalRecord> {
+        self.operators
+            .lock()
+            .await
+            .verify_principal(principal_id, credential)
+    }
+
+    pub async fn grant(&self, grant_id: &GrantId) -> Option<GrantRecord> {
+        self.grant_check
+            .inner
+            .lock()
+            .await
+            .get_grant(grant_id)
+            .cloned()
+    }
+
+    pub async fn ingest_grant<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        grant: Grant,
+    ) -> Result<EventId, AuthorityError> {
+        ingest_authority_grant(
+            storage,
+            &mut *self.grant_check.inner.lock().await,
+            authority_domain_id,
+            grant,
+        )
+        .await
+    }
+
+    pub async fn ingest_operator<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        record: OperatorRecord,
+    ) -> Result<EventId, OperatorError> {
+        ingest_operator_record(
+            storage,
+            &mut *self.operators.lock().await,
+            authority_domain_id,
+            record,
+        )
+        .await
+    }
+
+    pub async fn ingest_principal<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        record: ControlSurfacePrincipalRecord,
+    ) -> Result<EventId, OperatorError> {
+        ingest_control_surface_principal(
+            storage,
+            &mut *self.operators.lock().await,
+            authority_domain_id,
+            record,
+        )
+        .await
     }
 }
 

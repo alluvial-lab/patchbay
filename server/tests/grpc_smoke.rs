@@ -7,14 +7,15 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, EventId, Generation, Grant,
-    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
-    Operation, OperationKind, OperationState, RuntimeSessionId, SessionActivityState,
+    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
+    ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn, Operation,
+    OperationKind, OperationState, OperatorRecord, RuntimeSessionId, SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionState, StoredEventKind, StoredEventPayload,
     SubmissionOutcome, SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
-    authority::events as authority_events,
+    authority::{events as authority_events, hash_principal_credential},
     session::events as session_events,
     storage::{
         DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
@@ -22,7 +23,9 @@ use patchbay_core::{
     },
 };
 use patchbay_core_server::{
-    issuer::{OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER},
+    issuer::{
+        OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
+    },
     rpc::{
         control_service_client::ControlServiceClient, control_service_server::ControlServiceServer,
     },
@@ -39,6 +42,8 @@ use tonic_types::StatusExt;
 const SECRET: &str = "test-core-secret";
 const OPERATOR_SESSION: &str = "opaque-session-32fb8181";
 const OPERATOR_ACTOR: &str = "operator-primary";
+const PRINCIPAL_ID: &str = "web-principal";
+const PRINCIPAL_SECRET: &str = "web-principal-secret";
 const CONCURRENT_SUBMISSIONS: usize = 16;
 
 #[derive(Clone)]
@@ -473,6 +478,54 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .await
         .expect("grant fixture must append");
 
+    let operator = OperatorRecord {
+        actor_id: Some(ActorId {
+            value: OPERATOR_ACTOR.to_owned(),
+        }),
+        password_hash: "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g".to_owned(),
+        created_at: Some(prost_types::Timestamp { seconds: 1, nanos: 0 }),
+        authority_domain_id: Some(domain()),
+    };
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::OperatorRecord as i32,
+                payload: prost::Message::encode_to_vec(&operator),
+            },
+        )
+        .await
+        .expect("operator fixture must append");
+    let principal = ControlSurfacePrincipalRecord {
+        principal_id: PRINCIPAL_ID.to_owned(),
+        operator_actor_id: Some(ActorId {
+            value: OPERATOR_ACTOR.to_owned(),
+        }),
+        endpoint_id: Some(EndpointId {
+            value: "patchbay-web-server".to_owned(),
+        }),
+        device_id: Some(DeviceId {
+            value: "web-host".to_owned(),
+        }),
+        endpoint_generation: Some(Generation { value: 1 }),
+        credential_hash: hash_principal_credential(PRINCIPAL_SECRET),
+        created_at: Some(prost_types::Timestamp {
+            seconds: 2,
+            nanos: 0,
+        }),
+        authority_domain_id: Some(domain()),
+    };
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::ControlSurfacePrincipal as i32,
+                payload: prost::Message::encode_to_vec(&principal),
+            },
+        )
+        .await
+        .expect("principal fixture must append");
+
     let registration = session_events::registered(
         domain(),
         SessionRegistered {
@@ -513,6 +566,18 @@ fn authenticated_request<T>(message: T, secret: &str) -> Request<T> {
         OPERATOR_ACTOR
             .parse()
             .expect("test operator actor is valid metadata"),
+    );
+    request.metadata_mut().insert(
+        PRINCIPAL_ID_HEADER,
+        PRINCIPAL_ID
+            .parse()
+            .expect("test principal id is valid metadata"),
+    );
+    request.metadata_mut().insert(
+        PRINCIPAL_SECRET_HEADER,
+        PRINCIPAL_SECRET
+            .parse()
+            .expect("test principal secret is valid metadata"),
     );
     request
 }

@@ -8,6 +8,7 @@ pub mod check;
 pub mod events;
 pub mod ingest;
 pub mod issuer;
+pub mod operator;
 pub mod projection;
 pub mod registry;
 pub mod replay;
@@ -16,6 +17,10 @@ pub mod state;
 
 pub use ingest::{ingest_descendant_grant, ingest_grant, ingest_revocation};
 pub use issuer::IssuerContext;
+pub use operator::{
+    hash_principal_credential, ingest_control_surface_principal, ingest_operator_record,
+    rebuild_operator_registry, validate_operator_record, OperatorError, OperatorRegistry,
+};
 pub use projection::{GrantLookup, GrantProjection};
 pub use registry::AuthorityRegistry;
 pub use replay::rebuild_from_log;

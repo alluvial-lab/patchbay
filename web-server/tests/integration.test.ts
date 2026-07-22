@@ -1,19 +1,22 @@
 import { create, toBinary } from "@bufbuild/protobuf";
-import { createClient, type CallOptions } from "@connectrpc/connect";
+import { Code, ConnectError, createClient, type CallOptions } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import {
   ControlService,
   LoadSnapshotResponseSchema,
+  PrincipalCredentialSchema,
   SubmissionOutcome,
   SubmissionResultSchema,
   SubmitRequestSchema,
   SubscribeEventSchema,
+  VerifyOperatorPasswordResultSchema,
+  EnrollControlSurfacePrincipalResultSchema,
 } from "@patchbay/contracts";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
-import type { CoreClient } from "../src/core-client.js";
+import { CorePrincipalStore, type CoreClient } from "../src/core-client.js";
 import {
   CSRF_HEADER_NAME,
   SESSION_COOKIE_NAME,
@@ -22,7 +25,7 @@ import { buildApp, type WebServerConfig } from "../src/main.js";
 import { hashPassword, SessionStore } from "../src/sessions.js";
 
 interface CoreCall {
-  method: "submit" | "subscribe" | "loadSnapshot";
+  method: "submit" | "subscribe" | "loadSnapshot" | "verifyOperatorPassword";
   request: unknown;
   headers: Headers;
 }
@@ -37,6 +40,30 @@ const config: WebServerConfig = {
   operatorId: operatorActorId,
   operatorPasswordHash,
 };
+
+test("login verifies the core-owned operator record and installs the web principal", async () => {
+  const fixture = makeFixture();
+
+  const invalid = await fixture.app.inject({
+    method: "POST",
+    url: "/login",
+    payload: { password: "wrong" },
+  });
+  assert.equal(invalid.statusCode, 401);
+
+  const login = await fixture.app.inject({
+    method: "POST",
+    url: "/login",
+    payload: { password: "integration-password" },
+  });
+  assert.equal(login.statusCode, 200);
+  assert.equal(fixture.app.corePrincipals.get()?.principalId, "web-principal");
+  assert.equal(
+    fixture.calls.filter((call) => call.method === "verifyOperatorPassword").length,
+    2,
+  );
+  await fixture.app.close();
+});
 
 test("CsrfRejectsUnauthenticated: no cookie returns 401 before a core call", async () => {
   const fixture = makeFixture();
@@ -119,6 +146,8 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
 
     const call = fixture.calls[0];
     assert.equal(call.headers.get("x-patchbay-core-secret"), config.coreSecret);
+    assert.equal(call.headers.get("x-patchbay-principal-id"), "web-principal");
+    assert.equal(call.headers.get("x-patchbay-principal-secret"), "web-principal-secret");
     assert.equal(call.headers.get("x-patchbay-operator-id"), operatorActorId);
     assert.equal(call.headers.get("x-patchbay-operator-session-id"), session.sessionId);
     const forwarded = call.request as {
@@ -211,10 +240,43 @@ function makeFixture(): {
         snapshotPayload: new Uint8Array(),
       });
     },
+    async verifyOperatorPassword(request, options) {
+      calls.push({
+        method: "verifyOperatorPassword",
+        request,
+        headers: callHeaders(options),
+      });
+      if (request.password !== "integration-password") {
+        throw new ConnectError("invalid operator credentials", Code.Unauthenticated);
+      }
+      return create(VerifyOperatorPasswordResultSchema, {
+        operatorSessionId: { value: "core-issued-session" },
+        principal: {
+          principalId: "web-principal",
+          secret: "web-principal-secret",
+          operatorActorId: { value: operatorActorId },
+          endpointId: { value: "patchbay-web-server" },
+          deviceId: { value: "web-device" },
+          endpointGeneration: { value: 1n },
+        },
+      });
+    },
+    async enrollControlSurfacePrincipal() {
+      return create(EnrollControlSurfacePrincipalResultSchema);
+    },
   };
   const sessions = new SessionStore();
+  const corePrincipals = new CorePrincipalStore();
+  corePrincipals.set(create(PrincipalCredentialSchema, {
+    principalId: "web-principal",
+    secret: "web-principal-secret",
+    operatorActorId: { value: operatorActorId },
+    endpointId: { value: "patchbay-web-server" },
+    deviceId: { value: "web-device" },
+    endpointGeneration: { value: 1n },
+  }));
   return {
-    app: buildApp({ config, coreClient, sessions, logger: false }),
+    app: buildApp({ config, coreClient, corePrincipals, sessions, logger: false }),
     sessions,
     calls,
   };

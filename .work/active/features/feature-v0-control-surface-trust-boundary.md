@@ -1,14 +1,14 @@
 ---
 id: feature-v0-control-surface-trust-boundary
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-core-authority, feature-v0-web-server]
 release_binding: null
 gate_origin: null
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-22
 ---
 
 # Feature: v0.1.0 control-surface trust boundary (real transport principals + bootstrap)
@@ -91,10 +91,10 @@ message BootstrapResult {
 - Whether the core stores the password hash and the surface verifies, or the core does the scrypt check itself, is a Unit-1 detail — prefer the core doing the check (single verification site, no hash leakage to surfaces).
 
 **Acceptance Criteria**:
-- [ ] `AdminService.BootstrapOperator` on the local listener creates the operator record + authority grant; a second call is rejected (first-run-only)
-- [ ] The setup secret expires after use or timeout (SECURITY:78)
-- [ ] The bootstrap RPC is unreachable from the network listener (local-only)
-- [ ] The operator record is durable (survives a core restart via the storage port)
+- [x] `AdminService.BootstrapOperator` on the local listener creates the operator record + authority grant; a second call is rejected (first-run-only)
+- [x] The setup secret expires after use or timeout (SECURITY:78)
+- [x] The bootstrap RPC is unreachable from the network listener (local-only)
+- [x] The operator record is durable (survives a core restart via the storage port)
 
 ### Unit 2: Real transport-principal verifier
 
@@ -109,10 +109,10 @@ message BootstrapResult {
 - Do not regress the web-server's 4 `csrf_browser.qnt` properties — those are load-bearing, done, and tested. The verifier change strengthens the operator-identity half; the CSRF/session half is untouched.
 
 **Acceptance Criteria**:
-- [ ] A request with a self-asserted operator-id and no verifiable principal is rejected
-- [ ] The core distinguishes the web-server principal from the CLI principal (different endpoint/device/generation)
-- [ ] The verifier is property-tested: mutating it to accept unverified identity fails the test
-- [ ] The web-server's 4 csrf_browser.qnt properties still hold
+- [x] A request with a self-asserted operator-id and no verifiable principal is rejected
+- [x] The core distinguishes the web-server principal from the CLI principal (different endpoint/device/generation)
+- [x] The verifier is property-tested: mutating it to accept unverified identity fails the test
+- [x] The web-server's 4 csrf_browser.qnt properties still hold
 
 ### Unit 3: Operator-record read RPC + web-server/CLI consumption
 
@@ -126,10 +126,10 @@ A read RPC `GetOperatorRecord(ActorId) returns (OperatorRecord)` (or `VerifyOper
 - Backward-compat: the env-only posture (`PATCHBAY_OPERATOR_*`) is preserved as a first-run fallback so the web-server can still start before bootstrap exists, but the primary path is the shared record. Decide in Unit 3 whether to deprecate the env path or keep it as an override.
 
 **Acceptance Criteria**:
-- [ ] `VerifyOperatorPassword` (or equivalent) verifies against the core's operator record; both web-server and CLI use it
-- [ ] The web-server no longer relies solely on env vars for the operator record (env is fallback/override only)
-- [ ] A login with a wrong password is rejected; a login with the right password establishes a session
-- [ ] The web-server's 4 csrf_browser.qnt properties still hold
+- [x] `VerifyOperatorPassword` verifies against the core's operator record; the web server uses it and the CLI-facing contract/client capability is generated for `feature-v0-cli`
+- [x] The web-server no longer relies solely on env vars for the operator record (the password hash is an optional fallback/override; core verification is primary)
+- [x] A login with a wrong password is rejected; a login with the right password establishes a session
+- [x] The web-server's 4 csrf_browser.qnt properties still hold
 
 ### Unit 4: CLI-principal enrollment (boundary with feature-v0-cli)
 
@@ -138,8 +138,8 @@ A read RPC `GetOperatorRecord(ActorId) returns (OperatorRecord)` (or `VerifyOper
 The CLI enrolls as a transport principal (its own endpoint/device/generation) via the bootstrap/session channel, establishing the credential store `feature-v0-cli`'s option-1 auth posture requires. This unit likely lives in the CLI feature itself once Units 1-3 land; the boundary is: this feature delivers the *capability* (the enrollment RPC + the verifier that accepts a CLI principal), and the CLI feature delivers the *client* (the `login` command + credential store). Decided when Units 1-3 are done.
 
 **Acceptance Criteria**:
-- [ ] A CLI endpoint can enroll as a transport principal distinct from the web-server
-- [ ] The CLI's enrolled principal is verified by the core (not self-asserted)
+- [x] A CLI endpoint can enroll as a transport principal distinct from the web-server
+- [x] The CLI's enrolled principal is verified by the core (not self-asserted)
 
 ## Implementation Order
 
@@ -166,3 +166,37 @@ The CLI enrolls as a transport principal (its own endpoint/device/generation) vi
 ## Implementation discovery (origin)
 
 This feature was scoped in direct response to `feature-v0-cli`'s implementation-discovery blocker (commit `4da38dd`, 2026-07-21). The CLI worker correctly stopped when it found the resolved option-1 auth posture (CLI as a full transport principal with its own operator-session bootstrap) could not be realized against the shipped core boundary. The verified findings are reproduced in `## Grounding` above. Rather than weaken the CLI to the rejected option 2, the operator chose to scope this prerequisite feature (option 1 at the epic level): build the real trust boundary the docs promise, then build the CLI against it.
+
+## Implementation notes
+
+- Execution capability: one feature-owning high-capability implementation worker; direct-read/no-delegation was used because the caller assigned one cohesive security-boundary owner and prohibited nested delegation.
+- Review weight: `standard` (project default); implementation intentionally stops at `stage: review` per the caller's lifecycle boundary.
+- Delivery shape: one ownership bundle with Units 1–4 as checkpoints; no child stories were spawned.
+- Files changed:
+  - contracts: `contracts/proto/patchbay/admin.proto`, `common.proto`, `control.proto`, Rust/TS generation inputs and generated artifacts;
+  - core: `core/src/authority/operator.rs`, authority/acceptance projection integration, and operator durability tests;
+  - server: `server/src/admin_service.rs`, `identity.rs`, `issuer.rs`, `service.rs`, `state.rs`, `main.rs`, and gRPC/trust-boundary tests;
+  - web server: core-owned login verification, in-memory principal credential storage, principal forwarding, and integration/smoke tests.
+- Tests added: durable operator/principal replay; first-run-only bootstrap; setup-secret use/timeout expiry; malformed-bootstrap no-write; network-listener Admin rejection; wrong-password rejection; missing/wrong principal rejection; actor-binding rejection; distinct web/CLI endpoint-device-generation identity; authenticated endpoint enrollment; web login through the core record.
+- Simplification: reused the existing event log and `ingest_grant`; no operator table, shared file, duplicate grant engine, or password-hash read RPC was introduced. `COMMITTED_OPERATION_KINDS` is now the shared implementation registry used by both acceptance and the bootstrap grant.
+- Mechanical choices resolved in stride:
+  - selected a dedicated loopback TCP listener (default `127.0.0.1:50052`) rather than a Unix socket; startup rejects any non-loopback admin bind and rejects reuse of the network address;
+  - the core performs the Node-compatible scrypt check and never returns the stored password hash;
+  - principal bearer secrets are CSPRNG-generated and only SHA-256 credential hashes are durably stored;
+  - bootstrap prevalidates every record, appends the deterministic authority-domain grant before the operator record, then enrolls the initial principal. This ordering makes grant-before-operator retry recoverable while ensuring a durable operator always has its grant.
+- Unit 4 boundary: this feature ships `EnrollControlSurfacePrincipal`, password-authenticated enrollment, generated clients, and verifier support for CLI identities. `feature-v0-cli` remains responsible for the CLI command and 0600 credential store.
+- Discrepancies from design: `OperatorRecord` and principal messages live in `admin.proto` rather than `common.proto`; env password hash is now optional and available only to an explicitly selected fallback verifier, while the production default calls the core; no foundation docs were changed because their intended trust-boundary claims remain the target implemented here.
+- Adjacent issue retained: the separately discovered core-diagnostics/audit-log projection prerequisite still has no dedicated `AuditRecord` schema. This feature durably records the operator, principal, and grant artifacts but does not silently invent the broader audit subsystem.
+
+## Integrated verification
+
+- Contracts: `cd contracts/ts && npm run build && npm run check:vectors && npm run check:presentation` — passed (24 vectors; 4 presentation registries; axe/contrast passed).
+- Rust build: `cargo build --workspace --all-targets` with the project `CARGO_HOME`/`PATH` — passed.
+- Rust tests: `cargo test --workspace` — passed, including 4 trust-boundary integration tests, 2 issuer tests, operator durability/replay tests, and all existing workspace tests.
+- Rust lint: `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- Web server: `cd web-server && npm run build && npm test` — passed (20/20), including all four load-bearing `csrf_browser.qnt`-traced properties: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
+- Real-process seam: `cd web-server && npm run test:core-smoke` — passed after local-console bootstrap; the web client reached the network core with the issued principal credential.
+- Local-only evidence: a client calling `AdminService.BootstrapOperator` on the network listener receives `UNIMPLEMENTED`; `main.rs` additionally rejects `0.0.0.0` and non-loopback admin addresses.
+- Setup-secret evidence: valid first use succeeds; second use returns `FAILED_PRECONDITION`; a zero-duration injected setup secret returns `FAILED_PRECONDITION` without writing operator/grant/principal events.
+- Mutation evidence (load-bearing): temporarily mutated `MetadataIssuerContext::from_request` to accept actor/session metadata when principal metadata was absent. `cargo test -p patchbay-core-server --lib issuer::tests::unverified_identity_is_rejected_for_all_non_empty_claims` failed with minimal input `actor = "a", session = "a"`; the mutation was reverted and the same property test passed.
+- Formatting/integrity: `cargo fmt --all -- --check` and `git diff --check` — passed. `check:drift` was not run per the documented repository gap and caller instruction.

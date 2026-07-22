@@ -152,6 +152,10 @@ enum StoredEventKind {
   // Added by feature-v0-core-acceptance: one event per real transition;
   // late terminal candidates are stale_event Observations, not transitions.
   STORED_EVENT_KIND_COMMAND_TRANSITION = 8;
+  // Core-owned operator authentication record (admin.proto).
+  STORED_EVENT_KIND_OPERATOR_RECORD = 9;
+  // Enrolled, credential-backed control-surface principal (admin.proto).
+  STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL = 10;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

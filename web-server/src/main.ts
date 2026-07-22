@@ -1,14 +1,20 @@
 import cookie from "@fastify/cookie";
+import { Code, ConnectError } from "@connectrpc/connect";
 import Fastify, { type FastifyInstance } from "fastify";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { makeCoreClient, type CoreClient } from "./core-client.js";
+import {
+  CorePrincipalStore,
+  makeCoreClient,
+  type CoreClient,
+} from "./core-client.js";
 import { LoginLimiter } from "./login-limiter.js";
 import { registerCsrfTokenRoute } from "./routes/csrf-token.js";
 import {
+  type OperatorAuthenticator,
   type PasswordVerifier,
   registerSessionRoutes,
 } from "./routes/login.js";
@@ -24,7 +30,10 @@ export interface WebServerConfig {
   bindHost: string;
   bindPort: number;
   operatorId: string;
-  operatorPasswordHash: string;
+  operatorPasswordHash?: string;
+  principalEndpointId?: string;
+  principalDeviceId?: string;
+  principalGeneration?: bigint;
   tls?: { cert: Buffer; key: Buffer };
 }
 
@@ -34,6 +43,8 @@ export interface AppOptions {
   sessions?: SessionStore;
   loginLimiter?: LoginLimiter;
   passwordVerifier?: PasswordVerifier;
+  operatorAuthenticator?: OperatorAuthenticator;
+  corePrincipals?: CorePrincipalStore;
   cockpitAssetsDir?: string;
   logger?: boolean;
 }
@@ -41,11 +52,15 @@ export interface AppOptions {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfig {
   const coreSecret = requireNonEmpty(env.PATCHBAY_CORE_SECRET, "PATCHBAY_CORE_SECRET");
   const operatorId = requireNonEmpty(env.PATCHBAY_OPERATOR_ID, "PATCHBAY_OPERATOR_ID");
-  const operatorPasswordHash = requireNonEmpty(
+  const operatorPasswordHash = optionalNonEmpty(
     env.PATCHBAY_OPERATOR_PASSWORD_HASH,
     "PATCHBAY_OPERATOR_PASSWORD_HASH",
   );
-  assertPasswordHash(operatorPasswordHash);
+  if (operatorPasswordHash) assertPasswordHash(operatorPasswordHash);
+  const principalGeneration = parsePositiveBigInt(
+    env.PATCHBAY_WEB_ENDPOINT_GENERATION ?? "1",
+    "PATCHBAY_WEB_ENDPOINT_GENERATION",
+  );
   const { host: bindHost, port: bindPort } = parseBindAddress(
     env.PATCHBAY_WEB_BIND_ADDR ?? DEFAULT_WEB_BIND_ADDR,
   );
@@ -63,6 +78,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfi
     bindPort,
     operatorId,
     operatorPasswordHash,
+    principalEndpointId: env.PATCHBAY_WEB_ENDPOINT_ID ?? "patchbay-web-server",
+    principalDeviceId: env.PATCHBAY_WEB_DEVICE_ID ?? "patchbay-web-host",
+    principalGeneration,
     tls:
       certPath !== undefined && keyPath !== undefined
         ? { cert: readFileSync(certPath), key: readFileSync(keyPath) }
@@ -82,7 +100,11 @@ export function buildApp(options: AppOptions): FastifyInstance {
     options.coreClient ?? makeCoreClient(options.config.coreAddr, options.config.coreSecret);
   app.decorate("coreClient", coreClient);
 
-  assertPasswordHash(options.config.operatorPasswordHash);
+  if (options.config.operatorPasswordHash) {
+    assertPasswordHash(options.config.operatorPasswordHash);
+  }
+  const corePrincipals = options.corePrincipals ?? new CorePrincipalStore();
+  app.decorate("corePrincipals", corePrincipals);
   const sessions = options.sessions ?? new SessionStore();
   app.decorate("sessions", sessions);
   app.register(cookie);
@@ -91,11 +113,16 @@ export function buildApp(options: AppOptions): FastifyInstance {
     sessions,
     {
       actorId: options.config.operatorId,
-      passwordHash: options.config.operatorPasswordHash,
+      passwordHash: options.config.operatorPasswordHash ?? "",
     },
     {
       loginLimiter: options.loginLimiter,
       passwordVerifier: options.passwordVerifier,
+      operatorAuthenticator:
+        options.operatorAuthenticator ??
+        (options.passwordVerifier
+          ? undefined
+          : coreOperatorAuthenticator(options.config, coreClient, corePrincipals)),
     },
   );
   registerCsrfTokenRoute(app);
@@ -142,6 +169,48 @@ export async function run(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   await app.listen({ host: config.bindHost, port: config.bindPort });
 }
 
+function coreOperatorAuthenticator(
+  config: WebServerConfig,
+  coreClient: CoreClient,
+  principals: CorePrincipalStore,
+): OperatorAuthenticator {
+  return async (password) => {
+    try {
+      const result = await coreClient.verifyOperatorPassword({
+        operatorActorId: { value: config.operatorId },
+        password,
+        principal: {
+          endpointId: { value: config.principalEndpointId ?? "patchbay-web-server" },
+          deviceId: { value: config.principalDeviceId ?? "patchbay-web-host" },
+          endpointGeneration: { value: config.principalGeneration ?? 1n },
+        },
+      });
+      if (!result.principal) {
+        throw new Error("core password verification returned no principal credential");
+      }
+      principals.set(result.principal);
+      return result.principal.operatorActorId?.value ?? null;
+    } catch (error) {
+      const rpcError = ConnectError.from(error, Code.Internal);
+      if (rpcError.code === Code.Unauthenticated) return null;
+      throw error;
+    }
+  };
+}
+
+function optionalNonEmpty(value: string | undefined, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.length === 0) throw new Error(`${name} must not be empty when configured`);
+  return value;
+}
+
+function parsePositiveBigInt(value: string, name: string): bigint {
+  if (!/^[0-9]+$/.test(value)) throw new Error(`${name} must be a positive integer`);
+  const parsed = BigInt(value);
+  if (parsed <= 0n) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+}
+
 function requireNonEmpty(value: string | undefined, name: string): string {
   if (value === undefined || value.length === 0) {
     throw new Error(`${name} is required; refusing to start without it`);
@@ -171,6 +240,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 declare module "fastify" {
   interface FastifyInstance {
     coreClient: CoreClient;
+    corePrincipals: CorePrincipalStore;
     sessions: SessionStore;
   }
 }

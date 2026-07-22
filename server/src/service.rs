@@ -1,11 +1,14 @@
 use std::{pin::Pin, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn, SubmissionOutcome,
-    SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
+    ActorId, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
+    EnrollControlSurfacePrincipalResult, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
+    SubmissionOutcome, SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
+    VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
+    authority::{IssuerContext, OperatorError},
     storage::{Storage, StorageError},
 };
 use tokio_stream::{self as stream, Stream};
@@ -13,7 +16,9 @@ use tonic::{service::Interceptor, Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
-    issuer::MetadataIssuerContext, rpc::control_service_server::ControlService,
+    identity::{issue_operator_session_id, issue_principal},
+    issuer::MetadataIssuerContext,
+    rpc::control_service_server::ControlService,
     state::ProjectionState,
 };
 
@@ -66,9 +71,9 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[derive(Clone)]
 pub struct ControlServiceImpl<S> {
-    storage: S,
-    state: ProjectionState,
-    authority_domain_id: AuthorityDomainId,
+    pub(crate) storage: S,
+    pub(crate) state: ProjectionState,
+    pub(crate) authority_domain_id: AuthorityDomainId,
 }
 
 impl<S: Storage> ControlServiceImpl<S> {
@@ -82,6 +87,10 @@ impl<S: Storage> ControlServiceImpl<S> {
             state,
             authority_domain_id,
         })
+    }
+
+    pub async fn is_bootstrapped(&self) -> bool {
+        self.state.operator_exists().await
     }
 }
 
@@ -106,7 +115,9 @@ where
             .clone()
             .ok_or_else(|| Status::invalid_argument("operation is missing authority_domain_id"))?;
         self.require_configured_domain(&authority_domain_id)?;
-        let issuer = MetadataIssuerContext::from_request(&request, authority_domain_id.clone())?;
+        let issuer =
+            MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
+                .await?;
         let operation = request.into_inner().operation.ok_or_else(|| {
             Status::invalid_argument("submit request lost its validated operation")
         })?;
@@ -147,9 +158,11 @@ where
         &self,
         request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
-        let request = request.into_inner();
-        let authority_domain_id = required_domain(request.authority_domain_id)?;
+        let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
+        MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
+            .await?;
+        let request = request.into_inner();
         let cursor = request.cursor.unwrap_or(Lsn { value: 0 });
         let events = self
             .storage
@@ -169,9 +182,11 @@ where
         &self,
         request: Request<LoadSnapshotRequest>,
     ) -> Result<Response<LoadSnapshotResponse>, Status> {
-        let request = request.into_inner();
-        let authority_domain_id = required_domain(request.authority_domain_id)?;
+        let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
+        MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
+            .await?;
+        let request = request.into_inner();
         let snapshot = self
             .storage
             .load_latest_snapshot(&authority_domain_id, request.at_or_before)
@@ -191,10 +206,84 @@ where
         );
         Ok(Response::new(response))
     }
+
+    async fn verify_operator_password(
+        &self,
+        request: Request<VerifyOperatorPasswordRequest>,
+    ) -> Result<Response<VerifyOperatorPasswordResult>, Status> {
+        let request = request.into_inner();
+        let actor_id = required_actor(request.operator_actor_id)?;
+        if request.password.is_empty() {
+            return Err(Status::invalid_argument("password must not be empty"));
+        }
+        let verified = self
+            .state
+            .verify_password(&actor_id, &request.password)
+            .await
+            .map_err(map_operator_error_to_status)?;
+        if !verified {
+            return Err(Status::unauthenticated("invalid operator credentials"));
+        }
+        let enrollment = request
+            .principal
+            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
+        let (record, credential) =
+            issue_principal(actor_id, enrollment, self.authority_domain_id.clone())?;
+        let _submit_guard = self.state.submit_guard().await;
+        self.state
+            .ingest_principal(&self.storage, &self.authority_domain_id, record)
+            .await
+            .map_err(map_operator_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        Ok(Response::new(VerifyOperatorPasswordResult {
+            operator_session_id: Some(issue_operator_session_id()),
+            principal: Some(credential),
+        }))
+    }
+
+    async fn enroll_control_surface_principal(
+        &self,
+        request: Request<EnrollControlSurfacePrincipalRequest>,
+    ) -> Result<Response<EnrollControlSurfacePrincipalResult>, Status> {
+        let issuer = MetadataIssuerContext::from_request(
+            &request,
+            self.authority_domain_id.clone(),
+            &self.state,
+        )
+        .await?;
+        let actor_id = issuer
+            .verified_actor()
+            .cloned()
+            .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
+        let enrollment = request
+            .into_inner()
+            .principal
+            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
+        let (record, credential) =
+            issue_principal(actor_id, enrollment, self.authority_domain_id.clone())?;
+        let _submit_guard = self.state.submit_guard().await;
+        self.state
+            .ingest_principal(&self.storage, &self.authority_domain_id, record)
+            .await
+            .map_err(map_operator_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        Ok(Response::new(EnrollControlSurfacePrincipalResult {
+            principal: Some(credential),
+        }))
+    }
 }
 
 impl<S> ControlServiceImpl<S> {
-    fn require_configured_domain(&self, actual: &AuthorityDomainId) -> Result<(), Status> {
+    pub(crate) fn require_configured_domain(
+        &self,
+        actual: &AuthorityDomainId,
+    ) -> Result<(), Status> {
         if actual != &self.authority_domain_id {
             return Err(Status::invalid_argument(
                 "request authority domain does not match this core",
@@ -202,6 +291,16 @@ impl<S> ControlServiceImpl<S> {
         }
         Ok(())
     }
+}
+
+fn required_actor(actor: Option<ActorId>) -> Result<ActorId, Status> {
+    let actor = actor.ok_or_else(|| Status::invalid_argument("missing operator_actor_id"))?;
+    if actor.value.is_empty() {
+        return Err(Status::invalid_argument(
+            "operator_actor_id must not be empty",
+        ));
+    }
+    Ok(actor)
 }
 
 fn required_domain(domain: Option<AuthorityDomainId>) -> Result<AuthorityDomainId, Status> {
@@ -222,6 +321,22 @@ pub fn map_acceptance_error_to_status(error: AcceptanceError) -> Status {
         AcceptanceError::CorruptRecord(message) | AcceptanceError::CorruptLog(message) => {
             Status::internal(message)
         }
+    }
+}
+
+pub fn map_operator_error_to_status(error: OperatorError) -> Status {
+    match error {
+        OperatorError::AlreadyBootstrapped => {
+            Status::already_exists("operator bootstrap has already completed")
+        }
+        OperatorError::OperatorNotFound => {
+            Status::failed_precondition("operator bootstrap is required")
+        }
+        OperatorError::InvalidRecord(message) => Status::invalid_argument(message),
+        OperatorError::CorruptRecord(message) | OperatorError::CorruptLog(message) => {
+            Status::internal(message)
+        }
+        OperatorError::Storage(error) => map_storage_error_to_status(error),
     }
 }
 

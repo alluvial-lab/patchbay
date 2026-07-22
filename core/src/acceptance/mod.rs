@@ -21,7 +21,7 @@ pub use index::CommandIndex;
 pub use observation::{
     ingest_observation, CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,
 };
-pub use pipeline::{submit, target_key_for};
+pub use pipeline::{submit, target_key_for, COMMITTED_OPERATION_KINDS};
 pub use ports::{
     ActiveElicitation, Authorized, ElicitationContractLookup, GrantCheck, GrantDenied,
     TargetBinding, TargetNotFound, TargetResolver,

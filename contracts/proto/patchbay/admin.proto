@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+
+// Local-console administration. This service is served only on the core's
+// dedicated loopback listener; it is never registered on the network listener.
+service AdminService {
+  rpc BootstrapOperator(BootstrapRequest) returns (BootstrapResult);
+}
+
+// The core-owned durable operator authentication record. Password hashes use
+// the v0.1.0 scrypt$<base64url-salt>$<base64url-hash> format.
+message OperatorRecord {
+  ActorId actor_id = 1;
+  string password_hash = 2;
+  google.protobuf.Timestamp created_at = 3;
+  AuthorityDomainId authority_domain_id = 4;
+}
+
+// Public identity requested when a control-surface process enrolls. The core
+// generates the principal id and credential; callers cannot self-assert them.
+message PrincipalEnrollment {
+  EndpointId endpoint_id = 1;
+  DeviceId device_id = 2;
+  Generation endpoint_generation = 3;
+}
+
+// Durable verifier-side principal record. Only a one-way credential hash is
+// stored; the bearer credential is returned exactly once at enrollment.
+message ControlSurfacePrincipalRecord {
+  string principal_id = 1;
+  ActorId operator_actor_id = 2;
+  EndpointId endpoint_id = 3;
+  DeviceId device_id = 4;
+  Generation endpoint_generation = 5;
+  bytes credential_hash = 6;
+  google.protobuf.Timestamp created_at = 7;
+  AuthorityDomainId authority_domain_id = 8;
+}
+
+// Secret-bearing enrollment result. Control surfaces store this outside the
+// durable event/audit log and present it as transport metadata.
+message PrincipalCredential {
+  string principal_id = 1;
+  string secret = 2;
+  ActorId operator_actor_id = 3;
+  EndpointId endpoint_id = 4;
+  DeviceId device_id = 5;
+  Generation endpoint_generation = 6;
+}
+
+message BootstrapRequest {
+  string setup_secret = 1;
+  ActorId operator_actor_id = 2;
+  string password_hash = 3;
+  PrincipalEnrollment principal = 4;
+}
+
+message BootstrapResult {
+  GrantId grant_id = 1;
+  OperatorSessionId session_id = 2;
+  PrincipalCredential principal = 3;
+}

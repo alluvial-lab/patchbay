@@ -34,7 +34,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
           });
         }
         const output = await app.coreClient.submit(input, {
-          headers: coreHeaders(request, coreSecret),
+          headers: coreHeaders(app, request, coreSecret),
         });
         return sendUnary(reply, toBinary(SubmissionResultSchema, output));
       } catch (error) {
@@ -50,7 +50,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
       try {
         const input = fromBinary(LoadSnapshotRequestSchema, decodeRequestFrame(request.body));
         const output = await app.coreClient.loadSnapshot(input, {
-          headers: coreHeaders(request, coreSecret),
+          headers: coreHeaders(app, request, coreSecret),
         });
         return sendUnary(reply, toBinary(LoadSnapshotResponseSchema, output));
       } catch (error) {
@@ -77,7 +77,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
       reply.raw.flushHeaders();
       try {
         const stream = app.coreClient.subscribe(input, {
-          headers: coreHeaders(request, coreSecret),
+          headers: coreHeaders(app, request, coreSecret),
         });
         for await (const event of stream) {
           await writeFrame(reply, dataFrame(toBinary(SubscribeEventSchema, event)));
@@ -103,9 +103,19 @@ function decodeRequestFrame(body: unknown): Uint8Array {
   return body.subarray(5);
 }
 
-function coreHeaders(request: FastifyRequest, coreSecret: string): Headers {
+function coreHeaders(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  coreSecret: string,
+): Headers {
+  const principal = app.corePrincipals.get();
+  if (!principal) {
+    throw new ConnectError("control-surface principal enrollment is required", Code.Unauthenticated);
+  }
   const headers = new Headers();
   headers.set("x-patchbay-core-secret", coreSecret);
+  headers.set("x-patchbay-principal-id", principal.principalId);
+  headers.set("x-patchbay-principal-secret", principal.secret);
   headers.set("x-patchbay-operator-id", verified(request.verifiedOperator, "operator actor"));
   headers.set(
     "x-patchbay-operator-session-id",

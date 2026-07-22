@@ -101,6 +101,8 @@ impl ElicitationSlotLayer {
             | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
             | StoredEventKind::SessionState
+            | StoredEventKind::OperatorRecord
+            | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::Unspecified => Ok(()),
         }
     }

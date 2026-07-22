@@ -4,7 +4,9 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { AuthorityDomainId, EventId, Lsn, StoredEventPayload } from "./common_pb.js";
+import type { PrincipalCredential, PrincipalEnrollment } from "./admin_pb.js";
+import { file_patchbay_admin } from "./admin_pb.js";
+import type { ActorId, AuthorityDomainId, EventId, Lsn, OperatorSessionId, StoredEventPayload } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { Operation, SubmissionResultSchema } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
@@ -14,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/control.proto.
  */
 export const file_patchbay_control: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDDLjAQoOQ29udHJvbFNlcnZpY2USPQoGU3VibWl0EhcucGF0Y2hiYXkuU3VibWl0UmVxdWVzdBoaLnBhdGNoYmF5LlN1Ym1pc3Npb25SZXN1bHQSQwoJU3Vic2NyaWJlEhoucGF0Y2hiYXkuU3Vic2NyaWJlUmVxdWVzdBoYLnBhdGNoYmF5LlN1YnNjcmliZUV2ZW50MAESTQoMTG9hZFNuYXBzaG90Eh0ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVxdWVzdBoeLnBhdGNoYmF5LkxvYWRTbmFwc2hvdFJlc3BvbnNlYgZwcm90bzM", [file_patchbay_common, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDCKRAQodVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlcXVlc3QSLAoRb3BlcmF0b3JfYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhAKCHBhc3N3b3JkGAIgASgJEjAKCXByaW5jaXBhbBgDIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiigEKHFZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSOAoTb3BlcmF0b3Jfc2Vzc2lvbl9pZBgBIAEoCzIbLnBhdGNoYmF5Lk9wZXJhdG9yU2Vzc2lvbklkEjAKCXByaW5jaXBhbBgCIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbENyZWRlbnRpYWwiWAokRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0EjAKCXByaW5jaXBhbBgBIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiVwojRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSMAoJcHJpbmNpcGFsGAEgASgLMh0ucGF0Y2hiYXkuUHJpbmNpcGFsQ3JlZGVudGlhbDLOAwoOQ29udHJvbFNlcnZpY2USPQoGU3VibWl0EhcucGF0Y2hiYXkuU3VibWl0UmVxdWVzdBoaLnBhdGNoYmF5LlN1Ym1pc3Npb25SZXN1bHQSQwoJU3Vic2NyaWJlEhoucGF0Y2hiYXkuU3Vic2NyaWJlUmVxdWVzdBoYLnBhdGNoYmF5LlN1YnNjcmliZUV2ZW50MAESTQoMTG9hZFNuYXBzaG90Eh0ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVxdWVzdBoeLnBhdGNoYmF5LkxvYWRTbmFwc2hvdFJlc3BvbnNlEmkKFlZlcmlmeU9wZXJhdG9yUGFzc3dvcmQSJy5wYXRjaGJheS5WZXJpZnlPcGVyYXRvclBhc3N3b3JkUmVxdWVzdBomLnBhdGNoYmF5LlZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSfgodRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWwSLi5wYXRjaGJheS5FbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlcXVlc3QaLS5wYXRjaGJheS5FbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlc3VsdGIGcHJvdG8z", [file_patchbay_admin, file_patchbay_common, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.SubmitRequest
@@ -127,6 +129,89 @@ export const LoadSnapshotResponseSchema: GenMessage<LoadSnapshotResponse> = /*@_
   messageDesc(file_patchbay_control, 4);
 
 /**
+ * @generated from message patchbay.VerifyOperatorPasswordRequest
+ */
+export type VerifyOperatorPasswordRequest = Message<"patchbay.VerifyOperatorPasswordRequest"> & {
+  /**
+   * @generated from field: patchbay.ActorId operator_actor_id = 1;
+   */
+  operatorActorId?: ActorId | undefined;
+
+  /**
+   * @generated from field: string password = 2;
+   */
+  password: string;
+
+  /**
+   * @generated from field: patchbay.PrincipalEnrollment principal = 3;
+   */
+  principal?: PrincipalEnrollment | undefined;
+};
+
+/**
+ * Describes the message patchbay.VerifyOperatorPasswordRequest.
+ * Use `create(VerifyOperatorPasswordRequestSchema)` to create a new message.
+ */
+export const VerifyOperatorPasswordRequestSchema: GenMessage<VerifyOperatorPasswordRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 5);
+
+/**
+ * @generated from message patchbay.VerifyOperatorPasswordResult
+ */
+export type VerifyOperatorPasswordResult = Message<"patchbay.VerifyOperatorPasswordResult"> & {
+  /**
+   * @generated from field: patchbay.OperatorSessionId operator_session_id = 1;
+   */
+  operatorSessionId?: OperatorSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.PrincipalCredential principal = 2;
+   */
+  principal?: PrincipalCredential | undefined;
+};
+
+/**
+ * Describes the message patchbay.VerifyOperatorPasswordResult.
+ * Use `create(VerifyOperatorPasswordResultSchema)` to create a new message.
+ */
+export const VerifyOperatorPasswordResultSchema: GenMessage<VerifyOperatorPasswordResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 6);
+
+/**
+ * @generated from message patchbay.EnrollControlSurfacePrincipalRequest
+ */
+export type EnrollControlSurfacePrincipalRequest = Message<"patchbay.EnrollControlSurfacePrincipalRequest"> & {
+  /**
+   * @generated from field: patchbay.PrincipalEnrollment principal = 1;
+   */
+  principal?: PrincipalEnrollment | undefined;
+};
+
+/**
+ * Describes the message patchbay.EnrollControlSurfacePrincipalRequest.
+ * Use `create(EnrollControlSurfacePrincipalRequestSchema)` to create a new message.
+ */
+export const EnrollControlSurfacePrincipalRequestSchema: GenMessage<EnrollControlSurfacePrincipalRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 7);
+
+/**
+ * @generated from message patchbay.EnrollControlSurfacePrincipalResult
+ */
+export type EnrollControlSurfacePrincipalResult = Message<"patchbay.EnrollControlSurfacePrincipalResult"> & {
+  /**
+   * @generated from field: patchbay.PrincipalCredential principal = 1;
+   */
+  principal?: PrincipalCredential | undefined;
+};
+
+/**
+ * Describes the message patchbay.EnrollControlSurfacePrincipalResult.
+ * Use `create(EnrollControlSurfacePrincipalResultSchema)` to create a new message.
+ */
+export const EnrollControlSurfacePrincipalResultSchema: GenMessage<EnrollControlSurfacePrincipalResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 8);
+
+/**
  * The internal control-plane service the TS web server speaks to the Rust
  * core over gRPC/HTTP2. Browser-facing surfaces are a subset reachable
  * through the web server; control-surface methods are principal-gated.
@@ -157,6 +242,27 @@ export const ControlService: GenService<{
     methodKind: "unary";
     input: typeof LoadSnapshotRequestSchema;
     output: typeof LoadSnapshotResponseSchema;
+  },
+  /**
+   * Password verification stays in the core so password hashes never cross
+   * from the durable operator record to a control surface.
+   *
+   * @generated from rpc patchbay.ControlService.VerifyOperatorPassword
+   */
+  verifyOperatorPassword: {
+    methodKind: "unary";
+    input: typeof VerifyOperatorPasswordRequestSchema;
+    output: typeof VerifyOperatorPasswordResultSchema;
+  },
+  /**
+   * An already verified compound issuer may enroll another endpoint.
+   *
+   * @generated from rpc patchbay.ControlService.EnrollControlSurfacePrincipal
+   */
+  enrollControlSurfacePrincipal: {
+    methodKind: "unary";
+    input: typeof EnrollControlSurfacePrincipalRequestSchema;
+    output: typeof EnrollControlSurfacePrincipalResultSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_patchbay_control, 0);

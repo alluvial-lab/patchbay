@@ -7,7 +7,7 @@ import {
   SESSION_COOKIE_NAME,
 } from "../src/middleware/csrf-auth.js";
 import { buildApp, type WebServerConfig } from "../src/main.js";
-import { hashPassword, SessionStore } from "../src/sessions.js";
+import { hashPassword, SessionStore, verifyPassword } from "../src/sessions.js";
 
 const password = "correct horse battery staple";
 const operatorPasswordHash = await hashPassword(password, Buffer.alloc(16, 2));
@@ -44,7 +44,12 @@ test("session ids and CSRF secrets are independent 256-bit CSPRNG tokens", () =>
 });
 
 test("login verifies the operator record and sets the hardened host cookie", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
+  const app = buildApp({
+    config,
+    coreClient: unusedCoreClient,
+    passwordVerifier: verifyPassword,
+    logger: false,
+  });
 
   const invalid = await app.inject({ method: "POST", url: "/login", payload: { password: "bad" } });
   assert.equal(invalid.statusCode, 401);
@@ -64,7 +69,12 @@ test("login verifies the operator record and sets the hardened host cookie", asy
 });
 
 test("insecure non-loopback requests cannot establish browser sessions", async () => {
-  const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
+  const app = buildApp({
+    config,
+    coreClient: unusedCoreClient,
+    passwordVerifier: verifyPassword,
+    logger: false,
+  });
   const response = await app.inject({
     method: "POST",
     url: "/login",

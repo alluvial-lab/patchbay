@@ -102,6 +102,8 @@ impl SpawnDescendantTail {
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
+            | StoredEventKind::OperatorRecord
+            | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::Unspecified => Ok(None),
         }
     }

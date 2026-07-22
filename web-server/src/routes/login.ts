@@ -20,10 +20,12 @@ const SESSION_COOKIE_OPTIONS = {
 };
 
 export type PasswordVerifier = (password: string, passwordHash: string) => Promise<boolean>;
+export type OperatorAuthenticator = (password: string) => Promise<string | null>;
 
 export interface SessionRouteOptions {
   loginLimiter?: LoginLimiter;
   passwordVerifier?: PasswordVerifier;
+  operatorAuthenticator?: OperatorAuthenticator;
 }
 
 export function registerSessionRoutes(
@@ -34,6 +36,7 @@ export function registerSessionRoutes(
 ): void {
   const limiter = options.loginLimiter ?? new LoginLimiter();
   const passwordVerifier = options.passwordVerifier ?? verifyPassword;
+  const operatorAuthenticator = options.operatorAuthenticator;
 
   app.post("/login", async (request, reply) => {
     const networkAddress = directSocketAddress(request);
@@ -64,24 +67,30 @@ export function registerSessionRoutes(
         .send({ error: "login_throttled" });
     }
 
-    let verified: boolean;
+    let verifiedActorId: string | null;
     try {
-      verified = await passwordVerifier(password, operator.passwordHash);
+      if (operatorAuthenticator) {
+        verifiedActorId = await operatorAuthenticator(password);
+      } else {
+        verifiedActorId = (await passwordVerifier(password, operator.passwordHash))
+          ? operator.actorId
+          : null;
+      }
     } catch (error) {
       limiter.recordFailure(networkAddress);
       auditLogin(request, operator.actorId, networkAddress, "failure", "verification_error");
       throw error;
     }
 
-    if (!verified) {
+    if (verifiedActorId === null) {
       limiter.recordFailure(networkAddress);
       auditLogin(request, operator.actorId, networkAddress, "failure", "invalid_credentials");
       return reply.code(401).send({ error: "invalid_credentials" });
     }
 
     limiter.recordSuccess(networkAddress);
-    const session = sessions.create(operator.actorId);
-    auditLogin(request, operator.actorId, networkAddress, "success", "authenticated");
+    const session = sessions.create(verifiedActorId);
+    auditLogin(request, verifiedActorId, networkAddress, "success", "authenticated");
     reply.setCookie(SESSION_COOKIE_NAME, session.sessionId, SESSION_COOKIE_OPTIONS);
     return { csrfToken: session.csrfSecret };
   });

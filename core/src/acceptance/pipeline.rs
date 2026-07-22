@@ -20,7 +20,7 @@ use super::{
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
 /// not appear here, so adding another generated enum variant remains fail
 /// closed until its protocol disposition is explicitly promoted.
-const ACCEPTED_OPERATION_KINDS: [OperationKind; 10] = [
+pub const COMMITTED_OPERATION_KINDS: [OperationKind; 10] = [
     OperationKind::Spawn,
     OperationKind::Attach,
     OperationKind::Instruct,
@@ -219,7 +219,7 @@ pub fn target_key_for(operation: &Operation) -> Result<TargetKey, AcceptanceErro
 fn validate_operation(operation: &Operation) -> Result<ValidatedOperation<'_>, String> {
     let operation_kind = OperationKind::try_from(operation.kind)
         .ok()
-        .filter(|kind| ACCEPTED_OPERATION_KINDS.contains(kind))
+        .filter(|kind| COMMITTED_OPERATION_KINDS.contains(kind))
         .ok_or_else(|| "operation kind is unknown or unavailable in v0.1.0".to_owned())?;
 
     let command_id = operation

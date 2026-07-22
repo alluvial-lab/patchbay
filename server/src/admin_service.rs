@@ -1,0 +1,263 @@
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use patchbay_contracts::patchbay::{
+    ActorEndpointRef, ActorId, BootstrapRequest, BootstrapResult, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, OperatorRecord, TargetScope, TargetScopeKind,
+};
+use patchbay_core::{
+    acceptance::COMMITTED_OPERATION_KINDS,
+    authority::{validate_operator_record, AuthorityError},
+    storage::Storage,
+};
+use tokio::sync::Mutex;
+use tonic::{Request, Response, Status};
+
+use crate::{
+    identity::{issue_operator_session_id, issue_principal, now_timestamp, random_token},
+    rpc::admin_service_server::AdminService,
+    service::{map_operator_error_to_status, map_storage_error_to_status, ControlServiceImpl},
+};
+
+#[derive(Clone)]
+pub struct SetupSecret {
+    state: Arc<Mutex<SetupSecretState>>,
+}
+
+struct SetupSecretState {
+    expected: Vec<u8>,
+    expires_at: Instant,
+    consumed: bool,
+}
+
+impl SetupSecret {
+    #[must_use]
+    pub fn generate(ttl: Duration) -> (Self, String) {
+        let secret = random_token();
+        (Self::new(secret.clone(), ttl), secret)
+    }
+
+    #[must_use]
+    pub fn new(secret: String, ttl: Duration) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(SetupSecretState {
+                expected: secret.into_bytes(),
+                expires_at: Instant::now() + ttl,
+                consumed: false,
+            })),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct AdminServiceImpl<S> {
+    control: ControlServiceImpl<S>,
+    setup_secret: SetupSecret,
+}
+
+impl<S> AdminServiceImpl<S> {
+    #[must_use]
+    pub fn new(control: ControlServiceImpl<S>, setup_secret: SetupSecret) -> Self {
+        Self {
+            control,
+            setup_secret,
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl<S> AdminService for AdminServiceImpl<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    async fn bootstrap_operator(
+        &self,
+        request: Request<BootstrapRequest>,
+    ) -> Result<Response<BootstrapResult>, Status> {
+        let request = request.into_inner();
+        let mut setup = self.setup_secret.state.lock().await;
+        authorize_setup_secret(&setup, &request.setup_secret)?;
+        if self.control.state.operator_exists().await {
+            return Err(Status::already_exists(
+                "operator bootstrap has already completed",
+            ));
+        }
+
+        let actor_id = required_actor(request.operator_actor_id)?;
+        let enrollment = request
+            .principal
+            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
+        let created_at = now_timestamp()?;
+        // Validate and materialize the principal before the first durable write
+        // so malformed enrollment cannot leave a completed operator bootstrap
+        // without returning usable credentials.
+        let (principal_record, principal_credential) = issue_principal(
+            actor_id.clone(),
+            enrollment.clone(),
+            self.control.authority_domain_id.clone(),
+        )?;
+        let operator = OperatorRecord {
+            actor_id: Some(actor_id.clone()),
+            password_hash: request.password_hash,
+            created_at: Some(created_at),
+            authority_domain_id: Some(self.control.authority_domain_id.clone()),
+        };
+        validate_operator_record(&operator, &self.control.authority_domain_id)
+            .map_err(map_operator_error_to_status)?;
+        let grant_id = GrantId {
+            value: format!("bootstrap-operator-{}", actor_id.value),
+        };
+        let grant = bootstrap_grant(
+            grant_id.clone(),
+            actor_id.clone(),
+            &enrollment,
+            created_at,
+            self.control.authority_domain_id.clone(),
+        );
+
+        // One gate serializes bootstrap against submissions and routine
+        // enrollment. The grant uses a deterministic id so a retry after a
+        // partial storage failure can reuse an already-committed grant.
+        let _submit_guard = self.control.state.submit_guard().await;
+        if let Some(existing) = self.control.state.grant(&grant_id).await {
+            let expected_kinds = COMMITTED_OPERATION_KINDS.to_vec();
+            if existing.subject_actor_id != actor_id
+                || existing.authority_domain_id != self.control.authority_domain_id
+                || existing.allowed_operation_kinds != expected_kinds
+                || existing.target_scope.kind != TargetScopeKind::AuthorityDomain as i32
+                || !existing.is_live()
+            {
+                return Err(Status::internal(
+                    "bootstrap grant id conflicts with another authority record",
+                ));
+            }
+        } else {
+            self.control
+                .state
+                .ingest_grant(
+                    &self.control.storage,
+                    &self.control.authority_domain_id,
+                    grant,
+                )
+                .await
+                .map_err(map_authority_error_to_status)?;
+        }
+
+        self.control
+            .state
+            .ingest_operator(
+                &self.control.storage,
+                &self.control.authority_domain_id,
+                operator,
+            )
+            .await
+            .map_err(map_operator_error_to_status)?;
+
+        self.control
+            .state
+            .ingest_principal(
+                &self.control.storage,
+                &self.control.authority_domain_id,
+                principal_record,
+            )
+            .await
+            .map_err(map_operator_error_to_status)?;
+        self.control
+            .state
+            .catch_up(&self.control.storage, &self.control.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+
+        setup.consumed = true;
+        Ok(Response::new(BootstrapResult {
+            grant_id: Some(grant_id),
+            session_id: Some(issue_operator_session_id()),
+            principal: Some(principal_credential),
+        }))
+    }
+}
+
+fn authorize_setup_secret(state: &SetupSecretState, supplied: &str) -> Result<(), Status> {
+    if state.consumed {
+        return Err(Status::failed_precondition(
+            "the one-time setup secret has already been consumed",
+        ));
+    }
+    if Instant::now() >= state.expires_at {
+        return Err(Status::failed_precondition("the setup secret has expired"));
+    }
+    if !constant_time_eq(supplied.as_bytes(), &state.expected) {
+        return Err(Status::permission_denied("invalid setup secret"));
+    }
+    Ok(())
+}
+
+fn required_actor(actor: Option<ActorId>) -> Result<ActorId, Status> {
+    let actor = actor.ok_or_else(|| Status::invalid_argument("operator actor id is required"))?;
+    if actor.value.is_empty() {
+        return Err(Status::invalid_argument(
+            "operator actor id must not be empty",
+        ));
+    }
+    Ok(actor)
+}
+
+fn bootstrap_grant(
+    grant_id: GrantId,
+    actor_id: ActorId,
+    enrollment: &patchbay_contracts::patchbay::PrincipalEnrollment,
+    created_at: prost_types::Timestamp,
+    authority_domain_id: patchbay_contracts::patchbay::AuthorityDomainId,
+) -> Grant {
+    Grant {
+        grant_id: Some(grant_id),
+        authority_domain_id: Some(authority_domain_id),
+        subject_actor_id: Some(actor_id.clone()),
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::AuthorityDomain as i32,
+            ..TargetScope::default()
+        }),
+        allowed_operation_kinds: COMMITTED_OPERATION_KINDS
+            .iter()
+            .map(|kind| *kind as i32)
+            .collect(),
+        created_at: Some(created_at),
+        provenance: Some(GrantProvenance {
+            created_by: Some(ActorEndpointRef {
+                actor_id: Some(actor_id),
+                endpoint_id: enrollment.endpoint_id.clone(),
+                device_id: enrollment.device_id.clone(),
+                endpoint_generation: enrollment.endpoint_generation,
+            }),
+            reason: "local-console operator bootstrap".to_owned(),
+            ..GrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    }
+}
+
+fn map_authority_error_to_status(error: AuthorityError) -> Status {
+    match error {
+        AuthorityError::InvalidGrant(message) => Status::invalid_argument(message),
+        AuthorityError::GrantNotFound(message) => Status::failed_precondition(message),
+        AuthorityError::CorruptRecord(message) | AuthorityError::CorruptLog(message) => {
+            Status::internal(message)
+        }
+        AuthorityError::Storage(error) => map_storage_error_to_status(error),
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}

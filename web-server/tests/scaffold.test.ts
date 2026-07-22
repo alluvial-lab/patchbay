@@ -16,7 +16,7 @@ const config: WebServerConfig = {
 
 const unusedCoreClient = {} as never;
 
-test("startup fails closed without the core trust root or operator record", () => {
+test("startup fails closed without the core trust root or operator identity", () => {
   assert.throws(
     () => loadConfig({ PATCHBAY_OPERATOR_ID: "operator-primary" }),
     /PATCHBAY_CORE_SECRET is required/,
@@ -25,6 +25,12 @@ test("startup fails closed without the core trust root or operator record", () =
     () => loadConfig({ PATCHBAY_CORE_SECRET: "secret" }),
     /PATCHBAY_OPERATOR_ID is required/,
   );
+
+  const sharedRecordConfig = loadConfig({
+    PATCHBAY_CORE_SECRET: "secret",
+    PATCHBAY_OPERATOR_ID: "operator-primary",
+  });
+  assert.equal(sharedRecordConfig.operatorPasswordHash, undefined);
 });
 
 test("health check is unauthenticated", async () => {

@@ -1,5 +1,6 @@
 export * from "./gen/patchbay/adapter_pb.js";
 export * from "./gen/patchbay/adapter_control_pb.js";
+export * from "./gen/patchbay/admin_pb.js";
 export * from "./gen/patchbay/authority_pb.js";
 export * from "./gen/patchbay/common_pb.js";
 export * from "./gen/patchbay/control_pb.js";

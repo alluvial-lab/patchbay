@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package patchbay;
 
+import "patchbay/admin.proto";
 import "patchbay/common.proto";
 import "patchbay/operations.proto";
 
@@ -12,6 +13,11 @@ service ControlService {
   rpc Submit(SubmitRequest) returns (SubmissionResult);
   rpc Subscribe(SubscribeRequest) returns (stream SubscribeEvent);
   rpc LoadSnapshot(LoadSnapshotRequest) returns (LoadSnapshotResponse);
+  // Password verification stays in the core so password hashes never cross
+  // from the durable operator record to a control surface.
+  rpc VerifyOperatorPassword(VerifyOperatorPasswordRequest) returns (VerifyOperatorPasswordResult);
+  // An already verified compound issuer may enroll another endpoint.
+  rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
 }
 
 message SubmitRequest {
@@ -37,4 +43,23 @@ message LoadSnapshotResponse {
   bool present = 1;
   patchbay.EventId event_id = 2;
   bytes snapshot_payload = 3;
+}
+
+message VerifyOperatorPasswordRequest {
+  patchbay.ActorId operator_actor_id = 1;
+  string password = 2;
+  patchbay.PrincipalEnrollment principal = 3;
+}
+
+message VerifyOperatorPasswordResult {
+  patchbay.OperatorSessionId operator_session_id = 1;
+  patchbay.PrincipalCredential principal = 2;
+}
+
+message EnrollControlSurfacePrincipalRequest {
+  patchbay.PrincipalEnrollment principal = 1;
+}
+
+message EnrollControlSurfacePrincipalResult {
+  patchbay.PrincipalCredential principal = 1;
 }
