@@ -56,7 +56,11 @@ export async function startCockpit(options: StartCockpitOptions = {}): Promise<C
   const mount = options.mount ?? document.querySelector<HTMLElement>("[data-patchbay-cockpit]");
   if (!mount) throw new Error("cockpit mount element is missing");
   const authorityDomainId = options.authorityDomainId ?? authorityDomainFromDocument(document);
-  const fetcher = options.fetch ?? globalThis.fetch;
+  // Bind the global fetch: passing the bare function through as a callback
+  // would call it with the wrong receiver, and browsers require `window` as
+  // `this` ("'fetch' called on an object that does not implement interface
+  // Window"). Tests inject their own fetch, so this binding is browser-only.
+  const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
   let csrfToken: string;
   try {
     csrfToken = await fetchCsrfToken(fetcher);
