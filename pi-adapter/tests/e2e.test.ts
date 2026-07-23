@@ -71,14 +71,14 @@ const runtimeSessionId = "session-e2e";
 const deploymentScope = "machine-e2e";
 
 // The test is deliberately serial: it owns one core process and one SQLite fixture.
-test("core → adapter → real AgentSession → observation loop, generation bump, and reconnect", { timeout: 60_000 }, async () => {
+test("core → adapter → real AgentSession → observation loop, generation bump, reconnect, and core restart", { timeout: 60_000 }, async () => {
   const port = await freePort();
   let adminPort = await freePort();
   while (adminPort === port) adminPort = await freePort();
   mkdirSync(join(repoRoot, "tmp"), { recursive: true });
   const directory = mkdtempSync(join(repoRoot, "tmp", "pi-adapter-e2e-"));
   const databasePath = join(directory, "core.sqlite3");
-  const core = startCore(port, adminPort, databasePath);
+  let core = startCore(port, adminPort, databasePath);
   let adapter: AdapterProcess | undefined;
   let reconnect: AdapterProcess | undefined;
 
@@ -287,6 +287,22 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       "reconnect explicitly replays Pi getEntries()/TranscriptEventLog snapshot",
     );
     assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
+    const attachCountBeforeRestart = reconnectEvents.filter(isAdapterRegistration).length;
+
+    core.kill("SIGTERM");
+    await waitForExit(core);
+    core = startCore(port, adminPort, databasePath);
+    await waitForCoreListener(port, core);
+    assert.equal(
+      await reconnect.pollOnce(),
+      0,
+      "an unauthenticated post-restart poll reattaches once and retries",
+    );
+    assert.equal(
+      countAdapterRegistrations(databasePath),
+      attachCountBeforeRestart + 1,
+      "the retry path durably records exactly one fresh attachment",
+    );
   } finally {
     if (reconnect) await reconnect.dispose();
     if (adapter) await adapter.dispose();
@@ -543,6 +559,28 @@ function appendAcceptedOperation(
   }
 }
 
+function countAdapterRegistrations(databasePath: string): number {
+  const database = new DatabaseSync(databasePath);
+  try {
+    const rows = database
+      .prepare("SELECT payload FROM events WHERE authority_domain_id = ? AND kind = ?")
+      .all(domainId, StoredEventKind.OBSERVATION) as { payload: Uint8Array }[];
+    return rows
+      .map((row) => fromBinary(StoredEventPayloadSchema, row.payload))
+      .filter(isAdapterRegistration).length;
+  } finally {
+    database.close();
+  }
+}
+
+function isAdapterRegistration(payload: StoredEventPayload): boolean {
+  return (
+    payload.kind === StoredEventKind.OBSERVATION &&
+    fromBinary(ObservationSchema, payload.payload).payload?.schemaRef ===
+      "patchbay.AdapterRegistration"
+  );
+}
+
 function isGenerationTwo(payload: StoredEventPayload): boolean {
   if (payload.kind !== StoredEventKind.SESSION_STATE) return false;
   const event = fromBinary(SessionStateEventSchema, payload.payload);
@@ -570,6 +608,32 @@ async function freePort(): Promise<number> {
   const port = address.port;
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   return port;
+}
+
+async function waitForExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null) return;
+  await new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+}
+
+async function waitForCoreListener(port: number, child: ChildProcess): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`core exited before restart: ${child.exitCode}`);
+    try {
+      await new Promise<void>((resolveConnect, rejectConnect) => {
+        const socket = new Socket();
+        socket.once("error", rejectConnect);
+        socket.connect(port, "127.0.0.1", () => {
+          socket.destroy();
+          resolveConnect();
+        });
+      });
+      return;
+    } catch {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    }
+  }
+  throw new Error("core did not restart before timeout");
 }
 
 async function waitForCore(port: number, child: ChildProcess): Promise<string> {

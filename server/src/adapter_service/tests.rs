@@ -37,17 +37,21 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
             attachment_evidence: EVIDENCE.as_bytes().to_vec(),
         }))
         .await
-        .expect("attach succeeds")
-        .into_inner();
+        .expect("attach succeeds");
+    let attachment_token = attachment_token(&attached);
+    let attached = attached.into_inner();
     assert!(attached.accepted);
     assert!(attached.attach_event_id.is_some());
 
     let report = session_report(SessionConnectivityState::Live);
     service
-        .ingest_observation(authenticated(ObservationRequest {
-            authority_domain_id: Some(domain.clone()),
-            observation: Some(observation_request::Observation::SessionReport(report)),
-        }))
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(report)),
+            },
+            &attachment_token,
+        ))
         .await
         .expect("session report succeeds");
 
@@ -82,10 +86,13 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
         .expect("operation appends");
 
     let mut deliveries = service
-        .receive_deliveries(authenticated(ReceiveRequest {
-            adapter_id: Some(adapter_id()),
-            cursor: Some(Lsn { value: 0 }),
-        }))
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &attachment_token,
+        ))
         .await
         .expect("delivery stream opens")
         .into_inner();
@@ -102,12 +109,115 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
 }
 
 #[tokio::test]
+async fn newer_attachment_fences_stale_adapter_process() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(
+        storage,
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+
+    let stale_token = attach_generation(&service, domain.clone(), 1).await;
+    let current_token = attach_generation(&service, domain, 2).await;
+
+    let stale = service
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &stale_token,
+        ))
+        .await
+        .err()
+        .expect("superseded attachment token must be rejected");
+    assert_eq!(stale.code(), tonic::Code::Unauthenticated);
+
+    service
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &current_token,
+        ))
+        .await
+        .expect("current attachment token remains valid");
+}
+
+#[tokio::test]
+async fn post_attach_rpc_without_attachment_token_is_rejected() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, _attachment_token) = attached_service(storage, domain).await;
+
+    let status = service
+        .receive_deliveries(authenticated(ReceiveRequest {
+            adapter_id: Some(adapter_id()),
+            cursor: Some(Lsn { value: 0 }),
+        }))
+        .await
+        .err()
+        .expect("missing attachment token must be rejected");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn rebuilt_core_forgets_attachment_tokens_until_adapter_reattaches() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (before_restart, stale_token) = attached_service(storage.clone(), domain.clone()).await;
+    drop(before_restart);
+
+    let after_restart = AdapterControlServiceImpl::new(
+        storage,
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service rebuilds");
+    let status = after_restart
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &stale_token,
+        ))
+        .await
+        .err()
+        .expect("in-memory attachment tokens must not survive restart");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+
+    let refreshed_token = attach_generation(&after_restart, domain, 2).await;
+    after_restart
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &refreshed_token,
+        ))
+        .await
+        .expect("reattachment restores access");
+}
+
+#[tokio::test]
 async fn delivered_command_is_redelivered_and_reacknowledged_without_double_transition() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = attached_service(storage.clone(), domain.clone()).await;
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
     let operation = targeted_operation(domain.clone(), "command-redelivery");
     storage
         .append(
@@ -120,22 +230,22 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
         .await
         .expect("operation appends");
 
-    let mut first_tail = receive_from_start(&service).await;
+    let mut first_tail = receive_from_start(&service, &attachment_token).await;
     assert!(first_tail.next().await.unwrap().is_ok());
     assert!(first_tail.next().await.is_none());
 
     // Treat the first successful core call as a response lost after the
     // delivered checkpoint committed: the simulated adapter does not execute.
     service
-        .ingest_observation(authenticated(delivery_acknowledgement(
-            domain.clone(),
-            &operation,
-        )))
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), &operation),
+            &attachment_token,
+        ))
         .await
         .expect("first acknowledgement commits delivered");
     let mut executions = 0;
 
-    let mut redelivery_tail = receive_from_start(&service).await;
+    let mut redelivery_tail = receive_from_start(&service, &attachment_token).await;
     let redelivery = redelivery_tail
         .next()
         .await
@@ -145,10 +255,10 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
     assert!(redelivery_tail.next().await.is_none());
 
     service
-        .ingest_observation(authenticated(delivery_acknowledgement(
-            domain.clone(),
-            &operation,
-        )))
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), &operation),
+            &attachment_token,
+        ))
         .await
         .expect("delivered command re-acknowledges idempotently");
     executions += 1;
@@ -174,10 +284,16 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = attached_service(storage.clone(), domain.clone()).await;
-    report_session(&service, domain.clone(), SessionConnectivityState::Live).await;
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        &attachment_token,
+    )
+    .await;
 
-    let tail = receive_from_start(&service).await;
+    let tail = receive_from_start(&service, &attachment_token).await;
     drop(tail); // no terminal `None`: models transport loss / process death
 
     let mut became_stale = false;
@@ -201,7 +317,13 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
         "abnormal stream drop did not durably mark the session stale"
     );
 
-    report_session(&service, domain.clone(), SessionConnectivityState::Live).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        &attachment_token,
+    )
+    .await;
     let refreshed = session::rebuild_from_log(&storage, &domain)
         .await
         .expect("session log rebuilds after reconnect report");
@@ -222,10 +344,16 @@ async fn clean_delivery_tail_completion_does_not_mark_sessions_stale() {
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = attached_service(storage.clone(), domain.clone()).await;
-    report_session(&service, domain.clone(), SessionConnectivityState::Live).await;
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        &attachment_token,
+    )
+    .await;
 
-    let mut tail = receive_from_start(&service).await;
+    let mut tail = receive_from_start(&service, &attachment_token).await;
     assert!(tail.next().await.is_none(), "empty durable tail completes");
     drop(tail);
     for _ in 0..10 {
@@ -248,7 +376,7 @@ async fn clean_delivery_tail_completion_does_not_mark_sessions_stale() {
 async fn attached_service(
     storage: RusqliteStorage,
     domain: AuthorityDomainId,
-) -> AdapterControlServiceImpl<RusqliteStorage> {
+) -> (AdapterControlServiceImpl<RusqliteStorage>, String) {
     let service = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
@@ -256,24 +384,22 @@ async fn attached_service(
     )
     .await
     .expect("service initializes");
-    service
-        .attach(Request::new(AttachRequest {
-            registration: Some(registration(domain)),
-            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
-        }))
-        .await
-        .expect("attach succeeds");
-    service
+    let attachment_token = attach_generation(&service, domain, 1).await;
+    (service, attachment_token)
 }
 
 async fn receive_from_start(
     service: &AdapterControlServiceImpl<RusqliteStorage>,
+    attachment_token: &str,
 ) -> DeliveryStream {
     service
-        .receive_deliveries(authenticated(ReceiveRequest {
-            adapter_id: Some(adapter_id()),
-            cursor: Some(Lsn { value: 0 }),
-        }))
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            attachment_token,
+        ))
         .await
         .expect("delivery stream opens")
         .into_inner()
@@ -283,14 +409,18 @@ async fn report_session(
     service: &AdapterControlServiceImpl<RusqliteStorage>,
     domain: AuthorityDomainId,
     connectivity: SessionConnectivityState,
+    attachment_token: &str,
 ) {
     service
-        .ingest_observation(authenticated(ObservationRequest {
-            authority_domain_id: Some(domain),
-            observation: Some(observation_request::Observation::SessionReport(
-                session_report(connectivity),
-            )),
-        }))
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(connectivity),
+                )),
+            },
+            attachment_token,
+        ))
         .await
         .expect("session report succeeds");
 }
@@ -385,6 +515,42 @@ fn runtime_session_id() -> RuntimeSessionId {
     RuntimeSessionId {
         value: "session-1".into(),
     }
+}
+
+async fn attach_generation(
+    service: &AdapterControlServiceImpl<RusqliteStorage>,
+    domain: AuthorityDomainId,
+    generation: u64,
+) -> String {
+    let mut registration = registration(domain);
+    registration.adapter_generation = Some(Generation { value: generation });
+    let response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("attach succeeds");
+    attachment_token(&response)
+}
+
+fn attachment_token<T>(response: &Response<T>) -> String {
+    response
+        .metadata()
+        .get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
+        .expect("attach response carries attachment token")
+        .to_str()
+        .expect("attachment token is ASCII")
+        .to_owned()
+}
+
+fn authenticated_with_attachment_token<T>(message: T, attachment_token: &str) -> Request<T> {
+    let mut request = authenticated(message);
+    request.metadata_mut().insert(
+        ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        attachment_token.parse().expect("metadata"),
+    );
+    request
 }
 
 fn authenticated<T>(message: T) -> Request<T> {

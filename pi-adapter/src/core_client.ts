@@ -1,5 +1,11 @@
 import { create } from "@bufbuild/protobuf";
-import { createClient, type Client, type Interceptor } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createClient,
+  type Client,
+  type Interceptor,
+} from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorEndpointRefSchema,
@@ -40,6 +46,7 @@ import {
 import type { TranscriptEvent } from "./transcript_event.js";
 
 const encoder = new TextEncoder();
+const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
 
 type AdapterClient = Client<typeof AdapterControlService>;
 
@@ -62,6 +69,9 @@ export interface SessionIdentity {
 export class PatchbayCoreClient {
   readonly #client: AdapterClient;
   readonly #options: CoreClientOptions;
+  #attachmentToken: string | undefined;
+  #adapterGeneration: number | undefined;
+  #reattachPromise: Promise<void> | undefined;
 
   constructor(options: CoreClientOptions) {
     if (!options.adapterId || !options.authorityDomainId || !options.attachmentEvidence) {
@@ -71,7 +81,13 @@ export class PatchbayCoreClient {
     const authenticate: Interceptor = (next) => async (request) => {
       request.header.set("x-patchbay-adapter-id", options.adapterId);
       request.header.set("x-patchbay-adapter-evidence", options.attachmentEvidence);
-      return next(request);
+      if (this.#attachmentToken) {
+        request.header.set(attachmentTokenHeader, this.#attachmentToken);
+      }
+      const response = await next(request);
+      const issuedToken = response.header.get(attachmentTokenHeader);
+      if (issuedToken) this.#attachmentToken = issuedToken;
+      return response;
     };
     this.#client = createClient(
       AdapterControlService,
@@ -80,6 +96,8 @@ export class PatchbayCoreClient {
   }
 
   async attach(adapterGeneration: number): Promise<EventId> {
+    this.#adapterGeneration = adapterGeneration;
+    this.#attachmentToken = undefined;
     const result = await this.#client.attach(
       create(AttachRequestSchema, {
         registration: create(AdapterRegistrationSchema, {
@@ -97,6 +115,9 @@ export class PatchbayCoreClient {
     if (!result.accepted || !result.attachEventId) {
       throw new Error(`core rejected adapter attachment: ${result.failureCode || "unknown"}`);
     }
+    if (!this.#attachmentToken) {
+      throw new Error("core attachment response is missing the adapter attachment token");
+    }
     return result.attachEventId;
   }
 
@@ -105,24 +126,26 @@ export class PatchbayCoreClient {
     activity: SessionActivityState,
     connectivity = SessionConnectivityState.LIVE,
   ): Promise<EventId | undefined> {
-    const result = await this.#client.ingestObservation(
-      create(ObservationRequestSchema, {
-        authorityDomainId: this.#authorityDomainId(),
-        observation: {
-          case: "sessionReport",
-          value: create(SessionReportSchema, {
-            adapterId: this.#adapterId(),
-            deploymentScope: identity.deploymentScope,
-            runtimeSessionId: create(RuntimeSessionIdSchema, { value: identity.runtimeSessionId }),
-            sessionGeneration: create(GenerationSchema, { value: BigInt(identity.generation) }),
-            connectivity,
-            activity,
-            project: identity.project,
-            cwd: identity.cwd,
-            name: identity.name,
-          }),
-        },
-      }),
+    const result = await this.#postAttach(() =>
+      this.#client.ingestObservation(
+        create(ObservationRequestSchema, {
+          authorityDomainId: this.#authorityDomainId(),
+          observation: {
+            case: "sessionReport",
+            value: create(SessionReportSchema, {
+              adapterId: this.#adapterId(),
+              deploymentScope: identity.deploymentScope,
+              runtimeSessionId: create(RuntimeSessionIdSchema, { value: identity.runtimeSessionId }),
+              sessionGeneration: create(GenerationSchema, { value: BigInt(identity.generation) }),
+              connectivity,
+              activity,
+              project: identity.project,
+              cwd: identity.cwd,
+              name: identity.name,
+            }),
+          },
+        }),
+      ),
     );
     return result.eventId;
   }
@@ -163,11 +186,13 @@ export class PatchbayCoreClient {
       }),
       failureCode: FailureCode.UNSPECIFIED,
     });
-    const result = await this.#client.ingestObservation(
-      create(ObservationRequestSchema, {
-        authorityDomainId: this.#authorityDomainId(),
-        observation: { case: "event", value: observation },
-      }),
+    const result = await this.#postAttach(() =>
+      this.#client.ingestObservation(
+        create(ObservationRequestSchema, {
+          authorityDomainId: this.#authorityDomainId(),
+          observation: { case: "event", value: observation },
+        }),
+      ),
     );
     return result.eventId;
   }
@@ -216,12 +241,51 @@ export class PatchbayCoreClient {
   }
 
   receiveDeliveries(cursor: bigint): AsyncIterable<Delivery> {
-    return this.#client.receiveDeliveries(
-      create(ReceiveRequestSchema, {
-        adapterId: this.#adapterId(),
-        cursor: create(LsnSchema, { value: cursor }),
-      }),
-    );
+    return this.#receiveDeliveries(cursor);
+  }
+
+  async *#receiveDeliveries(cursor: bigint): AsyncGenerator<Delivery> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const failedToken = this.#attachmentToken;
+      try {
+        for await (const delivery of this.#client.receiveDeliveries(
+          create(ReceiveRequestSchema, {
+            adapterId: this.#adapterId(),
+            cursor: create(LsnSchema, { value: cursor }),
+          }),
+        )) {
+          yield delivery;
+        }
+        return;
+      } catch (error) {
+        if (attempt !== 0 || !isUnauthenticated(error)) throw error;
+        await this.#refreshAttachment(failedToken);
+      }
+    }
+  }
+
+  async #postAttach<T>(call: () => Promise<T>): Promise<T> {
+    const failedToken = this.#attachmentToken;
+    try {
+      return await call();
+    } catch (error) {
+      if (!isUnauthenticated(error)) throw error;
+      await this.#refreshAttachment(failedToken);
+      return call();
+    }
+  }
+
+  async #refreshAttachment(failedToken: string | undefined): Promise<void> {
+    if (this.#attachmentToken && this.#attachmentToken !== failedToken) return;
+    if (this.#adapterGeneration === undefined) {
+      throw new Error("cannot reattach before the initial adapter attachment");
+    }
+    this.#reattachPromise ??= this.attach(this.#adapterGeneration)
+      .then(() => undefined)
+      .finally(() => {
+        this.#reattachPromise = undefined;
+      });
+    await this.#reattachPromise;
   }
 
   #adapterId() {
@@ -264,14 +328,20 @@ export class PatchbayCoreClient {
       }),
       failureCode,
     });
-    const result = await this.#client.ingestObservation(
-      create(ObservationRequestSchema, {
-        authorityDomainId: this.#authorityDomainId(),
-        observation: { case: "event", value: observation },
-      }),
+    const result = await this.#postAttach(() =>
+      this.#client.ingestObservation(
+        create(ObservationRequestSchema, {
+          authorityDomainId: this.#authorityDomainId(),
+          observation: { case: "event", value: observation },
+        }),
+      ),
     );
     return result.eventId;
   }
+}
+
+function isUnauthenticated(error: unknown): boolean {
+  return error instanceof ConnectError && error.code === Code.Unauthenticated;
 }
 
 function jsonStringify(value: unknown): string {

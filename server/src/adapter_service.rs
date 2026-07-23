@@ -13,6 +13,7 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::{
     acceptance::{self, CommandIndex},
     adapter::{self, AdapterRegistry},
+    authority::hash_principal_credential,
     session::{self, SessionRegistry, SessionReport},
     storage::Storage,
 };
@@ -25,12 +26,14 @@ use tonic::{Request, Response, Status};
 mod tests;
 
 use crate::{
+    identity::random_token,
     rpc::adapter_control_service_server::AdapterControlService,
     service::{map_acceptance_error_to_status, map_storage_error_to_status},
 };
 
 pub const ADAPTER_ID_HEADER: &str = "x-patchbay-adapter-id";
 pub const ADAPTER_EVIDENCE_HEADER: &str = "x-patchbay-adapter-evidence";
+pub const ADAPTER_ATTACHMENT_TOKEN_HEADER: &str = "x-patchbay-adapter-attachment-token";
 
 #[derive(Clone)]
 pub struct AdapterEvidenceVerifier {
@@ -109,6 +112,7 @@ pub struct AdapterControlServiceImpl<S> {
     adapters: Arc<Mutex<AdapterRegistry>>,
     commands: Arc<Mutex<CommandIndex>>,
     sessions: Arc<Mutex<SessionRegistry>>,
+    attachment_tokens: Arc<Mutex<HashMap<AdapterId, Vec<u8>>>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
 }
 
@@ -140,8 +144,30 @@ where
             adapters: Arc::new(Mutex::new(adapters)),
             commands: Arc::new(Mutex::new(commands)),
             sessions: Arc::new(Mutex::new(sessions)),
+            attachment_tokens: Arc::new(Mutex::new(HashMap::new())),
             delivery_stream_epochs: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    async fn authenticate_request<T>(&self, request: &Request<T>) -> Result<AdapterId, Status> {
+        let adapter_id = self.evidence.verify_request(request)?;
+        let token = request
+            .metadata()
+            .get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
+            .ok_or_else(|| Status::unauthenticated("missing adapter attachment token"))?
+            .to_str()
+            .map_err(|_| Status::unauthenticated("invalid adapter attachment token"))?;
+        let actual_hash = hash_principal_credential(token);
+        let tokens = self.attachment_tokens.lock().await;
+        let expected_hash = tokens.get(&adapter_id).ok_or_else(|| {
+            Status::unauthenticated("adapter attachment is not current; reattach required")
+        })?;
+        if !constant_time_eq(&actual_hash, expected_hash) {
+            return Err(Status::unauthenticated(
+                "stale adapter attachment token; reattach required",
+            ));
+        }
+        Ok(adapter_id)
     }
 
     fn require_domain(&self, domain: &AuthorityDomainId) -> Result<(), Status> {
@@ -238,25 +264,43 @@ where
             Status::invalid_argument("registration is missing authority_domain_id")
         })?;
         self.require_domain(domain)?;
-        let event_id = adapter::ingest_registration(
-            &self.storage,
-            &mut *self.adapters.lock().await,
-            registration,
-        )
-        .await
-        .map_err(map_adapter_error)?;
-        Ok(Response::new(AttachResult {
+        let adapter_id = registration
+            .adapter_id
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("registration is missing adapter_id"))?;
+        let attachment_token = random_token();
+        let attachment_token_hash = hash_principal_credential(&attachment_token);
+        let mut adapters = self.adapters.lock().await;
+        let event_id = adapter::ingest_registration(&self.storage, &mut adapters, registration)
+            .await
+            .map_err(map_adapter_error)?;
+        // Keep registration acceptance and token replacement in one critical
+        // section so a slower older attach cannot overwrite a newer fence.
+        self.attachment_tokens
+            .lock()
+            .await
+            .insert(adapter_id, attachment_token_hash);
+        drop(adapters);
+
+        let mut response = Response::new(AttachResult {
             accepted: true,
             attach_event_id: Some(event_id),
             failure_code: String::new(),
-        }))
+        });
+        response.metadata_mut().insert(
+            ADAPTER_ATTACHMENT_TOKEN_HEADER,
+            attachment_token
+                .parse()
+                .map_err(|_| Status::internal("generated invalid adapter attachment token"))?,
+        );
+        Ok(response)
     }
 
     async fn ingest_observation(
         &self,
         request: Request<ObservationRequest>,
     ) -> Result<Response<ObservationResult>, Status> {
-        let authenticated_adapter = self.evidence.verify_request(&request)?;
+        let authenticated_adapter = self.authenticate_request(&request).await?;
         let request = request.into_inner();
         let domain = request
             .authority_domain_id
@@ -352,7 +396,7 @@ where
         &self,
         request: Request<ReceiveRequest>,
     ) -> Result<Response<Self::ReceiveDeliveriesStream>, Status> {
-        let authenticated_adapter = self.evidence.verify_request(&request)?;
+        let authenticated_adapter = self.authenticate_request(&request).await?;
         let request = request.into_inner();
         require_same_adapter(request.adapter_id.as_ref(), &authenticated_adapter)?;
         let domain = self.require_attached(&authenticated_adapter).await?;
