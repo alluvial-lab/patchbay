@@ -38,7 +38,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
         });
         return sendUnary(reply, toBinary(SubmissionResultSchema, output));
       } catch (error) {
-        return sendRpcError(reply, error);
+        return sendRpcError(app, request, reply, error);
       }
     },
   );
@@ -54,7 +54,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
         });
         return sendUnary(reply, toBinary(LoadSnapshotResponseSchema, output));
       } catch (error) {
-        return sendRpcError(reply, error);
+        return sendRpcError(app, request, reply, error);
       }
     },
   );
@@ -67,7 +67,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
       try {
         input = fromBinary(SubscribeRequestSchema, decodeRequestFrame(request.body));
       } catch (error) {
-        return sendRpcError(reply, error);
+        return sendRpcError(app, request, reply, error);
       }
 
       reply.hijack();
@@ -85,6 +85,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
         reply.raw.end(trailerFrame(0, ""));
       } catch (error) {
         const rpcError = ConnectError.from(error, Code.Internal);
+        invalidateDeadCoreSession(app, request, rpcError);
         reply.raw.end(trailerFrame(rpcError.code, rpcError.rawMessage));
       }
     },
@@ -137,13 +138,29 @@ function sendUnary(reply: FastifyReply, protobuf: Uint8Array): FastifyReply {
     .send(Buffer.concat([dataFrame(protobuf), trailerFrame(0, "")]));
 }
 
-function sendRpcError(reply: FastifyReply, error: unknown): FastifyReply {
+function sendRpcError(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  error: unknown,
+): FastifyReply {
   const rpcError = ConnectError.from(error, Code.Internal);
+  invalidateDeadCoreSession(app, request, rpcError);
   return reply
     .code(200)
     .header("content-type", GRPC_WEB_CONTENT_TYPE)
     .header("x-content-type-options", "nosniff")
     .send(trailerFrame(rpcError.code, rpcError.rawMessage));
+}
+
+function invalidateDeadCoreSession(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  error: ConnectError,
+): void {
+  if (error.code === Code.Unauthenticated && request.verifiedSessionId) {
+    app.sessions.invalidate(request.verifiedSessionId);
+  }
 }
 
 function dataFrame(payload: Uint8Array): Buffer {

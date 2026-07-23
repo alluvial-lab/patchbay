@@ -107,7 +107,11 @@ export function registerSessionRoutes(
     async (request, reply) => {
       const coreSessionId = request.verifiedCoreSessionId;
       if (coreSessionId && options.operatorSessionRevoker) {
-        await options.operatorSessionRevoker(coreSessionId);
+        try {
+          await options.operatorSessionRevoker(coreSessionId);
+        } catch (error) {
+          request.log.warn({ err: error }, "core operator-session revocation failed during logout");
+        }
       }
       sessions.revoke(request.verifiedSessionId!);
       reply.clearCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);

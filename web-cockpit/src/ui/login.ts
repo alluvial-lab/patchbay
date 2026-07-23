@@ -25,9 +25,6 @@ export function waitForOperatorLogin(
 
   const form = document.createElement("form");
   form.className = "login-form";
-  const actorField = field(document, "Operator actor id", "text", "username");
-  actorField.input.name = "actorId";
-  actorField.input.autocomplete = "username";
   const passwordField = field(document, "Password", "password", "current-password");
   passwordField.input.name = "password";
   passwordField.input.autocomplete = "current-password";
@@ -41,11 +38,11 @@ export function waitForOperatorLogin(
   submit.className = "btn btn-primary btn--lg";
   submit.type = "submit";
   submit.textContent = "Sign in";
-  form.append(actorField.element, passwordField.element, error, submit);
+  form.append(passwordField.element, error, submit);
   card.append(title, description, form);
   section.append(card);
   mount.replaceChildren(section);
-  actorField.input.focus();
+  passwordField.input.focus();
 
   return new Promise<void>((resolve) => {
     form.addEventListener("submit", (event) => {
@@ -61,10 +58,7 @@ export function waitForOperatorLogin(
               accept: "application/json",
               "content-type": "application/json",
             },
-            body: JSON.stringify({
-              actorId: actorField.input.value,
-              password: passwordField.input.value,
-            }),
+            body: JSON.stringify({ password: passwordField.input.value }),
           });
           if (!response.ok) {
             throw new Error(await loginFailureMessage(response));

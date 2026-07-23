@@ -86,6 +86,58 @@ test("login verifies the core-owned operator record and installs the web princip
   await fixture.app.close();
 });
 
+test("an unauthenticated core RPC invalidates the corresponding browser session", async () => {
+  const fixture = makeFixture({
+    submitError: new ConnectError("operator session expired", Code.Unauthenticated),
+  });
+  const session = fixture.sessions.create(operatorActorId, "dead-core-session");
+  const cookie = `${SESSION_COOKIE_NAME}=${session.sessionId}`;
+
+  const command = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/Submit",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie,
+      [CSRF_HEADER_NAME]: session.csrfSecret,
+    },
+    payload: submitFrame("browser-claim"),
+  });
+  assert.equal(command.statusCode, 200);
+  assert.match(command.body, /grpc-status: 16/);
+  assert.equal(fixture.sessions.lookup(session.sessionId), null);
+
+  const nextCsrf = await fixture.app.inject({
+    method: "GET",
+    url: "/csrf-token",
+    headers: { cookie },
+  });
+  assert.equal(nextCsrf.statusCode, 401);
+  await fixture.app.close();
+});
+
+test("logout clears the browser session when core revocation fails", async () => {
+  const fixture = makeFixture({
+    revokeError: new ConnectError("core unavailable", Code.Unavailable),
+  });
+  const session = fixture.sessions.create(operatorActorId, "dead-core-session");
+
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/logout",
+    headers: {
+      cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+      [CSRF_HEADER_NAME]: session.csrfSecret,
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { loggedOut: true });
+  assert.equal(fixture.sessions.lookup(session.sessionId)?.status, "revoked");
+  assert.match(String(response.headers["set-cookie"]), /Max-Age=0/);
+  await fixture.app.close();
+});
+
 test("CsrfRejectsUnauthenticated: no cookie returns 401 before a core call", async () => {
   const fixture = makeFixture();
   const response = await fixture.app.inject({
@@ -236,15 +288,16 @@ test("CSRF token issuance and LoadSnapshot are authenticated reads without CSRF"
   }
 });
 
-function makeFixture(): {
+function makeFixture(options: { submitError?: unknown; revokeError?: unknown } = {}): {
   app: ReturnType<typeof buildApp>;
   sessions: SessionStore;
   calls: CoreCall[];
 } {
   const calls: CoreCall[] = [];
   const coreClient: CoreClient = {
-    async submit(request, options) {
-      calls.push({ method: "submit", request, headers: callHeaders(options) });
+    async submit(request, callOptions) {
+      calls.push({ method: "submit", request, headers: callHeaders(callOptions) });
+      if (options.submitError !== undefined) throw options.submitError;
       return create(SubmissionResultSchema, { outcome: SubmissionOutcome.ACCEPTED });
     },
     async *subscribe(request, options) {
@@ -282,12 +335,13 @@ function makeFixture(): {
         },
       });
     },
-    async revokeOperatorSession(_request, options) {
+    async revokeOperatorSession(_request, callOptions) {
       calls.push({
         method: "revokeOperatorSession",
         request: {},
-        headers: callHeaders(options),
+        headers: callHeaders(callOptions),
       });
+      if (options.revokeError !== undefined) throw options.revokeError;
       return create(RevokeOperatorSessionResultSchema, { revoked: true });
     },
     async enrollControlSurfacePrincipal() {

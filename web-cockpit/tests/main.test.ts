@@ -63,8 +63,8 @@ test("an unauthenticated startup renders login and proceeds after successful aut
     assert.equal(String(input), "/login");
     assert.equal(init?.method, "POST");
     loginRequests += 1;
-    const body = JSON.parse(String(init?.body)) as { actorId: string; password: string };
-    assert.deepEqual(body, { actorId: "operator-primary", password: "correct-password" });
+    const body = JSON.parse(String(init?.body)) as { password: string };
+    assert.deepEqual(body, { password: "correct-password" });
     return loginRequests === 1
       ? new Response(JSON.stringify({ error: "invalid_credentials" }), {
           status: 401,
@@ -83,9 +83,8 @@ test("an unauthenticated startup renders login and proceeds after successful aut
     isMobile: () => false,
   });
   const form = await waitForElement<HTMLFormElement>(dom, ".login-form");
-  const actor = dom.window.document.querySelector<HTMLInputElement>('input[name="actorId"]')!;
+  assert.equal(dom.window.document.querySelector('input[name="actorId"]'), null);
   const password = dom.window.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-  actor.value = "operator-primary";
   password.value = "correct-password";
   form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
 

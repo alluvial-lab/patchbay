@@ -88,6 +88,11 @@ export class SessionStore {
     return true;
   }
 
+  /** Removes a browser session whose core-side authority no longer exists. */
+  invalidate(sessionId: string): boolean {
+    return this.#sessions.delete(sessionId);
+  }
+
   revokeAllForOperator(operatorActorId: string): number {
     let revoked = 0;
     for (const session of this.#sessions.values()) {
