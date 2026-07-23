@@ -14,16 +14,17 @@ import {
   ActorIdSchema,
   AdapterIdSchema,
   AdapterRegistrationSchema,
+  AdminService,
   AuthorityDomainIdSchema,
+  BootstrapRequestSchema,
   CommandIdSchema,
   CommandTransitionSchema,
   ControlService,
+  DeviceIdSchema,
+  EndpointIdSchema,
   FailureCode,
   GenerationSchema,
-  GrantProvenanceSchema,
-  GrantRevocationPolicy,
-  GrantSchema,
-  GrantIdSchema,
+  LoadSnapshotRequestSchema,
   LsnSchema,
   ObservationKind,
   ObservationSchema,
@@ -32,8 +33,10 @@ import {
   OperationSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PrincipalEnrollmentSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
+  SessionSnapshotSchema,
   SessionStateEventSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
@@ -41,6 +44,8 @@ import {
   SubscribeRequestSchema,
   TargetScopeKind,
   TargetScopeSchema,
+  VerifyOperatorPasswordRequestSchema,
+  type PrincipalCredential,
   type StoredEventPayload,
 } from "@patchbay/contracts";
 import {
@@ -58,6 +63,9 @@ const coreSecret = "e2e-core-secret";
 const adapterEvidence = "e2e-adapter-secret";
 const domainId = "authority-e2e";
 const operatorId = "operator-e2e";
+const operatorPassword = "correct-password";
+const operatorPasswordHash =
+  "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g";
 const adapterId = "pi";
 const runtimeSessionId = "session-e2e";
 const deploymentScope = "machine-e2e";
@@ -65,16 +73,24 @@ const deploymentScope = "machine-e2e";
 // The test is deliberately serial: it owns one core process and one SQLite fixture.
 test("core → adapter → real AgentSession → observation loop, generation bump, and reconnect", { timeout: 60_000 }, async () => {
   const port = await freePort();
+  let adminPort = await freePort();
+  while (adminPort === port) adminPort = await freePort();
   mkdirSync(join(repoRoot, "tmp"), { recursive: true });
   const directory = mkdtempSync(join(repoRoot, "tmp", "pi-adapter-e2e-"));
   const databasePath = join(directory, "core.sqlite3");
-  const core = startCore(port, databasePath);
+  const core = startCore(port, adminPort, databasePath);
   let adapter: AdapterProcess | undefined;
   let reconnect: AdapterProcess | undefined;
 
   try {
-    await waitForCore(port, core);
+    const setupSecret = await waitForCore(port, core);
     const baseUrl = `http://127.0.0.1:${port}`;
+    const auth = await bootstrapAndLogin(
+      baseUrl,
+      `http://127.0.0.1:${adminPort}`,
+      setupSecret,
+    );
+    const control = makeControlClient(baseUrl, auth);
     const sessionFixture = createSessionFixture(1);
     const configured: PreprovisionedSession = {
       cwd: repoRoot,
@@ -97,7 +113,19 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     // has no separate immutable pre-provisioned configuration dependency.
     await adapter.registerSession(configured);
 
-    const attachedEvents = await readAfter(makeControlClient(baseUrl), 0n);
+    const loadedSnapshot = await control.loadSnapshot(
+      create(LoadSnapshotRequestSchema, {
+        authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+      }),
+    );
+    assert.equal(loadedSnapshot.present, true);
+    const snapshot = fromBinary(SessionSnapshotSchema, loadedSnapshot.snapshotPayload);
+    assert.equal(snapshot.authorityDomainId?.value, domainId);
+    assert.equal(snapshot.snapshotLsn?.value, loadedSnapshot.eventId?.lsn?.value);
+    assert.equal(snapshot.sessions.length, 1);
+    assert.equal(snapshot.sessions[0]?.runtimeSessionId?.value, runtimeSessionId);
+
+    const attachedEvents = await readAfter(control, 0n);
     const manifest = attachedEvents
       .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
       .map((payload) => fromBinary(ObservationSchema, payload.payload))
@@ -118,8 +146,6 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       false,
     );
 
-    seedOperatorGrant(databasePath, 1);
-    const control = makeControlClient(baseUrl);
     const accepted = await control.submit(
       create(SubmitRequestSchema, {
         operation: operation("command-instruct", OperationKind.INSTRUCT, "hello from Patchbay"),
@@ -156,7 +182,6 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.equal(await adapter.pollOnce(), 1);
     const generationEvents = await readAfter(control, sessionNew.acceptedLsn?.value ?? 0n);
     assert.ok(generationEvents.some(isGenerationTwo));
-    seedOperatorGrant(databasePath, 2);
 
     const query = await control.submit(
       create(SubmitRequestSchema, {
@@ -327,7 +352,7 @@ function createSessionFixture(generation: number, seedSnapshot = false) {
   };
 }
 
-function startCore(port: number, databasePath: string): ChildProcess {
+function startCore(port: number, adminPort: number, databasePath: string): ChildProcess {
   execFileSync("cargo", ["build", "-p", "patchbay-core-server"], {
     cwd: repoRoot,
     env: {
@@ -344,47 +369,12 @@ function startCore(port: number, databasePath: string): ChildProcess {
       PATCHBAY_CORE_SECRET: coreSecret,
       PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterEvidence,
       PATCHBAY_BIND_ADDR: `127.0.0.1:${port}`,
+      PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
       PATCHBAY_DB_PATH: databasePath,
       PATCHBAY_AUTHORITY_DOMAIN_ID: domainId,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-}
-
-function seedOperatorGrant(databasePath: string, generation: number): void {
-  const database = new DatabaseSync(databasePath);
-  try {
-    const grant = create(GrantSchema, {
-      grantId: create(GrantIdSchema, { value: `e2e-grant-${generation}` }),
-      authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
-      subjectActorId: create(ActorIdSchema, { value: operatorId }),
-      targetScope: targetScope(generation),
-      allowedOperationKinds: [
-        OperationKind.INSTRUCT,
-        OperationKind.CANCEL,
-        OperationKind.SESSION_MANAGEMENT,
-        OperationKind.QUERY,
-        OperationKind.SPAWN,
-      ],
-      provenance: create(GrantProvenanceSchema, { reason: "Pi adapter e2e fixture" }),
-      revocationPolicy: GrantRevocationPolicy.CONTINUE,
-    });
-    database
-      .prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)")
-      .run(
-        domainId,
-        StoredEventKind.GRANT,
-        toBinary(
-          StoredEventPayloadSchema,
-          create(StoredEventPayloadSchema, {
-            kind: StoredEventKind.GRANT,
-            payload: toBinary(GrantSchema, grant),
-          }),
-        ),
-      );
-  } finally {
-    database.close();
-  }
 }
 
 function operation(
@@ -419,11 +409,66 @@ function targetScope(generation: number) {
   });
 }
 
-function makeControlClient(baseUrl: string) {
+interface ControlAuth {
+  principal: PrincipalCredential;
+  operatorSessionId: string;
+}
+
+async function bootstrapAndLogin(
+  baseUrl: string,
+  adminBaseUrl: string,
+  setupSecret: string,
+): Promise<ControlAuth> {
+  const enrollment = (endpoint: string) =>
+    create(PrincipalEnrollmentSchema, {
+      endpointId: create(EndpointIdSchema, { value: endpoint }),
+      deviceId: create(DeviceIdSchema, { value: "pi-adapter-e2e-device" }),
+      endpointGeneration: create(GenerationSchema, { value: 1n }),
+    });
+  const admin = createClient(
+    AdminService,
+    createGrpcTransport({ baseUrl: adminBaseUrl }),
+  );
+  const bootstrap = await admin.bootstrapOperator(
+    create(BootstrapRequestSchema, {
+      setupSecret,
+      operatorActorId: create(ActorIdSchema, { value: operatorId }),
+      passwordHash: operatorPasswordHash,
+      principal: enrollment("pi-adapter-e2e-bootstrap"),
+    }),
+  );
+  assert.ok(bootstrap.grantId?.value, "bootstrap creates the authority grant");
+
+  const coreAuthenticate: Interceptor = (next) => async (request) => {
+    request.header.set("x-patchbay-core-secret", coreSecret);
+    return next(request);
+  };
+  const control = createClient(
+    ControlService,
+    createGrpcTransport({ baseUrl, interceptors: [coreAuthenticate] }),
+  );
+  const login = await control.verifyOperatorPassword(
+    create(VerifyOperatorPasswordRequestSchema, {
+      operatorActorId: create(ActorIdSchema, { value: operatorId }),
+      password: operatorPassword,
+      principal: enrollment("pi-adapter-e2e-control"),
+    }),
+  );
+  assert.ok(login.principal, "password verification enrolls a transport principal");
+  assert.ok(login.operatorSessionId?.value, "password verification issues an operator session");
+  return {
+    principal: login.principal,
+    operatorSessionId: login.operatorSessionId.value,
+  };
+}
+
+function makeControlClient(baseUrl: string, auth: ControlAuth) {
   const authenticate: Interceptor = (next) => async (request) => {
     request.header.set("x-patchbay-core-secret", coreSecret);
-    request.header.set("x-patchbay-operator-session-id", "e2e-session");
+    request.header.set("x-patchbay-principal-id", auth.principal.principalId);
+    request.header.set("x-patchbay-principal-secret", auth.principal.secret);
     request.header.set("x-patchbay-operator-id", operatorId);
+    request.header.set("x-patchbay-operator-session-id", auth.operatorSessionId);
     return next(request);
   };
   return createClient(
@@ -527,23 +572,34 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-async function waitForCore(port: number, child: ChildProcess): Promise<void> {
+async function waitForCore(port: number, child: ChildProcess): Promise<string> {
+  let stdout = "";
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`core exited before startup: ${child.exitCode}`);
-    try {
-      await new Promise<void>((resolveConnect, rejectConnect) => {
-        const socket = new Socket();
-        socket.once("error", rejectConnect);
-        socket.connect(port, "127.0.0.1", () => {
-          socket.destroy();
-          resolveConnect();
+    const setupSecret = stdout.match(
+      /one-time setup secret \(expires in \d+s\): ([A-Za-z0-9_-]+)/,
+    )?.[1];
+    if (setupSecret) {
+      try {
+        await new Promise<void>((resolveConnect, rejectConnect) => {
+          const socket = new Socket();
+          socket.once("error", rejectConnect);
+          socket.connect(port, "127.0.0.1", () => {
+            socket.destroy();
+            resolveConnect();
+          });
         });
-      });
-      return;
-    } catch {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+        return setupSecret;
+      } catch {
+        // The process has printed startup metadata but has not bound yet.
+      }
     }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
   }
-  throw new Error("core did not start before timeout");
+  throw new Error(`core did not start before timeout: ${stdout}`);
 }
