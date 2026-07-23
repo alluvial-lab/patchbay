@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: review
+stage: implementing
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -137,6 +137,27 @@ Two parallel fix workers (disjoint write sets; orchestrator verified + committed
 Final integration verification (orchestrator, post-wave): Rust workspace all suites green; pi-adapter 6/6; web-cockpit 38/38; web-server 21/21 + core-smoke; cli 16/16 + core-smoke; composed e2e passes; contracts vectors + presentation + models green.
 
 Epic re-advanced `implementing → review` for pass 2 (adversarial).
+
+## Review outcome — Pass 2 (2026-07-23, adversarial, gpt-5.6-sol): Request changes → implementing
+
+Maximum-weight pass 2 (adversarial attack, fresh-context `gpt-5.6-sol` — cross-model vs the K3 complementary reviewer). Verdict: **Request changes** — 4 receiver-confirmed blockers (all verified by the orchestrator against code), 3 important findings, 1 nit, and a clean list of rejected attacks (the credential-binding, loopback-bypass, HTML-injection, throttle-enumeration, and future-kind-leak attacks all failed — the boundary held). Epic bounced `review → implementing` for the corrective wave.
+
+### Blockers (verified by orchestrator)
+
+1. **B1 — trust-boundary filter + B2/B3 fixes wedge the cockpit** (`server/src/service.rs:207` filter × `web-cockpit/src/domain/reconcile.ts:131`): the filter intentionally keeps dropped auth records' LSNs as cursor gaps; the cockpit treats every gap as loss, demands a bounded snapshot, B2's current materialized snapshot always exceeds the bound → rejected → replay hits the same holes → permanently unreconciled → composer locked. Fix (cockpit-local): on gap, adopt the current materialized snapshot (authoritative sessions) + replay the visible prefix (visible kinds are never filtered) + advance cursor.
+2. **B2 — stale adapter generation stays authenticated** (`server/src/adapter_service.rs:61`): `verify_request` checks only the shared attachment secret + caller-supplied adapter id — no binding to the registered generation. The `stale adapter generation` error variant exists (`core/src/adapter/mod.rs:388`) but is never enforced in the auth path. Fix: bind requests to the registered generation; reject stale.
+3. **B3a — delivery-ack ordering rots commands at `delivered`** (`core/src/adapter/mod.rs:278` × `server/src/adapter_service.rs:333`): the ack commits `accepted→delivered` before the RPC completes; `ReceiveDeliveries` offers only `accepted`. A crash between commit and response leaves the command `delivered`-never-executed with no redelivery. OPERATOR DECISION (Q1a): redelivery also offers `delivered`-but-not-`running` (bounded; adapter re-polls and re-executes idempotently).
+4. **B3b — no adapter-liveness mechanism** (adapter death → core presents `live/working` forever; stale-never-live violated). OPERATOR DECISION (Q2a): fix now via the connection-liveness signal — mark the adapter's sessions stale when its gRPC stream drops; refresh on re-attach.
+5. **B4 — non-loopback plaintext core transport** (`server/src/main.rs:37`): the general listener allows non-loopback binds serving h2c — every bearer trust root crosses plaintext. OPERATOR DECISION (Q3a): constrain the general listener to loopback in v0.1.0 (refuse non-loopback binds, like the admin listener); split-deploy + TLS is a documented fast-follower.
+
+### Important (fix wave / parked)
+
+- **I1 — revocation/authorization lifecycle partially exposed** (`control.proto:20`, `core/src/authority/state.rs:45`): only current-session revocation; no revoke-all/endpoint/device/grant revocation, no lockdown surface, grant expiration ignored, no Subscribe grant check. Exploitability limited in single-operator (one permanent bootstrap grant, no public grant-admin path). **Parked** as a fast-follower backlog item (security surface, not a single-operator-exploitable defect today).
+- **I2 — forged sender identity persists** (`core/src/acceptance/pipeline.rs:39`): `Operation.sender` retained as audit data, not normalized to the verified issuer. Fix in wave: core normalizes sender from the verified issuer (mirrors the web-server's overwrite).
+- **I3 — core restart strands browser sessions** (`web-server/src/routes/login.ts:97`): web-server session survives while the core session dies; cockpit doesn't show login and logout also fails. Fix in wave: web-server invalidates its session on dead-core-session RPC failure; logout clears the local session even if core revocation fails.
+
+### Nit
+- Login view submits an actor ID the route ignores (misleading field) — folded into the I3 login fix.
 
 ## Stage correction (2026-07-14)
 
