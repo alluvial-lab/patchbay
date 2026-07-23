@@ -175,6 +175,14 @@ impl SessionRegistry {
         })
     }
 
+    /// Iterate over the authoritative live-session projection.
+    ///
+    /// Callers that serialize the records must impose a stable order because
+    /// the registry's hash-map layout is intentionally not protocol state.
+    pub fn sessions(&self) -> impl Iterator<Item = &SessionRecord> {
+        self.sessions.values()
+    }
+
     /// Look up the live record matching all four identity fields.
     #[must_use]
     pub fn get_session(&self, identity: &SessionIdentity) -> Option<&SessionRecord> {

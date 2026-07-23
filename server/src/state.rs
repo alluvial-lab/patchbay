@@ -2,7 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
-    Grant, GrantId, Lsn, OperationKind, OperatorRecord, TargetScope,
+    Grant, GrantId, Lsn, OperationKind, OperatorRecord, Session, SessionSnapshot, TargetScope,
+    TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
     acceptance::{
@@ -118,6 +119,79 @@ impl ProjectionState {
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
         self.submit_gate.lock().await
+    }
+
+    /// Materialize the authoritative live-session projection at its applied LSN.
+    ///
+    /// The cursor lock is acquired before the session lock, matching
+    /// `catch_up`, so the returned records and `snapshot_lsn` describe one
+    /// consistent projection prefix. Durable snapshot checkpointing remains a
+    /// separate, deferred concern.
+    pub async fn materialize_session_snapshot(
+        &self,
+        authority_domain_id: AuthorityDomainId,
+        materialized_at: prost_types::Timestamp,
+    ) -> SessionSnapshot {
+        let cursor = self.last_applied_lsn.lock().await;
+        let registry = self.target_resolver.inner.lock().await;
+        let mut sessions: Vec<_> = registry.sessions().cloned().collect();
+        sessions.sort_by(|left, right| {
+            (
+                &left.identity.adapter_id.value,
+                &left.identity.deployment_scope,
+                &left.identity.runtime_session_id.value,
+                left.identity.session_generation.value,
+            )
+                .cmp(&(
+                    &right.identity.adapter_id.value,
+                    &right.identity.deployment_scope,
+                    &right.identity.runtime_session_id.value,
+                    right.identity.session_generation.value,
+                ))
+        });
+        let sessions: Vec<Session> = sessions
+            .into_iter()
+            .map(|record| Session {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                adapter_id: Some(record.identity.adapter_id),
+                deployment_scope: record.identity.deployment_scope,
+                runtime_session_id: Some(record.identity.runtime_session_id),
+                session_generation: Some(record.identity.session_generation),
+                project: record.project,
+                cwd: record.cwd,
+                name: record.name,
+                state: Some(record.state),
+                last_authoritative_lsn: record.last_authoritative_lsn.map(|value| Lsn { value }),
+                observed_at: None,
+                tombstoned: record.tombstoned,
+                superseded_at_lsn: record.superseded_at_lsn.map(|value| Lsn { value }),
+            })
+            .collect();
+        let view_revisions = sessions
+            .iter()
+            .map(|session| ViewRevision {
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::RuntimeSession as i32,
+                    adapter_id: session.adapter_id.clone(),
+                    deployment_scope: session.deployment_scope.clone(),
+                    runtime_session_id: session.runtime_session_id.clone(),
+                    session_generation: session.session_generation,
+                    ..TargetScope::default()
+                }),
+                revision_lsn: session.last_authoritative_lsn,
+            })
+            .collect();
+
+        SessionSnapshot {
+            authority_domain_id: Some(authority_domain_id),
+            snapshot_lsn: Some(Lsn { value: *cursor }),
+            // Core-generation persistence is a reserved seam in the current
+            // executable slice; do not fabricate one on this read path.
+            core_generation: None,
+            sessions,
+            view_revisions,
+            materialized_at: Some(materialized_at),
+        }
     }
 
     /// Fold newly committed events into every server-owned projection.

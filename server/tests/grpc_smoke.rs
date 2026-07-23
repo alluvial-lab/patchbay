@@ -11,9 +11,9 @@ use patchbay_contracts::patchbay::{
     ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, Generation, Grant, GrantId,
     GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn, Operation,
     OperationKind, OperationState, OperatorRecord, PrincipalEnrollment, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, SubscribeRequest,
-    TargetScope, TargetScopeKind, VerifyOperatorPasswordRequest,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
+    SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest,
+    SubscribeRequest, TargetScope, TargetScopeKind, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
@@ -34,6 +34,7 @@ use patchbay_core_server::{
         map_storage_error_to_status, ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER,
     },
 };
+use prost::Message;
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -239,7 +240,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         "subscribe must return only events with LSN greater than the cursor and complete"
     );
 
-    let empty_snapshot = server
+    let materialized_snapshot = server
         .client
         .load_snapshot(authenticated_request(
             LoadSnapshotRequest {
@@ -252,9 +253,36 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         .await
         .expect("snapshot lookup must complete")
         .into_inner();
-    assert!(!empty_snapshot.present);
-    assert!(empty_snapshot.event_id.is_none());
-    assert!(empty_snapshot.snapshot_payload.is_empty());
+    // The service used to report `present: false` because production never
+    // wrote durable checkpoints. A missing durable checkpoint now falls back
+    // to the authoritative rebuilt session projection.
+    assert!(materialized_snapshot.present);
+    let materialized = SessionSnapshot::decode(materialized_snapshot.snapshot_payload.as_slice())
+        .expect("read-materialized snapshot must be valid protobuf");
+    assert_eq!(materialized.authority_domain_id, Some(domain()));
+    assert_eq!(materialized.sessions.len(), 1);
+    assert_eq!(
+        materialized.sessions[0]
+            .runtime_session_id
+            .as_ref()
+            .map(|id| id.value.as_str()),
+        Some("session-1")
+    );
+    assert_eq!(
+        materialized.snapshot_lsn,
+        materialized_snapshot
+            .event_id
+            .as_ref()
+            .and_then(|event_id| event_id.lsn)
+    );
+    assert_eq!(materialized.snapshot_lsn, accepted.accepted_lsn);
+    assert_eq!(
+        materialized.sessions[0].state,
+        Some(SessionState {
+            connectivity: SessionConnectivityState::Live as i32,
+            activity: SessionActivityState::Idle as i32,
+        })
+    );
 
     let accepted_lsn = accepted
         .accepted_lsn

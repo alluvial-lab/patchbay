@@ -61,7 +61,12 @@ try {
       },
     },
   );
-  assert.equal(response.present, false);
+  // The materialize-on-read fix (epic review B2) means LoadSnapshot now returns
+  // a live snapshot built from the caught-up projection even when no durable
+  // checkpoint exists. A freshly-bootstrapped core has zero sessions, so the
+  // snapshot is present with an empty sessions list (previously present === false).
+  assert.equal(response.present, true);
+  assert.ok(response.snapshotPayload);
   console.log("core client reached patchbay-core-server with authenticated metadata");
 } finally {
   core.kill("SIGTERM");

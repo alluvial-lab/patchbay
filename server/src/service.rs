@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
-    EnrollControlSurfacePrincipalResult, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
+    EnrollControlSurfacePrincipalResult, EventId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
     RevokeOperatorSessionRequest, RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome,
     SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
@@ -12,6 +12,7 @@ use patchbay_core::{
     authority::{IssuerContext, OperatorError},
     storage::{RecordedEvent, Storage, StorageError},
 };
+use prost::Message;
 use tokio_stream::{self as stream, Stream};
 use tonic::{service::Interceptor, Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
@@ -217,24 +218,52 @@ where
         MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
             .await?;
         let request = request.into_inner();
-        let snapshot = self
+
+        // Snapshot reads share the submission gate and catch-up ordering so a
+        // caller never observes a projection behind an already committed
+        // event. If no durable checkpoint exists, serve the current rebuilt
+        // session projection directly; this deliberately does not write into
+        // the still-undiscriminated durable snapshot namespace.
+        let _submit_guard = self.state.submit_guard().await;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        if let Some(snapshot) = self
             .storage
             .load_latest_snapshot(&authority_domain_id, request.at_or_before)
             .await
-            .map_err(map_storage_error_to_status)?;
-        let response = snapshot.map_or(
-            LoadSnapshotResponse {
-                present: false,
-                event_id: None,
-                snapshot_payload: Vec::new(),
-            },
-            |snapshot| LoadSnapshotResponse {
+            .map_err(map_storage_error_to_status)?
+        {
+            return Ok(Response::new(LoadSnapshotResponse {
                 present: true,
                 event_id: Some(snapshot.event_id),
                 snapshot_payload: snapshot.payload,
-            },
-        );
-        Ok(Response::new(response))
+            }));
+        }
+
+        // A historical at_or_before bound cannot be reconstructed from the
+        // current hot projection. Returning the newer current authoritative
+        // view follows the protocol's stale-snapshot repair rule rather than
+        // reporting an empty deployment.
+        let snapshot = self
+            .state
+            .materialize_session_snapshot(
+                authority_domain_id.clone(),
+                crate::identity::now_timestamp()?,
+            )
+            .await;
+        let snapshot_lsn = snapshot
+            .snapshot_lsn
+            .ok_or_else(|| Status::internal("materialized session snapshot has no LSN"))?;
+        Ok(Response::new(LoadSnapshotResponse {
+            present: true,
+            event_id: Some(EventId {
+                authority_domain_id: Some(authority_domain_id),
+                lsn: Some(snapshot_lsn),
+            }),
+            snapshot_payload: snapshot.encode_to_vec(),
+        }))
     }
 
     async fn verify_operator_password(
