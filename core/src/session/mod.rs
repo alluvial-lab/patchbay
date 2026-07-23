@@ -16,7 +16,8 @@ pub mod state;
 
 pub use events::SessionStateEvent;
 pub use ingest::{
-    ingest_session_report, IngestResult, SessionLookup, SessionProjection, SessionReport,
+    ingest_session_report, mark_adapter_sessions_stale, IngestResult, SessionLookup,
+    SessionProjection, SessionReport,
 };
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;

@@ -365,6 +365,66 @@ where
     }
 }
 
+/// Durably degrade every live session owned by an abnormally disconnected adapter.
+///
+/// The degradation is expressed as ordinary adapter-style session reports, so
+/// disconnect handling and live adapter observations share the canonical
+/// connectivity transition writer. A single rebuilt projection is installed
+/// after the append batch; if a partial append fails, that committed prefix is
+/// still rebuilt before the error is returned.
+pub async fn mark_adapter_sessions_stale<S: Storage>(
+    storage: &S,
+    registry: &mut SessionRegistry,
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+) -> Result<Vec<EventId>, SessionError> {
+    let reports: Vec<_> = registry
+        .sessions()
+        .filter(|record| {
+            record.identity.adapter_id == *adapter_id
+                && record.state.connectivity() != SessionConnectivityState::Stale
+        })
+        .map(|record| SessionReport {
+            authority_domain_id: authority_domain_id.clone(),
+            adapter_id: record.identity.adapter_id.clone(),
+            deployment_scope: record.identity.deployment_scope.clone(),
+            runtime_session_id: record.identity.runtime_session_id.clone(),
+            session_generation: record.identity.session_generation,
+            connectivity: SessionConnectivityState::Stale,
+            activity: record.state.activity(),
+            project: record.project.clone(),
+            cwd: record.cwd.clone(),
+            name: record.name.clone(),
+            spawn_origin: None,
+        })
+        .collect();
+
+    let mut event_ids = Vec::with_capacity(reports.len());
+    let mut ingest_error = None;
+    for report in reports {
+        match ingest_session_report(storage, registry, report).await {
+            Ok(IngestResult::ConnectivityChanged { event_id, .. }) => event_ids.push(event_id),
+            Ok(IngestResult::NoChange) => {}
+            Ok(other) => {
+                ingest_error = Some(SessionError::CorruptLog(format!(
+                    "stale connectivity report produced unexpected result {other:?}"
+                )));
+                break;
+            }
+            Err(error) => {
+                ingest_error = Some(error);
+                break;
+            }
+        }
+    }
+
+    *registry = super::rebuild_from_log(storage, authority_domain_id).await?;
+    if let Some(error) = ingest_error {
+        return Err(error);
+    }
+    Ok(event_ids)
+}
+
 async fn append_and_warm<S, L>(
     storage: &S,
     session_lookup: &mut L,

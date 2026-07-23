@@ -214,7 +214,9 @@ pub async fn ingest_registration<S: Storage>(
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeliveryAcknowledgementResult {
     pub observation_event_id: EventId,
-    pub transition_event_id: EventId,
+    /// Absent when a redelivered command is idempotently re-acknowledged in
+    /// the already-delivered state.
+    pub transition_event_id: Option<EventId>,
 }
 
 #[must_use]
@@ -227,10 +229,10 @@ pub fn is_delivery_acknowledgement(observation: &Observation) -> bool {
 
 /// Durably acknowledge that an attached adapter accepted one Operation for delivery.
 ///
-/// The acknowledgement commits the canonical `accepted -> delivered` transition and
-/// records the adapter's audit Observation. The core's command projection therefore owns
-/// the resumable delivery checkpoint: an adapter restart may scan from LSN 0 without
-/// re-offering commands that already crossed this durable boundary.
+/// The first acknowledgement commits the canonical `accepted -> delivered` transition and
+/// records the adapter's audit Observation. A delivered command that has not advanced to
+/// running or terminal remains eligible for re-delivery; its repeated acknowledgement records
+/// audit evidence without appending a second lifecycle transition.
 pub async fn ingest_delivery_acknowledgement<S: Storage>(
     storage: &S,
     commands: &CommandIndex,
@@ -258,9 +260,12 @@ pub async fn ingest_delivery_acknowledgement<S: Storage>(
             command_id
         ))
     })?;
-    if record.state != OperationState::Accepted {
+    if !matches!(
+        record.state,
+        OperationState::Accepted | OperationState::Delivered
+    ) {
         return Err(AdapterError::InvalidDeliveryAcknowledgement(format!(
-            "command {:?} is {:?}, not accepted",
+            "command {:?} is {:?}, not accepted or delivered",
             command_id, record.state
         )));
     }
@@ -276,25 +281,33 @@ pub async fn ingest_delivery_acknowledgement<S: Storage>(
     }
 
     // Commit the lifecycle checkpoint first. If the following audit Observation
-    // append fails, recovery still sees `delivered` and cannot re-execute the
-    // Operation. The adapter receives an RPC error and does not begin execution.
-    let transition_event_id = storage
-        .append(
-            authority_domain_id,
-            StoredEventPayload {
-                kind: StoredEventKind::CommandTransition as i32,
-                payload: CommandTransition {
-                    command_id: Some(command_id),
-                    from_state: OperationState::Accepted as i32,
-                    to_state: OperationState::Delivered as i32,
-                    failure_code: FailureCode::Unspecified as i32,
-                    correlations: observation.correlations.clone(),
-                    ..Default::default()
-                }
-                .encode_to_vec(),
-            },
+    // append fails, recovery still sees `delivered`; the delivery filter then
+    // re-offers that non-running command so the adapter can re-acknowledge it
+    // and begin execution. A re-ack is a no-op, never a delivered -> delivered
+    // transition.
+    let transition_event_id = if record.state == OperationState::Accepted {
+        Some(
+            storage
+                .append(
+                    authority_domain_id,
+                    StoredEventPayload {
+                        kind: StoredEventKind::CommandTransition as i32,
+                        payload: CommandTransition {
+                            command_id: Some(command_id),
+                            from_state: OperationState::Accepted as i32,
+                            to_state: OperationState::Delivered as i32,
+                            failure_code: FailureCode::Unspecified as i32,
+                            correlations: observation.correlations.clone(),
+                            ..Default::default()
+                        }
+                        .encode_to_vec(),
+                    },
+                )
+                .await?,
         )
-        .await?;
+    } else {
+        None
+    };
     let observation_event_id = storage
         .append(
             authority_domain_id,

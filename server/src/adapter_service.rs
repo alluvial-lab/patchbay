@@ -1,4 +1,9 @@
-use std::{pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use patchbay_contracts::patchbay::{
     observation_request, AdapterId, AttachRequest, AttachResult, AuthorityDomainId, Delivery,
@@ -104,6 +109,7 @@ pub struct AdapterControlServiceImpl<S> {
     adapters: Arc<Mutex<AdapterRegistry>>,
     commands: Arc<Mutex<CommandIndex>>,
     sessions: Arc<Mutex<SessionRegistry>>,
+    delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
 }
 
 impl<S> AdapterControlServiceImpl<S>
@@ -134,6 +140,7 @@ where
             adapters: Arc::new(Mutex::new(adapters)),
             commands: Arc::new(Mutex::new(commands)),
             sessions: Arc::new(Mutex::new(sessions)),
+            delivery_stream_epochs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -162,6 +169,56 @@ where
 }
 
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
+type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
+
+/// A finite delivery tail is healthy only once the transport polls it to
+/// completion. Dropping it early (or producing an error item) is the server's
+/// connection-liveness signal for an abnormal adapter disconnect.
+struct DeliveryTail {
+    inner: DeliveryStream,
+    on_abnormal_disconnect: Option<DisconnectCallback>,
+}
+
+impl DeliveryTail {
+    fn new(inner: DeliveryStream, on_abnormal_disconnect: DisconnectCallback) -> Self {
+        Self {
+            inner,
+            on_abnormal_disconnect: Some(on_abnormal_disconnect),
+        }
+    }
+
+    fn mark_abnormal_disconnect(&mut self) {
+        if let Some(callback) = self.on_abnormal_disconnect.take() {
+            callback();
+        }
+    }
+}
+
+impl Stream for DeliveryTail {
+    type Item = Result<Delivery, Status>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(context) {
+            Poll::Ready(None) => {
+                // The adapter consumed the complete durable tail. This is the
+                // normal v0.1.0 polling completion, not a disconnect signal.
+                self.on_abnormal_disconnect.take();
+                Poll::Ready(None)
+            }
+            result @ Poll::Ready(Some(Err(_))) => {
+                self.mark_abnormal_disconnect();
+                result
+            }
+            result => result,
+        }
+    }
+}
+
+impl Drop for DeliveryTail {
+    fn drop(&mut self) {
+        self.mark_abnormal_disconnect();
+    }
+}
 
 #[tonic::async_trait]
 impl<S> AdapterControlService for AdapterControlServiceImpl<S>
@@ -299,6 +356,14 @@ where
         let request = request.into_inner();
         require_same_adapter(request.adapter_id.as_ref(), &authenticated_adapter)?;
         let domain = self.require_attached(&authenticated_adapter).await?;
+        let stream_epoch = {
+            let mut epochs = self.delivery_stream_epochs.lock().await;
+            let epoch = epochs.entry(authenticated_adapter.clone()).or_default();
+            *epoch = epoch
+                .checked_add(1)
+                .ok_or_else(|| Status::internal("delivery stream epoch overflow"))?;
+            *epoch
+        };
         let cursor = request
             .cursor
             .unwrap_or(patchbay_contracts::patchbay::Lsn { value: 0 });
@@ -313,6 +378,7 @@ where
             .map_err(map_acceptance_error_to_status)?;
         let commands = live_commands.clone();
         drop(live_commands);
+        let delivery_adapter = authenticated_adapter.clone();
         let deliveries = events.into_iter().filter_map(move |event| {
             if event.payload.kind != StoredEventKind::Operation as i32 {
                 return None;
@@ -329,20 +395,70 @@ where
                 .target_scope
                 .as_ref()
                 .and_then(|target| target.adapter_id.as_ref())
-                == Some(&authenticated_adapter);
-            let remains_accepted = operation
+                == Some(&delivery_adapter);
+            let remains_deliverable = operation
                 .command_id
                 .as_ref()
                 .and_then(|command_id| commands.get_command(command_id))
-                .is_some_and(|record| record.state == OperationState::Accepted);
-            (targets_adapter && remains_accepted).then_some(Ok(Delivery {
+                .is_some_and(|record| {
+                    matches!(
+                        record.state,
+                        OperationState::Accepted | OperationState::Delivered
+                    )
+                });
+            (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
                 operation: Some(operation),
                 delivery_event_id: Some(event.event_id),
             }))
         });
+        let storage = self.storage.clone();
+        let sessions = Arc::clone(&self.sessions);
+        let delivery_stream_epochs = Arc::clone(&self.delivery_stream_epochs);
+        let stale_domain = domain.clone();
+        let stale_adapter = authenticated_adapter;
+        let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
+            let task = async move {
+                // A newer poll supersedes an older stream's delayed drop task.
+                // Holding the epoch guard through the state append establishes
+                // a total order: either this disconnect marks stale first and
+                // the newer adapter report restores live, or the newer stream
+                // wins and this obsolete marker is inert.
+                let epochs = delivery_stream_epochs.lock().await;
+                if epochs.get(&stale_adapter) != Some(&stream_epoch) {
+                    return;
+                }
+                let result = session::mark_adapter_sessions_stale(
+                    &storage,
+                    &mut *sessions.lock().await,
+                    &stale_domain,
+                    &stale_adapter,
+                )
+                .await;
+                drop(epochs);
+                if let Err(error) = result {
+                    eprintln!(
+                        "patchbay-core-server: failed to mark sessions stale after adapter disconnect: {error}"
+                    );
+                }
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => {
+                    runtime.spawn(task);
+                }
+                Err(error) => {
+                    eprintln!(
+                        "patchbay-core-server: cannot record abnormal adapter disconnect outside a Tokio runtime: {error}"
+                    );
+                }
+            }
+        });
+
         // v0.1.0 polling fallback: this server-stream returns the durable tail
         // currently available. The adapter immediately resumes from its cursor.
-        Ok(Response::new(Box::pin(stream::iter(deliveries))))
+        // Polling the tail through `None` is clean completion; transport drop
+        // before that point marks this adapter's sessions stale.
+        let tail = DeliveryTail::new(Box::pin(stream::iter(deliveries)), on_abnormal_disconnect);
+        Ok(Response::new(Box::pin(tail)))
     }
 }
 
