@@ -57,9 +57,12 @@ export async function fetchCsrfToken(
   return body.csrfToken;
 }
 
-function csrfInterceptor(readToken: () => string | undefined): Interceptor {
+export function csrfInterceptor(readToken: () => string | undefined): Interceptor {
   return (next) => async (request) => {
-    if (request.method.name === "submit") {
+    // Connect method names come from the proto declaration ("Submit", not
+    // "submit") — a lowercase gate never matches, so the header would never
+    // be sent and the web-server's CSRF guard rejects with 403.
+    if (request.method.name === "Submit") {
       const token = readToken();
       if (!token) throw new Error("Submit requires a session-bound CSRF token");
       request.header.set(CSRF_HEADER, token);
