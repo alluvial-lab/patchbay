@@ -59,6 +59,26 @@ surfaces (browser cockpit + CLI).
 - `audit-query` / `inspect-command` / `adapter-status` are reserved
   post-v0.1.0 (stubbed; they need the core-diagnostics projection).
 
+## Known v0.1.0 limitations (honest, not defects)
+
+- **Adapter-liveness staleness coverage is narrow.** The core marks an
+  adapter's sessions `stale` when the adapter's delivery stream drops
+  abnormally (crash / transport error). But the v0.1.0 delivery model is a
+  polling fallback: the stream drains the durable tail and completes in
+  milliseconds per ~100ms poll, and command execution happens *after* stream
+  completion. So the staleness signal only fires for deaths during an active
+  stream drain. **An adapter that dies between polls or mid-execution leaves
+  its sessions presented as `live/working` until the adapter restarts** and
+  re-reports. Commands are not lost — accepted/delivered commands re-deliver
+  on adapter restart (epic pass-2 B3a), and a replacement adapter process
+  cannot compound the confusion (epic pass-2 B2 fencing). A heartbeat /
+  last-report-age staleness mechanism (or a long-poll delivery redesign) is
+  parked as a fast-follower (`backlog-adapter-staleness-full-coverage`).
+- **Commands rot at `running` if execution never completes.** The redelivery
+  bound is `delivered`-but-not-`running` (epic pass-2 B3a, operator decision
+  Q1a). A command that reaches `running` but never completes (adapter death
+  mid-execution) is not re-offered. Same recovery as above: adapter restart.
+
 ## Verification
 
 - Composed end-to-end smoke (boots core + adapter and drives
