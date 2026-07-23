@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: review
+stage: done
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -174,6 +174,27 @@ Three fix workers (disjoint write sets; orchestrator verified + committed; the B
 Integration verification (orchestrator, post-wave): Rust workspace all suites green + clippy clean; pi-adapter 6/6; web-cockpit 39/39; web-server 23/23 + core-smoke; cli 16/16 + core-smoke; composed e2e passes; presentation conformance green.
 
 Epic re-advanced `implementing → review` for pass 3 (re-review, maximum convergence).
+
+## Review closure — Pass 3 (2026-07-23, convergence, kimi-coding/k3): Approve with comments → done
+
+Maximum-weight pass 3 (convergence re-review, fresh-context `kimi-coding/k3` — cross-model vs the gpt-5.6-sol implementers and the pass-2 adversarial reviewer). Verdict: **Approve with comments** — the convergence signal.
+
+**All 7 pass-2 fixes verified genuine, not cosmetic.** Every attack rejected with evidence (three focused probe tests written against the live code): B1 does not mask real visible-event loss (the snapshot + full-prefix replay rebuilds everything; cursor advance honest); B2's double-attach race resolves to exactly one valid token inside one lock critical section; B2 token replay/missing/restart all rejected by existing tests; B3a duplicate-execution impossible by construction + test (exactly 1 CommandTransition); B3b clean-vs-abnormal correctly distinguished (epoch guard supersedes obsolete streams); B4 loopback matrix holds (0.0.0.0/::/public refused, hostname fails closed); I2 normalization is the sole ingress path and strengthens downstream; I3 neither over- nor under-invalidates. **0 new blockers.**
+
+### Adjudication
+
+- **P3-I1 (Important, parked):** the B3b staleness signal only fires during an active stream drain; the v0.1.0 polling fallback completes streams in milliseconds and execution happens after completion, so adapter death between polls or mid-execution leaves sessions presented `live/working` until restart. Verified by the receiver against `pi-adapter/src/main.ts:110-121` + `server/src/adapter_service.rs:500`. Receiver judgment: Important-not-Blocker (mechanism genuine; commands never lost via B3a; replacement-process confusion fenced via B2; presentational residual in single-operator deployment; natural recovery works). Disposition per the reviewer's recommendation: documented honestly in `docs/RUNBOOK.md` (correcting the `af00794` overclaim) + parked as `backlog-adapter-staleness-full-coverage` (heartbeat/last-report-age, or long-poll redesign). Commit `bf7c47f`.
+- **P3-N1 (nit):** commands rot at `running` after mid-execution death — the documented Q1a bound; folded into the same backlog item.
+- **P3-N2 (nit):** per-poll full-log command rebuild — perf note for when the log grows; folded into the backlog item.
+- **P3-N3 (nit):** `validate_operation` still requires a caller-supplied `sender` that normalization overwrites — vestigial; noted.
+
+### Convergence
+
+Pass 1 found 4 blockers, pass 2 found 4 blockers + 3 important, pass 3 finds 0 blockers + 1 important (a coverage limitation of an operator-decided mechanism, the fix itself verified genuine). Per the maximum-weight convergence rule — a pass with no receiver-confirmed material current-cycle blockers — the epic is closed. **Epic advanced `review → done`.**
+
+### What the maximum review earned
+
+The two-lens, multi-model maximum review is what caught the class of defect per-feature review could not: pass 1 (complementary, K3) found the composed-system breaks (no snapshot producer, cockpit deadlock on normal completion, domain mismatch, red e2e at HEAD); pass 2 (adversarial, gpt-5.6-sol) found the security/recoverability gaps (filter×reconcile wedge, stale adapter generation, delivery-ack rot, no liveness mechanism, plaintext transport); pass 3 (K3) verified every fix genuine and found none remaining. Every fix wave was mutation-verified. The milestone's claims are now earned at epic scale, not just per-feature.
 
 ## Stage correction (2026-07-14)
 
