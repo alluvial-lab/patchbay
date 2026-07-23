@@ -381,8 +381,17 @@ async fn run_boundary_dedup_check<S: Storage>(
     }
     let recorded = Operation::decode(events[0].payload.payload.as_slice())
         .map_err(|error| format!("cannot decode acceptance event: {error}"))?;
-    if recorded != submitted {
-        return Err("durable acceptance payload differs from the submitted operation".to_owned());
+    let mut expected = submitted;
+    // Sender is the one durable field intentionally normalized rather than
+    // retained from caller input.
+    expected.sender = Some(ActorEndpointRef {
+        actor_id: Some(issuer.actor.clone()),
+        endpoint_id: Some(issuer.endpoint.clone()),
+        device_id: Some(issuer.device.clone()),
+        endpoint_generation: Some(issuer.generation),
+    });
+    if recorded != expected {
+        return Err("durable acceptance payload differs after sender normalization".to_owned());
     }
 
     Ok(())

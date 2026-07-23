@@ -36,9 +36,6 @@ pub const COMMITTED_OPERATION_KINDS: [OperationKind; 10] = [
 struct ValidatedOperation<'a> {
     command_id: &'a CommandId,
     authority_domain_id: &'a AuthorityDomainId,
-    /// Retained as validated audit data; authority uses `IssuerContext`.
-    #[allow(dead_code)]
-    sender: &'a ActorEndpointRef,
     operation_kind: OperationKind,
     target_scope: &'a TargetScope,
     idempotency_key: IdempotencyKey,
@@ -73,6 +70,17 @@ where
                 operation.command_id.clone(),
                 FailureCode::ValidationFailed,
                 diagnostic,
+            ));
+        }
+    };
+
+    let verified_sender = match sender_from_verified_issuer(issuer) {
+        Some(sender) => sender,
+        None => {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::AuthorizationDenied,
+                "operation issuer identity is incomplete".to_owned(),
             ));
         }
     };
@@ -134,9 +142,14 @@ where
         ));
     }
 
+    // Sender is an audit attribution field, but it must never preserve a
+    // caller-supplied identity claim. Persist only the identity established by
+    // the authenticated ingress boundary.
+    let mut durable_operation = operation.clone();
+    durable_operation.sender = Some(verified_sender);
     let payload = StoredEventPayload {
         kind: StoredEventKind::Operation as i32,
-        payload: operation.encode_to_vec(),
+        payload: durable_operation.encode_to_vec(),
     };
 
     let append_result = storage
@@ -238,7 +251,7 @@ fn validate_operation(operation: &Operation) -> Result<ValidatedOperation<'_>, S
         return Err("operation authority_domain_id is empty".to_owned());
     }
 
-    let sender = operation
+    operation
         .sender
         .as_ref()
         .ok_or_else(|| "operation is missing sender".to_owned())?;
@@ -261,13 +274,21 @@ fn validate_operation(operation: &Operation) -> Result<ValidatedOperation<'_>, S
     Ok(ValidatedOperation {
         command_id,
         authority_domain_id,
-        sender,
         operation_kind,
         target_scope,
         idempotency_key: IdempotencyKey {
             value: operation.idempotency_key.clone(),
         },
         target_key,
+    })
+}
+
+fn sender_from_verified_issuer(issuer: &dyn IssuerContext) -> Option<ActorEndpointRef> {
+    Some(ActorEndpointRef {
+        actor_id: Some(issuer.verified_actor()?.clone()),
+        endpoint_id: Some(issuer.verified_endpoint()?.clone()),
+        device_id: Some(issuer.verified_device()?.clone()),
+        endpoint_generation: Some(issuer.endpoint_generation()?),
     })
 }
 

@@ -189,6 +189,15 @@ fn issuer() -> TestIssuer {
     TestIssuer::new(authority_domain())
 }
 
+fn verified_sender(test_issuer: &TestIssuer) -> ActorEndpointRef {
+    ActorEndpointRef {
+        actor_id: Some(test_issuer.actor.clone()),
+        endpoint_id: Some(test_issuer.endpoint.clone()),
+        device_id: Some(test_issuer.device.clone()),
+        endpoint_generation: Some(test_issuer.generation),
+    }
+}
+
 fn operation() -> Operation {
     Operation {
         command_id: Some(CommandId {
@@ -467,6 +476,7 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
     let grant = TestGrantCheck::new(true);
     let resolver = TestTargetResolver::new(true);
     let submitted = operation();
+    let test_issuer = issuer();
 
     let result = submit(
         &storage,
@@ -474,7 +484,7 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
         &resolver,
         &AlwaysAccepted,
         &NoElicitationContractLookup,
-        &issuer(),
+        &test_issuer,
         submitted.clone(),
     )
     .await
@@ -494,7 +504,49 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
         StoredEventKind::Operation
     );
     let recorded = Operation::decode(events[0].payload.payload.as_slice()).unwrap();
-    assert_eq!(recorded, submitted);
+    // Durable sender attribution is normalized from authenticated issuer
+    // evidence; it is not an assertion that caller-supplied sender data persists.
+    let mut expected = submitted;
+    expected.sender = Some(verified_sender(&test_issuer));
+    assert_eq!(recorded, expected);
+}
+
+#[tokio::test]
+async fn mismatched_sender_claim_is_overwritten_by_verified_issuer() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let test_issuer = issuer();
+    let mut submitted = operation();
+    submitted.sender = Some(ActorEndpointRef {
+        actor_id: Some(ActorId {
+            value: "forged-actor".to_owned(),
+        }),
+        endpoint_id: Some(EndpointId {
+            value: "forged-endpoint".to_owned(),
+        }),
+        device_id: Some(DeviceId {
+            value: "forged-device".to_owned(),
+        }),
+        endpoint_generation: Some(Generation { value: 999 }),
+    });
+
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &test_issuer,
+        submitted,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&result), SubmissionOutcome::Accepted);
+
+    let events = durable_events(&storage).await;
+    let recorded = Operation::decode(events[0].payload.payload.as_slice()).unwrap();
+    assert_eq!(recorded.sender, Some(verified_sender(&test_issuer)));
 }
 
 #[tokio::test]
