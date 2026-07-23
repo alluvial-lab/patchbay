@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: implementing
+stage: review
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -158,6 +158,22 @@ Maximum-weight pass 2 (adversarial attack, fresh-context `gpt-5.6-sol` — cross
 
 ### Nit
 - Login view submits an actor ID the route ignores (misleading field) — folded into the I3 login fix.
+
+### Fix wave 2 (2026-07-23) — all pass-2 blockers + important findings addressed
+
+Three fix workers (disjoint write sets; orchestrator verified + committed; the B2 worker required a coordinated server + pi-adapter scope after the first worker correctly surfaced the cross-boundary blocker). 6 commits:
+
+- `ea47e9b` **B1** — cockpit reconciler tolerates the filter's intentional cursor gaps (adopts current snapshot, replays visible prefix, unlocks composer). Mutation tests re-verified.
+- `a8d9c37` **I3** — web-server invalidates stranded browser sessions on dead-core-session RPC errors; fail-safe logout; login nit removed.
+- `af00794` **B3a+B3b** — redelivery offers `delivered`-not-`running` (idempotent re-ack); abnormal stream disconnects mark adapter sessions stale (clean completion does not). Mutation checks verified.
+- `880fd9d` **B4** — general listener loopback-constrained (refuses non-loopback; split-deploy + TLS documented as future).
+- `0ae9661` **I2** — `Operation.sender` normalized from the verified issuer at Submit.
+- `45c7375` **B2** — per-attachment fencing token (operator decision: option 2). Attach mints a CSPRNG bearer token, stores only its SHA-256 hash in memory, invalidates the prior attachment's token on re-attach, returns the bearer via response metadata (no proto change). Post-attach RPCs require it; stale/missing rejected. Fail-closed on core restart (adapter re-attaches). The pi-adapter captures/sends/re-attaches. The generation boundary is genuinely enforced, not asserted. Mutation check verified.
+- `9cb3ca4` — parked I1 (revocation-lifecycle surface) as a fast-follower backlog item.
+
+Integration verification (orchestrator, post-wave): Rust workspace all suites green + clippy clean; pi-adapter 6/6; web-cockpit 39/39; web-server 23/23 + core-smoke; cli 16/16 + core-smoke; composed e2e passes; presentation conformance green.
+
+Epic re-advanced `implementing → review` for pass 3 (re-review, maximum convergence).
 
 ## Stage correction (2026-07-14)
 
