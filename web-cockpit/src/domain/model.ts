@@ -189,13 +189,15 @@ export function replaceFromSnapshot(
     observations: [],
   };
 
+  let replayCursor = 0n;
   for (const event of replayEvents) {
     const lsn = requiredBigint(event.eventId?.lsn?.value, "replay event LSN");
     const eventDomain = required(event.eventId?.authorityDomainId?.value, "replay event authority domain");
     if (eventDomain !== authorityDomainId) throw new Error("cross-domain replay event rejected");
-    if (lsn !== model.cursor + 1n || lsn > snapshotLsn) {
-      throw new Error(`snapshot replay is not a complete prefix at LSN ${lsn}`);
+    if (lsn <= replayCursor || lsn > snapshotLsn) {
+      throw new Error(`snapshot replay is not a strictly ordered visible prefix at LSN ${lsn}`);
     }
+    replayCursor = lsn;
     if (!event.payload) throw new Error("snapshot replay event payload is missing");
 
     if (event.payload.kind === StoredEventKind.SESSION_STATE) {
@@ -209,10 +211,11 @@ export function replaceFromSnapshot(
       );
     }
   }
-  if (model.cursor !== snapshotLsn) {
-    throw new Error(`snapshot replay ended at LSN ${model.cursor}, expected ${snapshotLsn}`);
-  }
 
+  // Invisible authority records can trail the final operator-facing event.
+  // The snapshot is authoritative through snapshot_lsn even when the visible
+  // replay cursor ends earlier.
+  model.cursor = snapshotLsn;
   model.reconciled = true;
   model.sessions = new Map(
     [...model.sessions].map(([key, session]) => [key, { ...session, reconciled: true }]),

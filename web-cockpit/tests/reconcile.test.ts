@@ -42,7 +42,7 @@ import {
 } from "@patchbay/contracts";
 import fc from "fast-check";
 
-import { PresentationProjection } from "../src/domain/model.js";
+import { PresentationProjection, stableTarget } from "../src/domain/model.js";
 import {
   Reconciler,
   type ReconcileClient,
@@ -137,34 +137,74 @@ test("clean completion at the durable tail stays reconciled and re-subscribes", 
   assert.equal(reconciler.currentCursor, 2n);
 });
 
-test("an event gap is repaired with a bounded snapshot and complete prefix replay", async () => {
+test("an event gap adopts the current snapshot and filtered visible prefix", async () => {
+  const controller = new AbortController();
   const projection = new RecordingProjection();
   const snapshotRequests: LoadSnapshotRequest[] = [];
   let subscription = 0;
   const client: ReconcileClient = {
     subscribe(request) {
       subscription += 1;
-      if (subscription === 1) return values([event(1n), event(3n)]);
       assert.equal(request.cursor!.value, 0n);
-      return values([event(1n), event(2n)]);
+      return values([operationEvent(1n), observationEvent(4n)]);
     },
     async loadSnapshot(request) {
       snapshotRequests.push(request);
       assert.equal(projection.visibleConnectivity, SessionConnectivityState.STALE);
-      return snapshotResponse(2n);
+      return snapshotResponse(4n);
     },
   };
 
-  const reconciler = new Reconciler(client, projection, { retryDelayMs: 0 });
-  for await (const next of reconciler.subscribe(DOMAIN)) {
-    if (eventLsn(next) === 3n) break;
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    delay: async () => controller.abort(),
+  });
+  for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
+    // The first event is delivered normally; the event at four is included in
+    // the authoritative prefix replay that repairs the filtered gap.
   }
 
-  assert.deepEqual(projection.folded, [1n, 2n, 3n]);
+  assert.equal(subscription, 2);
+  assert.deepEqual(projection.folded, [1n, 4n]);
   assert.equal(projection.snapshots, 1);
-  assert.equal(snapshotRequests[0]!.atOrBefore!.value, 2n);
-  assert.equal(reconciler.currentCursor, 3n);
+  assert.equal(snapshotRequests[0]!.atOrBefore, undefined);
+  assert.equal(reconciler.currentCursor, 4n);
   assert.deepEqual(projection.marks, ["event-gap"]);
+});
+
+test("filtered authority-record holes reconcile the model and unlock the snapshot session", async () => {
+  const controller = new AbortController();
+  const projection = new PresentationProjection();
+  const prefix = [operationEvent(1n), observationEvent(4n)];
+  let subscription = 0;
+  const client: ReconcileClient = {
+    subscribe(request) {
+      subscription += 1;
+      assert.equal(request.cursor!.value, 0n);
+      return values(prefix);
+    },
+    async loadSnapshot(request) {
+      assert.equal(request.atOrBefore, undefined);
+      return snapshotResponse(4n);
+    },
+  };
+
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    delay: async () => controller.abort(),
+  });
+  for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
+    // Drain until the repaired stream reaches its normal polling boundary.
+  }
+
+  const session = [...projection.model.sessions.values()][0];
+  assert.equal(subscription, 2);
+  assert.equal(projection.model.reconciled, true);
+  assert.equal(projection.model.cursor, 4n);
+  assert.equal(reconciler.currentCursor, 4n);
+  assert.equal(projection.model.commands.has("command-1"), true);
+  assert.equal(projection.model.observations.some((item) => item.id === "message-1"), true);
+  assert.equal(stableTarget(session), true, "the composer target must be unlocked");
 });
 
 test("snapshot reconciliation replays non-session events hidden behind the higher snapshot LSN", async () => {

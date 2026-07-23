@@ -75,8 +75,14 @@ export class Reconciler {
 
           if (lsn > this.cursor + 1n) {
             this.projection.markUnreconciled("event-gap");
-            await this.reconcile(authorityDomainId, lsn - 1n);
-            if (lsn <= this.cursor) continue;
+            await this.reconcile(authorityDomainId);
+            if (lsn <= this.cursor) {
+              // Reconciliation replayed this visible event while adopting the
+              // current snapshot. Yield it once so presentation subscribers
+              // render the atomically replaced model.
+              yield event;
+              continue;
+            }
             if (lsn !== this.cursor + 1n) {
               throw new Error(`snapshot did not bridge event gap before LSN ${lsn}`);
             }
@@ -105,15 +111,9 @@ export class Reconciler {
     }
   }
 
-  private async reconcile(
-    authorityDomainId: AuthorityDomainId,
-    atOrBefore?: bigint,
-  ): Promise<void> {
+  private async reconcile(authorityDomainId: AuthorityDomainId): Promise<void> {
     const response = await this.client.loadSnapshot(
-      create(LoadSnapshotRequestSchema, {
-        authorityDomainId,
-        atOrBefore: atOrBefore === undefined ? undefined : create(LsnSchema, { value: atOrBefore }),
-      }),
+      create(LoadSnapshotRequestSchema, { authorityDomainId }),
     );
     if (!response.present) throw new Error("authoritative snapshot is unavailable");
 
@@ -128,9 +128,6 @@ export class Reconciler {
     const responseLsn = requiredBigint(response.eventId?.lsn?.value, "snapshot event LSN");
     if (snapshotLsn !== responseLsn) throw new Error("snapshot LSN does not match response event LSN");
     if (snapshotLsn < this.cursor) throw new Error("older snapshot rejected");
-    if (atOrBefore !== undefined && snapshotLsn > atOrBefore) {
-      throw new Error("snapshot exceeds requested reconciliation boundary");
-    }
 
     // SessionSnapshot is authoritative only for the session registry. Rebuild
     // every other presentation axis from the durable prefix instead of merging
@@ -147,24 +144,25 @@ export class Reconciler {
     if (snapshotLsn === 0n) return [];
 
     const replayEvents: SubscribeEvent[] = [];
-    let expectedLsn = 1n;
+    let previousLsn = 0n;
     const request = create(SubscribeRequestSchema, {
       authorityDomainId,
       cursor: create(LsnSchema, { value: 0n }),
     });
     for await (const event of this.client.subscribe(request)) {
       const lsn = eventLsn(event, authorityDomainId.value);
-      if (lsn !== expectedLsn) {
-        throw new Error(`snapshot replay cannot bridge LSN ${expectedLsn}`);
+      if (lsn <= previousLsn) {
+        throw new Error(`snapshot replay is not strictly ordered at LSN ${lsn}`);
       }
+      if (lsn > snapshotLsn) return replayEvents;
       replayEvents.push(event);
+      previousLsn = lsn;
       if (lsn === snapshotLsn) return replayEvents;
-      if (lsn > snapshotLsn) {
-        throw new Error(`snapshot replay exceeded LSN ${snapshotLsn}`);
-      }
-      expectedLsn += 1n;
     }
-    throw new Error(`snapshot replay ended before LSN ${snapshotLsn}`);
+    // The operator-facing stream deliberately omits authority records while
+    // retaining their LSNs. Clean completion therefore proves the complete
+    // visible prefix even when its final event precedes snapshot_lsn.
+    return replayEvents;
   }
 }
 
