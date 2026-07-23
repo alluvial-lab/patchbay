@@ -74,6 +74,8 @@ body {
   margin: 0 auto;
   padding: var(--space-6);
   overflow-y: auto;
+  min-height: 0; /* flex items default to min-height:auto — without this the
+                   timeline grows with content instead of scrolling internally */
 }
 
 .cockpit .msg {

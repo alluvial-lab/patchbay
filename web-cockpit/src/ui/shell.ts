@@ -61,6 +61,12 @@ export function createCockpitShell(
   }
 
   function render(): void {
+    // The render is a full DOM rebuild, which would lose the timeline scroll
+    // position on every streamed delta. Capture whether the user was already
+    // near the bottom before the rebuild; only stick to the bottom if so
+    // (never yank a user reading history back down).
+    const previousTimeline = root.querySelector<HTMLElement>(".timeline");
+    const stickToBottom = !previousTimeline || isNearBottom(previousTimeline);
     root.replaceChildren();
     const content = document.createElement("div");
     content.className = "cockpit__content";
@@ -96,6 +102,14 @@ export function createCockpitShell(
       root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
     }
     applyLayout();
+    if (stickToBottom) {
+      const timeline = root.querySelector<HTMLElement>(".timeline");
+      if (timeline) timeline.scrollTop = timeline.scrollHeight;
+    }
+  }
+
+  function isNearBottom(el: HTMLElement): boolean {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }
 
   function applyLayout(): void {
