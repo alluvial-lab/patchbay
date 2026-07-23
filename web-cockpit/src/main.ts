@@ -20,11 +20,13 @@ import {
 import { PresentationProjection, type SessionIdentity, type SessionView } from "./domain/model.js";
 import {
   createProtocolClient,
+  CsrfTokenRequestError,
   fetchCsrfToken,
   type ProtocolClient,
 } from "./domain/protocol-client.js";
 import { Reconciler } from "./domain/reconcile.js";
 import { createMobileElicitationSheet } from "./ui/elicitation.js";
+import { waitForOperatorLogin } from "./ui/login.js";
 import { createMarkdownRenderer } from "./ui/markdown.js";
 import { createCockpitShell, type CockpitShell } from "./ui/shell.js";
 import type { SubmissionFeedback } from "./ui/session-detail.js";
@@ -55,7 +57,14 @@ export async function startCockpit(options: StartCockpitOptions = {}): Promise<C
   if (!mount) throw new Error("cockpit mount element is missing");
   const authorityDomainId = options.authorityDomainId ?? authorityDomainFromDocument(document);
   const fetcher = options.fetch ?? globalThis.fetch;
-  const csrfToken = await fetchCsrfToken(fetcher);
+  let csrfToken: string;
+  try {
+    csrfToken = await fetchCsrfToken(fetcher);
+  } catch (error) {
+    if (!(error instanceof CsrfTokenRequestError) || error.status !== 401) throw error;
+    await waitForOperatorLogin(document, mount, { fetch: fetcher });
+    csrfToken = await fetchCsrfToken(fetcher);
+  }
   const protocol = createProtocolClient({
     baseUrl: options.baseUrl,
     fetch: fetcher,

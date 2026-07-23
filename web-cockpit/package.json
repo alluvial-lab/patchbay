@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build:types": "rm -rf dist && tsc -p tsconfig.json",
-    "build:browser": "mkdir -p dist/assets && esbuild src/main.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/assets/cockpit.js && cp index.html dist/index.html && cp ../.mockups/design-system/tokens.css ../.mockups/design-system/components.css src/ui/markdown.css src/ui/shell.css dist/assets/",
+    "build:browser": "mkdir -p dist/assets && esbuild src/main.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/assets/cockpit.js && cp index.html dist/index.html && cp ../.mockups/design-system/tokens.css ../.mockups/design-system/components.css src/ui/markdown.css src/ui/shell.css src/ui/login.css dist/assets/",
     "build": "npm run build:types && npm run build:browser",
     "test": "npm run build && node --test dist/tests/*.test.js"
   },

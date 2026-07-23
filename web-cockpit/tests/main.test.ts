@@ -44,6 +44,63 @@ test("browser entry composes protocol client, projection, reconciler, and shell"
   app.stop();
 });
 
+test("an unauthenticated startup renders login and proceeds after successful authentication", async () => {
+  const dom = new JSDOM(`<!doctype html>
+    <meta name="patchbay-authority-domain" content="default">
+    <main data-patchbay-cockpit></main>`);
+  let csrfRequests = 0;
+  let loginRequests = 0;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/csrf-token") {
+      csrfRequests += 1;
+      return csrfRequests === 1
+        ? new Response(JSON.stringify({ error: "unauthenticated" }), { status: 401 })
+        : new Response(JSON.stringify({ csrfToken: "csrf-after-login" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+    }
+    assert.equal(String(input), "/login");
+    assert.equal(init?.method, "POST");
+    loginRequests += 1;
+    const body = JSON.parse(String(init?.body)) as { actorId: string; password: string };
+    assert.deepEqual(body, { actorId: "operator-primary", password: "correct-password" });
+    return loginRequests === 1
+      ? new Response(JSON.stringify({ error: "invalid_credentials" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        })
+      : new Response(JSON.stringify({ csrfToken: "login-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+  }) as typeof globalThis.fetch;
+
+  const starting = startCockpit({
+    document: dom.window.document,
+    fetch: fetcher,
+    startSubscription: false,
+    isMobile: () => false,
+  });
+  const form = await waitForElement<HTMLFormElement>(dom, ".login-form");
+  const actor = dom.window.document.querySelector<HTMLInputElement>('input[name="actorId"]')!;
+  const password = dom.window.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+  actor.value = "operator-primary";
+  password.value = "correct-password";
+  form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+
+  const error = await waitForElement<HTMLElement>(dom, ".login-form__error:not([hidden])");
+  assert.match(error.textContent ?? "", /invalid_credentials/);
+  assert.equal(dom.window.document.querySelectorAll(".cockpit").length, 0);
+
+  form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+  const app = await starting;
+  assert.equal(csrfRequests, 2);
+  assert.equal(loginRequests, 2);
+  assert.equal(dom.window.document.querySelectorAll(".cockpit").length, 1);
+  app.stop();
+});
+
 test("composition submission builder emits a boundary-valid instruct Operation", () => {
   const operation = buildInstructOperation(
     DOMAIN,
@@ -72,6 +129,15 @@ test("browser build emits a servable HTML entry and bundled module", async () =>
   assert.match(html, /\/assets\/cockpit\.js/);
   assert.match(bundle, /startCockpit/);
 });
+
+async function waitForElement<T extends Element>(dom: JSDOM, selector: string): Promise<T> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const element = dom.window.document.querySelector<T>(selector);
+    if (element) return element;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`element did not appear: ${selector}`);
+}
 
 function session(): SessionView {
   return {
