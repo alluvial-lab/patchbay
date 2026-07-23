@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: review
+stage: implementing
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -77,11 +77,54 @@ Six child features, one per architectural layer. The coordination core is the la
 - `feature-v0-web-cockpit` — responsive web cockpit: session list, composer, delivery states, reconnect — depends on: `[feature-v0-web-server]`
 - `feature-v0-cli` — CLI: setup, admin, debug, scripted access — depends on: `[feature-v0-protocol-seam]`
 
+### Child status (current, 2026-07-23 — roll-forward)
+
+The decomposition above lists 6 children and predates the realized decomposition. The actual child set is 9 features + the core epic, **all done**:
+
+- `epic-v0-core` — **done** (durable event log, storage port, acceptance + idempotency, authority, snapshots, recovery)
+- `feature-v0-protocol-seam` — **done**
+- `feature-v0-web-server` — **done**
+- `feature-v0-web-cockpit` — **done** (standard review, 6 blockers fixed + mutation-verified)
+- `feature-v0-presentation-component-layer` — **done** (thorough, 7-pass convergence)
+- `feature-v0-elicitation-response-contract` — **done**
+- `feature-v0-approval-response-contract` — **done** (DENIED→Declined, mutation-verified)
+- `feature-v0-control-surface-trust-boundary` — **done** (thorough, 3 security blockers fixed + mutation-verified)
+- `feature-v0-pi-adapter` — **done**
+- `feature-v0-cli` — **done** (standard review, 2 blockers fixed + mutation-verified)
+
+## Review outcome (2026-07-23) — Pass 1 (maximum/complementary): Request changes → implementing
+
+Maximum-weight epic aggregate review, pass 1 (complementary/completeness, fresh-context `kimi-coding/k3` — cross-model vs the gpt-5.6-sol implementation workers). Verdict: **Request changes** — 4 receiver-confirmed aggregate blockers + 5 important findings, every one invisible to per-feature review because all suites test pairwise seams, not the composed system. The per-feature "earned not asserted" properties are genuinely real (mutation-verified); the composed walking skeleton was broken in the operator's daily-use paths. Epic bounced `review → implementing` for the corrective wave.
+
+### Blockers (all verified by the orchestrator against code)
+
+1. **B1 — pi-adapter e2e RED at HEAD** (`pi-adapter/tests/e2e.test.ts`): the trust-boundary change made verified principals mandatory; the e2e fixture still self-asserts headers + seeds grants via raw SQLite. `npm test` → 5/6, `[unauthenticated] missing transport principal`. Nothing caught it (no CI). Fix: rewrite the fixture through the real flow (BootstrapOperator → VerifyOperatorPassword → enrolled principal + core session); grants via the bootstrap RPC, not SQLite.
+2. **B2 — `LoadSnapshot` has no producer** (`core/src/acceptance/replay.rs:80-89`): the materializer is deferred, so `LoadSnapshot` returns `present: false` against any real deployment — silently killing CLI `session-health`/`instruct` target resolution and the cockpit reconcile. Fix: materialize `SessionSnapshot` on read from the rebuilt projection at current LSN (no `write_snapshot`; durable checkpoint stays deferred).
+3. **B3 — cockpit treats the seam's normal stream completion as an error** (`web-cockpit/src/domain/reconcile.ts:90`): throws `"subscription stream ended"`, permanently degrades the model, locks the composer (stableTarget requires `reconciled`). Fix: re-subscribe on clean completion without degrading; degrade only on transport errors/gaps.
+4. **B4 — authority-domain defaults disagree** (`web-cockpit/index.html:6` hard-codes `operator-domain`; core + CLI default from env): out-of-the-box the cockpit is 100% rejected, no config path, no docs. Fix: web-server takes domain from env + serves it to the cockpit; align all three defaults; document.
+
+### Important (confirmed; fix wave inclusion per operator decision)
+
+- **I1 — core-diagnostics scope:** OPERATOR DECISION (2026-07-23): **ship the honest partial; re-scope foundation docs before tagging.** Reclassify `audit-query`/`inspect-command`/`adapter-status` + the durable queryable audit log as reserved/post-v0.1.0 in SPEC/PROTOCOL/UX/SECURITY. Core-diagnostics parks as the first v0.x fast-follower.
+- **I2 — no TS suite in CI:** add the 4 npm suites (why B1 shipped undetected).
+- **I3 — no browser login UI:** OPERATOR DECISION: **include in the fix wave** — a minimal login view posting to the existing `/login` API. The flagship surface cannot be authenticated through the product without it.
+- **I4 — foundation/README roll-forward:** README "Current status" claims no daemon/web app/adapter exists (false); SECURITY §143 stale "deferred" wording. Folded into the fix wave.
+- **I5 — no composed end-to-end proof + no runbook:** OPERATOR DECISION: **include in the fix wave** — a composed walking-skeleton smoke (boots the topology, drives one instruction from a surface to a Pi session and back) + a runbook. Subsumes B1's fixture pattern + B4's docs; evidences ADAPTER-PI §8 migration criteria.
+
+### Nits (noted, not blocking)
+- N1 — epic body child list stale (rolled forward above).
+- N2 — fleet-scoped `spawn` can rot in `accepted` forever (no adapter delivery for fleet targets; unreachable via shipped surfaces today — note for the spawn fast-follower).
+- N3 — pi-adapter e2e grant-seeding bypasses the ingest path (subsumed by B1).
+
+### Pass 2 (adversarial) pending
+
+After the corrective wave lands, pass 2 (adversarial attack, `gpt-5.6-sol` — different model class) runs against the fixed state per maximum ordering, then convergence until a pass yields no receiver-confirmed material current-cycle blockers.
+
 ## Stage correction (2026-07-14)
 
 Advanced `drafting → implementing`. The decomposition was settled (complete child list + critical-path diagram + depends_on graph) but the `epic-design` Phase 8 stage advance was never applied — a stale stage, not a deliberate hold. Per the `epic-design` skill, an epic advances to `implementing` once its decomposition is done, not once all children are done.
 
-### Child status
+### Child status (2026-07-14, historical — superseded by the current roll-forward above)
 - `epic-v0-core` — **done** (root of the critical path; completed this session)
 - `feature-v0-protocol-seam` — **done** (the web↔core gRPC seam; transport caveat retired by interop spike, then designed + implemented + reviewed this arc)
 - `feature-v0-pi-adapter` — **done** (Pi adapter: in-process `AgentSession` host + harvested session layer + adapter-facing core RPC surface; delivery lifecycle, reconnect w/ partial-snapshot reconcile, session_new replacement, spawn-foreclosure via session registry all verified; `spawn` is the fast-follower)
