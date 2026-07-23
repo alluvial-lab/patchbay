@@ -87,7 +87,10 @@ export class Reconciler {
           yield event;
         }
         if (signal?.aborted) return;
-        throw new Error("subscription stream ended");
+        // Subscribe returns the currently durable prefix and then completes.
+        // Completion at the tail is the normal polling boundary, so retain the
+        // reconciled projection and resume from the last folded cursor.
+        await this.delay(this.retryDelayMs, signal);
       } catch (error) {
         if (signal?.aborted || isAbortError(error)) return;
         this.projection.markUnreconciled("stream-break");

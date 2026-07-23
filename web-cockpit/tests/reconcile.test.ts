@@ -108,6 +108,35 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
   assert.deepEqual(projection.marks, ["stream-break"]);
 });
 
+test("clean completion at the durable tail stays reconciled and re-subscribes", async () => {
+  const projection = new RecordingProjection();
+  const cursors: bigint[] = [];
+  let subscription = 0;
+  const client: ReconcileClient = {
+    subscribe(request) {
+      cursors.push(request.cursor!.value);
+      subscription += 1;
+      return subscription === 1 ? values([event(1n)]) : values([event(2n)]);
+    },
+    async loadSnapshot() {
+      assert.fail("clean completion must not trigger snapshot reconciliation");
+    },
+  };
+
+  const reconciler = new Reconciler(client, projection, { retryDelayMs: 0 });
+  const received: bigint[] = [];
+  for await (const next of reconciler.subscribe(DOMAIN)) {
+    received.push(eventLsn(next));
+    if (received.length === 2) break;
+  }
+
+  assert.deepEqual(received, [1n, 2n]);
+  assert.deepEqual(cursors, [0n, 1n]);
+  assert.deepEqual(projection.marks, []);
+  assert.equal(projection.visibleConnectivity, SessionConnectivityState.LIVE);
+  assert.equal(reconciler.currentCursor, 2n);
+});
+
 test("an event gap is repaired with a bounded snapshot and complete prefix replay", async () => {
   const projection = new RecordingProjection();
   const snapshotRequests: LoadSnapshotRequest[] = [];
