@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?,
     )?;
 
-    let address: SocketAddr = env::var("PATCHBAY_BIND_ADDR")
-        .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_owned())
-        .parse()?;
+    let address = local_network_address(
+        &env::var("PATCHBAY_BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_owned()),
+    )?;
     let admin_address = local_admin_address(
         &env::var("PATCHBAY_ADMIN_BIND_ADDR")
             .unwrap_or_else(|_| DEFAULT_ADMIN_BIND_ADDR.to_owned()),
@@ -88,6 +88,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn local_network_address(value: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    let address: SocketAddr = value.parse()?;
+    if !address.ip().is_loopback() {
+        return Err(
+            "PATCHBAY_BIND_ADDR must use a loopback address in v0.1.0; split deployment with TLS is a future milestone"
+                .into(),
+        );
+    }
+    Ok(address)
+}
+
 fn local_admin_address(value: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
     let address: SocketAddr = value.parse()?;
     if !address.ip().is_loopback() {
@@ -110,6 +121,14 @@ fn setup_secret_ttl(configured: Option<String>) -> Result<Duration, Box<dyn std:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn general_listener_is_loopback_only() {
+        assert!(local_network_address("127.0.0.1:50051").is_ok());
+        assert!(local_network_address("[::1]:50051").is_ok());
+        assert!(local_network_address("0.0.0.0:50051").is_err());
+        assert!(local_network_address("192.168.1.10:50051").is_err());
+    }
 
     #[test]
     fn admin_listener_is_loopback_only() {
