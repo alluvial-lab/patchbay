@@ -1,4 +1,11 @@
 /* Cockpit instance layout. Protocol-state styling stays in the locked components.css layer. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg-primary);
+}
+
 .cockpit {
   display: flex;
   flex-direction: column;

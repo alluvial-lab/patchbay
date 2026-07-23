@@ -137,7 +137,9 @@ function renderTimeline(
     entries.push({ lsn: observation.lsn, type: "observation", observation, command });
   }
   for (const command of commands) {
-    if (!associatedCommands.has(command.id)) entries.push({ lsn: command.lsn, type: "command", command });
+    // Place a command by its accepted LSN, not its latest transition — the
+    // advancing lsn would otherwise put it after the agent turn.
+    if (!associatedCommands.has(command.id)) entries.push({ lsn: acceptedLsn(command), type: "command", command });
   }
   const groupedIds = new Set<string>();
   const batches = new Map<string, ElicitationView[]>();
@@ -298,6 +300,13 @@ function renderComposer(
     send.disabled = !targetStable || !input.value.trim() || !actions?.send;
   }
   input.addEventListener("input", updateSend);
+  // Enter sends; Shift+Enter inserts a newline (standard chat-composer behavior).
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      composer.requestSubmit();
+    }
+  });
   composer.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!session || !stableTarget(session) || send.disabled) return;
@@ -442,9 +451,17 @@ function nearestCommand(
   commands: readonly CommandView[],
   used: ReadonlySet<string>,
 ): CommandView | undefined {
+  // Match on the command's accepted LSN: command.lsn advances with every
+  // transition (delivered/running/completed), so at final fold it would sit
+  // after the observation and never associate — duplicating the instruct as
+  // a separate card after the agent turn.
   return commands
-    .filter((command) => !used.has(command.id) && command.lsn <= observation.lsn)
-    .sort((left, right) => left.lsn > right.lsn ? -1 : left.lsn < right.lsn ? 1 : 0)[0];
+    .filter((command) => !used.has(command.id) && acceptedLsn(command) <= observation.lsn)
+    .sort((left, right) => acceptedLsn(left) > acceptedLsn(right) ? -1 : acceptedLsn(left) < acceptedLsn(right) ? 1 : 0)[0];
+}
+
+function acceptedLsn(command: CommandView): bigint {
+  return command.history.at(0)?.lsn ?? command.lsn;
 }
 
 function sameIdentity(left: SessionIdentity | undefined, right: SessionIdentity): boolean {
