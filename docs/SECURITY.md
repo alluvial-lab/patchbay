@@ -140,7 +140,7 @@ Sender identity comes from the verified connection/session context. Payload disp
 
 ### Compound issuer
 
-When an Operation arrives at the core through a control surface (the v0.1.0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The exact wire/evidence shape for how operator-session evidence crosses the web↔core seam is deferred to `feature-web-core-protocol-seam`; this document commits only to the requirement that the core independently verify both the transport principal and the operator identity.
+When an Operation arrives at the core through a control surface (the v0.1.0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The implemented web↔core wire shape carries the operator-session evidence and control-surface principal evidence separately, and the core independently verifies both before accepting an Operation.
 
 ## Grant shape
 
@@ -211,7 +211,7 @@ Revocation never deletes command history. Late events after revocation are audit
 
 ## Audit events
 
-Security audit is part of v0.1.0. The audit log should be durable and queryable even before a full audit UI exists.
+Security audit is part of v0.1.0. The walking skeleton emits redacted security audit lines to process stderr/stdout. A durable, queryable audit log is a reserved post-v0.1.0 core-diagnostics capability rather than a v0.1.0 storage claim.
 
 Audit records are distinct from durable command/session state-transition events. They may record rejected attempts, failed checks, and security decisions that do not create command records.
 
@@ -237,7 +237,7 @@ Audit records must not directly store raw session cookies, CSRF tokens, access t
 
 **This is the canonical no-log/redaction list for Patchbay.** Other docs (PROTOCOL, UX, ARCHITECTURE) summarize or point here; they do not maintain competing lists. Add new redacted fields to this list, not to a doc-local copy.
 
-The v0.1.0 CLI diagnostic commands (`docs/UX.md` CLI — `audit-query`, `inspect-command`, `session-health`, `adapter-status`) project these already-redacted audit and event-log records; they introduce no new raw-payload exposure path. `inspect-command` surfaces lifecycle state, timestamps, LSNs, and audit-trail entries for a command — not prompt bodies or sensitive payload content. `adapter-status` surfaces capability manifests but excludes raw `attachment_method.descriptor` (adapter attachment material is redacted per the rule above). Redaction is enforced at the boundary before audit/snapshot materializes, so diagnostic projections inherit it automatically. A future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
+The committed v0.1.0 `session-health` CLI projection reads canonical session state and does not create a raw-payload exposure path. `audit-query`, `inspect-command`, and `adapter-status` are reserved for the post-v0.1.0 core-diagnostics capability; their current CLI stubs exit non-zero with a prerequisite message rather than claiming data the core does not expose. When promoted, those projections must inherit the redaction boundary above: `inspect-command` must exclude prompt bodies and sensitive payloads, and `adapter-status` must exclude raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
 ## Deployment posture
 

@@ -8,9 +8,9 @@ Patchbay starts with a **responsive web cockpit** and a **Pi-first adapter targe
 
 ## Current status
 
-Patchbay is in the **foundation/design phase** with the `v0.1.0` walking skeleton now defined.
+Patchbay now contains the implemented **`v0.1.0` walking skeleton**: a Rust coordination core with durable local state, a TypeScript web server and responsive web cockpit, a Pi adapter, a diagnostic/scriptable CLI, generated Protobuf contracts, the browser/core trust boundary, and the registry-derived presentation conformance floor. Together these components exercise the single-operator durable control loop; deployment and operation are documented in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
-This repository currently contains project definition documents only. There is no daemon, web app, adapter, package, or installable release yet. The first implementation milestone is a narrow single-operator slice: responsive web cockpit + CLI admin/debug surface + one authoritative coordination core + local durable event/snapshot store + Pi adapter. The first implementation work should follow that slice rather than inventing product semantics ad hoc.
+This is an executable internal milestone rather than a finished public distribution. Packaging, migrations, public compatibility guarantees, broader adapter proof, and independent-operator deployment hardening remain work for the `v0.x` line.
 
 `v0.1.0` gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone and does not require completed publication legal review. It is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
 
