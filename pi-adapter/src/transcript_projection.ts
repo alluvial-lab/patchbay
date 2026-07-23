@@ -30,6 +30,11 @@ export function projectAgentEvent(
       const ts = messageTimestamp(message, now);
       const messageId = assistantMessageId(message, ts);
       const update = asRecord(event.assistantMessageEvent);
+      // Only text deltas are message content. thinking_start/thinking_delta/
+      // thinking_end carry the model's internal reasoning, which surfaces via
+      // the activity-detail channel (turn_started → "thinking") — never as
+      // rendered message text.
+      if (update["type"] !== "text_delta") return null;
       const delta = stringValue(update["delta"]);
       if (!delta) return null;
       return {
@@ -192,8 +197,9 @@ export function stringifyContent(content: unknown): string {
   return content
     .map((block) => {
       const value = asRecord(block);
+      // Text blocks only — thinking blocks are internal reasoning, not
+      // message content (they surface via the activity-detail channel).
       if (value["type"] === "text") return stringValue(value["text"]) ?? "";
-      if (value["type"] === "thinking") return stringValue(value["thinking"]) ?? "";
       return "";
     })
     .join("");
