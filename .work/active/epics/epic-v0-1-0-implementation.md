@@ -1,7 +1,7 @@
 ---
 id: epic-v0-1-0-implementation
 kind: epic
-stage: implementing
+stage: review
 tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening]
 parent: null
@@ -119,6 +119,24 @@ Maximum-weight epic aggregate review, pass 1 (complementary/completeness, fresh-
 ### Pass 2 (adversarial) pending
 
 After the corrective wave lands, pass 2 (adversarial attack, `gpt-5.6-sol` — different model class) runs against the fixed state per maximum ordering, then convergence until a pass yields no receiver-confirmed material current-cycle blockers.
+
+### Fix wave (2026-07-23) — all blockers + important findings addressed
+
+Two parallel fix workers (disjoint write sets; orchestrator verified + committed) landed the full corrective wave in 9 commits:
+
+- `428c219` **B2** — `LoadSnapshot` materializes on read from the rebuilt projection (durable checkpoint stays deferred). Unblocks CLI `session-health`/`instruct` + cockpit reconcile. Orchestrator reconciled the web-server core-smoke's stale `present:false` assertion (cross-boundary seam neither worker could touch).
+- `80c76d0` **B1** — pi-adapter e2e authenticates through the real trust boundary (loopback bootstrap → VerifyPassword → enrolled principal + core session; no SQLite grant seeding). 6/6 green.
+- `29fb9f9` **B3** — cockpit treats clean subscription completion as the normal polling boundary (re-subscribe without degrading; degrade only on transport errors/gaps). Mutation-verified property tests re-verified; new completion regression test.
+- `5f4690e` **B4** — web-server reads `PATCHBAY_AUTHORITY_DOMAIN_ID` (default `default`, aligned with core/CLI) and templates it into the served cockpit HTML.
+- `c08f963` **I3** — cockpit operator login view (401 → login form → existing `/login` API → startup continues).
+- `cadddfe` **I2** — CI runs all 4 TS suites (web-server, web-cockpit, cli, pi-adapter) + core build.
+- `6c1d748` **I5** — composed walking-skeleton e2e: core + Pi adapter + CLI, bootstrap → login → instruct → live/working → completed/idle. Passes.
+- `6db620f` **I4** — README + foundation docs rolled forward to the honest v0.1.0 partial (operator-confirmed: audit-query/inspect-command/adapter-status + durable audit log reclassified reserved/post-v0.1.0; session-health committed; SECURITY §143 deferral resolved).
+- `a8f6b2e` **I5-runbook** — `docs/RUNBOOK.md` (startup order, env matrix, bootstrap flow, commands, verification).
+
+Final integration verification (orchestrator, post-wave): Rust workspace all suites green; pi-adapter 6/6; web-cockpit 38/38; web-server 21/21 + core-smoke; cli 16/16 + core-smoke; composed e2e passes; contracts vectors + presentation + models green.
+
+Epic re-advanced `implementing → review` for pass 2 (adversarial).
 
 ## Stage correction (2026-07-14)
 
