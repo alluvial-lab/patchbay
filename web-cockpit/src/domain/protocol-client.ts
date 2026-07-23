@@ -35,6 +35,13 @@ export function createProtocolClient(options: ProtocolClientOptions = {}): Proto
   return { client: createClient(ControlService, transport), transport };
 }
 
+export class CsrfTokenRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`CSRF token request failed (${status})`);
+    this.name = "CsrfTokenRequestError";
+  }
+}
+
 /** Fetches the proof required by the web server before a state-changing Submit. */
 export async function fetchCsrfToken(
   fetcher: typeof globalThis.fetch = globalThis.fetch,
@@ -44,7 +51,7 @@ export async function fetchCsrfToken(
     credentials: "same-origin",
     headers: { accept: "application/json" },
   });
-  if (!response.ok) throw new Error(`CSRF token request failed (${response.status})`);
+  if (!response.ok) throw new CsrfTokenRequestError(response.status);
   const body: unknown = await response.json();
   if (!isCsrfResponse(body)) throw new Error("CSRF token response is malformed");
   return body.csrfToken;

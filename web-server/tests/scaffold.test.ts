@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { buildApp, loadConfig, type WebServerConfig } from "../src/main.js";
@@ -10,6 +13,7 @@ const config: WebServerConfig = {
   coreSecret: "test-core-secret",
   bindHost: "127.0.0.1",
   bindPort: 3000,
+  authorityDomainId: "default",
   operatorId: "operator-primary",
   operatorPasswordHash,
 };
@@ -31,6 +35,14 @@ test("startup fails closed without the core trust root or operator identity", ()
     PATCHBAY_OPERATOR_ID: "operator-primary",
   });
   assert.equal(sharedRecordConfig.operatorPasswordHash, undefined);
+  assert.equal(sharedRecordConfig.authorityDomainId, "default");
+
+  const configuredDomain = loadConfig({
+    PATCHBAY_CORE_SECRET: "secret",
+    PATCHBAY_OPERATOR_ID: "operator-primary",
+    PATCHBAY_AUTHORITY_DOMAIN_ID: "operator-fleet",
+  });
+  assert.equal(configuredDomain.authorityDomainId, "operator-fleet");
 });
 
 test("health check is unauthenticated", async () => {
@@ -40,6 +52,33 @@ test("health check is unauthenticated", async () => {
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { status: "ok" });
   await app.close();
+});
+
+test("served cockpit entry carries the configured authority domain", async () => {
+  const assets = await mkdtemp(join(tmpdir(), "patchbay-cockpit-assets-"));
+  try {
+    await writeFile(
+      join(assets, "index.html"),
+      '<meta name="patchbay-authority-domain" content="__PATCHBAY_AUTHORITY_DOMAIN_ID__">',
+    );
+    const app = buildApp({
+      config: { ...config, authorityDomainId: "operator-fleet" },
+      coreClient: unusedCoreClient,
+      cockpitAssetsDir: assets,
+      logger: false,
+    });
+    const response = await app.inject({ method: "GET", url: "/" });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(
+      response.body,
+      /<meta name="patchbay-authority-domain" content="operator-fleet">/,
+    );
+    assert.doesNotMatch(response.body, /__PATCHBAY_AUTHORITY_DOMAIN_ID__/);
+    await app.close();
+  } finally {
+    await rm(assets, { recursive: true, force: true });
+  }
 });
 
 test("TLS certificate and key must be configured as a pair", () => {

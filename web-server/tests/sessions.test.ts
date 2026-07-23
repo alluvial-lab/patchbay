@@ -16,6 +16,7 @@ const config: WebServerConfig = {
   coreSecret: "test-core-secret",
   bindHost: "127.0.0.1",
   bindPort: 3000,
+  authorityDomainId: "default",
   operatorId: "operator-from-record",
   operatorPasswordHash,
 };

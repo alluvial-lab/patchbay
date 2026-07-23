@@ -38,6 +38,7 @@ const config: WebServerConfig = {
   coreSecret: "core-principal-secret",
   bindHost: "127.0.0.1",
   bindPort: 3000,
+  authorityDomainId: "default",
   operatorId: operatorActorId,
   operatorPasswordHash,
 };

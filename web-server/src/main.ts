@@ -24,12 +24,14 @@ import { assertPasswordHash, SessionStore } from "./sessions.js";
 
 const DEFAULT_CORE_ADDR = "http://127.0.0.1:50051";
 const DEFAULT_WEB_BIND_ADDR = "127.0.0.1:3000";
+const DEFAULT_AUTHORITY_DOMAIN_ID = "default";
 
 export interface WebServerConfig {
   coreAddr: string;
   coreSecret: string;
   bindHost: string;
   bindPort: number;
+  authorityDomainId: string;
   operatorId: string;
   operatorPasswordHash?: string;
   principalEndpointId?: string;
@@ -53,6 +55,10 @@ export interface AppOptions {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfig {
   const coreSecret = requireNonEmpty(env.PATCHBAY_CORE_SECRET, "PATCHBAY_CORE_SECRET");
   const operatorId = requireNonEmpty(env.PATCHBAY_OPERATOR_ID, "PATCHBAY_OPERATOR_ID");
+  const authorityDomainId = requireNonEmpty(
+    env.PATCHBAY_AUTHORITY_DOMAIN_ID ?? DEFAULT_AUTHORITY_DOMAIN_ID,
+    "PATCHBAY_AUTHORITY_DOMAIN_ID",
+  );
   const operatorPasswordHash = optionalNonEmpty(
     env.PATCHBAY_OPERATOR_PASSWORD_HASH,
     "PATCHBAY_OPERATOR_PASSWORD_HASH",
@@ -77,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfi
     coreSecret,
     bindHost,
     bindPort,
+    authorityDomainId,
     operatorId,
     operatorPasswordHash,
     principalEndpointId: env.PATCHBAY_WEB_ENDPOINT_ID ?? "patchbay-web-server",
@@ -136,20 +143,44 @@ export function buildApp(options: AppOptions): FastifyInstance {
   registerCockpitAssets(
     app,
     options.cockpitAssetsDir ?? fileURLToPath(new URL("../../../web-cockpit/dist/", import.meta.url)),
+    options.config.authorityDomainId,
   );
 
   app.get("/healthz", async () => ({ status: "ok" }));
   return app;
 }
 
-function registerCockpitAssets(app: FastifyInstance, root: string): void {
+function registerCockpitAssets(
+  app: FastifyInstance,
+  root: string,
+  authorityDomainId: string,
+): void {
+  app.get("/", async (_request, reply) => {
+    try {
+      const source = await readFile(join(root, "index.html"), "utf8");
+      const body = source.replaceAll(
+        "__PATCHBAY_AUTHORITY_DOMAIN_ID__",
+        escapeHtmlAttribute(authorityDomainId),
+      );
+      return reply
+        .header("content-type", "text/html; charset=utf-8")
+        .header("x-content-type-options", "nosniff")
+        .send(body);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return reply.code(503).send({ error: "cockpit_assets_unavailable" });
+      }
+      throw error;
+    }
+  });
+
   const assets = new Map<string, { file: string; contentType: string }>([
-    ["/", { file: "index.html", contentType: "text/html; charset=utf-8" }],
     ["/assets/cockpit.js", { file: "assets/cockpit.js", contentType: "text/javascript; charset=utf-8" }],
     ["/assets/tokens.css", { file: "assets/tokens.css", contentType: "text/css; charset=utf-8" }],
     ["/assets/components.css", { file: "assets/components.css", contentType: "text/css; charset=utf-8" }],
     ["/assets/markdown.css", { file: "assets/markdown.css", contentType: "text/css; charset=utf-8" }],
     ["/assets/shell.css", { file: "assets/shell.css", contentType: "text/css; charset=utf-8" }],
+    ["/assets/login.css", { file: "assets/login.css", contentType: "text/css; charset=utf-8" }],
   ]);
   for (const [route, asset] of assets) {
     app.get(route, async (_request, reply) => {
@@ -167,6 +198,16 @@ function registerCockpitAssets(app: FastifyInstance, root: string): void {
       }
     });
   }
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]!);
 }
 
 export async function run(env: NodeJS.ProcessEnv = process.env): Promise<void> {
