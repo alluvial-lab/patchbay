@@ -69,3 +69,69 @@ jobs:
         run: cargo test --workspace
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  typescript-suites:
+    needs: [contracts-and-conformance, rust]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            contracts/ts/package-lock.json
+            web-server/package-lock.json
+            web-cockpit/package-lock.json
+            cli/package-lock.json
+            pi-adapter/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build core binary for TypeScript integration suites
+        run: cargo build
+
+      - name: Build generated TypeScript contracts
+        working-directory: contracts/ts
+        run: npm ci && npm run build
+
+      - name: Install web server dependencies
+        working-directory: web-server
+        run: npm ci
+
+      - name: Install web cockpit dependencies
+        working-directory: web-cockpit
+        run: npm ci
+
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
+
+      - name: Install Pi adapter dependencies
+        working-directory: pi-adapter
+        run: npm ci
+
+      - name: Test web server
+        working-directory: web-server
+        run: npm test
+
+      - name: Test web server against core
+        working-directory: web-server
+        run: npm run test:core-smoke
+
+      - name: Test web cockpit
+        working-directory: web-cockpit
+        run: npm test
+
+      - name: Test CLI
+        working-directory: cli
+        run: npm test
+
+      - name: Test CLI against core
+        working-directory: cli
+        run: npm run test:core-smoke
+
+      - name: Test Pi adapter
+        working-directory: pi-adapter
+        run: npm test
