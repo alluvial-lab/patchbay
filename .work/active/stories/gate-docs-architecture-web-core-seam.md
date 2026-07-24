@@ -1,7 +1,7 @@
 ---
 id: gate-docs-architecture-web-core-seam
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -28,3 +28,9 @@ The shipped web server verifies credentials with the core through `verifyOperato
 
 ## Required edit
 Replace the deferred-seam assertion with the implemented v0.1.0 web-to-core boundary and name only remaining extension work as reserved.
+
+## Completion
+Corrected `docs/ARCHITECTURE.md` to describe the shipped generated
+Protobuf/Connect `Submit`, `LoadSnapshot`, and `Subscribe` boundary, including
+core-issued principal and operator-session evidence and the pre-forwarding CSRF
+check. Further internal RPC and protocol expansion is now the reserved seam.

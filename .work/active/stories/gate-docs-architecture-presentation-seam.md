@@ -1,7 +1,7 @@
 ---
 id: gate-docs-architecture-presentation-seam
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -28,3 +28,8 @@ foundation-doc-assertion
 
 ## Required edit
 Replace the deferred-implementation assertion with the active v0.1.0 implementation boundary, retaining only genuinely reserved runtime consumer guarantees as future work.
+
+## Completion
+Corrected `docs/ARCHITECTURE.md` to state that v0.1.0 ships the
+registry-derived presentation check and skin-able CSS/showcase artifacts.
+Executable runtime consumer assertions remain the reserved seam.

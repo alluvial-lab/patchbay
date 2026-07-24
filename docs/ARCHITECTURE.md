@@ -144,7 +144,7 @@ The `v0.1.0` executable slice is a single-authority deployment that proves the c
 
 v0.1.0 architecture decisions:
 
-- The coordination core is singular and authoritative. Split deployments may place the web surface, CLI, core, and adapter processes on different machines, but there is no HA core or multi-writer state in v0.1.0.
+- The coordination core is singular and authoritative. v0.1.0 ships its core-dependent processes colocated on one host: the core listener is loopback-only and the web server, CLI, and Pi adapter reach it through that listener. There is no HA core or multi-writer state in v0.1.0; split deployment is a reserved seam.
 - Persistence is local and durable through a storage port owned by the core. The first backend can be embedded, but event and snapshot semantics must remain independent of the backend.
 - The Pi adapter is the only required runtime adapter. Other adapters remain future examples and must not shape the v0.1.0 core ontology.
 - The web cockpit is the first operator surface. The CLI exists for setup, administration, debugging, and scripted access, not as a second independent product surface with divergent semantics.
@@ -160,13 +160,13 @@ v0.1.0 runs three logical processes:
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
 
-The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics. The presentation model is refined in `docs/UX.md` as the **shared presentation-component layer** — a named architectural seam that binds canonical protocol states to skin-able presentable primitives, making the surface-neutral UX conformance floor enforceable; its implementation is deferred (see `docs/UX.md`).
+The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics. The presentation model is refined in `docs/UX.md` as the **shared presentation-component layer**. v0.1.0 implements that layer as a registry-derived static check plus skin-able CSS and showcase artifacts that bind canonical protocol states to presentable primitives. Executable runtime consumer assertions remain a reserved seam (see `docs/UX.md`).
 
 Reserved seams:
 
 - **Server-side operator-domain reuse**: v0.1.0 may run the web server as a thin HTTP→protocol translator with the operator domain executing only in the browser; promoting delivery/reconnect state machines or SSR to the server is reserved for when a concrete need arrives.
-- **Web↔core internal protocol design**: the specific RPC surface, streaming/event channel, operator-session/CSRF evidence crossing, and web-surface authentication to the core are designed in a follow-on feature (see `feature-web-core-protocol-seam`).
-- **Split deployment**: the web server, CLI, core, and adapters may run on different machines. v0.1.0 may colocate them on one host for installation simplicity, but that colocation is a deployment convenience, not the architecture. The Rust coordination core remains the network-reachable fixed point and the single durable writer.
+- **Web↔core internal protocol**: v0.1.0 ships a generated Protobuf/Connect boundary for `Submit`, `LoadSnapshot`, and `Subscribe`. The web server verifies the configured operator password with the core, receives core-issued control-surface principal and operator-session evidence, and forwards that evidence on its session-authenticated RPC bridge; state-changing browser calls pass CSRF protection before forwarding. Additional internal RPC surface and protocol evolution are reserved seams.
+- **Split deployment**: v0.1.0 ships the core, web server, CLI, and Pi adapter colocated on one host, with the core bound only to loopback. A browser may reach the colocated web server directly over TLS, but that does not make the core network-reachable. Separate-machine components and a network-reachable core are reserved seams that require an explicit transport/TLS design.
 
 This topology is consistent with the single-authoritative-core commitment: there is one writer to the durable log (the Rust core), and the HTTP-terminating process is a control surface whose authority is delegated and revocable.
 

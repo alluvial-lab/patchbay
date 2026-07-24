@@ -1,7 +1,7 @@
 ---
 id: gate-docs-architecture-split-topology
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -30,3 +30,10 @@ The v0.1.0 core validates `PATCHBAY_BIND_ADDR` with `local_network_address`, whi
 
 ## Required edit
 State that v0.1.0's executable deployment is loopback/colocated and retain split deployment as a future architectural seam rather than a current v0.1.0 capability.
+
+## Completion
+Corrected `docs/ARCHITECTURE.md` to make the core-dependent v0.1.0 topology
+loopback and colocated, with split deployment reserved pending an explicit
+transport/TLS design. The correction retains the shipped direct-TLS browser
+access to a colocated web server; that access does not make the core
+network-reachable.
