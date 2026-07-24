@@ -243,11 +243,13 @@ The committed v0.1.0 `session-health` CLI projection reads canonical session sta
 
 Allowed v0.1.0 deployments:
 
-- localhost development;
-- local workstation service;
-- VM or container behind local access controls, with HTTPS required for non-localhost browser sessions;
-- LAN, VPN, or reverse-proxy deployment with HTTPS and authenticated browser sessions;
-- split deployment where adapters run near runtimes and the core remains the single authority.
+- a loopback/colocated deployment on a local workstation, VM, or container: the core's general and admin listeners bind to loopback, and the web server, CLI, and Pi adapter run on that host and reach the core through its loopback listener;
+- a browser connected directly to that colocated web server over loopback or TLS. Direct TLS browser access does not make the core network-reachable.
+
+Reserved deployment seams:
+
+- exposing the core on a LAN or VPN, or separating the web server, CLI, or adapters from the core, requires a future transport/TLS design;
+- reverse-proxy TLS termination for the web server requires an explicit trusted-proxy design. v0.1.0 accepts direct TLS or loopback browser connections only.
 
 Forbidden v0.1.0 deployments:
 

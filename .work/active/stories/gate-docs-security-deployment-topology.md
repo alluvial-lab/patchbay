@@ -1,7 +1,7 @@
 ---
 id: gate-docs-security-deployment-topology
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -32,3 +32,11 @@ The shipped core rejects every non-loopback `PATCHBAY_BIND_ADDR` and explicitly 
 
 ## Required edit
 Restrict the v0.1.0 allowed-deployment list to the loopback/colocated topology actually accepted by the core, and move LAN/VPN/reverse-proxy and split deployment to a reserved future deployment seam.
+
+## Completion
+Corrected `docs/SECURITY.md` to require the core-dependent processes to be
+loopback/colocated and to reserve core LAN/VPN exposure, reverse-proxy TLS
+termination, and split deployment. The gate evidence was incomplete: the web
+server does accept a browser's direct TLS connection on a non-loopback bind, so
+the corrected text retains that shipped access while making clear it does not
+make the core network-reachable.
