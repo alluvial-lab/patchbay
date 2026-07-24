@@ -3,17 +3,18 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
-    ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn, Operation,
-    OperationKind, OperationState, OperatorRecord, PrincipalEnrollment, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
-    SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest,
-    SubscribeRequest, TargetScope, TargetScopeKind, VerifyOperatorPasswordRequest,
+    ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
+    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
+    Operation, OperationKind, OperationState, OperatorRecord, PrincipalEnrollment,
+    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionRegistered,
+    SessionSnapshot, SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
+    VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
@@ -35,6 +36,7 @@ use patchbay_core_server::{
     },
 };
 use prost::Message;
+use prost_types::Timestamp;
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -332,6 +334,75 @@ async fn grant_subject_uses_verified_actor_not_operator_session() {
 }
 
 #[tokio::test]
+async fn rpc_rejects_expired_and_not_yet_valid_operations_without_append() {
+    let mut server = start_server().await;
+    let operation_count_before = operation_event_count(&server.storage).await;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("test clock must be after the Unix epoch")
+        .as_secs() as i64;
+
+    let mut expired = operation("expired-command", "expired-key");
+    expired.validity_window = Some(TimeWindow {
+        starts_at: Some(Timestamp {
+            seconds: now - 60,
+            nanos: 0,
+        }),
+        expires_at: Some(Timestamp {
+            seconds: now - 1,
+            nanos: 0,
+        }),
+    });
+    expired.submitted_at = Some(Timestamp {
+        seconds: now - 30,
+        nanos: 0,
+    });
+
+    let mut not_yet_valid = operation("future-command", "future-key");
+    not_yet_valid.validity_window = Some(TimeWindow {
+        starts_at: Some(Timestamp {
+            seconds: now + 60,
+            nanos: 0,
+        }),
+        expires_at: Some(Timestamp {
+            seconds: now + 120,
+            nanos: 0,
+        }),
+    });
+    not_yet_valid.submitted_at = Some(Timestamp {
+        seconds: now + 60,
+        nanos: 0,
+    });
+
+    for (operation, expected_failure) in [
+        (expired, FailureCode::Expired),
+        (not_yet_valid, FailureCode::ValidationFailed),
+    ] {
+        let result = server
+            .client
+            .submit(authenticated_request(
+                SubmitRequest {
+                    operation: Some(operation),
+                },
+                SECRET,
+                &server.operator_session,
+            ))
+            .await
+            .expect("validity rejection is an RPC submission result")
+            .into_inner();
+        assert_eq!(result.outcome, SubmissionOutcome::Rejected as i32);
+        assert_eq!(result.failure_code, expected_failure as i32);
+        assert!(result.accepted_lsn.is_none());
+    }
+
+    assert_eq!(
+        operation_event_count(&server.storage).await,
+        operation_count_before,
+        "invalid windows must not append or become delivery candidates"
+    );
+}
+
+#[tokio::test]
 async fn retry_reconciles_a_commit_after_post_append_catch_up_failure() {
     let directory = tempfile::tempdir().expect("test directory must be created");
     let database_path = directory.path().join("patchbay.sqlite3");
@@ -450,6 +521,16 @@ fn startup_secret_and_storage_error_mapping_fail_safe() {
         map_storage_error_to_status(StorageError::CorruptRecord("bad".into())).code(),
         Code::Internal
     );
+}
+
+async fn operation_event_count(storage: &RusqliteStorage) -> usize {
+    storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("durable log must remain readable")
+        .into_iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .count()
 }
 
 async fn start_server() -> TestServer {
@@ -668,6 +749,20 @@ fn operation(command_id: &str, idempotency_key: &str) -> Operation {
         kind: OperationKind::Instruct as i32,
         target_scope: Some(target_scope()),
         idempotency_key: idempotency_key.to_owned(),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 253_402_300_799,
+                nanos: 0,
+            }),
+        }),
+        submitted_at: Some(Timestamp {
+            seconds: 1,
+            nanos: 0,
+        }),
         ..Operation::default()
     }
 }

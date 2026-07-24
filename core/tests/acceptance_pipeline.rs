@@ -6,18 +6,19 @@ use patchbay_contracts::patchbay::{
     CommandId, DeviceId, ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode,
     Generation, Lsn, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
-    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TypedCorrelation,
+    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
-    submit, AcceptanceError, ActiveElicitation, Authorized, CommandSnapshot, CommandStateLookup,
-    ElicitationContractLookup, GrantCheck, GrantDenied, TargetBinding, TargetNotFound,
-    TargetResolver,
+    submit, submit_with_clock, AcceptanceError, ActiveElicitation, Authorized, Clock,
+    CommandSnapshot, CommandStateLookup, ElicitationContractLookup, GrantCheck, GrantDenied,
+    TargetBinding, TargetNotFound, TargetResolver,
 };
 use patchbay_core::{
     authority::IssuerContext,
     storage::{RusqliteStorage, Storage},
 };
 use prost::Message;
+use prost_types::Timestamp;
 
 struct TestGrantCheck {
     authorized: bool,
@@ -198,6 +199,25 @@ fn verified_sender(test_issuer: &TestIssuer) -> ActorEndpointRef {
     }
 }
 
+fn timestamp(seconds: i64) -> Timestamp {
+    Timestamp { seconds, nanos: 0 }
+}
+
+fn validity_window(starts_at: i64, expires_at: i64) -> TimeWindow {
+    TimeWindow {
+        starts_at: Some(timestamp(starts_at)),
+        expires_at: Some(timestamp(expires_at)),
+    }
+}
+
+struct FixedClock(Timestamp);
+
+impl Clock for FixedClock {
+    fn now(&self) -> Timestamp {
+        self.0
+    }
+}
+
 fn operation() -> Operation {
     Operation {
         command_id: Some(CommandId {
@@ -233,6 +253,8 @@ fn operation() -> Operation {
             content_type: PayloadContentType::TextUtf8 as i32,
             schema_ref: "patchbay.test.instruct.v0".to_owned(),
         }),
+        validity_window: Some(validity_window(1, 253_402_300_799)),
+        submitted_at: Some(timestamp(1)),
         ..Operation::default()
     }
 }
@@ -366,6 +388,14 @@ async fn missing_required_fields_reject_before_grant_without_durable_state() {
     missing_key.idempotency_key.clear();
     submissions.push(missing_key);
 
+    let mut missing_window = operation();
+    missing_window.validity_window = None;
+    submissions.push(missing_window);
+
+    let mut missing_submitted_at = operation();
+    missing_submitted_at.submitted_at = None;
+    submissions.push(missing_submitted_at);
+
     for submitted in submissions {
         let storage = RusqliteStorage::open_in_memory().unwrap();
         let grant = TestGrantCheck::new(true);
@@ -416,6 +446,243 @@ async fn malformed_response_rejects_before_grant_without_durable_state() {
     assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
     assert_eq!(resolver.calls.load(Ordering::Relaxed), 0);
     assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn expired_operation_rejects_before_grant_without_durable_state() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let mut submitted = operation();
+    submitted.validity_window = Some(validity_window(1, 2));
+    submitted.submitted_at = Some(timestamp(1));
+
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&result), FailureCode::Expired);
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn operation_inside_active_window_is_accepted() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let mut submitted = operation();
+    submitted.validity_window = Some(validity_window(10, 30));
+    submitted.submitted_at = Some(timestamp(15));
+
+    let result = submit_with_clock(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        submitted,
+        &FixedClock(timestamp(20)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&result), SubmissionOutcome::Accepted);
+    assert_eq!(failure(&result), FailureCode::Unspecified);
+    assert_eq!(durable_events(&storage).await.len(), 1);
+}
+
+#[tokio::test]
+async fn validity_window_start_is_inclusive_and_expiry_is_exclusive() {
+    let start_storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut at_start = operation();
+    at_start.validity_window = Some(validity_window(10, 30));
+    at_start.submitted_at = Some(timestamp(10));
+    let start_result = submit_with_clock(
+        &start_storage,
+        &TestGrantCheck::new(true),
+        &TestTargetResolver::new(true),
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        at_start,
+        &FixedClock(timestamp(10)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&start_result), SubmissionOutcome::Accepted);
+
+    let expiry_storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut at_expiry = operation();
+    at_expiry.validity_window = Some(validity_window(10, 30));
+    at_expiry.submitted_at = Some(timestamp(20));
+    let expiry_result = submit_with_clock(
+        &expiry_storage,
+        &TestGrantCheck::new(true),
+        &TestTargetResolver::new(true),
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        at_expiry,
+        &FixedClock(timestamp(30)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&expiry_result), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&expiry_result), FailureCode::Expired);
+    assert!(durable_events(&expiry_storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn not_yet_valid_and_future_dated_operations_fail_validation() {
+    for (now, submitted_at) in [(9, 9), (20, 21)] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let grant = TestGrantCheck::new(true);
+        let resolver = TestTargetResolver::new(true);
+        let mut submitted = operation();
+        submitted.validity_window = Some(validity_window(10, 30));
+        submitted.submitted_at = Some(timestamp(submitted_at));
+
+        let result = submit_with_clock(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &NoElicitationContractLookup,
+            &issuer(),
+            submitted,
+            &FixedClock(timestamp(now)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+        assert_eq!(failure(&result), FailureCode::ValidationFailed);
+        assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+        assert!(durable_events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn malformed_validity_windows_fail_validation() {
+    let mut reversed = operation();
+    reversed.validity_window = Some(validity_window(30, 10));
+    reversed.submitted_at = Some(timestamp(20));
+
+    let mut invalid_timestamp = operation();
+    invalid_timestamp.validity_window = Some(TimeWindow {
+        starts_at: Some(Timestamp {
+            seconds: 10,
+            nanos: 1_000_000_000,
+        }),
+        expires_at: Some(timestamp(30)),
+    });
+    invalid_timestamp.submitted_at = Some(timestamp(20));
+
+    for submitted in [reversed, invalid_timestamp] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let grant = TestGrantCheck::new(true);
+        let resolver = TestTargetResolver::new(true);
+        let result = submit_with_clock(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &NoElicitationContractLookup,
+            &issuer(),
+            submitted,
+            &FixedClock(timestamp(20)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+        assert_eq!(failure(&result), FailureCode::ValidationFailed);
+        assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+        assert!(durable_events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn submitted_at_must_be_inside_the_half_open_window() {
+    for submitted_at in [9, 30] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let grant = TestGrantCheck::new(true);
+        let resolver = TestTargetResolver::new(true);
+        let mut submitted = operation();
+        submitted.validity_window = Some(validity_window(10, 30));
+        submitted.submitted_at = Some(timestamp(submitted_at));
+
+        let result = submit_with_clock(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &NoElicitationContractLookup,
+            &issuer(),
+            submitted,
+            &FixedClock(timestamp(20)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+        assert_eq!(failure(&result), FailureCode::ValidationFailed);
+        assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+        assert!(durable_events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn replay_after_window_expiry_is_rejected_without_a_second_append() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let mut submitted = operation();
+    submitted.validity_window = Some(validity_window(10, 30));
+    submitted.submitted_at = Some(timestamp(15));
+
+    let first = submit_with_clock(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        submitted.clone(),
+        &FixedClock(timestamp(20)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&first), SubmissionOutcome::Accepted);
+
+    let replay = submit_with_clock(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        submitted,
+        &FixedClock(timestamp(30)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&replay), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&replay), FailureCode::Expired);
+    assert!(!replay.deduplicated);
+    assert_eq!(durable_events(&storage).await.len(), 1);
 }
 
 #[tokio::test]

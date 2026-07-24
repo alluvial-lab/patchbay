@@ -1,4 +1,5 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   ActorEndpointRefSchema,
@@ -8,12 +9,14 @@ import {
   SubmitRequestSchema,
   SubscribeEventSchema,
   SubscribeRequestSchema,
+  TimeWindowSchema,
 } from "@patchbay/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-auth.js";
 
 const GRPC_WEB_CONTENT_TYPE = "application/grpc-web+proto";
+const DEFAULT_OPERATION_VALIDITY_MS = 5 * 60 * 1_000;
 
 export function registerRpcRoutes(
   app: FastifyInstance,
@@ -35,6 +38,15 @@ export function registerRpcRoutes(
           // it with the actor established by the server-side session record.
           input.operation.sender = create(ActorEndpointRefSchema, {
             actorId: { value: verified(request.verifiedOperator, "operator actor") },
+          });
+          // The browser clock is untrusted and may be skewed. Stamp the
+          // protocol window at this authenticated control-surface boundary.
+          const submittedAtMs = Date.now();
+          const submittedAt = timestampFromMs(submittedAtMs);
+          input.operation.submittedAt = submittedAt;
+          input.operation.validityWindow = create(TimeWindowSchema, {
+            startsAt: submittedAt,
+            expiresAt: timestampFromMs(submittedAtMs + DEFAULT_OPERATION_VALIDITY_MS),
           });
         }
         const output = await app.coreClient.submit(input, {

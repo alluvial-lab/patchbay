@@ -3,9 +3,10 @@
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode, IdempotencyKey, Lsn,
     Operation, OperationKind, OperationState, StoredEventKind, StoredEventPayload,
-    SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind,
+    SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind, TimeWindow,
 };
 use prost::Message;
+use prost_types::Timestamp;
 
 use crate::{
     authority::IssuerContext,
@@ -13,8 +14,8 @@ use crate::{
 };
 
 use super::{
-    validate_response_payload, AcceptanceError, CommandStateLookup, ElicitationContractLookup,
-    GrantCheck, TargetResolver,
+    validate_response_payload, AcceptanceError, Clock, CommandStateLookup,
+    ElicitationContractLookup, GrantCheck, SystemClock, TargetResolver,
 };
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
@@ -42,17 +43,38 @@ struct ValidatedOperation<'a> {
     target_key: TargetKey,
 }
 
-/// Submit an operation for acceptance.
+struct ValidationRejection {
+    failure_code: FailureCode,
+    diagnostic: String,
+}
+
+impl ValidationRejection {
+    fn validation_failed(diagnostic: impl Into<String>) -> Self {
+        Self {
+            failure_code: FailureCode::ValidationFailed,
+            diagnostic: diagnostic.into(),
+        }
+    }
+
+    fn expired(diagnostic: impl Into<String>) -> Self {
+        Self {
+            failure_code: FailureCode::Expired,
+            diagnostic: diagnostic.into(),
+        }
+    }
+}
+
+/// Submit an operation for acceptance using the production wall clock.
 ///
 /// The ordering is protocol-significant: boundary validation, authority check,
 /// target binding, and only then the atomic deduplicating durable append.
 /// Every rejection before that append leaves the command log untouched.
-pub async fn submit<S, G, R, L, C>(
+pub async fn submit<S, G, R, L, E>(
     storage: &S,
     grant_check: &G,
     target_resolver: &R,
     state_lookup: &L,
-    contract_lookup: &C,
+    contract_lookup: &E,
     issuer: &dyn IssuerContext,
     operation: Operation,
 ) -> Result<SubmissionResult, AcceptanceError>
@@ -61,15 +83,56 @@ where
     G: GrantCheck,
     R: TargetResolver,
     L: CommandStateLookup,
-    C: ElicitationContractLookup,
+    E: ElicitationContractLookup,
 {
-    let validated = match validate_operation(&operation) {
+    submit_with_clock(
+        storage,
+        grant_check,
+        target_resolver,
+        state_lookup,
+        contract_lookup,
+        issuer,
+        operation,
+        &SystemClock,
+    )
+    .await
+}
+
+/// Submit an operation using an injected clock.
+///
+/// The ordering is protocol-significant: boundary and validity-window
+/// validation, authority check, target binding, and only then the atomic
+/// deduplicating durable append. Every rejection before that append leaves the
+/// command log untouched.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the injected clock extends the existing acceptance boundary without bundling unrelated ports"
+)]
+pub async fn submit_with_clock<S, G, R, L, E, C>(
+    storage: &S,
+    grant_check: &G,
+    target_resolver: &R,
+    state_lookup: &L,
+    contract_lookup: &E,
+    issuer: &dyn IssuerContext,
+    operation: Operation,
+    clock: &C,
+) -> Result<SubmissionResult, AcceptanceError>
+where
+    S: Storage,
+    G: GrantCheck,
+    R: TargetResolver,
+    L: CommandStateLookup,
+    E: ElicitationContractLookup,
+    C: Clock,
+{
+    let validated = match validate_operation(&operation, &clock.now()) {
         Ok(validated) => validated,
-        Err(diagnostic) => {
+        Err(rejection) => {
             return Ok(rejected_result(
                 operation.command_id.clone(),
-                FailureCode::ValidationFailed,
-                diagnostic,
+                rejection.failure_code,
+                rejection.diagnostic,
             ));
         }
     };
@@ -229,47 +292,64 @@ pub fn target_key_for(operation: &Operation) -> Result<TargetKey, AcceptanceErro
     })
 }
 
-fn validate_operation(operation: &Operation) -> Result<ValidatedOperation<'_>, String> {
+fn validate_operation<'a>(
+    operation: &'a Operation,
+    now: &Timestamp,
+) -> Result<ValidatedOperation<'a>, ValidationRejection> {
     let operation_kind = OperationKind::try_from(operation.kind)
         .ok()
         .filter(|kind| COMMITTED_OPERATION_KINDS.contains(kind))
-        .ok_or_else(|| "operation kind is unknown or unavailable in v0.1.0".to_owned())?;
+        .ok_or_else(|| {
+            ValidationRejection::validation_failed(
+                "operation kind is unknown or unavailable in v0.1.0",
+            )
+        })?;
 
     let command_id = operation
         .command_id
         .as_ref()
-        .ok_or_else(|| "operation is missing command_id".to_owned())?;
+        .ok_or_else(|| ValidationRejection::validation_failed("operation is missing command_id"))?;
     if command_id.value.is_empty() {
-        return Err("operation command_id is empty".to_owned());
+        return Err(ValidationRejection::validation_failed(
+            "operation command_id is empty",
+        ));
     }
 
-    let authority_domain_id = operation
-        .authority_domain_id
-        .as_ref()
-        .ok_or_else(|| "operation is missing authority_domain_id".to_owned())?;
+    let authority_domain_id = operation.authority_domain_id.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation is missing authority_domain_id")
+    })?;
     if authority_domain_id.value.is_empty() {
-        return Err("operation authority_domain_id is empty".to_owned());
+        return Err(ValidationRejection::validation_failed(
+            "operation authority_domain_id is empty",
+        ));
     }
 
     operation
         .sender
         .as_ref()
-        .ok_or_else(|| "operation is missing sender".to_owned())?;
-    let target_scope = operation
-        .target_scope
-        .as_ref()
-        .ok_or_else(|| "operation is missing target_scope".to_owned())?;
-    let target_scope_kind = TargetScopeKind::try_from(target_scope.kind)
-        .map_err(|_| "operation target_scope has an unknown kind".to_owned())?;
+        .ok_or_else(|| ValidationRejection::validation_failed("operation is missing sender"))?;
+    let target_scope = operation.target_scope.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation is missing target_scope")
+    })?;
+    let target_scope_kind = TargetScopeKind::try_from(target_scope.kind).map_err(|_| {
+        ValidationRejection::validation_failed("operation target_scope has an unknown kind")
+    })?;
     if target_scope_kind == TargetScopeKind::Unspecified {
-        return Err("operation target_scope kind is unspecified".to_owned());
+        return Err(ValidationRejection::validation_failed(
+            "operation target_scope kind is unspecified",
+        ));
     }
 
     if operation.idempotency_key.is_empty() {
-        return Err("operation is missing idempotency_key".to_owned());
+        return Err(ValidationRejection::validation_failed(
+            "operation is missing idempotency_key",
+        ));
     }
 
-    let target_key = target_key_for(operation).map_err(|error| error.to_string())?;
+    validate_validity_window(operation, now)?;
+
+    let target_key = target_key_for(operation)
+        .map_err(|error| ValidationRejection::validation_failed(error.to_string()))?;
 
     Ok(ValidatedOperation {
         command_id,
@@ -281,6 +361,79 @@ fn validate_operation(operation: &Operation) -> Result<ValidatedOperation<'_>, S
         },
         target_key,
     })
+}
+
+fn validate_validity_window(
+    operation: &Operation,
+    now: &Timestamp,
+) -> Result<(), ValidationRejection> {
+    validate_timestamp("acceptance clock", now)?;
+    let TimeWindow {
+        starts_at,
+        expires_at,
+    } = operation.validity_window.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation is missing validity_window")
+    })?;
+    let starts_at = starts_at.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation validity_window is missing starts_at")
+    })?;
+    let expires_at = expires_at.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation validity_window is missing expires_at")
+    })?;
+    let submitted_at = operation.submitted_at.as_ref().ok_or_else(|| {
+        ValidationRejection::validation_failed("operation is missing submitted_at")
+    })?;
+
+    validate_timestamp("operation validity_window.starts_at", starts_at)?;
+    validate_timestamp("operation validity_window.expires_at", expires_at)?;
+    validate_timestamp("operation submitted_at", submitted_at)?;
+
+    if timestamp_key(starts_at) >= timestamp_key(expires_at) {
+        return Err(ValidationRejection::validation_failed(
+            "operation validity_window must have starts_at before expires_at",
+        ));
+    }
+    if timestamp_key(submitted_at) < timestamp_key(starts_at)
+        || timestamp_key(submitted_at) >= timestamp_key(expires_at)
+    {
+        return Err(ValidationRejection::validation_failed(
+            "operation submitted_at is outside validity_window",
+        ));
+    }
+    if timestamp_key(now) < timestamp_key(starts_at) {
+        return Err(ValidationRejection::validation_failed(
+            "operation validity_window is not active yet",
+        ));
+    }
+    if timestamp_key(now) >= timestamp_key(expires_at) {
+        return Err(ValidationRejection::expired(
+            "operation validity_window has expired",
+        ));
+    }
+    if timestamp_key(submitted_at) > timestamp_key(now) {
+        return Err(ValidationRejection::validation_failed(
+            "operation submitted_at is in the future",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_timestamp(field: &str, timestamp: &Timestamp) -> Result<(), ValidationRejection> {
+    const MIN_SECONDS: i64 = -62_135_596_800;
+    const MAX_SECONDS: i64 = 253_402_300_799;
+    if !(MIN_SECONDS..=MAX_SECONDS).contains(&timestamp.seconds)
+        || !(0..1_000_000_000).contains(&timestamp.nanos)
+    {
+        return Err(ValidationRejection::validation_failed(format!(
+            "{field} is not a valid protobuf Timestamp"
+        )));
+    }
+    Ok(())
+}
+
+fn timestamp_key(timestamp: &Timestamp) -> (i64, i32) {
+    (timestamp.seconds, timestamp.nanos)
 }
 
 fn sender_from_verified_issuer(issuer: &dyn IssuerContext) -> Option<ActorEndpointRef> {

@@ -1,4 +1,5 @@
 import { create, fromBinary } from "@bufbuild/protobuf";
+import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { createHash, randomUUID } from "node:crypto";
 import {
   ActorEndpointRefSchema,
@@ -13,12 +14,15 @@ import {
   OperationSchema,
   StoredEventKind,
   TargetScopeKind,
+  TimeWindowSchema,
   TypedCorrelationSchema,
   type Operation,
   type TargetScope,
 } from "@patchbay/contracts";
 import type { ControlClient } from "../core-client.js";
 import type { CliCredentials, CredentialStore } from "../credentials.js";
+
+const DEFAULT_OPERATION_VALIDITY_MS = 5 * 60 * 1_000;
 
 export interface OperationIdOptions {
   idempotencyKey?: string;
@@ -92,6 +96,8 @@ export function operationBase(
   kind: OperationKind,
   ids: { commandId: string; idempotencyKey: string },
 ): Operation {
+  const submittedAtMs = Date.now();
+  const submittedAt = timestampFromMs(submittedAtMs);
   return create(OperationSchema, {
     commandId: create(CommandIdSchema, { value: ids.commandId }),
     authorityDomainId: context.authorityDomainId,
@@ -99,6 +105,11 @@ export function operationBase(
     kind,
     targetScope,
     idempotencyKey: ids.idempotencyKey,
+    submittedAt,
+    validityWindow: create(TimeWindowSchema, {
+      startsAt: submittedAt,
+      expiresAt: timestampFromMs(submittedAtMs + DEFAULT_OPERATION_VALIDITY_MS),
+    }),
   });
 }
 

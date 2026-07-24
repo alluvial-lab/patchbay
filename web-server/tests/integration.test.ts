@@ -204,6 +204,7 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
   const { client, close } = await listen(fixture);
 
   try {
+    const beforeSubmit = Date.now();
     const response = await client.submit(
       { operation: { sender: { actorId: { value: "forged-browser-actor" } } } },
       {
@@ -224,9 +225,26 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
     assert.equal(call.headers.get("x-patchbay-operator-id"), operatorActorId);
     assert.equal(call.headers.get("x-patchbay-operator-session-id"), "core-issued-session");
     const forwarded = call.request as {
-      operation?: { sender?: { actorId?: { value: string } } };
+      operation?: {
+        sender?: { actorId?: { value: string } };
+        submittedAt?: { seconds: bigint; nanos: number };
+        validityWindow?: {
+          startsAt?: { seconds: bigint; nanos: number };
+          expiresAt?: { seconds: bigint; nanos: number };
+        };
+      };
     };
     assert.equal(forwarded.operation?.sender?.actorId?.value, operatorActorId);
+    const submittedAt = forwarded.operation?.submittedAt;
+    const startsAt = forwarded.operation?.validityWindow?.startsAt;
+    const expiresAt = forwarded.operation?.validityWindow?.expiresAt;
+    assert.ok(submittedAt);
+    assert.ok(startsAt);
+    assert.ok(expiresAt);
+    assert.ok(timestampMs(submittedAt) >= beforeSubmit);
+    assert.ok(timestampMs(submittedAt) <= Date.now());
+    assert.equal(timestampMs(startsAt), timestampMs(submittedAt));
+    assert.equal(timestampMs(expiresAt) - timestampMs(startsAt), 300_000);
   } finally {
     await close();
   }
@@ -367,6 +385,10 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
 
 function callHeaders(options: CallOptions | undefined): Headers {
   return new Headers(options?.headers);
+}
+
+function timestampMs(timestamp: { seconds: bigint; nanos: number }): number {
+  return Number(timestamp.seconds) * 1_000 + Math.floor(timestamp.nanos / 1_000_000);
 }
 
 function submitFrame(browserActorId: string): Buffer {

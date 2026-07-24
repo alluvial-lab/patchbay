@@ -16,7 +16,7 @@ use patchbay_contracts::patchbay::{
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, Revocation,
     RuntimeSessionId, SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload,
-    SubmissionOutcome, TargetScope, TargetScopeKind, TypedCorrelation,
+    SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{
@@ -33,6 +33,7 @@ use patchbay_core::{
 };
 use proptest::prelude::*;
 use prost::Message;
+use prost_types::Timestamp;
 
 const ACCEPTED_OPERATION_KINDS: [OperationKind; 10] = [
     OperationKind::Spawn,
@@ -1470,6 +1471,20 @@ fn compound_issuer_integration_denies_payload_actor_mismatch_through_submit() {
             kind: OperationKind::Instruct as i32,
             target_scope: Some(target_scope),
             idempotency_key: "compound-issuer-submit-key".to_owned(),
+            validity_window: Some(TimeWindow {
+                starts_at: Some(Timestamp {
+                    seconds: 1,
+                    nanos: 0,
+                }),
+                expires_at: Some(Timestamp {
+                    seconds: 253_402_300_799,
+                    nanos: 0,
+                }),
+            }),
+            submitted_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
             ..Operation::default()
         };
 

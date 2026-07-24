@@ -87,6 +87,7 @@ test("instruct prints stable identity before submission and keeps JSON output se
   assert.match(submitted?.commandId?.value ?? "", /^cli-[a-f0-9]{32}$/);
   assert.equal(submitted?.sender?.actorId?.value, "operator-primary");
   assert.equal(submitted?.sender?.endpointId?.value, "cli-endpoint");
+  assertDefaultValidityWindow(submitted);
   assert.equal(JSON.parse(output.out[0]!).outcome, "accepted");
   assert.equal([...output.out, ...output.err].join("\n").includes(BEARER_SECRET), false);
 });
@@ -132,6 +133,7 @@ test("cancel and interrupt recover the stable target from command records", asyn
     assert.equal(submitted?.kind, expectedKind);
     assert.equal(submitted?.targetScope?.runtimeSessionId?.value, "runtime-1");
     assert.equal(submitted?.correlations[0]?.ref.case, "commandId");
+    assertDefaultValidityWindow(submitted);
     assert.equal(
       submitted?.correlations[0]?.ref.case === "commandId"
         ? submitted.correlations[0].ref.value.value
@@ -140,3 +142,16 @@ test("cancel and interrupt recover the stable target from command records", asyn
     );
   }
 });
+
+function assertDefaultValidityWindow(operation: Operation | undefined): void {
+  assert.ok(operation?.submittedAt);
+  assert.ok(operation.validityWindow?.startsAt);
+  assert.ok(operation.validityWindow.expiresAt);
+  assert.equal(operation.validityWindow.startsAt.seconds, operation.submittedAt.seconds);
+  assert.equal(operation.validityWindow.startsAt.nanos, operation.submittedAt.nanos);
+  assert.equal(
+    operation.validityWindow.expiresAt.seconds - operation.validityWindow.startsAt.seconds,
+    300n,
+  );
+  assert.equal(operation.validityWindow.expiresAt.nanos, operation.validityWindow.startsAt.nanos);
+}

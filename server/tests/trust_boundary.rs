@@ -9,7 +9,7 @@ use patchbay_contracts::patchbay::{
     PrincipalCredential, PrincipalEnrollment, RevokeOperatorSessionRequest, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
     StoredEventKind, SubmissionOutcome, SubmitRequest, SubscribeRequest, TargetScope,
-    TargetScopeKind, VerifyOperatorPasswordRequest,
+    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     session::events as session_events,
@@ -28,6 +28,7 @@ use patchbay_core_server::{
     },
     service::{ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER},
 };
+use prost_types::Timestamp;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{transport::Channel, Code, Request};
@@ -682,6 +683,20 @@ fn operation(command_id: &str, idempotency_key: &str) -> Operation {
         kind: OperationKind::Instruct as i32,
         target_scope: Some(target_scope()),
         idempotency_key: idempotency_key.to_owned(),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 253_402_300_799,
+                nanos: 0,
+            }),
+        }),
+        submitted_at: Some(Timestamp {
+            seconds: 1,
+            nanos: 0,
+        }),
         ..Operation::default()
     }
 }

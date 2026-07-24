@@ -373,6 +373,21 @@ A command accepted by Patchbay is durably recorded before delivery. After accept
 
 Acceptance creates a command record only after boundary validation, authority checking, idempotency reconciliation, and target identity binding. Invalid submissions that fail before acceptance return `SubmissionOutcome = rejected` without creating durable command state. Audit policy may record rejected attempts, but those audit records are not command records and do not use `CommandState`.
 
+### Operation validity windows
+
+Every v0.1.0 Operation submission carries both `submitted_at` and a `validity_window = [starts_at, expires_at)`. The interval is half-open: the start instant is valid and the expiry instant is not. `starts_at` must be strictly earlier than `expires_at`, and `submitted_at` must lie inside the same half-open interval.
+
+The core samples its injected acceptance clock once per submission and validates the window before grant evaluation, target resolution, idempotency lookup, or durable append:
+
+- `core_now < starts_at` is not-yet-valid intent and rejects with `SubmissionOutcome = rejected` / `validation_failed`;
+- `core_now >= expires_at` is expired intent and rejects with `SubmissionOutcome = rejected` / `expired`;
+- `submitted_at > core_now`, a missing timestamp/window bound, an invalid Protobuf timestamp, a reversed/empty interval, or `submitted_at` outside the interval rejects with `validation_failed`;
+- no rejected validity candidate creates or delivers a command record. A repeated request is revalidated at its new arrival time, so a retry after the original window expires is rejected before deduplication and cannot reactivate the intent.
+
+v0.1.0 applies **zero clock-skew tolerance** at this boundary. This is deliberate for the committed colocated topology: the authenticated web server overwrites browser-provided timing with its own ingress time, while the colocated CLI stamps its Operation immediately before submission. Direct protocol clients must populate the same fields from their local submission time. A future split-deployment transport must explicitly promote a skew policy rather than silently widening acceptance.
+
+The default control-surface window is five minutes: `submitted_at = starts_at = surface_now` and `expires_at = surface_now + 5 minutes`. A flow may choose a shorter window when its semantics require it; longer defaults require a protocol-policy update because they widen replay exposure.
+
 ## Idempotency and retry
 
 Commands are deduplicated at the Patchbay acceptance boundary. Retrying the same command id and idempotency key returns the existing command record and does not create a new accepted record at the boundary. This is a boundary guarantee, not an end-to-end execution guarantee: an adapter that does not track idempotency internally may execute the same logical Operation more than once on retry, and that adapter-side behavior is governed by the adapter's declared `idempotency_strength` capability, not by Patchbay's boundary dedup.

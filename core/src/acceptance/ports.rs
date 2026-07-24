@@ -4,12 +4,57 @@
 //! features provide adapters. Keeping the interfaces here prevents acceptance
 //! from depending on either sibling feature's implementation.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, ElicitationId, Generation, GrantId, Operation, OperationKind,
     ResponseContract, RuntimeSessionId, TargetScope,
 };
+use prost_types::Timestamp;
 
 use crate::authority::IssuerContext;
+
+/// Time source for acceptance-window validation.
+///
+/// The domain receives time through this port so validity checks are
+/// deterministic in tests and do not depend directly on the system clock.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Timestamp;
+}
+
+/// Production wall-clock adapter for the acceptance boundary.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Timestamp {
+        timestamp_from_system_time(SystemTime::now())
+    }
+}
+
+fn timestamp_from_system_time(time: SystemTime) -> Timestamp {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => Timestamp {
+            seconds: i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            nanos: duration.subsec_nanos() as i32,
+        },
+        Err(error) => {
+            let duration = error.duration();
+            let seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+            if duration.subsec_nanos() == 0 {
+                Timestamp {
+                    seconds: -seconds,
+                    nanos: 0,
+                }
+            } else {
+                Timestamp {
+                    seconds: -seconds - 1,
+                    nanos: 1_000_000_000 - duration.subsec_nanos() as i32,
+                }
+            }
+        }
+    }
+}
 
 /// The authority seam used before an operation can become durable command
 /// state.

@@ -19,6 +19,7 @@ use patchbay_contracts::patchbay::{
     DeviceId, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, Operation,
     OperationKind, OperationState, PayloadContentType, PayloadEnvelope, RuntimeSessionId,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, TargetScope, TargetScopeKind,
+    TimeWindow,
 };
 use patchbay_core::acceptance::{
     apply_transition, is_terminal, rebuild_from_log, submit, AcceptanceError, ActiveElicitation,
@@ -34,6 +35,7 @@ use patchbay_core::{
 };
 use proptest::prelude::*;
 use prost::Message;
+use prost_types::Timestamp;
 
 const TERMINAL_STATES: [OperationState; 6] = [
     OperationState::Completed,
@@ -127,6 +129,20 @@ fn operation(command_id: &str, idempotency_key: &str, payload: Vec<u8>) -> Opera
             payload,
             content_type: PayloadContentType::Binary as i32,
             schema_ref: "patchbay.test.acceptance-proptest.v0".to_owned(),
+        }),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 253_402_300_799,
+                nanos: 0,
+            }),
+        }),
+        submitted_at: Some(Timestamp {
+            seconds: 1,
+            nanos: 0,
         }),
         ..Operation::default()
     }
