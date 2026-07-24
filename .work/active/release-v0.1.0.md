@@ -162,7 +162,7 @@ Gates: security, tests, cruft, docs, patterns (default set).
 - **gate-tests** (2026-07-24) — 1 finding (1 high); commit a666a40
 - **gate-cruft** (2026-07-24) — 1 finding; commit 31045b5
 - **gate-docs** (2026-07-24) — 6 findings; commit 2a3142b
-- **gate-patterns** — pending (runs last)
+- **gate-patterns** (2026-07-24) — 6 patterns promoted (`.agents/skills/patterns/` + rules digest); commit e4051fb
 
 ### Binding-consistency warnings
 
