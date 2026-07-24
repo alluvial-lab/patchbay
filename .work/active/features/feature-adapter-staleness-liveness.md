@@ -1,7 +1,7 @@
 ---
 id: feature-adapter-staleness-liveness
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol, fast-follower]
 parent: null
 depends_on: []
@@ -356,3 +356,21 @@ async #beginDelivery(
   harness invocation exposes no subagent dispatch tool. The design therefore
   records direct code evidence and targeted regression seams for the normal
   feature-level independent review after implementation.
+
+## Implementation notes
+
+- Execution capability: single feature-owning worker with direct repository reads; the correctness-critical stream/cursor/terminal-race surface was kept in one context to preserve sequencing and ownership.
+- Review weight: `standard` (project/default); caller explicitly requested stop at `stage: review` for the separate orchestrator review step.
+- Files changed: `core/src/acceptance/index.rs`, `core/src/adapter/mod.rs`, `server/Cargo.toml`, `server/src/adapter_service.rs`, `server/src/adapter_service/tests.rs`, `pi-adapter/src/core_client.ts`, `pi-adapter/src/main.ts`, `pi-adapter/tests/e2e.test.ts`, `docs/PROTOCOL.md`, `docs/RUNBOOK.md`, and the feature/story substrate files.
+- Tests added/removed: replaced finite-tail/poll-batch assertions with idle-pending and post-establishment delivery coverage; added current-vs-obsolete drop fencing, running-loss terminalization/late-terminal finality, delivered redelivery, continuous Pi lifecycle, shutdown/reconnect, and restart-mid-turn regressions.
+- Simplification: removed the external `pollOnce()`/100ms polling loop and per-RPC full command-log rebuild; one subscription-local incremental projection now follows its own scan cursor while the shared projection is incrementally caught up for acknowledgement/observation validation.
+- Discrepancies from design: the subscription retains an independent scan projection **and** incrementally catches up the shared service projection; using one shared scan cursor was rejected during implementation because unary ingestion could advance it past an undelivered Operation (the converted old-generation regression caught this miss hazard). Concurrent `feature-session-model-field` work overlapped the three Pi files and left residual model-report integration plus two malformed trailing lines after its commit; those already-intended hunks were preserved/cleaned in the combined Pi commit so the tested merged tree remains buildable. No protocol-semantic operator decision changed.
+- Adjacent issues parked: none.
+
+## Integrated verification evidence
+
+- `cargo build --workspace --all-targets` — passed.
+- `cargo test --workspace` — passed (all workspace unit, integration, property, and doc tests).
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd pi-adapter && npm test` — passed (10/10); this package has no separate lint script.
+- Acceptance walk: the idle stream stays pending and receives later work; current stream loss marks sessions stale and fails only matching running commands with `execution_outcome_unknown`; delivered work remains redeliverable; the Pi run loop preserves instruction concurrency/observation ordering and reconnects after transport loss or attachment refresh; shutdown is cancellation-aware.
