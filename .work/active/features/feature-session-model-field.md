@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, ux, fast-follower]
 parent: null
 depends_on: []
@@ -519,3 +519,11 @@ dependencies: `proto-contract → core-registry → {pi-adapter, surfaces}`.
 - Model-change adapter test only exercises observer plumbing, never a `model_change` through `AdapterProcess` → **fold into blocker-1 fix** (the missing test is how the blocker passed).
 
 Feature bounced review → implementing for the fix wave.
+
+### Blocker fix wave (2026-07-24)
+
+- `6718292b576a13619896b18030a5ddf5700c8c78` (`fix(pi-adapter): preserve model change reports`) captures each emitted model value and real Pi activity at event time, keeps rapid switches ordered on the existing per-session tail, and adds a real-AgentSession A→B→C regression through `AdapterProcess`.
+- `d6fa8a2f6a2268bcf18005f2f8a1eb223de35afe` (`fix(server): serialize session report projection updates`) keeps session append, projection rebuild, and installation under one registry critical section; the concurrent conflicting-report regression replays the durable log and verifies the final model.
+- Verification: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cd pi-adapter && npm test` pass. Shared contracts were unchanged, so cockpit/CLI suites were not required.
+
+Both adjudicated blockers are fixed; feature returned to `stage: review`.
