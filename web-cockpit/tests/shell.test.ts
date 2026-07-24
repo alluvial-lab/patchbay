@@ -82,6 +82,7 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
 test("desktop shell is two-pane and rows lead with identity before label metadata", () => {
   const dom = new JSDOM();
   const first = session("session-1", 1n, { name: "core", project: "patchbay" });
+  first.model = "provider/model-1";
   const second = session("session-2", 1n, { name: "adapter", project: "patchbay" });
   second.needsYou = true;
   const model = withSessions(first, second);
@@ -102,13 +103,21 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(rows[0]!.classList.contains("session-row--needs-you"), true);
   assert.ok(rows[0]!.querySelector(".connectivity-indicator"));
   assert.ok(rows[0]!.querySelector(".activity-indicator"));
+  assert.match(rows[1]!.textContent!, /provider\/model-1/);
   const unavailableControls = [...shell.element.querySelectorAll<HTMLButtonElement>(".sidebar__actions button")];
   assert.deepEqual(unavailableControls.map((button) => button.getAttribute("aria-label")), ["Spawn session unavailable", "Attach session unavailable"]);
   assert.equal(unavailableControls.every((button) => button.disabled && button.querySelector('.icon[aria-hidden="true"]')), true);
 
   shell.select(sessionKey(first.identity));
+  assert.match(shell.detail.header.textContent!, /provider\/model-1/);
   assert.equal(shell.detail.element.dataset.sessionKey, sessionKey(first.identity));
   assert.equal(shell.element.querySelectorAll(".session-detail").length, 1);
+});
+
+test("session rows render unavailable models honestly", () => {
+  const dom = new JSDOM();
+  const row = renderSessionRow(dom.window.document, session("session-unknown"), false, () => undefined);
+  assert.match(row.textContent!, /Model unknown/);
 });
 
 test("mobile drill-in swaps containers around the same detail component", () => {

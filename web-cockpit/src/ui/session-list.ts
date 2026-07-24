@@ -139,13 +139,15 @@ function sessionLabel(session: SessionView): string {
 }
 
 function sessionContext(session: SessionView): string {
-  const metadata = [session.label.project, session.label.cwd].filter(Boolean).join(" · ");
+  const metadata = [session.model ?? "Model unknown", session.label.project, session.label.cwd]
+    .filter(Boolean)
+    .join(" · ");
   const updated = session.lastUpdate ? ` · updated ${session.lastUpdate.toLocaleString()}` : "";
   return `${metadata || "No label metadata"}${updated}`;
 }
 
 function searchableSession(session: SessionView): string {
-  return `${formatSessionIdentity(session.identity)} ${session.label.name ?? ""} ${session.label.project ?? ""} ${session.label.cwd ?? ""}`.toLocaleLowerCase();
+  return `${formatSessionIdentity(session.identity)} ${session.model ?? ""} ${session.label.name ?? ""} ${session.label.project ?? ""} ${session.label.cwd ?? ""}`.toLocaleLowerCase();
 }
 
 function compareSessions(left: SessionView, right: SessionView): number {

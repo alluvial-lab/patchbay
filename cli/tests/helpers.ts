@@ -45,6 +45,7 @@ export function session(): Session {
     runtimeSessionId: create(RuntimeSessionIdSchema, { value: "runtime-1" }),
     sessionGeneration: create(GenerationSchema, { value: 3n }),
     name: "primary",
+    model: "provider/model-1",
     state: create(SessionStateSchema, {
       connectivity: SessionConnectivityState.LIVE,
       activity: SessionActivityState.WORKING,

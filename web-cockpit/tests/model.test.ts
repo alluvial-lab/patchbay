@@ -31,6 +31,7 @@ import {
   SessionActivityState,
   SessionConnectivityState,
   SessionGenerationBumpedSchema,
+  SessionModelChangedSchema,
   SessionRegisteredSchema,
   SessionSnapshotSchema,
   SessionStateEventSchema,
@@ -76,6 +77,20 @@ test("fold is pure and registration exposes the stable identity tuple", () => {
     generation: 1n,
   });
   assert.equal(rendersLive(session), true);
+  assert.equal(session.model, "provider/model-1");
+});
+
+test("model deltas preserve session identity", () => {
+  const registered = fold(emptyPresentationModel(), registration(1n, 1n));
+  const updated = fold(registered, modelChange(2n, "provider/model-1", "provider/model-2"));
+  const session = [...updated.sessions.values()][0]!;
+  assert.equal(session.model, "provider/model-2");
+  assert.deepEqual(session.identity, {
+    adapterId: "pi",
+    deploymentScope,
+    runtimeSessionId: "session-1",
+    generation: 1n,
+  });
 });
 
 test("unreconciled and tombstoned generations cannot render as live", () => {
@@ -218,6 +233,7 @@ function registration(lsn: bigint, generation: bigint): SubscribeEvent {
     project: "patchbay",
     cwd: "/projects/patchbay",
     name: "core",
+    model: "provider/model-1",
   });
   return stored(
     lsn,
@@ -244,6 +260,7 @@ function generationBump(lsn: bigint, from: bigint, to: bigint): SubscribeEvent {
     project: "patchbay",
     cwd: "/projects/patchbay",
     name: "core",
+    model: "provider/model-2",
   });
   return stored(
     lsn,
@@ -252,6 +269,28 @@ function generationBump(lsn: bigint, from: bigint, to: bigint): SubscribeEvent {
     create(SessionStateEventSchema, {
       authorityDomainId: DOMAIN,
       mutation: { case: "generationBumped", value: mutation },
+    }),
+  );
+}
+
+function modelChange(lsn: bigint, from: string, to: string): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.SESSION_STATE,
+    SessionStateEventSchema,
+    create(SessionStateEventSchema, {
+      authorityDomainId: DOMAIN,
+      mutation: {
+        case: "modelChanged",
+        value: create(SessionModelChangedSchema, {
+          adapterId,
+          deploymentScope,
+          runtimeSessionId,
+          sessionGeneration: create(GenerationSchema, { value: 1n }),
+          from,
+          to,
+        }),
+      },
     }),
   );
 }

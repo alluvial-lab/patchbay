@@ -104,6 +104,7 @@ function renderHeader(
   header.append(back);
   if (session) {
     header.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
+    header.append(textElement(document, "span", "session-row__context", session.model ?? "Model unknown"));
     header.append(renderSessionStatus(document, session));
   } else {
     header.append(textElement(document, "span", "nav-bar__brand", "Select a session"));

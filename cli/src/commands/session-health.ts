@@ -48,6 +48,7 @@ export function sessionHealthView(session: Session) {
     generation: session.sessionGeneration?.value.toString() ?? "",
     connectivity: connectivityLabel(connectivity),
     activity: activityLabel(activity),
+    model: session.model || null,
     name: session.name || null,
     lastAuthoritativeLsn: session.lastAuthoritativeLsn?.value.toString() ?? null,
   };
@@ -71,11 +72,12 @@ function printTable(
   rows: ReturnType<typeof sessionHealthView>[],
   output: CliOutput,
 ): void {
-  const headers = ["IDENTITY", "CONNECTIVITY", "ACTIVITY", "NAME"];
+  const headers = ["IDENTITY", "CONNECTIVITY", "ACTIVITY", "MODEL", "NAME"];
   const values = rows.map((row) => [
     row.identity,
     row.connectivity,
     row.activity,
+    row.model ?? "Model unknown",
     row.name ?? "-",
   ]);
   const widths = headers.map((header, index) =>

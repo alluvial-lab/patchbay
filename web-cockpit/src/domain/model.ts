@@ -39,6 +39,7 @@ export interface SessionIdentity {
 export interface SessionView {
   identity: SessionIdentity;
   label: { project?: string; cwd?: string; name?: string };
+  model?: string;
   connectivity: SessionConnectivityState;
   activity: SessionActivityState;
   activityDetail?: string;
@@ -393,6 +394,7 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
       model.sessions.set(key, {
         identity,
         label: labels(value),
+        model: value.model || undefined,
         connectivity: normalizeConnectivity(value.initialState?.connectivity),
         activity: normalizeActivity(value.initialState?.activity),
         needsYou: false,
@@ -423,6 +425,7 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
       model.sessions.set(sessionKey(identity), {
         identity,
         label: labels(value),
+        model: value.model || undefined,
         connectivity: normalizeConnectivity(value.initialState?.connectivity),
         activity: normalizeActivity(value.initialState?.activity),
         needsYou: false,
@@ -455,6 +458,14 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
         activity: normalizeActivity(value.to),
         lastLsn: lsn,
       });
+      return;
+    }
+    case "modelChanged": {
+      const value = mutation.value;
+      const key = sessionKey(identityFromParts(value));
+      const current = model.sessions.get(key);
+      if (!current || current.tombstoned) return;
+      model.sessions.set(key, { ...current, model: value.to || undefined, lastLsn: lsn });
       return;
     }
     case "relabeled": {
@@ -537,6 +548,7 @@ function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView
   return {
     identity,
     label: labels(session),
+    model: session.model || undefined,
     connectivity: session.tombstoned
       ? SessionConnectivityState.STALE
       : normalizeConnectivity(session.state?.connectivity),

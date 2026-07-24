@@ -4,6 +4,7 @@ import { create } from "@bufbuild/protobuf";
 import {
   OperationState,
   SubmissionOutcome,
+  SessionSchema,
   SubmissionResultSchema,
 } from "@patchbay/contracts";
 import { adapterStatusCommand } from "../src/commands/adapter-status.js";
@@ -12,7 +13,7 @@ import { inspectCommandCommand } from "../src/commands/inspect-command.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
 import { parseArguments, run } from "../src/main.js";
 import { exitCodeForSubmission, printSubmissionResult } from "../src/output.js";
-import { captureOutput, DOMAIN, snapshotResponse } from "./helpers.js";
+import { captureOutput, DOMAIN, session, snapshotResponse } from "./helpers.js";
 
 test("SubmissionOutcome has stable script-facing exit codes", () => {
   assert.equal(exitCodeForSubmission(SubmissionOutcome.ACCEPTED), 0);
@@ -49,7 +50,33 @@ test("session-health emits canonical connectivity and activity as JSON", async (
   const rows = JSON.parse(output.out[0]!) as Array<Record<string, unknown>>;
   assert.equal(rows[0]?.["connectivity"], "live");
   assert.equal(rows[0]?.["activity"], "working");
+  assert.equal(rows[0]?.["model"], "provider/model-1");
   assert.match(String(rows[0]?.["identity"]), /adapter=pi-adapter.*generation=3/);
+});
+
+test("session-health renders unavailable model as null in JSON and unknown in tables", async () => {
+  const output = captureOutput();
+  const unavailable = create(SessionSchema, { ...session(), model: "" });
+  assert.equal(
+    await sessionHealthCommand(
+      { async loadSnapshot() { return snapshotResponse([unavailable]); } } as never,
+      DOMAIN,
+      { json: true },
+      output,
+    ),
+    0,
+  );
+  assert.equal(JSON.parse(output.out[0]!)[0].model, null);
+
+  const table = captureOutput();
+  await sessionHealthCommand(
+    { async loadSnapshot() { return snapshotResponse([unavailable]); } } as never,
+    DOMAIN,
+    { json: false },
+    table,
+  );
+  assert.match(table.out[0]!, /MODEL/);
+  assert.match(table.out[1]!, /Model unknown/);
 });
 
 test("deep diagnostics are honest non-zero stubs", () => {

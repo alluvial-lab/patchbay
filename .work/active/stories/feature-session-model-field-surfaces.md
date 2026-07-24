@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field-surfaces
 kind: story
-stage: implementing
+stage: done
 parent: feature-session-model-field
 depends_on: [feature-session-model-field-core-registry]
 release_binding: null
@@ -33,3 +33,13 @@ projection.
 
 Depends on the core projection/snapshot checkpoint. It may proceed in parallel
 with the Pi producer because both consume the same committed contract.
+
+## Implementation notes
+- Execution capability: inline single-owner implementation; extends existing presentation and diagnostic projections without a new UI surface.
+- Review weight: standard (default).
+- Files changed: cockpit session projection/list/detail and focused tests; CLI session-health projection/table and diagnostics tests.
+- Tests added/removed: populated/unknown cockpit rendering and model-delta identity coverage; populated/null JSON and unknown table CLI coverage. No tests removed.
+- Simplification: no surface-local model cache; both surfaces consume the generated session contract.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `npm test` in `web-cockpit` (45 passed) and `cli` (17 passed).
