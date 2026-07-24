@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, ux, fast-follower]
 parent: null
 depends_on: []
@@ -481,6 +481,16 @@ dependencies: `proto-contract → core-registry → {pi-adapter, surfaces}`.
 - **Test removal:** none. Existing session and state-axis cases retain their
   purpose and gain explicit `model` fixture values as required by regenerated
   Rust structs.
+
+## Implementation notes
+- Execution capability: inline single-owner implementation across the contract, durable registry, Pi adapter, and existing cockpit/CLI projections.
+- Review weight: standard (default); caller explicitly requested the feature remain at review for a separate orchestrator.
+- Files changed: contract protos/generated bindings/vector/docs; core session ingest/event/registry plus snapshot materialization; Pi adapter report and model-entry subscription; cockpit model/list/detail; CLI session-health and focused tests.
+- Tests added/removed: durable model change/replay/mismatch and combined-retry coverage; adapter model observer/disposal coverage; cockpit mutation/unknown rendering; CLI JSON/table model rendering. No tests removed.
+- Simplification: a single adapter report → registry fold → snapshot/event projection path; no Pi-specific core vocabulary or browser-only state cache.
+- Discrepancies from design: `buf lint` remains blocked by pre-existing RPC request/response naming violations across adapter/admin/control protos. The full Pi e2e suite was concurrently migrating to the long-lived delivery stream and failed once on an unrelated operator-session authentication path; focused adapter tests passed. The live stack was left untouched.
+- Adjacent issues parked: none.
+- Integrated verification: `cargo build && cargo test` passed; `contracts/ts`: `npm run build` and `npm run check:vectors` passed; `web-cockpit`: `npm test` passed (45); `cli`: `npm test` passed (17); `pi-adapter`: build plus focused `pi_session`/`delivery` tests passed (5).
 
 ## Risks
 
