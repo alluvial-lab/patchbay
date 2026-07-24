@@ -1,7 +1,7 @@
 ---
 id: feature-adapter-staleness-liveness-core-delivery-subscription
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: feature-adapter-staleness-liveness
 depends_on: []
@@ -41,3 +41,10 @@ committed delivery-liveness shape and reserved heartbeat/age seam.
   `failed` with `execution_outcome_unknown`; a delivered command remains
   redeliverable.
 - Existing terminal-finality and B3a redelivery tests remain green.
+
+## Completion evidence
+
+- Replaced finite delivery tails with one epoch-fenced, idle-pending subscription that rebuilds once at establishment and incrementally applies subsequent durable batches.
+- Added adapter-loss reconciliation for `running -> failed(execution_outcome_unknown)` while preserving accepted/delivered redelivery and first-terminal finality.
+- Added regressions for delivery after idle establishment, current-vs-obsolete stream drops, running-command terminalization, late terminal candidates, and delivered-command redelivery.
+- Verified with `cargo build --workspace --all-targets`, `cargo test --workspace`, and `cargo clippy -p patchbay-core -p patchbay-core-server --all-targets -- -D warnings`.

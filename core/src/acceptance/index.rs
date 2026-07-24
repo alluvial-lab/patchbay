@@ -102,8 +102,11 @@ impl CommandIndex {
         self.commands.is_empty()
     }
 
-    #[allow(dead_code)] // retained for the deferred snapshot checkpoint
-    pub(super) fn records(&self) -> impl Iterator<Item = &CommandRecord> {
+    /// Iterate over every projected command record.
+    ///
+    /// The durable log remains authoritative; this view supports focused
+    /// reconciliation policies such as adapter-loss terminalization.
+    pub fn records(&self) -> impl Iterator<Item = &CommandRecord> {
         self.commands.values()
     }
 

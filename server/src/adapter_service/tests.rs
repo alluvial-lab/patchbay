@@ -105,7 +105,12 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
         delivery.operation.expect("operation").kind,
         OperationKind::Instruct as i32
     );
-    assert!(deliveries.next().await.is_none(), "tail completes cleanly");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), deliveries.next())
+            .await
+            .is_err(),
+        "an idle delivery subscription remains pending"
+    );
 }
 
 #[tokio::test]
@@ -232,7 +237,6 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
 
     let mut first_tail = receive_from_start(&service, &attachment_token).await;
     assert!(first_tail.next().await.unwrap().is_ok());
-    assert!(first_tail.next().await.is_none());
 
     // Treat the first successful core call as a response lost after the
     // delivered checkpoint committed: the simulated adapter does not execute.
@@ -243,6 +247,7 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
         ))
         .await
         .expect("first acknowledgement commits delivered");
+    drop(first_tail);
     let mut executions = 0;
 
     let mut redelivery_tail = receive_from_start(&service, &attachment_token).await;
@@ -252,7 +257,6 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
         .expect("delivered command is re-offered")
         .expect("redelivery is valid");
     assert_eq!(redelivery.operation, Some(operation.clone()));
-    assert!(redelivery_tail.next().await.is_none());
 
     service
         .ingest_observation(authenticated_with_attachment_token(
@@ -261,6 +265,7 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
         ))
         .await
         .expect("delivered command re-acknowledges idempotently");
+    drop(redelivery_tail);
     executions += 1;
     assert_eq!(executions, 1, "adapter begins execution exactly once");
 
@@ -339,7 +344,43 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
 }
 
 #[tokio::test]
-async fn clean_delivery_tail_completion_does_not_mark_sessions_stale() {
+async fn idle_delivery_subscription_receives_an_operation_accepted_later() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let mut subscription = receive_from_start(&service, &attachment_token).await;
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), subscription.next())
+            .await
+            .is_err(),
+        "empty subscription must not complete"
+    );
+
+    let operation = targeted_operation(domain.clone(), "command-after-open");
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: operation.encode_to_vec(),
+            },
+        )
+        .await
+        .expect("operation appends");
+
+    let delivered = tokio::time::timeout(Duration::from_secs(1), subscription.next())
+        .await
+        .expect("subscription observes the durable tail")
+        .expect("subscription remains open")
+        .expect("delivery is valid");
+    assert_eq!(delivered.operation, Some(operation));
+}
+
+#[tokio::test]
+async fn obsolete_stream_drop_is_inert_but_current_stream_drop_marks_stale() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
@@ -353,24 +394,186 @@ async fn clean_delivery_tail_completion_does_not_mark_sessions_stale() {
     )
     .await;
 
-    let mut tail = receive_from_start(&service, &attachment_token).await;
-    assert!(tail.next().await.is_none(), "empty durable tail completes");
-    drop(tail);
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
+    let obsolete = receive_from_start(&service, &attachment_token).await;
+    let current = receive_from_start(&service, &attachment_token).await;
+    drop(obsolete);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        session_connectivity(&storage, &domain).await,
+        SessionConnectivityState::Live,
+        "the newer stream epoch fences the obsolete drop"
+    );
+
+    drop(current);
+    wait_for_connectivity(&storage, &domain, SessionConnectivityState::Stale).await;
+}
+
+#[tokio::test]
+async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let running = targeted_operation(domain.clone(), "command-running");
+    let delivered = targeted_operation(domain.clone(), "command-delivered");
+    for operation in [&running, &delivered] {
+        storage
+            .append(
+                &domain,
+                StoredEventPayload {
+                    kind: StoredEventKind::Operation as i32,
+                    payload: operation.encode_to_vec(),
+                },
+            )
+            .await
+            .expect("operation appends");
     }
 
-    let rebuilt = session::rebuild_from_log(&storage, &domain)
+    let mut subscription = receive_from_start(&service, &attachment_token).await;
+    for operation in [&running, &delivered] {
+        subscription
+            .next()
+            .await
+            .expect("delivery")
+            .expect("valid delivery");
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                delivery_acknowledgement(domain.clone(), operation),
+                &attachment_token,
+            ))
+            .await
+            .expect("delivery acknowledgement");
+    }
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            lifecycle_observation(
+                domain.clone(),
+                &running,
+                ObservationKind::Status,
+                FailureCode::Unspecified,
+            ),
+            &attachment_token,
+        ))
         .await
-        .expect("session log rebuilds");
+        .expect("running observation");
+
+    drop(subscription);
+    wait_for_command_state(&storage, &domain, "command-running", OperationState::Failed).await;
+
+    let rebuilt = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("command log rebuilds");
+    let running_record = rebuilt
+        .get_command(&CommandId {
+            value: "command-running".into(),
+        })
+        .expect("running command remains indexed");
+    assert_eq!(
+        running_record.failure_code,
+        Some(FailureCode::ExecutionOutcomeUnknown)
+    );
     assert_eq!(
         rebuilt
-            .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
-            .expect("session remains registered")
-            .state
-            .connectivity(),
-        SessionConnectivityState::Live
+            .get_command(&CommandId {
+                value: "command-delivered".into(),
+            })
+            .expect("delivered command remains indexed")
+            .state,
+        OperationState::Delivered
     );
+
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            lifecycle_observation(
+                domain.clone(),
+                &running,
+                ObservationKind::Result,
+                FailureCode::Unspecified,
+            ),
+            &attachment_token,
+        ))
+        .await
+        .expect("late completion is accepted as audit evidence");
+    let after_late = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("command log rebuilds after late terminal");
+    assert_eq!(
+        after_late
+            .get_command(&CommandId {
+                value: "command-running".into(),
+            })
+            .expect("command")
+            .state,
+        OperationState::Failed,
+        "first durable terminal outcome remains final"
+    );
+
+    let mut redelivery = receive_from_start(&service, &attachment_token).await;
+    let operation = redelivery
+        .next()
+        .await
+        .expect("delivered command is re-offered")
+        .expect("redelivery is valid")
+        .operation
+        .expect("redelivery carries operation");
+    assert_eq!(operation.command_id, delivered.command_id);
+}
+
+async fn session_connectivity(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+) -> SessionConnectivityState {
+    session::rebuild_from_log(storage, domain)
+        .await
+        .expect("session log rebuilds")
+        .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+        .expect("session remains registered")
+        .state
+        .connectivity()
+}
+
+async fn wait_for_connectivity(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+    expected: SessionConnectivityState,
+) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if session_connectivity(storage, domain).await == expected {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("session connectivity reaches expected state");
+}
+
+async fn wait_for_command_state(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+    command_id: &str,
+    expected: OperationState,
+) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let commands = acceptance::rebuild_from_log(storage, domain)
+                .await
+                .expect("command log rebuilds");
+            if commands
+                .get_command(&CommandId {
+                    value: command_id.into(),
+                })
+                .is_some_and(|record| record.state == expected)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("command reaches expected state");
 }
 
 async fn attached_service(
@@ -460,6 +663,29 @@ fn targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
         }),
         idempotency_key: format!("{command}-key"),
         ..Default::default()
+    }
+}
+
+fn lifecycle_observation(
+    domain: AuthorityDomainId,
+    operation: &Operation,
+    kind: ObservationKind,
+    failure_code: FailureCode,
+) -> ObservationRequest {
+    ObservationRequest {
+        authority_domain_id: Some(domain.clone()),
+        observation: Some(observation_request::Observation::Event(Observation {
+            authority_domain_id: Some(domain),
+            kind: kind as i32,
+            target_scope: operation.target_scope.clone(),
+            failure_code: failure_code as i32,
+            correlations: vec![TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(
+                    operation.command_id.clone().expect("command id"),
+                )),
+            }],
+            ..Default::default()
+        })),
     }
 }
 

@@ -227,6 +227,61 @@ pub fn is_delivery_acknowledgement(observation: &Observation) -> bool {
         .is_some_and(|payload| payload.schema_ref == DELIVERY_ACKNOWLEDGEMENT_SCHEMA)
 }
 
+/// Terminalize commands whose execution outcome became unknowable when an adapter disconnected.
+///
+/// Accepted and delivered commands remain untouched so the existing bounded redelivery policy can
+/// recover them. Callers serialize this append batch with adapter observation ingestion; replay's
+/// first-terminal rule remains the final authority if a terminal candidate is already durable.
+pub async fn fail_running_commands_for_adapter<S: Storage>(
+    storage: &S,
+    commands: &CommandIndex,
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+) -> Result<Vec<EventId>, AdapterError> {
+    let candidates: Vec<_> = commands
+        .records()
+        .filter(|record| {
+            record.state == OperationState::Running
+                && record.operation.authority_domain_id.as_ref() == Some(authority_domain_id)
+                && record
+                    .operation
+                    .target_scope
+                    .as_ref()
+                    .and_then(|target| target.adapter_id.as_ref())
+                    == Some(adapter_id)
+        })
+        .map(|record| {
+            (
+                record.command_id.clone(),
+                record.operation.correlations.clone(),
+            )
+        })
+        .collect();
+
+    let mut event_ids = Vec::with_capacity(candidates.len());
+    for (command_id, correlations) in candidates {
+        let event_id = storage
+            .append(
+                authority_domain_id,
+                StoredEventPayload {
+                    kind: StoredEventKind::CommandTransition as i32,
+                    payload: CommandTransition {
+                        command_id: Some(command_id),
+                        from_state: OperationState::Running as i32,
+                        to_state: OperationState::Failed as i32,
+                        failure_code: FailureCode::ExecutionOutcomeUnknown as i32,
+                        correlations,
+                        ..Default::default()
+                    }
+                    .encode_to_vec(),
+                },
+            )
+            .await?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
+}
+
 /// Durably acknowledge that an attached adapter accepted one Operation for delivery.
 ///
 /// The first acknowledgement commits the canonical `accepted -> delivered` transition and

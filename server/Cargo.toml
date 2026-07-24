@@ -11,7 +11,7 @@ base64 = "0.22"
 rand = "0.8"
 prost = "0.14"
 prost-types = "0.14"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", features = ["server", "transport"] }
 tonic-prost = "0.14"

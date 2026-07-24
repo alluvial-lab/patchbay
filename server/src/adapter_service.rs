@@ -3,6 +3,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use patchbay_contracts::patchbay::{
@@ -15,11 +16,14 @@ use patchbay_core::{
     adapter::{self, AdapterRegistry},
     authority::hash_principal_credential,
     session::{self, SessionRegistry, SessionReport},
-    storage::Storage,
+    storage::{RecordedEvent, Storage},
 };
 use prost::Message;
-use tokio::sync::Mutex;
-use tokio_stream::{self as stream, Stream};
+use tokio::{
+    sync::{mpsc, Mutex},
+    time::sleep,
+};
+use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::{Request, Response, Status};
 
 #[cfg(test)]
@@ -110,7 +114,7 @@ pub struct AdapterControlServiceImpl<S> {
     authority_domain_id: AuthorityDomainId,
     evidence: AdapterEvidenceVerifier,
     adapters: Arc<Mutex<AdapterRegistry>>,
-    commands: Arc<Mutex<CommandIndex>>,
+    commands: Arc<Mutex<CommandProjection>>,
     sessions: Arc<Mutex<SessionRegistry>>,
     attachment_tokens: Arc<Mutex<HashMap<AdapterId, Vec<u8>>>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
@@ -131,7 +135,7 @@ where
         let adapters = adapter::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
-        let commands = acceptance::rebuild_from_log(&storage, &authority_domain_id)
+        let commands = rebuild_command_projection(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
         let sessions = session::rebuild_from_log(&storage, &authority_domain_id)
@@ -194,12 +198,242 @@ where
     }
 }
 
+const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
 type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
 
-/// A finite delivery tail is healthy only once the transport polls it to
-/// completion. Dropping it early (or producing an error item) is the server's
-/// connection-liveness signal for an abnormal adapter disconnect.
+#[derive(Debug, Clone)]
+struct CommandProjection {
+    index: CommandIndex,
+    cursor: u64,
+}
+
+async fn rebuild_command_projection<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+) -> Result<CommandProjection, acceptance::AcceptanceError> {
+    let events = storage
+        .read_after(
+            authority_domain_id,
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
+        .await?;
+    command_projection_from_events(&events)
+}
+
+fn command_projection_from_events(
+    events: &[RecordedEvent],
+) -> Result<CommandProjection, acceptance::AcceptanceError> {
+    let mut index = CommandIndex::new();
+    let mut cursor = 0;
+    for event in events {
+        index.apply(event)?;
+        cursor = recorded_event_lsn(event)?;
+    }
+    Ok(CommandProjection { index, cursor })
+}
+
+async fn catch_up_command_projection<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    projection: &mut CommandProjection,
+) -> Result<Vec<RecordedEvent>, acceptance::AcceptanceError> {
+    let events = storage
+        .read_after(
+            authority_domain_id,
+            patchbay_contracts::patchbay::Lsn {
+                value: projection.cursor,
+            },
+        )
+        .await?;
+    for event in &events {
+        projection.index.apply(event)?;
+        projection.cursor = recorded_event_lsn(event)?;
+    }
+    Ok(events)
+}
+
+fn recorded_event_lsn(event: &RecordedEvent) -> Result<u64, acceptance::AcceptanceError> {
+    event
+        .event_id
+        .lsn
+        .as_ref()
+        .map(|lsn| lsn.value)
+        .ok_or_else(|| acceptance::AcceptanceError::CorruptRecord("event has no LSN".into()))
+}
+
+fn deliveries_for_events(
+    events: &[RecordedEvent],
+    commands: &CommandIndex,
+    adapter_id: &AdapterId,
+    after_cursor: u64,
+) -> Vec<Result<Delivery, Status>> {
+    events
+        .iter()
+        .filter(|event| {
+            event
+                .event_id
+                .lsn
+                .as_ref()
+                .is_some_and(|lsn| lsn.value > after_cursor)
+        })
+        .filter_map(|event| {
+            if event.payload.kind != StoredEventKind::Operation as i32 {
+                return None;
+            }
+            let operation = match Operation::decode(event.payload.payload.as_slice()) {
+                Ok(operation) => operation,
+                Err(error) => {
+                    return Some(Err(Status::internal(format!(
+                        "cannot decode accepted operation: {error}"
+                    ))))
+                }
+            };
+            let targets_adapter = operation
+                .target_scope
+                .as_ref()
+                .and_then(|target| target.adapter_id.as_ref())
+                == Some(adapter_id);
+            let remains_deliverable = operation
+                .command_id
+                .as_ref()
+                .and_then(|command_id| commands.get_command(command_id))
+                .is_some_and(|record| {
+                    matches!(
+                        record.state,
+                        OperationState::Accepted | OperationState::Delivered
+                    )
+                });
+            (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
+                operation: Some(operation),
+                delivery_event_id: Some(event.event_id.clone()),
+            }))
+        })
+        .collect()
+}
+
+struct DeliverySubscriptionContext<S> {
+    storage: S,
+    authority_domain_id: AuthorityDomainId,
+    adapter_id: AdapterId,
+    commands: Arc<Mutex<CommandProjection>>,
+    delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
+    stream_epoch: u64,
+}
+
+fn delivery_subscription<S>(
+    context: DeliverySubscriptionContext<S>,
+    initial_cursor: u64,
+    initial_events: Vec<RecordedEvent>,
+    initial_projection: CommandProjection,
+) -> DeliveryStream
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let DeliverySubscriptionContext {
+        storage,
+        authority_domain_id,
+        adapter_id,
+        commands,
+        delivery_stream_epochs,
+        stream_epoch,
+    } = context;
+    let (sender, receiver) = mpsc::channel(16);
+    tokio::spawn(async move {
+        let mut delivery_cursor = initial_cursor.max(initial_projection.cursor);
+        let mut scan_cursor = initial_projection.cursor;
+        let mut subscription_commands = initial_projection.index;
+        let initial = deliveries_for_events(
+            &initial_events,
+            &subscription_commands,
+            &adapter_id,
+            initial_cursor,
+        );
+        for delivery in initial {
+            if sender.send(delivery).await.is_err() {
+                return;
+            }
+        }
+
+        loop {
+            if sender.is_closed() {
+                return;
+            }
+            let epochs = delivery_stream_epochs.lock().await;
+            if epochs.get(&adapter_id) != Some(&stream_epoch) {
+                return;
+            }
+            let batch = match storage
+                .read_after(
+                    &authority_domain_id,
+                    patchbay_contracts::patchbay::Lsn { value: scan_cursor },
+                )
+                .await
+            {
+                Ok(events) => {
+                    let applied = events.iter().try_for_each(|event| {
+                        subscription_commands.apply(event)?;
+                        scan_cursor = recorded_event_lsn(event)?;
+                        Ok::<(), acceptance::AcceptanceError>(())
+                    });
+                    match applied {
+                        Ok(()) => {
+                            // Keep unary acknowledgement/observation ingestion's
+                            // shared projection current without borrowing its
+                            // cursor as the subscription's delivery cursor.
+                            let global_catch_up = {
+                                let mut projection = commands.lock().await;
+                                catch_up_command_projection(
+                                    &storage,
+                                    &authority_domain_id,
+                                    &mut projection,
+                                )
+                                .await
+                            };
+                            match global_catch_up {
+                                Ok(_) => {
+                                    let deliveries = deliveries_for_events(
+                                        &events,
+                                        &subscription_commands,
+                                        &adapter_id,
+                                        delivery_cursor,
+                                    );
+                                    delivery_cursor = delivery_cursor.max(scan_cursor);
+                                    Ok((events.is_empty(), deliveries))
+                                }
+                                Err(error) => Err(map_acceptance_error_to_status(error)),
+                            }
+                        }
+                        Err(error) => Err(map_acceptance_error_to_status(error)),
+                    }
+                }
+                Err(error) => Err(map_storage_error_to_status(error)),
+            };
+            drop(epochs);
+
+            let (empty, deliveries) = match batch {
+                Ok(batch) => batch,
+                Err(status) => {
+                    let _ = sender.send(Err(status)).await;
+                    return;
+                }
+            };
+            for delivery in deliveries {
+                if sender.send(delivery).await.is_err() {
+                    return;
+                }
+            }
+            if empty {
+                sleep(DELIVERY_SCAN_INTERVAL).await;
+            }
+        }
+    });
+    Box::pin(ReceiverStream::new(receiver))
+}
+
+/// A long-lived delivery subscription treats every end or error as a lost
+/// connection. Obsolete streams are made inert by the callback's epoch fence.
 struct DeliveryTail {
     inner: DeliveryStream,
     on_abnormal_disconnect: Option<DisconnectCallback>,
@@ -226,9 +460,7 @@ impl Stream for DeliveryTail {
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.inner.as_mut().poll_next(context) {
             Poll::Ready(None) => {
-                // The adapter consumed the complete durable tail. This is the
-                // normal v0.1.0 polling completion, not a disconnect signal.
-                self.on_abnormal_disconnect.take();
+                self.mark_abnormal_disconnect();
                 Poll::Ready(None)
             }
             result @ Poll::Ready(Some(Err(_))) => {
@@ -360,15 +592,26 @@ where
                     &authenticated_adapter,
                 )?;
                 let mut commands = self.commands.lock().await;
+                catch_up_command_projection(&self.storage, &domain, &mut commands)
+                    .await
+                    .map_err(map_acceptance_error_to_status)?;
                 let event_id = if adapter::is_delivery_acknowledgement(&observation) {
-                    adapter::ingest_delivery_acknowledgement(&self.storage, &commands, observation)
-                        .await
-                        .map_err(map_adapter_error)?
-                        .observation_event_id
+                    adapter::ingest_delivery_acknowledgement(
+                        &self.storage,
+                        &commands.index,
+                        observation,
+                    )
+                    .await
+                    .map_err(map_adapter_error)?
+                    .observation_event_id
                 } else {
-                    match acceptance::ingest_observation(&self.storage, &*commands, observation)
-                        .await
-                        .map_err(map_acceptance_error_to_status)?
+                    match acceptance::ingest_observation(
+                        &self.storage,
+                        &commands.index,
+                        observation,
+                    )
+                    .await
+                    .map_err(map_acceptance_error_to_status)?
                     {
                         acceptance::IngestResult::Recorded { event_id }
                         | acceptance::IngestResult::StaleCandidate {
@@ -380,7 +623,7 @@ where
                         } => event_id,
                     }
                 };
-                *commands = acceptance::rebuild_from_log(&self.storage, &domain)
+                catch_up_command_projection(&self.storage, &domain, &mut commands)
                     .await
                     .map_err(map_acceptance_error_to_status)?;
                 Some(event_id)
@@ -409,70 +652,62 @@ where
                 .ok_or_else(|| Status::internal("delivery stream epoch overflow"))?;
             *epoch
         };
-        let cursor = request
-            .cursor
-            .unwrap_or(patchbay_contracts::patchbay::Lsn { value: 0 });
-        let events = self
-            .storage
-            .read_after(&domain, cursor)
-            .await
-            .map_err(map_storage_error_to_status)?;
-        let mut live_commands = self.commands.lock().await;
-        *live_commands = acceptance::rebuild_from_log(&self.storage, &domain)
-            .await
-            .map_err(map_acceptance_error_to_status)?;
-        let commands = live_commands.clone();
-        drop(live_commands);
-        let delivery_adapter = authenticated_adapter.clone();
-        let deliveries = events.into_iter().filter_map(move |event| {
-            if event.payload.kind != StoredEventKind::Operation as i32 {
-                return None;
-            }
-            let operation = match Operation::decode(event.payload.payload.as_slice()) {
-                Ok(operation) => operation,
-                Err(error) => {
-                    return Some(Err(Status::internal(format!(
-                        "cannot decode accepted operation: {error}"
-                    ))))
-                }
-            };
-            let targets_adapter = operation
-                .target_scope
-                .as_ref()
-                .and_then(|target| target.adapter_id.as_ref())
-                == Some(&delivery_adapter);
-            let remains_deliverable = operation
-                .command_id
-                .as_ref()
-                .and_then(|command_id| commands.get_command(command_id))
-                .is_some_and(|record| {
-                    matches!(
-                        record.state,
-                        OperationState::Accepted | OperationState::Delivered
-                    )
-                });
-            (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
-                operation: Some(operation),
-                delivery_event_id: Some(event.event_id),
-            }))
-        });
+        let initial_cursor = request.cursor.map_or(0, |cursor| cursor.value);
+        let (initial_events, initial_projection) = {
+            // Establish one complete projection and remember its durable prefix.
+            // Every later scan applies only the tail beyond this projection cursor.
+            let mut live_commands = self.commands.lock().await;
+            let events = self
+                .storage
+                .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+                .await
+                .map_err(map_storage_error_to_status)?;
+            *live_commands =
+                command_projection_from_events(&events).map_err(map_acceptance_error_to_status)?;
+            (events, live_commands.clone())
+        };
+
         let storage = self.storage.clone();
+        let commands = Arc::clone(&self.commands);
         let sessions = Arc::clone(&self.sessions);
         let delivery_stream_epochs = Arc::clone(&self.delivery_stream_epochs);
         let stale_domain = domain.clone();
-        let stale_adapter = authenticated_adapter;
+        let stale_adapter = authenticated_adapter.clone();
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
-                // A newer poll supersedes an older stream's delayed drop task.
-                // Holding the epoch guard through the state append establishes
-                // a total order: either this disconnect marks stale first and
-                // the newer adapter report restores live, or the newer stream
-                // wins and this obsolete marker is inert.
+                // Holding the epoch guard through reconciliation establishes a
+                // total order with a replacement stream. An obsolete stream's
+                // delayed drop cannot mutate the replacement attachment.
                 let epochs = delivery_stream_epochs.lock().await;
                 if epochs.get(&stale_adapter) != Some(&stream_epoch) {
                     return;
                 }
-                let result = session::mark_adapter_sessions_stale(
+
+                let command_result = {
+                    let mut projection = commands.lock().await;
+                    let caught_up =
+                        catch_up_command_projection(&storage, &stale_domain, &mut projection).await;
+                    let failed = match caught_up {
+                        Ok(_) => adapter::fail_running_commands_for_adapter(
+                            &storage,
+                            &projection.index,
+                            &stale_domain,
+                            &stale_adapter,
+                        )
+                        .await
+                        .map(|_| ()),
+                        Err(error) => Err(adapter::AdapterError::CorruptRecord(error.to_string())),
+                    };
+                    let rebuilt =
+                        catch_up_command_projection(&storage, &stale_domain, &mut projection).await;
+                    failed.and_then(|()| {
+                        rebuilt.map(|_| ()).map_err(|error| {
+                            adapter::AdapterError::CorruptRecord(error.to_string())
+                        })
+                    })
+                };
+
+                let session_result = session::mark_adapter_sessions_stale(
                     &storage,
                     &mut *sessions.lock().await,
                     &stale_domain,
@@ -480,7 +715,13 @@ where
                 )
                 .await;
                 drop(epochs);
-                if let Err(error) = result {
+
+                if let Err(error) = command_result {
+                    eprintln!(
+                        "patchbay-core-server: failed to reconcile running commands after adapter disconnect: {error}"
+                    );
+                }
+                if let Err(error) = session_result {
                     eprintln!(
                         "patchbay-core-server: failed to mark sessions stale after adapter disconnect: {error}"
                     );
@@ -498,11 +739,20 @@ where
             }
         });
 
-        // v0.1.0 polling fallback: this server-stream returns the durable tail
-        // currently available. The adapter immediately resumes from its cursor.
-        // Polling the tail through `None` is clean completion; transport drop
-        // before that point marks this adapter's sessions stale.
-        let tail = DeliveryTail::new(Box::pin(stream::iter(deliveries)), on_abnormal_disconnect);
+        let subscription = delivery_subscription(
+            DeliverySubscriptionContext {
+                storage: self.storage.clone(),
+                authority_domain_id: domain,
+                adapter_id: authenticated_adapter,
+                commands: Arc::clone(&self.commands),
+                delivery_stream_epochs: Arc::clone(&self.delivery_stream_epochs),
+                stream_epoch,
+            },
+            initial_cursor,
+            initial_events,
+            initial_projection,
+        );
+        let tail = DeliveryTail::new(subscription, on_abnormal_disconnect);
         Ok(Response::new(Box::pin(tail)))
     }
 }
