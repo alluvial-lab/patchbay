@@ -42,6 +42,14 @@ export class AdapterProcess {
   readonly #translator = new DeliveryTranslator();
   readonly #activeCommands = new Map<string, string>();
   readonly #pendingObservations = new Set<Promise<void>>();
+  // Per-session report chains: transcript events (hundreds of deltas per turn)
+  // must reach the core in stream order. Firing each ingestTranscript
+  // concurrently lets them race, and the core appends in arrival order —
+  // scrambling the delta order the cockpit folds (found in live use: agent
+  // messages rendered word fragments out of order until the commit replaced
+  // them). Chaining each report after the previous one preserves order at the
+  // cost of one round-trip per delta, which is negligible for streaming.
+  readonly #observationTails = new Map<string, Promise<void>>();
   #observationError: unknown;
   #cursor = 0n;
   #started = false;
@@ -74,14 +82,14 @@ export class AdapterProcess {
     let entry: RuntimeSessionEntry;
     try {
       entry = this.#registry.register(configured, session, (observedEntry, event) => {
-        const promise = this.#core
-          .ingestTranscript(
-            this.#identity(observedEntry),
-            event,
-            this.#activeCommands.get(observedEntry.runtimeSessionId),
-          )
+        const identity = this.#identity(observedEntry);
+        const activeCommand = this.#activeCommands.get(observedEntry.runtimeSessionId);
+        const tail = this.#observationTails.get(observedEntry.runtimeSessionId) ?? Promise.resolve();
+        const next = tail
+          .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
           .then(() => undefined);
-        this.#trackObservation(promise);
+        this.#observationTails.set(observedEntry.runtimeSessionId, next);
+        this.#trackObservation(next);
       });
     } catch (error) {
       await session.dispose();
