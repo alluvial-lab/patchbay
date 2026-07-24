@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field
 kind: feature
-stage: review
+stage: done
 tags: [protocol, ux, fast-follower]
 parent: null
 depends_on: []
@@ -527,3 +527,10 @@ Feature bounced review → implementing for the fix wave.
 - Verification: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cd pi-adapter && npm test` pass. Shared contracts were unchanged, so cockpit/CLI suites were not required.
 
 Both adjudicated blockers are fixed; feature returned to `stage: review`.
+
+### Fix wave (2026-07-24) — blockers resolved, feature done
+
+- `6718292` fix(pi-adapter): model-change callback captures the event-time model and real activity (no fabricated IDLE; ordered reports preserved). Also fixed a design-missed runtime reality: the pinned Pi runtime persists model changes without forwarding them through its subscription, so `PiSession.setModel` now emits the callback after a successful change.
+- `d6fa8a2` fix(server): session-report append + projection rebuild + installation now hold one registry lock (single critical section) — concurrent conflicting reports can no longer write an unreplayable log.
+- Regression tests: real `AgentSession` rapid A→B→C switch (reports [A,B,C] exactly once, in order, activities [idle, working, working]); forced concurrent conflicting model reports (durable log replays to model C).
+- Receiver verification (orchestrator, standard weight — no second review pass): diffs inspected, `cargo test --workspace` green, pi-adapter 11/11, web-cockpit 45/45, cli 17/17, presentation conformance green.
