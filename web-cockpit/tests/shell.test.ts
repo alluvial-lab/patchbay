@@ -41,12 +41,31 @@ import {
   type SessionIdentity,
   type SessionView,
 } from "../src/domain/model.js";
+import { renderIcon, type IconName } from "../src/ui/icons.js";
 import { createMarkdownRenderer } from "../src/ui/markdown.js";
 import { renderSessionDetail } from "../src/ui/session-detail.js";
 import { renderSessionRow } from "../src/ui/session-list.js";
 import { createCockpitShell } from "../src/ui/shell.js";
 
 const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
+
+if (false) {
+  // @ts-expect-error The public icon vocabulary rejects untyped consumer names.
+  const invalidIconName: IconName = "not-a-lucide-icon";
+  void invalidIconName;
+}
+
+test("typed icon factory renders Lucide outline geometry", () => {
+  const dom = new JSDOM();
+  const icon = renderIcon(dom.window.document, "paperclip", { size: "lg" });
+
+  assert.equal(icon.getAttribute("viewBox"), "0 0 24 24");
+  assert.equal(icon.getAttribute("stroke-width"), "2");
+  assert.equal(icon.getAttribute("aria-hidden"), "true");
+  assert.equal(icon.classList.contains("icon"), true);
+  assert.equal(icon.classList.contains("icon--lg"), true);
+  assert.equal(icon.querySelector("path")?.getAttribute("d"), "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48");
+});
 
 test("shell stylesheet provides responsive layout without rebinding protocol states", async () => {
   const css = await readFile(new URL("../src/ui/shell.css", import.meta.url), "utf8").catch(
@@ -83,6 +102,9 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(rows[0]!.classList.contains("session-row--needs-you"), true);
   assert.ok(rows[0]!.querySelector(".connectivity-indicator"));
   assert.ok(rows[0]!.querySelector(".activity-indicator"));
+  const unavailableControls = [...shell.element.querySelectorAll<HTMLButtonElement>(".sidebar__actions button")];
+  assert.deepEqual(unavailableControls.map((button) => button.getAttribute("aria-label")), ["Spawn session unavailable", "Attach session unavailable"]);
+  assert.equal(unavailableControls.every((button) => button.disabled && button.querySelector('.icon[aria-hidden="true"]')), true);
 
   shell.select(sessionKey(first.identity));
   assert.equal(shell.detail.element.dataset.sessionKey, sessionKey(first.identity));
@@ -249,7 +271,12 @@ test("detail integrates markdown, current plus last delivery, failures, contextu
   assert.equal(detail.composer.querySelector("select"), null);
 
   const contextual = [...detail.element.querySelectorAll<HTMLButtonElement>(".delivery-line .btn")];
-  assert.deepEqual(contextual.map((button) => button.textContent), ["Cancel", "Interrupt"]);
+  assert.deepEqual(contextual.map((button) => button.getAttribute("aria-label")), ["Cancel running operation", "Interrupt running operation"]);
+  assert.equal(contextual.every((button) => button.title === button.getAttribute("aria-label") && button.querySelector('.icon[aria-hidden="true"]')), true);
+  const composerControls = [...detail.composer.querySelectorAll<HTMLButtonElement>("button")];
+  assert.deepEqual(composerControls.map((button) => button.getAttribute("aria-label")), ["Attach file or image", "Send instruction"]);
+  assert.equal(composerControls.every((button) => button.title === button.getAttribute("aria-label") && button.querySelector('.icon[aria-hidden="true"]')), true);
+  assert.equal(detail.header.querySelector<HTMLButtonElement>("button")?.getAttribute("aria-label"), "Back to sessions");
   contextual[0]!.click();
   contextual[1]!.click();
   assert.equal(cancelled, 1);

@@ -6,6 +6,7 @@ import {
   type PresentationModel,
   type SessionView,
 } from "../domain/model.js";
+import { renderIcon, type IconName } from "./icons.js";
 import {
   renderSessionDetail,
   type SessionDetailActions,
@@ -176,6 +177,13 @@ function renderSidebar(
   const header = document.createElement("header");
   header.className = "nav-bar";
   header.append(textElement(document, "span", "nav-bar__brand", "Patchbay · Sessions"));
+  const headerActions = document.createElement("div");
+  headerActions.className = "sidebar__actions";
+  headerActions.append(
+    unavailableIconButton(document, "plus", "Spawn session unavailable"),
+    unavailableIconButton(document, "link", "Attach session unavailable"),
+  );
+  header.append(headerActions);
   const needsYou = [...model.sessions.values()].filter((session) => session.needsYou && stableTarget(session)).length;
   if (needsYou > 0) {
     const attention = document.createElement("span");
@@ -206,6 +214,17 @@ function renderSidebar(
     }),
   );
   return sidebar;
+}
+
+function unavailableIconButton(document: Document, icon: IconName, label: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = "btn btn-ghost btn--sm btn--icon-only";
+  button.type = "button";
+  button.disabled = true;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.append(renderIcon(document, icon));
+  return button;
 }
 
 function renderDegradedBanner(

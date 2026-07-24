@@ -1,7 +1,7 @@
 ---
 id: feature-cockpit-icon-set-cockpit-chrome
 kind: story
-stage: implementing
+stage: done
 tags: [ux, ui]
 parent: feature-cockpit-icon-set
 depends_on: [feature-cockpit-icon-set-design-system-conformance]
@@ -28,3 +28,13 @@ Convert cockpit action chrome only after the shared primitive and its conformanc
 - `cd web-cockpit && npm test` passes.
 - Converted icon-only buttons have distinct `aria-label`/`title` values and `.icon[aria-hidden="true"]` descendants.
 - No converted call site owns SVG paths or raw SVG setup; no expanded delivery trace appears.
+
+## Implementation notes
+- Execution capability: direct-read only; the feature design named the catalog/factory, cockpit consumers, and test integration points.
+- Review weight: standard (default; feature review remains pending).
+- Files changed: `web-cockpit/src/ui/icons.ts`, `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/src/ui/shell.ts`, `web-cockpit/src/ui/shell.css`, `web-cockpit/tests/shell.test.ts`.
+- Tests added/removed: factory-shape and compile-time vocabulary assertions, plus DOM assertions for accessible icon controls, disabled sidebar affordances, unchanged contextual actions, and no delivery disclosure.
+- Simplification: removed the hand-built paperclip SVG and converted chrome icon setup to the single catalog/factory.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `cd web-cockpit && npm test` passed (43 tests); presentation check and its meta-test passed after the integrated change.

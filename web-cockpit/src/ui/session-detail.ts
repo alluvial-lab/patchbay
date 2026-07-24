@@ -22,6 +22,7 @@ import {
   renderElicitationGroup,
   type ElicitationRenderOptions,
 } from "./elicitation.js";
+import { renderIcon, type IconName } from "./icons.js";
 import type { MarkdownRenderer } from "./markdown.js";
 import { formatSessionIdentity, renderSessionStatus } from "./session-list.js";
 
@@ -98,8 +99,7 @@ function renderHeader(
 ): HTMLElement {
   const header = document.createElement("header");
   header.className = "session-detail__header nav-bar";
-  const back = textElement(document, "button", "btn btn-ghost btn--sm", "← Sessions") as HTMLButtonElement;
-  back.type = "button";
+  const back = iconButton(document, "arrow-left", "Back to sessions", "btn btn-ghost btn--sm");
   back.addEventListener("click", () => onBack?.());
   header.append(back);
   if (session) {
@@ -261,8 +261,8 @@ function renderDelivery(
   if (command.state === OperationState.RUNNING && (actions?.cancel || actions?.interrupt)) {
     const contextual = document.createElement("div");
     contextual.className = "btn-group";
-    if (actions.cancel) contextual.append(contextButton(document, "Cancel", () => actions.cancel!(command)));
-    if (actions.interrupt) contextual.append(contextButton(document, "Interrupt", () => actions.interrupt!(command), true));
+    if (actions.cancel) contextual.append(contextButton(document, "x", "Cancel running operation", () => actions.cancel!(command)));
+    if (actions.interrupt) contextual.append(contextButton(document, "square", "Interrupt running operation", () => actions.interrupt!(command), true));
     wrapper.append(contextual);
   }
   return wrapper;
@@ -278,30 +278,7 @@ function renderComposer(
   composer.className = "composer";
   const targetStable = stableTarget(session);
 
-  // Paperclip icon (not text) so the button stays icon-sized; the "Attach"
-  // text inflated the aspect-ratio:1 icon button into a large circle.
-  const attach = document.createElement("button");
-  attach.className = "btn btn-secondary btn--icon-only";
-  attach.type = "button";
-  attach.setAttribute("aria-label", "Attach file or image");
-  attach.title = "Attach file or image";
-  const paperclip = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  paperclip.setAttribute("viewBox", "0 0 24 24");
-  paperclip.setAttribute("width", "16");
-  paperclip.setAttribute("height", "16");
-  paperclip.setAttribute("fill", "none");
-  paperclip.setAttribute("stroke", "currentColor");
-  paperclip.setAttribute("stroke-width", "2");
-  paperclip.setAttribute("stroke-linecap", "round");
-  paperclip.setAttribute("stroke-linejoin", "round");
-  paperclip.setAttribute("aria-hidden", "true");
-  const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  clipPath.setAttribute(
-    "d",
-    "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48",
-  );
-  paperclip.append(clipPath);
-  attach.append(paperclip);
+  const attach = iconButton(document, "paperclip", "Attach file or image", "btn btn-secondary");
   attach.disabled = !targetStable || !actions?.attach;
   attach.addEventListener("click", () => {
     if (session && stableTarget(session)) void actions?.attach?.(session);
@@ -314,8 +291,7 @@ function renderComposer(
   input.disabled = !targetStable;
   input.setAttribute("aria-label", "Instruction");
 
-  const send = textElement(document, "button", "btn btn-primary btn--sm", "Send") as HTMLButtonElement;
-  send.type = "submit";
+  const send = iconButton(document, "arrow-up", "Send instruction", "btn btn-primary btn--sm", "submit");
   send.disabled = true;
   function updateSend(): void {
     send.disabled = !targetStable || !input.value.trim() || !actions?.send;
@@ -443,18 +419,29 @@ function failureMessage(code: FailureCode): string {
 
 function contextButton(
   document: Document,
+  icon: IconName,
   label: string,
   action: () => void | Promise<void>,
   danger = false,
 ): HTMLButtonElement {
-  const button = textElement(
-    document,
-    "button",
-    `btn ${danger ? "btn-danger" : "btn-secondary"} btn--sm`,
-    label,
-  ) as HTMLButtonElement;
-  button.type = "button";
+  const button = iconButton(document, icon, label, `btn ${danger ? "btn-danger" : "btn-secondary"} btn--sm`);
   button.addEventListener("click", () => void action());
+  return button;
+}
+
+function iconButton(
+  document: Document,
+  icon: IconName,
+  label: string,
+  className: string,
+  type: "button" | "submit" = "button",
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = `${className} btn--icon-only`;
+  button.type = type;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.append(renderIcon(document, icon));
   return button;
 }
 
