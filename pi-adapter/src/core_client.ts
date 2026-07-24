@@ -64,6 +64,7 @@ export interface SessionIdentity {
   project: string;
   cwd: string;
   name: string;
+  model: string;
 }
 
 export class PatchbayCoreClient {
@@ -142,6 +143,7 @@ export class PatchbayCoreClient {
               project: identity.project,
               cwd: identity.cwd,
               name: identity.name,
+              model: identity.model,
             }),
           },
         }),
@@ -240,11 +242,14 @@ export class PatchbayCoreClient {
     );
   }
 
-  receiveDeliveries(cursor: bigint): AsyncIterable<Delivery> {
-    return this.#receiveDeliveries(cursor);
+  receiveDeliveries(cursor: bigint, signal?: AbortSignal): AsyncIterable<Delivery> {
+    return this.#receiveDeliveries(cursor, signal);
   }
 
-  async *#receiveDeliveries(cursor: bigint): AsyncGenerator<Delivery> {
+  async *#receiveDeliveries(
+    cursor: bigint,
+    signal?: AbortSignal,
+  ): AsyncGenerator<Delivery> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const failedToken = this.#attachmentToken;
       try {
@@ -253,6 +258,7 @@ export class PatchbayCoreClient {
             adapterId: this.#adapterId(),
             cursor: create(LsnSchema, { value: cursor }),
           }),
+          signal ? { signal } : {},
         )) {
           yield delivery;
         }
@@ -383,5 +389,3 @@ function piCapabilityManifest() {
     ],
   });
 }
-  model: string;
-              model: identity.model,

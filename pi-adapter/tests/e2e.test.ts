@@ -36,6 +36,7 @@ import {
   PrincipalEnrollmentSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
+  SessionConnectivityState,
   SessionSnapshotSchema,
   SessionStateEventSchema,
   StoredEventKind,
@@ -80,7 +81,11 @@ test("core → adapter → real AgentSession → observation loop, generation bu
   const databasePath = join(directory, "core.sqlite3");
   let core = startCore(port, adminPort, databasePath);
   let adapter: AdapterProcess | undefined;
+  let adapterController: AbortController | undefined;
+  let adapterRun: Promise<void> | undefined;
   let reconnect: AdapterProcess | undefined;
+  let reconnectController: AbortController | undefined;
+  let reconnectRun: Promise<void> | undefined;
 
   try {
     const setupSecret = await waitForCore(port, core);
@@ -112,6 +117,8 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     // Future spawn uses this same complete runtime-entry path; delivery routing
     // has no separate immutable pre-provisioned configuration dependency.
     await adapter.registerSession(configured);
+    adapterController = new AbortController();
+    adapterRun = adapter.run(adapterController.signal);
 
     const loadedSnapshot = await control.loadSnapshot(
       create(LoadSnapshotRequestSchema, {
@@ -124,6 +131,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.equal(snapshot.snapshotLsn?.value, loadedSnapshot.eventId?.lsn?.value);
     assert.equal(snapshot.sessions.length, 1);
     assert.equal(snapshot.sessions[0]?.runtimeSessionId?.value, runtimeSessionId);
+    assert.equal(snapshot.sessions[0]?.model, `${sessionFixture.faux.getModel().provider}/${sessionFixture.faux.getModel().id}`);
 
     const attachedEvents = await readAfter(control, 0n);
     const manifest = attachedEvents
@@ -152,7 +160,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       }),
     );
     assert.ok(accepted.acceptedLsn);
-    assert.equal(await adapter.pollOnce(), 1);
+    await waitForCommandState(control, "command-instruct", OperationState.COMPLETED);
 
     const outputEvents = await readAfter(control, accepted.acceptedLsn?.value ?? 0n);
     assert.deepEqual(
@@ -179,7 +187,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         ),
       }),
     );
-    assert.equal(await adapter.pollOnce(), 1);
+    await waitForCommandState(control, "command-session-new", OperationState.COMPLETED);
     const generationEvents = await readAfter(control, sessionNew.acceptedLsn?.value ?? 0n);
     assert.ok(generationEvents.some(isGenerationTwo));
 
@@ -193,7 +201,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         ),
       }),
     );
-    assert.equal(await adapter.pollOnce(), 1);
+    await waitForCommandState(control, "command-query", OperationState.COMPLETED);
     const queryEvents = await readAfter(control, query.acceptedLsn?.value ?? 0n);
     const queryResult = observationsFor(queryEvents, "command-query").find(
       (observation) => observation.kind === ObservationKind.RESULT,
@@ -221,8 +229,8 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         operation: operation("command-cancel", OperationKind.CANCEL, "", 2),
       }),
     );
-    assert.equal(await adapter.pollOnce(), 2);
-    assert.equal(sessionFixture.session?.getState().idle, true);
+    await waitForCommandState(control, "command-cancel", OperationState.COMPLETED);
+    await waitForPiIdle(sessionFixture);
 
     // An accepted old-generation delivery may remain after replacement, but it
     // must be acknowledged-and-rejected without entering the new Pi context.
@@ -230,7 +238,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       databasePath,
       operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
     );
-    assert.equal(await adapter.pollOnce(), 1);
+    await waitForCommandState(control, "command-old-generation", OperationState.FAILED);
     const staleDeliveryEvents = await readAfter(control, 0n);
     const staleFailure = observationsFor(
       staleDeliveryEvents,
@@ -249,7 +257,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         operation: operation("command-spawn", OperationKind.SPAWN, "", 2),
       }),
     );
-    assert.equal(await adapter.pollOnce(), 1);
+    await waitForCommandState(control, "command-spawn", OperationState.FAILED);
     const spawnEvents = await readAfter(control, spawn.acceptedLsn?.value ?? 0n);
     assert.ok(
       spawnEvents
@@ -258,8 +266,38 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         .some((observation) => observation.failureCode === FailureCode.UNSUPPORTED_COMMAND),
     );
 
+    sessionFixture.faux.appendResponses([
+      async () => {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 750));
+        return fauxAssistantMessage("completion after adapter loss");
+      },
+    ]);
+    await control.submit(
+      create(SubmitRequestSchema, {
+        operation: operation(
+          "command-restart-mid-turn",
+          OperationKind.INSTRUCT,
+          "lose the adapter after running",
+          2,
+        ),
+      }),
+    );
+    await waitForCommandState(control, "command-restart-mid-turn", OperationState.RUNNING);
+    adapterController.abort();
+    await Promise.all([
+      waitForCommandFailure(
+        control,
+        "command-restart-mid-turn",
+        FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+      ),
+      waitForSessionConnectivity(control, SessionConnectivityState.STALE),
+    ]);
     await adapter.dispose();
+    await adapterRun;
     adapter = undefined;
+    adapterController = undefined;
+    adapterRun = undefined;
+
     const reconnectFixture = createSessionFixture(3, true);
     reconnect = new AdapterProcess({
       coreAddress: baseUrl,
@@ -271,8 +309,9 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       createSession: reconnectFixture.create,
     });
     await reconnect.start();
+    reconnectController = new AbortController();
+    reconnectRun = reconnect.run(reconnectController.signal);
     assert.equal(reconnectFixture.session?.getState().generation, 3);
-    assert.equal(await reconnect.pollOnce(), 0, "durably acknowledged history is not re-offered");
 
     const reconnectEvents = await readAfter(control, 0n);
     assert.ok(
@@ -293,19 +332,19 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     await waitForExit(core);
     core = startCore(port, adminPort, databasePath);
     await waitForCoreListener(port, core);
-    assert.equal(
-      await reconnect.pollOnce(),
-      0,
-      "an unauthenticated post-restart poll reattaches once and retries",
-    );
-    assert.equal(
-      countAdapterRegistrations(databasePath),
-      attachCountBeforeRestart + 1,
+    await waitFor(
+      () => countAdapterRegistrations(databasePath) === attachCountBeforeRestart + 1,
       "the retry path durably records exactly one fresh attachment",
     );
   } finally {
+    reconnectController?.abort();
+    adapterController?.abort();
     if (reconnect) await reconnect.dispose();
     if (adapter) await adapter.dispose();
+    const runs = [reconnectRun, adapterRun].filter(
+      (run): run is Promise<void> => run !== undefined,
+    );
+    await Promise.allSettled(runs);
     core.kill("SIGTERM");
     rmSync(directory, { recursive: true, force: true });
   }
@@ -507,6 +546,76 @@ async function readAfter(
     if (event.payload) payloads.push(event.payload);
   }
   return payloads;
+}
+
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  throw new Error(`timed out waiting for ${message}`);
+}
+
+async function waitForCommandState(
+  control: ReturnType<typeof makeControlClient>,
+  commandId: string,
+  expected: OperationState,
+): Promise<void> {
+  await waitFor(async () => {
+    const states = commandStates(await readAfter(control, 0n), commandId);
+    return states.at(-1) === expected;
+  }, `${commandId} to reach ${OperationState[expected] ?? expected}`);
+}
+
+async function waitForCommandFailure(
+  control: ReturnType<typeof makeControlClient>,
+  commandId: string,
+  failureCode: FailureCode,
+): Promise<void> {
+  await waitFor(async () => {
+    const transitions = commandTransitions(await readAfter(control, 0n), commandId);
+    const terminal = transitions.at(-1);
+    return terminal?.toState === OperationState.FAILED && terminal.failureCode === failureCode;
+  }, `${commandId} to fail with ${FailureCode[failureCode] ?? failureCode}`);
+}
+
+async function waitForSessionConnectivity(
+  control: ReturnType<typeof makeControlClient>,
+  expected: SessionConnectivityState,
+): Promise<void> {
+  await waitFor(async () => {
+    const loaded = await control.loadSnapshot(
+      create(LoadSnapshotRequestSchema, {
+        authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+      }),
+    );
+    if (!loaded.present) return false;
+    const snapshot = fromBinary(SessionSnapshotSchema, loaded.snapshotPayload);
+    return snapshot.sessions.some(
+      (session) =>
+        session.runtimeSessionId?.value === runtimeSessionId &&
+        session.state?.connectivity === expected,
+    );
+  }, `session connectivity ${SessionConnectivityState[expected] ?? expected}`);
+}
+
+async function waitForPiIdle(fixture: { readonly session: PiSession | undefined }): Promise<void> {
+  await waitFor(() => fixture.session?.getState().idle === true, "Pi session to become idle");
+}
+
+function commandTransitions(
+  payloads: readonly StoredEventPayload[],
+  commandId: string,
+) {
+  return payloads
+    .filter((payload) => payload.kind === StoredEventKind.COMMAND_TRANSITION)
+    .map((payload) => fromBinary(CommandTransitionSchema, payload.payload))
+    .filter((transition) => transition.commandId?.value === commandId);
 }
 
 function commandStates(

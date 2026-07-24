@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   FailureCode,
   OperationKind,
@@ -53,6 +54,7 @@ export class AdapterProcess {
   #observationError: unknown;
   #cursor = 0n;
   #started = false;
+  #runController: AbortController | undefined;
 
   constructor(options: AdapterProcessOptions) {
     this.#options = options;
@@ -118,26 +120,6 @@ export class AdapterProcess {
     );
   }
 
-  async pollOnce(): Promise<number> {
-    if (!this.#started) throw new Error("adapter process has not started");
-    const inFlight: Promise<void>[] = [];
-    let delivered = 0;
-    for await (const delivery of this.#core.receiveDeliveries(this.#cursor)) {
-      const operation = requiredOperation(delivery);
-      const started = await this.#beginDelivery(delivery, operation);
-      this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
-      delivered += 1;
-      // Instruct runs remain in flight so a later cancel in the same durable
-      // tail can abort them. Delivery acknowledgement and running status have
-      // already committed before the next Operation starts.
-      if (operation.kind === OperationKind.INSTRUCT) inFlight.push(started.completion);
-      else await started.completion;
-    }
-    await Promise.all(inFlight);
-    await this.flushObservations();
-    return delivered;
-  }
-
   async flushObservations(): Promise<void> {
     await Promise.all([...this.#pendingObservations]);
     if (this.#observationError !== undefined) {
@@ -149,15 +131,72 @@ export class AdapterProcess {
 
   async run(signal?: AbortSignal): Promise<void> {
     await this.start();
-    while (!signal?.aborted) {
-      const delivered = await this.pollOnce();
-      if (delivered === 0) await delay(100, signal);
+    if (this.#runController) throw new Error("adapter delivery loop is already running");
+
+    const controller = new AbortController();
+    this.#runController = controller;
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+
+    try {
+      while (!controller.signal.aborted) {
+        try {
+          await this.#consumeDeliveries(controller.signal);
+          if (!controller.signal.aborted) {
+            throw new ConnectError(
+              "delivery subscription ended without shutdown",
+              Code.Unavailable,
+            );
+          }
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (!isRetryableTransportFailure(error)) throw error;
+          await delay(100, controller.signal);
+        }
+      }
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      controller.abort();
+      if (this.#runController === controller) this.#runController = undefined;
     }
   }
 
   async dispose(): Promise<void> {
+    this.#runController?.abort();
     await this.#registry.dispose();
     this.#started = false;
+  }
+
+  async #consumeDeliveries(signal?: AbortSignal): Promise<void> {
+    if (!this.#started) throw new Error("adapter process has not started");
+    const inFlight = new Set<Promise<void>>();
+    let completionError: unknown;
+    try {
+      for await (const delivery of this.#core.receiveDeliveries(this.#cursor, signal)) {
+        const operation = requiredOperation(delivery);
+        const started = await this.#beginDelivery(delivery, operation);
+        this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
+
+        // Instruction completion remains in flight so the live subscription
+        // can receive a later cancellation for the same session.
+        if (operation.kind === OperationKind.INSTRUCT) {
+          let tracked: Promise<void>;
+          tracked = started.completion
+            .catch((error: unknown) => {
+              completionError ??= error;
+            })
+            .finally(() => inFlight.delete(tracked));
+          inFlight.add(tracked);
+        } else {
+          await started.completion;
+        }
+      }
+    } finally {
+      await Promise.all(inFlight);
+      await this.flushObservations();
+      if (completionError !== undefined) throw completionError;
+    }
   }
 
   async #beginDelivery(delivery: Delivery, operation: Operation): Promise<StartedDelivery> {
@@ -183,10 +222,7 @@ export class AdapterProcess {
     const commandId = operation.commandId?.value;
     if (commandId) this.#activeCommands.set(entry.runtimeSessionId, commandId);
     if (operation.kind === OperationKind.INSTRUCT) {
-      await this.#core.reportSession(
-        this.#identity(entry),
-        SessionActivityState.WORKING,
-      );
+      await this.#queueSessionReport(entry, SessionActivityState.WORKING);
     }
     return { completion: this.#executeDelivery(operation, entry) };
   }
@@ -195,16 +231,8 @@ export class AdapterProcess {
     const commandId = operation.commandId?.value;
     try {
       const outcome = await this.#translator.deliver(operation, entry.session);
-      if (outcome.sessionGenerationChanged) {
-        await this.#core.reportSession(
-          this.#identity(entry),
-          SessionActivityState.IDLE,
-        );
-      } else if (operation.kind === OperationKind.INSTRUCT) {
-        await this.#core.reportSession(
-          this.#identity(entry),
-          SessionActivityState.IDLE,
-        );
+      if (outcome.sessionGenerationChanged || operation.kind === OperationKind.INSTRUCT) {
+        await this.#queueSessionReport(entry, SessionActivityState.IDLE);
       }
       await this.#core.reportResult(operation, outcome.value);
     } catch (error) {
