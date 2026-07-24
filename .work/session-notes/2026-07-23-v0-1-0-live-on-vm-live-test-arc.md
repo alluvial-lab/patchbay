@@ -20,7 +20,10 @@ Roughly ten real bugs surfaced in live use; all were fixed inline and committed.
   in `tmp/devup/`). The cockpit has a login form.
 - **CLI:** `node cli/dist/src/main.js` (not installed globally). Credentials at
   `tmp/devup/cli-credentials.json` (0600).
-- **Login (both cockpit form + CLI):** `operator-dev` / `dev-password-123`.
+- **Login (both cockpit form + CLI):** `operator-dev` / `<redacted — rotated 2026-07-24>`.
+  This note originally carried the live password in cleartext; gate-security flagged it
+  (Critical) and the credentials were rotated. **Lesson, now convention: tracked notes
+  never carry live secrets — describe where they live (tmp/devup, 0600), not their values.**
 - Scratch state is all under `tmp/devup/` (db, credentials, TLS cert, workspace). `rm -rf tmp/devup`
   resets everything. A start script for the adapter lives at `/tmp/start-adapter.sh` (edit env as needed).
 
@@ -30,7 +33,7 @@ Roughly ten real bugs surfaced in live use; all were fixed inline and committed.
   `docs/RUNBOOK.md` — the runbook is accurate and current).
 - Adapter: `setsid /tmp/start-adapter.sh > /tmp/adapter-live.log 2>&1 < /dev/null &`
   (background launches via plain `nohup ... &` were flaky in this shell; setsid+disown works).
-- Web-server: `nohup env PATCHBAY_CORE_ADDR=http://127.0.0.1:50051 PATCHBAY_CORE_SECRET=devup-core-secret
+- Web-server: `nohup env PATCHBAY_CORE_ADDR=http://127.0.0.1:50051 PATCHBAY_CORE_SECRET=<redacted — rotated 2026-07-24>
   PATCHBAY_AUTHORITY_DOMAIN_ID=devup PATCHBAY_OPERATOR_ID=operator-dev
   PATCHBAY_WEB_BIND_ADDR=192.168.50.110:3000 PATCHBAY_TLS_CERT=tmp/devup/tls-cert.pem
   PATCHBAY_TLS_KEY=tmp/devup/tls-key.pem node web-server/dist/src/main.js > tmp/devup/web.log 2>&1 &`
