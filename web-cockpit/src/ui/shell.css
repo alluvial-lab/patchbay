@@ -1,16 +1,37 @@
 /* Cockpit instance layout. Protocol-state styling stays in the locked components.css layer. */
+
+/* Desktop: bound the body to the viewport so the PAGE never scrolls — the
+   timeline scrolls internally (the locked mockup's model: body height:100vh
+   overflow:hidden). Without this the page grows with content and the internal
+   timeline scroll is moot (found in live use: the chatbox extended past the
+   sidebar). Mobile overrides this back to page-scroll below. */
 html,
 body {
   margin: 0;
   padding: 0;
   background: var(--color-bg-primary);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+body > [data-patchbay-cockpit] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .cockpit {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  min-height: 100dvh;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
@@ -57,7 +78,8 @@ body {
 }
 
 .cockpit .session-detail {
-  height: 100dvh;
+  height: 100%; /* fill the desktop content row (not the viewport) so a banner
+                  above doesn't push it into overflow */
 }
 
 .cockpit .session-detail__header[hidden] {
@@ -212,6 +234,14 @@ body {
 }
 
 @media (max-width: 760px) {
+  /* Mobile: restore page scroll (the desktop bounded body would clip it).
+     The session list is the home; the detail drills in over it. */
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+  }
+
   .cockpit {
     display: block;
     min-height: 100dvh;
