@@ -1,7 +1,7 @@
 ---
 id: feature-adapter-staleness-liveness
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol, fast-follower]
 parent: null
 depends_on: []
@@ -374,3 +374,13 @@ async #beginDelivery(
 - `cargo clippy --workspace --all-targets -- -D warnings` — passed.
 - `cd pi-adapter && npm test` — passed (10/10); this package has no separate lint script.
 - Acceptance walk: the idle stream stays pending and receives later work; current stream loss marks sessions stale and fails only matching running commands with `execution_outcome_unknown`; delivered work remains redeliverable; the Pi run loop preserves instruction concurrency/observation ordering and reconnects after transport loss or attachment refresh; shutdown is cancellation-aware.
+
+## Review record (2026-07-24, standard weight, cross-model kimi-coding/k3 vs gpt-5.6-sol implementer)
+
+One balanced fresh-context pass. **Verdict: APPROVE-WITH-IMPORTANT-FINDINGS — no blockers.** All acceptance criteria met with test evidence; the independent-scan-projection deviation walked cursor/ack paths and found sound (projections fold the same ordered log via the same deterministic apply; miss hazard of a shared cursor confirmed real and avoided; mis-ack excluded by mutex-serialized transition writers; terminal race resolves first-durable-terminal-wins with replay skipping AlreadyTerminal). Locked decisions Q1a/Q2a/B2/B3a verified honored. Reviewer independently re-ran cargo test/clippy, adapter tests, contracts vectors, presentation check — all green.
+
+**Findings adjudicated:**
+- F1 (Important) — RUNBOOK overstated black-hole recovery: replace-before-detection corner is *permanent* running-rot, not a delay. **Fixed in-wave**: docs/RUNBOOK.md now states the corner precisely and names the reserved heartbeat/age escalation.
+- F2 (Important) — contamination assessment: current tree confirmed COHERENT (broken intermediate commit 157b40c belonged to feature-session-model-field's trail; repaired by a7d3058; final state type-checks, all suites green). Informational; no tree action.
+- F3 (Nit) — e2e conversion dropped the integrated "acknowledged history not re-offered" assertion; property still covered at server level. Kept in review notes.
+- F4 (Nit) — core-side subscription fault fires the same abnormal-disconnect path (healthy adapter's running commands terminalized). Arguably fail-fast-correct; **documented** in the same RUNBOOK edit as an honest named limitation.

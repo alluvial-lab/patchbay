@@ -65,9 +65,21 @@ surfaces (browser cockpit + CLI).
   attachment holds one long-lived authenticated delivery stream, and an
   abnormal transport close marks its sessions `stale`. A network black hole
   that leaves TCP/HTTP2 apparently open can still delay that signal until the
-  transport detects failure. Heartbeat/last-report-age policy remains a
-  reserved escalation if operations show that transport liveness is
-  insufficient.
+  transport detects failure — and in one corner it never arrives: if a
+  replacement attachment bumps the stream epoch *before* the black-holed old
+  transport dies, the old stream's eventual drop is fenced inert, so its
+  `running` commands are never terminalized and (per the delivered-not-running
+  redelivery rule) never re-offered. That is permanent running-rot for that
+  attachment, by design: the old process may still be alive behind the
+  partition, and heartbeat/last-report-age policy remains the reserved
+  escalation if operations show transport liveness is insufficient.
+- **Core-side stream faults conflate with adapter loss.** If the delivery
+  subscription itself fails core-side (a storage read error or a corrupt log
+  event), the same abnormal-disconnect path fires: the (healthy) adapter's
+  sessions go `stale` and its `running` commands are terminalized as
+  `failed(execution_outcome_unknown)`, with later completions demoted to
+  audit-only. This is deliberate fail-fast behavior on a corruption path, not
+  a liveness signal about the adapter.
 - **`execution_outcome_unknown` requires retry judgment.** If the adapter
   stream is lost after a command reaches `running`, the core records
   `failed(execution_outcome_unknown)`: the action may already have executed.
