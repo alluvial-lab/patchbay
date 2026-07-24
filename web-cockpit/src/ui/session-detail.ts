@@ -278,9 +278,30 @@ function renderComposer(
   composer.className = "composer";
   const targetStable = stableTarget(session);
 
-  const attach = textElement(document, "button", "btn btn-secondary btn--icon-only", "Attach") as HTMLButtonElement;
+  // Paperclip icon (not text) so the button stays icon-sized; the "Attach"
+  // text inflated the aspect-ratio:1 icon button into a large circle.
+  const attach = document.createElement("button");
+  attach.className = "btn btn-secondary btn--icon-only";
   attach.type = "button";
   attach.setAttribute("aria-label", "Attach file or image");
+  attach.title = "Attach file or image";
+  const paperclip = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  paperclip.setAttribute("viewBox", "0 0 24 24");
+  paperclip.setAttribute("width", "16");
+  paperclip.setAttribute("height", "16");
+  paperclip.setAttribute("fill", "none");
+  paperclip.setAttribute("stroke", "currentColor");
+  paperclip.setAttribute("stroke-width", "2");
+  paperclip.setAttribute("stroke-linecap", "round");
+  paperclip.setAttribute("stroke-linejoin", "round");
+  paperclip.setAttribute("aria-hidden", "true");
+  const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  clipPath.setAttribute(
+    "d",
+    "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48",
+  );
+  paperclip.append(clipPath);
+  attach.append(paperclip);
   attach.disabled = !targetStable || !actions?.attach;
   attach.addEventListener("click", () => {
     if (session && stableTarget(session)) void actions?.attach?.(session);
