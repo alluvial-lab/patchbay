@@ -158,7 +158,11 @@ Gates: security, tests, cruft, docs, patterns (default set).
 
 
 ## Gate runs
-(populated at gate execution)
+- **gate-security** (2026-07-24) — 5 findings (1 critical, 4 medium); commit 1f1a143
+- **gate-tests** (2026-07-24) — 1 finding (1 high); commit a666a40
+- **gate-cruft** (2026-07-24) — 1 finding; commit 31045b5
+- **gate-docs** (2026-07-24) — 6 findings; commit 2a3142b
+- **gate-patterns** — pending (runs last)
 
 ### Binding-consistency warnings
 
