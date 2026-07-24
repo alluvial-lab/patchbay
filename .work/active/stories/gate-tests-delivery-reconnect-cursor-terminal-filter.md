@@ -1,7 +1,7 @@
 ---
 id: gate-tests-delivery-reconnect-cursor-terminal-filter
 kind: story
-stage: implementing
+stage: done
 tags: [testing, adapter, protocol]
 parent: null
 depends_on: []
@@ -40,3 +40,15 @@ Missing reconnect e2e seam / cursor-and-ack state-transition coverage.
 
 ## Test location (suggested)
 `pi-adapter/tests/e2e.test.ts`, with a focused server-level counterpart in `server/src/adapter_service/tests.rs` if needed to isolate post-batch eligibility filtering.
+
+## Implementation notes
+- Execution capability: direct implementation; one existing LIVE integration suite owns the core, adapter, and real `AgentSession` boundary.
+- Review weight: standard (default).
+- Files changed: `pi-adapter/tests/e2e.test.ts`.
+- Tests added/removed: added a fenced-stream reconnect regression that completes a non-zero-cursor terminal command, accepts a later operation while the old stream is fenced, and proves terminal filtering plus exactly-once catch-up.
+- Simplification: none.
+- Discrepancies from design: none; the existing LIVE suite could force a stream replacement with a same-generation attached core client, avoiding a second core fixture.
+- Adjacent issues parked: none.
+
+## Verification evidence
+- `cd pi-adapter && npm test` — passed (11 tests), including `core → adapter → real AgentSession → observation loop, generation bump, reconnect, and core restart`.

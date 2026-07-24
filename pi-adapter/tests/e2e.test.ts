@@ -56,6 +56,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import { PatchbayCoreClient } from "../src/core_client.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
 import { PiSession } from "../src/pi_session.js";
 
@@ -176,6 +177,83 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       transcriptPayloads.some(
         (event) => event.kind === "assistant_committed" && event.text === "Pi received the operation",
       ),
+    );
+
+    // The first command advances the live adapter's private stream cursor beyond
+    // zero. A replacement stream then ends the old subscription; the adapter
+    // must reconnect from that cursor rather than re-executing terminal history.
+    let terminalExecutions = 0;
+    sessionFixture.faux.appendResponses([
+      async () => {
+        terminalExecutions += 1;
+        return fauxAssistantMessage("terminal command must not replay");
+      },
+    ]);
+    const terminal = await control.submit(
+      create(SubmitRequestSchema, {
+        operation: operation(
+          "command-reconnect-terminal",
+          OperationKind.INSTRUCT,
+          "finish before reconnect",
+        ),
+      }),
+    );
+    assert.ok(terminal.acceptedLsn && terminal.acceptedLsn.value > 0n);
+    await waitForCommandState(
+      control,
+      "command-reconnect-terminal",
+      OperationState.COMPLETED,
+    );
+    assert.equal(terminalExecutions, 1);
+
+    const streamInterrupter = new PatchbayCoreClient({
+      coreAddress: baseUrl,
+      adapterId,
+      authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+    });
+    await streamInterrupter.attach(1);
+    const interrupterController = new AbortController();
+    const interruptedStream = (async () => {
+      for await (const _delivery of streamInterrupter.receiveDeliveries(
+        0n,
+        interrupterController.signal,
+      )) {
+        // Opening this replacement stream fences and closes the adapter's idle stream.
+      }
+    })();
+
+    // This acceptance happens after the old stream is fenced and before the
+    // production run loop can retry. It is the unseen tail the reconnect must catch up.
+    const caughtUp = await control.submit(
+      create(SubmitRequestSchema, {
+        operation: operation(
+          "command-reconnect-catch-up",
+          OperationKind.INSTRUCT,
+          "run exactly once after reconnect",
+        ),
+      }),
+    );
+    assert.ok(caughtUp.acceptedLsn && caughtUp.acceptedLsn.value > terminal.acceptedLsn.value);
+    await waitForCommandState(
+      control,
+      "command-reconnect-catch-up",
+      OperationState.COMPLETED,
+    );
+    interrupterController.abort();
+    await interruptedStream;
+
+    const reconnectCatchUpEvents = await readAfter(control, 0n);
+    assert.deepEqual(
+      commandStates(reconnectCatchUpEvents, "command-reconnect-terminal"),
+      [OperationState.DELIVERED, OperationState.RUNNING, OperationState.COMPLETED],
+      "the terminal command is filtered from reconnect delivery",
+    );
+    assert.equal(terminalExecutions, 1, "the terminal command never executes again");
+    assert.deepEqual(
+      commandStates(reconnectCatchUpEvents, "command-reconnect-catch-up"),
+      [OperationState.DELIVERED, OperationState.RUNNING, OperationState.COMPLETED],
+      "the later accepted operation is caught up exactly once",
     );
 
     const sessionNew = await control.submit(
