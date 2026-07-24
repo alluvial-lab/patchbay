@@ -159,3 +159,12 @@ Gates: security, tests, cruft, docs, patterns (default set).
 
 ## Gate runs
 (populated at gate execution)
+
+### Binding-consistency warnings
+
+BINDING CONSISTENCY — release v0.1.0 (epic_cohesion: phased): 0 CONFLICTs.
+5 INCOMPLETEs, all informational under phased: the five [research]-tagged
+children of epic-foundation-hardening (feature-research-contract-tooling,
+feature-research-formal-methods-tooling, feature-research-harness-action-surfaces,
+feature-research-v0-stack-tooling, feature-research-web-control-security) are
+unbound by design — research engagements are inputs, not release members.
