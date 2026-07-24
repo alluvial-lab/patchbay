@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field
 kind: feature
-stage: review
+stage: implementing
 tags: [protocol, ux, fast-follower]
 parent: null
 depends_on: []
@@ -507,3 +507,15 @@ dependencies: `proto-contract → core-registry → {pi-adapter, surfaces}`.
 - **Unavailable model must not be invented.** An empty wire value remains
   unknown in every surface; no provider/model fallback or Pi-specific label is
   fabricated.
+
+## Review record (2026-07-24, standard weight, cross-model sol) — pass 1: BLOCK
+
+**Adjudicated blockers (fix in-wave):**
+1. Pi model-change callback discards the emitted model, hard-codes `SessionActivityState.IDLE`, and re-reads `session.model` later → false `working → idle` transitions mid-instruction; rapid A→B→C collapses (two reports both carrying C). Violates "exactly one ordered report per `model_change`".
+2. `ingest_session_report` appends under the registry lock but rebuilds/reinstalls the projection after release → concurrent same-session reports can write an unreplayable log (permanent restart/replay failure). Predates the feature but directly undermines the mutable model contract.
+
+**Adjudicated importants:**
+- Delayed sequential report can roll the model backward (no adapter-side revision/sequence in the report contract; Pi promise tail mitigates in v0.1.0) → **park to backlog** (contract hardening, v0.x).
+- Model-change adapter test only exercises observer plumbing, never a `model_change` through `AdapterProcess` → **fold into blocker-1 fix** (the missing test is how the blocker passed).
+
+Feature bounced review → implementing for the fix wave.
