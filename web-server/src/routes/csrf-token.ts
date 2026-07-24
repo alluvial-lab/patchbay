@@ -1,11 +1,14 @@
 import type { FastifyInstance } from "fastify";
 
-import { requireOperatorSession } from "../middleware/csrf-auth.js";
+import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-auth.js";
 
-export function registerCsrfTokenRoute(app: FastifyInstance): void {
+export function registerCsrfTokenRoute(
+  app: FastifyInstance,
+  options: Pick<GuardOptions, "trustedLoopbackProxy"> = {},
+): void {
   app.get(
     "/csrf-token",
-    { preHandler: requireOperatorSession(app.sessions, { requireCsrf: false }) },
+    { preHandler: requireOperatorSession(app.sessions, { ...options, requireCsrf: false }) },
     async (request, reply) => {
       const session = app.sessions.lookup(request.verifiedSessionId!);
       if (!session || session.status !== "active") {

@@ -87,6 +87,59 @@ test("insecure non-loopback requests cannot establish browser sessions", async (
   await app.close();
 });
 
+test("a loopback proxy must be explicitly trusted and attest browser HTTPS", async () => {
+  const untrusted = buildApp({
+    config,
+    coreClient: unusedCoreClient,
+    passwordVerifier: verifyPassword,
+    logger: false,
+  });
+  const forwardedHttps = {
+    method: "POST" as const,
+    url: "/login",
+    remoteAddress: "127.0.0.1",
+    headers: { "x-forwarded-proto": "https" },
+    payload: { password },
+  };
+  const untrustedResponse = await untrusted.inject(forwardedHttps);
+  assert.equal(untrustedResponse.statusCode, 400);
+  assert.deepEqual(untrustedResponse.json(), { error: "https_required" });
+  await untrusted.close();
+
+  const trusted = buildApp({
+    config: { ...config, trustedLoopbackProxy: true },
+    coreClient: unusedCoreClient,
+    passwordVerifier: verifyPassword,
+    logger: false,
+  });
+  const forwardedHttp = await trusted.inject({
+    ...forwardedHttps,
+    headers: { "x-forwarded-proto": "http" },
+  });
+  assert.equal(forwardedHttp.statusCode, 400);
+  assert.deepEqual(forwardedHttp.json(), { error: "https_required" });
+  const missingForwardedScheme = await trusted.inject({ ...forwardedHttps, headers: {} });
+  assert.equal(missingForwardedScheme.statusCode, 400);
+  assert.deepEqual(missingForwardedScheme.json(), { error: "https_required" });
+
+  const accepted = await trusted.inject(forwardedHttps);
+  assert.equal(accepted.statusCode, 200);
+
+  const session = trusted.sessions.create("operator-from-record");
+  const proxiedSessionRead = await trusted.inject({
+    method: "GET",
+    url: "/csrf-token",
+    remoteAddress: "127.0.0.1",
+    headers: {
+      cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+      "x-forwarded-proto": "http",
+    },
+  });
+  assert.equal(proxiedSessionRead.statusCode, 400);
+  assert.deepEqual(proxiedSessionRead.json(), { error: "https_required" });
+  await trusted.close();
+});
+
 test("state-changing guard enforces auth, live status, and timing-safe CSRF proof", async () => {
   const app = buildApp({ config, coreClient: unusedCoreClient, logger: false });
   app.post(

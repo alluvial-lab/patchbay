@@ -11,18 +11,22 @@ import {
 } from "@patchbay/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { requireOperatorSession } from "../middleware/csrf-auth.js";
+import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-auth.js";
 
 const GRPC_WEB_CONTENT_TYPE = "application/grpc-web+proto";
 
-export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): void {
+export function registerRpcRoutes(
+  app: FastifyInstance,
+  coreSecret: string,
+  options: Pick<GuardOptions, "trustedLoopbackProxy"> = {},
+): void {
   app.addContentTypeParser(GRPC_WEB_CONTENT_TYPE, { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
   });
 
   app.post(
     "/patchbay.ControlService/Submit",
-    { preHandler: requireOperatorSession(app.sessions) },
+    { preHandler: requireOperatorSession(app.sessions, options) },
     async (request, reply) => {
       try {
         const input = fromBinary(SubmitRequestSchema, decodeRequestFrame(request.body));
@@ -45,7 +49,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
 
   app.post(
     "/patchbay.ControlService/LoadSnapshot",
-    { preHandler: requireOperatorSession(app.sessions, { requireCsrf: false }) },
+    { preHandler: requireOperatorSession(app.sessions, { ...options, requireCsrf: false }) },
     async (request, reply) => {
       try {
         const input = fromBinary(LoadSnapshotRequestSchema, decodeRequestFrame(request.body));
@@ -61,7 +65,7 @@ export function registerRpcRoutes(app: FastifyInstance, coreSecret: string): voi
 
   app.post(
     "/patchbay.ControlService/Subscribe",
-    { preHandler: requireOperatorSession(app.sessions, { requireCsrf: false }) },
+    { preHandler: requireOperatorSession(app.sessions, { ...options, requireCsrf: false }) },
     async (request, reply) => {
       let input;
       try {

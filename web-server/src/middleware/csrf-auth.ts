@@ -8,6 +8,7 @@ export const CSRF_HEADER_NAME = "x-patchbay-csrf";
 
 export interface GuardOptions {
   requireCsrf?: boolean;
+  trustedLoopbackProxy?: boolean;
 }
 
 export function requireOperatorSession(
@@ -17,7 +18,7 @@ export function requireOperatorSession(
   const requireCsrf = options.requireCsrf ?? true;
 
   return async (request, reply) => {
-    if (!isSecureSessionRequest(request)) {
+    if (!isSecureSessionRequest(request, options)) {
       await reply.code(400).send({ error: "https_required" });
       return;
     }
@@ -49,11 +50,25 @@ export function requireOperatorSession(
   };
 }
 
-export function isSecureSessionRequest(request: FastifyRequest): boolean {
+export function isSecureSessionRequest(
+  request: FastifyRequest,
+  options: Pick<GuardOptions, "trustedLoopbackProxy"> = {},
+): boolean {
   const socket = request.raw.socket as typeof request.raw.socket & { encrypted?: boolean };
   if (socket.encrypted === true) return true;
-  const address = socket.remoteAddress;
+  if (!isLoopbackAddress(socket.remoteAddress)) return false;
+
+  const forwardedScheme = request.headers["x-forwarded-proto"];
+  if (forwardedScheme === undefined) return options.trustedLoopbackProxy !== true;
+  return options.trustedLoopbackProxy === true && isHttpsForwardedScheme(forwardedScheme);
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function isHttpsForwardedScheme(value: string | string[]): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "https";
 }
 
 function safeTokenEqual(actual: string, expected: string): boolean {

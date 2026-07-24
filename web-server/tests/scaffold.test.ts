@@ -43,6 +43,23 @@ test("startup fails closed without the core trust root or operator identity", ()
     PATCHBAY_AUTHORITY_DOMAIN_ID: "operator-fleet",
   });
   assert.equal(configuredDomain.authorityDomainId, "operator-fleet");
+
+  assert.equal(
+    loadConfig({
+      PATCHBAY_CORE_SECRET: "secret",
+      PATCHBAY_OPERATOR_ID: "operator-primary",
+      PATCHBAY_TRUST_LOOPBACK_PROXY: "true",
+    }).trustedLoopbackProxy,
+    true,
+  );
+  assert.throws(
+    () => loadConfig({
+      PATCHBAY_CORE_SECRET: "secret",
+      PATCHBAY_OPERATOR_ID: "operator-primary",
+      PATCHBAY_TRUST_LOOPBACK_PROXY: "yes",
+    }),
+    /PATCHBAY_TRUST_LOOPBACK_PROXY must be true or false/,
+  );
 });
 
 test("health check is unauthenticated", async () => {

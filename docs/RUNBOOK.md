@@ -28,7 +28,8 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_CORE_ADDR` | web-server, CLI, pi-adapter | yes | The core's network listener address. |
 | `PATCHBAY_CORE_ADMIN_ADDR` | CLI | setup only | The core's loopback admin listener (for `setup`). |
 | `PATCHBAY_WEB_BIND_ADDR` | web-server | no | HTTP listener for the cockpit. |
-| `PATCHBAY_TLS_CERT` / `PATCHBAY_TLS_KEY` | web-server | non-localhost | TLS for non-loopback binds (loopback uses the secure-cookie exception). |
+| `PATCHBAY_TLS_CERT` / `PATCHBAY_TLS_KEY` | web-server | non-localhost | Direct TLS for browser sessions on non-loopback binds. |
+| `PATCHBAY_TRUST_LOOPBACK_PROXY` | web-server | no (default `false`) | Allow an explicitly configured loopback reverse proxy only when it attests `X-Forwarded-Proto: https`. |
 | `PATCHBAY_CREDENTIALS_PATH` | CLI | no | CLI credential store (0600). |
 | `PATCHBAY_SETUP_SECRET` | CLI | setup only | One-time setup secret. Supply through the environment or the CLI's non-echoing TTY prompt; never as an argument. |
 | `PATCHBAY_OPERATOR_PASSWORD` | CLI | setup/login | Operator password. Supply through the environment or the CLI's non-echoing TTY prompt; never as an argument. |
@@ -54,6 +55,19 @@ surfaces (browser cockpit + CLI).
    `patchbay-cli login` (prompts non-echoingly for the password unless
    `PATCHBAY_OPERATOR_PASSWORD` is set; throttled core password verification;
    writes the 0600 credential store).
+
+## Browser transport
+
+- For a non-loopback browser listener, configure `PATCHBAY_TLS_CERT` and
+  `PATCHBAY_TLS_KEY`; plaintext browser sessions fail closed.
+- The local HTTP exception is only for a direct loopback browser request with
+  no `X-Forwarded-Proto` header.
+- A same-host reverse proxy must listen to the web server over loopback, set
+  `PATCHBAY_TRUST_LOOPBACK_PROXY=true`, and **overwrite**
+  `X-Forwarded-Proto` with its browser-facing scheme. The server accepts a
+  proxied browser session only when that single header value is exactly `https`;
+  `http`, missing/ambiguous forwarded values, and untrusted proxy headers fail
+  closed. Do not use this setting for a non-loopback proxy.
 
 ## Everyday commands
 

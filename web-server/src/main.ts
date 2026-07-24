@@ -37,6 +37,7 @@ export interface WebServerConfig {
   principalEndpointId?: string;
   principalDeviceId?: string;
   principalGeneration?: bigint;
+  trustedLoopbackProxy?: boolean;
   tls?: { cert: Buffer; key: Buffer };
 }
 
@@ -89,6 +90,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebServerConfi
     principalEndpointId: env.PATCHBAY_WEB_ENDPOINT_ID ?? "patchbay-web-server",
     principalDeviceId: env.PATCHBAY_WEB_DEVICE_ID ?? "patchbay-web-host",
     principalGeneration,
+    trustedLoopbackProxy: parseBoolean(
+      env.PATCHBAY_TRUST_LOOPBACK_PROXY,
+      "PATCHBAY_TRUST_LOOPBACK_PROXY",
+    ),
     tls:
       certPath !== undefined && keyPath !== undefined
         ? { cert: readFileSync(certPath), key: readFileSync(keyPath) }
@@ -136,10 +141,12 @@ export function buildApp(options: AppOptions): FastifyInstance {
         coreClient,
         corePrincipals,
       ),
+      trustedLoopbackProxy: options.config.trustedLoopbackProxy,
     },
   );
-  registerCsrfTokenRoute(app);
-  registerRpcRoutes(app, options.config.coreSecret);
+  const secureTransport = { trustedLoopbackProxy: options.config.trustedLoopbackProxy };
+  registerCsrfTokenRoute(app, secureTransport);
+  registerRpcRoutes(app, options.config.coreSecret, secureTransport);
   registerCockpitAssets(
     app,
     options.cockpitAssetsDir ?? fileURLToPath(new URL("../../../web-cockpit/dist/", import.meta.url)),
@@ -270,6 +277,13 @@ function optionalNonEmpty(value: string | undefined, name: string): string | und
   if (value === undefined) return undefined;
   if (value.length === 0) throw new Error(`${name} must not be empty when configured`);
   return value;
+}
+
+function parseBoolean(value: string | undefined, name: string): boolean {
+  if (value === undefined) return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false when configured`);
 }
 
 function parsePositiveBigInt(value: string, name: string): bigint {

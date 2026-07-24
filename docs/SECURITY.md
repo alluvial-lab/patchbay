@@ -93,7 +93,7 @@ v0.1.0 browser-session requirements:
 - session identifiers are high-entropy, meaningless client-side values;
 - session records include operator id, endpoint id, created time, last-used time, expiration, revoked time, and session generation;
 - session cookies use `HttpOnly`, `Secure` outside localhost, `SameSite=Strict` by default, `Path=/`, and no `Domain` attribute;
-- non-localhost deployments require HTTPS or a trusted HTTPS-terminating reverse proxy before browser sessions are accepted;
+- non-localhost deployments require direct HTTPS before browser sessions are accepted; the only supported proxy mode is an explicitly enabled loopback proxy that overwrites `X-Forwarded-Proto` and attests `https` (see `docs/RUNBOOK.md`);
 - localhost development may use the browser's localhost secure-cookie exception, but that exception must not be generalized to LAN/IP/container deployments;
 - session secrets are never stored in localStorage;
 - login, logout, session renewal, and session revocation are audit records;

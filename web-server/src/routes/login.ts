@@ -32,6 +32,7 @@ export interface SessionRouteOptions {
   passwordVerifier?: PasswordVerifier;
   operatorAuthenticator?: OperatorAuthenticator;
   operatorSessionRevoker?: OperatorSessionRevoker;
+  trustedLoopbackProxy?: boolean;
 }
 
 export function registerSessionRoutes(
@@ -46,7 +47,7 @@ export function registerSessionRoutes(
 
   app.post("/login", async (request, reply) => {
     const networkAddress = directSocketAddress(request);
-    if (!isSecureSessionRequest(request)) {
+    if (!isSecureSessionRequest(request, options)) {
       auditLogin(request, operator.actorId, networkAddress, "failure", "https_required");
       return reply.code(400).send({ error: "https_required" });
     }
@@ -103,7 +104,7 @@ export function registerSessionRoutes(
 
   app.post(
     "/logout",
-    { preHandler: requireOperatorSession(sessions) },
+    { preHandler: requireOperatorSession(sessions, options) },
     async (request, reply) => {
       const coreSessionId = request.verifiedCoreSessionId;
       if (coreSessionId && options.operatorSessionRevoker) {
