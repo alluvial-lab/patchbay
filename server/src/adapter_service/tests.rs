@@ -1,18 +1,113 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use patchbay_contracts::patchbay::{
     observation_request, typed_correlation, AdapterCapability, AdapterRegistration,
     AdapterSnapshotSupport, AttachRequest, AuthorityDomainId, CommandId, EndpointId, FailureCode,
-    Generation, Lsn, Observation, ObservationKind, Operation, OperationKind, PayloadEnvelope,
-    ReceiveRequest, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
+    PayloadEnvelope, ReceiveRequest, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
-use patchbay_core::storage::{RusqliteStorage, Storage};
+use patchbay_core::storage::{
+    DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+};
 use prost::Message;
+use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 use tonic::Request;
 
 use super::*;
 
 const EVIDENCE: &str = "adapter-test-secret";
+
+#[derive(Clone)]
+struct BlockingReadStorage {
+    inner: RusqliteStorage,
+    block_next_read: Arc<AtomicBool>,
+    read_started: Arc<Notify>,
+    release_read: Arc<Notify>,
+}
+
+impl BlockingReadStorage {
+    fn new() -> Self {
+        Self {
+            inner: RusqliteStorage::open_in_memory().expect("storage opens"),
+            block_next_read: Arc::new(AtomicBool::new(false)),
+            read_started: Arc::new(Notify::new()),
+            release_read: Arc::new(Notify::new()),
+        }
+    }
+
+    fn block_next_read(&self) {
+        self.block_next_read.store(true, Ordering::SeqCst);
+    }
+
+    async fn wait_for_blocked_read(&self) {
+        self.read_started.notified().await;
+    }
+
+    fn release_blocked_read(&self) {
+        self.release_read.notify_one();
+    }
+}
+
+impl Storage for BlockingReadStorage {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        if self.block_next_read.swap(false, Ordering::SeqCst) {
+            self.read_started.notify_one();
+            self.release_read.notified().await;
+        }
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+}
 
 #[tokio::test]
 async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
@@ -110,6 +205,93 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
             .await
             .is_err(),
         "an idle delivery subscription remains pending"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_conflicting_model_reports_leave_a_replayable_log() {
+    let storage = BlockingReadStorage::new();
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+
+    let mut initial = session_report(SessionConnectivityState::Live);
+    initial.model = "provider/model-a".into();
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(initial)),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("initial session report succeeds");
+
+    storage.block_next_read();
+    let first_service = service.clone();
+    let first_domain = domain.clone();
+    let first_token = attachment_token.clone();
+    let first = tokio::spawn(async move {
+        let mut report = session_report(SessionConnectivityState::Live);
+        report.model = "provider/model-b".into();
+        first_service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(first_domain),
+                    observation: Some(observation_request::Observation::SessionReport(report)),
+                },
+                &first_token,
+            ))
+            .await
+    });
+    storage.wait_for_blocked_read().await;
+
+    let second_service = service.clone();
+    let second_domain = domain.clone();
+    let second_token = attachment_token.clone();
+    let second = tokio::spawn(async move {
+        let mut report = session_report(SessionConnectivityState::Live);
+        report.model = "provider/model-c".into();
+        second_service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(second_domain),
+                    observation: Some(observation_request::Observation::SessionReport(report)),
+                },
+                &second_token,
+            ))
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    storage.release_blocked_read();
+    first
+        .await
+        .expect("first report task joins")
+        .expect("first model report succeeds");
+    second
+        .await
+        .expect("second report task joins")
+        .expect("second model report succeeds");
+
+    let replayed = session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("concurrent model-report log remains replayable");
+    assert_eq!(
+        replayed
+            .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+            .expect("session remains live")
+            .model,
+        "provider/model-c"
     );
 }
 
@@ -744,11 +926,14 @@ fn runtime_session_id() -> RuntimeSessionId {
     }
 }
 
-async fn attach_generation(
-    service: &AdapterControlServiceImpl<RusqliteStorage>,
+async fn attach_generation<S>(
+    service: &AdapterControlServiceImpl<S>,
     domain: AuthorityDomainId,
     generation: u64,
-) -> String {
+) -> String
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     let mut registration = registration(domain);
     registration.adapter_generation = Some(Generation { value: generation });
     let response = service

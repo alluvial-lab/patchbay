@@ -565,17 +565,14 @@ where
                     model: report.model,
                     spawn_origin: report.spawn_origin,
                 };
-                let result = session::ingest_session_report(
-                    &self.storage,
-                    &mut *self.sessions.lock().await,
-                    report,
-                )
-                .await
-                .map_err(map_session_error)?;
+                let mut sessions = self.sessions.lock().await;
+                let result = session::ingest_session_report(&self.storage, &mut *sessions, report)
+                    .await
+                    .map_err(map_session_error)?;
                 let rebuilt = session::rebuild_from_log(&self.storage, &domain)
                     .await
                     .map_err(map_session_error)?;
-                *self.sessions.lock().await = rebuilt;
+                *sessions = rebuilt;
                 session_result_event_id(result)
             }
             Some(observation_request::Observation::Event(observation)) => {
