@@ -266,6 +266,7 @@ export class PiSession {
     const model = session.modelRegistry.find(provider, modelId);
     if (!model) throw new Error(`Pi model is unavailable: ${provider}/${modelId}`);
     await session.setModel(model);
+    this.#emitModelChange(`${provider}/${modelId}`);
   }
 
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {

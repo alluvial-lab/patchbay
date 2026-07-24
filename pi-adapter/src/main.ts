@@ -96,8 +96,11 @@ export class AdapterProcess {
           this.#observationTails.set(observedEntry.runtimeSessionId, next);
           this.#trackObservation(next);
         },
-        (observedEntry) => {
-          this.#trackObservation(this.#queueSessionReport(observedEntry, SessionActivityState.IDLE));
+        (observedEntry, model) => {
+          const activity = observedEntry.session.getState().idle
+            ? SessionActivityState.IDLE
+            : SessionActivityState.WORKING;
+          this.#trackObservation(this.#queueSessionReport(observedEntry, activity, undefined, model));
         },
       );
     } catch (error) {
@@ -270,7 +273,7 @@ export class AdapterProcess {
     return undefined;
   }
 
-  #identity(entry: RuntimeSessionEntry): SessionIdentity {
+  #identity(entry: RuntimeSessionEntry, model?: string): SessionIdentity {
     return {
       runtimeSessionId: entry.runtimeSessionId,
       deploymentScope: entry.deploymentScope,
@@ -278,7 +281,7 @@ export class AdapterProcess {
       project: entry.project ?? "",
       cwd: entry.cwd,
       name: entry.name ?? entry.runtimeSessionId,
-      model: normalizedModel(entry.session.getState().model),
+      model: model ?? normalizedModel(entry.session.getState().model),
     };
   }
 
@@ -286,10 +289,11 @@ export class AdapterProcess {
     entry: RuntimeSessionEntry,
     activity: SessionActivityState,
     connectivity = SessionConnectivityState.LIVE,
+    model?: string,
   ): Promise<void> {
     const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
     const next = tail
-      .then(() => this.#core.reportSession(this.#identity(entry), activity, connectivity))
+      .then(() => this.#core.reportSession(this.#identity(entry, model), activity, connectivity))
       .then(() => undefined);
     this.#observationTails.set(entry.runtimeSessionId, next);
     return next;
