@@ -1,7 +1,7 @@
 ---
 id: gate-security-remove-cli-secrets-from-argv
 kind: story
-stage: drafting
+stage: done
 tags: [security, secrets]
 parent: null
 depends_on: []
@@ -34,3 +34,14 @@ const VALUE_OPTIONS = new Set([
 
 ## Remediation direction
 Read passwords and one-time setup secrets from a non-echoing TTY prompt or an explicit protected input channel (for automation, stdin/credential file or a documented secret manager path). Remove secret-bearing argv forms from usage, reject them rather than silently retaining compatibility, and add tests that process arguments and normal output never contain the supplied secret.
+
+## Completion
+
+- Removed `--password` and `--setup-secret` from CLI parsing and help. Both are now rejected before command dispatch, without echoing their values.
+- `setup` and `login` read the documented `PATCHBAY_SETUP_SECRET` / `PATCHBAY_OPERATOR_PASSWORD` variables first, otherwise use a non-echoing interactive TTY prompt; non-interactive callers without the required environment variable fail closed.
+- Updated the CLI core-smoke invocation and `docs/RUNBOOK.md` to use/document the secret environment variables and prohibit secret-bearing argv.
+
+## Verification
+
+- `cd cli && npm test` — passed: 17 tests, 0 failures.
+- The added CLI regression test passes an inline secret argument, confirms rejection and that normal output excludes the supplied value; it also confirms help contains neither secret option.

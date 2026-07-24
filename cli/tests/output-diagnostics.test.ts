@@ -11,7 +11,7 @@ import { adapterStatusCommand } from "../src/commands/adapter-status.js";
 import { auditQueryCommand } from "../src/commands/audit-query.js";
 import { inspectCommandCommand } from "../src/commands/inspect-command.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
-import { parseArguments, run } from "../src/main.js";
+import { parseArguments, run, usage } from "../src/main.js";
 import { exitCodeForSubmission, printSubmissionResult } from "../src/output.js";
 import { captureOutput, DOMAIN, session, snapshotResponse } from "./helpers.js";
 
@@ -90,8 +90,21 @@ test("deep diagnostics are honest non-zero stubs", () => {
   }
 });
 
-test("argument parser preserves inline secret values", () => {
-  assert.equal(parseArguments(["--password=a=b=c"]).options.get("password"), "a=b=c");
+test("secret-bearing arguments are rejected without echoing their value", async () => {
+  const secret = "argv-secret-must-not-appear";
+  const output = captureOutput();
+  const exit = await run(
+    ["login", `--password=${secret}`],
+    output,
+    { env: { PATCHBAY_CORE_SECRET: "configured" } },
+  );
+
+  assert.equal(exit, 1);
+  assert.match(output.err.join("\n"), /unknown option: --password/);
+  assert.doesNotMatch([...output.out, ...output.err].join("\n"), new RegExp(secret));
+  assert.throws(() => parseArguments(["--setup-secret", secret]), /unknown option: --setup-secret/);
+  assert.doesNotMatch(usage(), /--(?:password|setup-secret)/);
+  assert.match(usage(), /PATCHBAY_OPERATOR_PASSWORD/);
 });
 
 test("state-changing dispatch refuses a missing credential store before submission", async () => {

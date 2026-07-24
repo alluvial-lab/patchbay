@@ -38,34 +38,37 @@ const cliEnv = {
 
 try {
   const setupSecret = await waitForCore(core);
-  const setup = await runCli([
-    "setup",
-    "--setup-secret",
-    setupSecret,
-    "--operator-id",
-    "operator-primary",
-    "--password",
-    "smoke-password",
-    "--endpoint-id",
-    "cli-setup",
-    "--device-id",
-    "smoke-device",
-  ]);
+  const setup = await runCli(
+    [
+      "setup",
+      "--operator-id",
+      "operator-primary",
+      "--endpoint-id",
+      "cli-setup",
+      "--device-id",
+      "smoke-device",
+    ],
+    {
+      PATCHBAY_SETUP_SECRET: setupSecret,
+      PATCHBAY_OPERATOR_PASSWORD: "smoke-password",
+    },
+  );
   assert.equal(setup.code, 0, setup.stderr);
   assert.equal(setup.stdout.includes(setupSecret), false);
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
 
-  const login = await runCli([
-    "login",
-    "--operator-id",
-    "operator-primary",
-    "--password",
-    "smoke-password",
-    "--endpoint-id",
-    "cli-login",
-    "--device-id",
-    "smoke-device",
-  ]);
+  const login = await runCli(
+    [
+      "login",
+      "--operator-id",
+      "operator-primary",
+      "--endpoint-id",
+      "cli-login",
+      "--device-id",
+      "smoke-device",
+    ],
+    { PATCHBAY_OPERATOR_PASSWORD: "smoke-password" },
+  );
   assert.equal(login.code, 0, login.stderr);
 
   const health = await runCli(["session-health", "--json"]);
@@ -85,11 +88,11 @@ try {
   await rm(stateDirectory, { recursive: true, force: true });
 }
 
-function runCli(args) {
+function runCli(args, secretEnv = {}) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [join(cliRoot, "dist/src/main.js"), ...args], {
       cwd: cliRoot,
-      env: cliEnv,
+      env: { ...cliEnv, ...secretEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

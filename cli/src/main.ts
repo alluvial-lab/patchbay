@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
-import { stdin as processStdin } from "node:process";
+import { stderr as processStderr, stdin as processStdin } from "node:process";
 import {
   loadConfig,
   makeAdminClient,
@@ -27,6 +27,7 @@ export interface CliOutput {
 export interface CliRuntime {
   env?: NodeJS.ProcessEnv;
   readStdin?: () => Promise<string>;
+  readSecret?: (prompt: string) => Promise<string>;
 }
 
 interface ParsedArguments {
@@ -37,9 +38,7 @@ interface ParsedArguments {
 
 const BOOLEAN_OPTIONS = new Set(["json"]);
 const VALUE_OPTIONS = new Set([
-  "setup-secret",
   "operator-id",
-  "password",
   "endpoint-id",
   "device-id",
   "idempotency-key",
@@ -76,18 +75,21 @@ export async function run(
           store,
           config.authorityDomainId,
           {
-            setupSecret: optionOrEnv(parsed, "setup-secret", runtime.env, "PATCHBAY_SETUP_SECRET"),
+            setupSecret: await secretFromEnvOrPrompt(
+              runtime,
+              "PATCHBAY_SETUP_SECRET",
+              "One-time setup secret",
+            ),
             operatorActorId: optionOrEnv(
               parsed,
               "operator-id",
               runtime.env,
               "PATCHBAY_OPERATOR_ID",
             ),
-            password: optionOrEnv(
-              parsed,
-              "password",
-              runtime.env,
+            password: await secretFromEnvOrPrompt(
+              runtime,
               "PATCHBAY_OPERATOR_PASSWORD",
+              "Operator password",
             ),
             endpointId: parsed.options.get("endpoint-id"),
             deviceId: parsed.options.get("device-id"),
@@ -108,11 +110,10 @@ export async function run(
               runtime.env,
               "PATCHBAY_OPERATOR_ID",
             ),
-            password: optionOrEnv(
-              parsed,
-              "password",
-              runtime.env,
+            password: await secretFromEnvOrPrompt(
+              runtime,
               "PATCHBAY_OPERATOR_PASSWORD",
+              "Operator password",
             ),
             endpointId: parsed.options.get("endpoint-id"),
             deviceId: parsed.options.get("device-id"),
@@ -244,10 +245,10 @@ export function usage(): string {
     "             PATCHBAY_AUTHORITY_DOMAIN_ID, PATCHBAY_CREDENTIALS_PATH",
     "",
     "Commands:",
-    "  setup --setup-secret S --operator-id ID --password P",
-    "      Bootstrap the first operator through the loopback-only admin listener.",
-    "  login --operator-id ID --password P",
-    "      Authenticate through the throttled core RPC and enroll a fresh CLI endpoint.",
+    "  setup --operator-id ID",
+    "      Bootstrap through the loopback-only admin listener; read secrets from env or a TTY prompt.",
+    "  login --operator-id ID",
+    "      Authenticate through the throttled core RPC; read the password from env or a TTY prompt.",
     "  logout",
     "      Revoke the current core-issued operator session and remove local credentials.",
     "  session-health [session-id] [--json]",
@@ -261,8 +262,9 @@ export function usage(): string {
     "  adapter-status     Requires core-diagnostics (stub)",
     "",
     "Target may be a unique runtime session id/name or the stable identity printed by",
-    "session-health. Secrets may also be supplied via PATCHBAY_SETUP_SECRET,",
-    "PATCHBAY_OPERATOR_ID, and PATCHBAY_OPERATOR_PASSWORD.",
+    "session-health. Supply secrets with PATCHBAY_SETUP_SECRET and",
+    "PATCHBAY_OPERATOR_PASSWORD, or enter them at a non-echoing TTY prompt. Never pass secrets as arguments.",
+    "PATCHBAY_OPERATOR_ID may also supply the operator id.",
   ].join("\n");
 }
 
@@ -272,7 +274,63 @@ function optionOrEnv(
   env: NodeJS.ProcessEnv | undefined,
   environmentName: string,
 ): string {
-  return parsed.options.get(option) ?? env?.[environmentName] ?? process.env[environmentName] ?? "";
+  return parsed.options.get(option) ?? environmentValue(env, environmentName) ?? "";
+}
+
+async function secretFromEnvOrPrompt(
+  runtime: CliRuntime,
+  environmentName: string,
+  prompt: string,
+): Promise<string> {
+  const value = environmentValue(runtime.env, environmentName);
+  if (value !== undefined) return value;
+  return await (runtime.readSecret ?? readSecretFromTty)(prompt);
+}
+
+function environmentValue(
+  env: NodeJS.ProcessEnv | undefined,
+  environmentName: string,
+): string | undefined {
+  return env?.[environmentName] ?? process.env[environmentName];
+}
+
+async function readSecretFromTty(prompt: string): Promise<string> {
+  if (!processStdin.isTTY || typeof processStdin.setRawMode !== "function") {
+    throw new Error(`${prompt} requires ${promptEnvironmentName(prompt)} or an interactive TTY`);
+  }
+
+  processStderr.write(`${prompt}: `);
+  return await new Promise<string>((resolve, reject) => {
+    let value = "";
+    const finish = (result?: string, error?: Error) => {
+      processStdin.off("data", onData);
+      processStdin.setRawMode(false);
+      processStdin.pause();
+      processStderr.write("\n");
+      if (error) reject(error);
+      else resolve(result ?? value);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString("utf8")) {
+        if (character === "\r" || character === "\n") return finish(value);
+        if (character === "\u0003") return finish(undefined, new Error("secret entry cancelled"));
+        if (character === "\u007f" || character === "\b") {
+          value = value.slice(0, -1);
+        } else {
+          value += character;
+        }
+      }
+    };
+    processStdin.setRawMode(true);
+    processStdin.resume();
+    processStdin.on("data", onData);
+  });
+}
+
+function promptEnvironmentName(prompt: string): string {
+  return prompt === "One-time setup secret"
+    ? "PATCHBAY_SETUP_SECRET"
+    : "PATCHBAY_OPERATOR_PASSWORD";
 }
 
 function requirePositionals(
