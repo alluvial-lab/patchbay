@@ -21,6 +21,11 @@ core/target/
 
 target/
 
+# local SQLite core state
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
 # spike cargo home (throwaway)
 .cargo-home/
 .npm-cache/

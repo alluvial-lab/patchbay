@@ -8,6 +8,9 @@
 //! - WAL concurrent reads while a write is in flight
 //! - append_dedup atomic check-and-register (the formal model's appliedKeys)
 
+#[cfg(unix)]
+use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
 use patchbay_contracts::patchbay::{
     AuthorityDomainId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
@@ -34,6 +37,53 @@ fn test_key(value: &str) -> IdempotencyKey {
 
 fn test_target(value: &str) -> TargetKey {
     TargetKey::new(value.to_string()).unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn database_and_wal_sidecars_are_owner_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("private.sqlite3");
+    let path_str = path.to_str().unwrap().to_owned();
+    let storage = patchbay_core::storage::RusqliteStorage::open(&path_str).unwrap();
+    let domain = test_domain();
+    storage
+        .append(&domain, test_payload(StoredEventKind::Operation))
+        .await
+        .unwrap();
+    storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+
+    for state_file in [
+        path,
+        format!("{path_str}-wal").into(),
+        format!("{path_str}-shm").into(),
+    ] {
+        assert_eq!(
+            file_mode(&state_file),
+            0o600,
+            "{} must be accessible only by its owner",
+            state_file.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn opening_existing_database_tightens_permissive_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("existing.sqlite3");
+    fs::write(&path, []).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(file_mode(&path), 0o644);
+
+    let _storage = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+
+    assert_eq!(file_mode(&path), 0o600);
+}
+
+#[cfg(unix)]
+fn file_mode(path: &Path) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
 #[tokio::test]

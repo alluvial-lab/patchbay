@@ -23,6 +23,12 @@
 
 use std::sync::Arc;
 
+#[cfg(unix)]
+use std::{
+    fs::{OpenOptions, Permissions},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+};
+
 use patchbay_contracts::patchbay::{
     AuthorityDomainId, EventId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
@@ -106,8 +112,11 @@ impl Clone for RusqliteStorage {
 
 impl RusqliteStorage {
     /// Open a storage backend at the given path. Creates the schema if absent.
+    /// On Unix, creates or tightens the database file to mode `0600` before
+    /// SQLite opens it; SQLite derives WAL/SHM sidecar modes from that file.
     /// Spawns the writer actor on the current tokio runtime.
     pub fn open(path: &str) -> Result<Self, StorageError> {
+        secure_database_file(path)?;
         let write_db = Connection::open(path).map_err(map_write_err)?;
         write_db
             .execute_batch(SCHEMA)
@@ -526,6 +535,33 @@ impl Storage for RusqliteStorage {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(map_read_err(e)),
         }
+    }
+}
+
+#[cfg(unix)]
+fn secure_database_file(path: &str) -> Result<(), StorageError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| state_file_error(path, error))?;
+    file.set_permissions(Permissions::from_mode(0o600))
+        .map_err(|error| state_file_error(path, error))
+}
+
+#[cfg(not(unix))]
+fn secure_database_file(_path: &str) -> Result<(), StorageError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn state_file_error(path: &str, error: std::io::Error) -> StorageError {
+    StorageError::WriteFailed {
+        message: format!("cannot secure SQLite state file {path}: {error}"),
+        retryable: false,
     }
 }
 
