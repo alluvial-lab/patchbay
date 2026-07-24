@@ -66,7 +66,7 @@ Items that currently still carry `[prose]` in `tags:` (legacy, from before the r
 
 ## Release mapping
 
-Patchbay has no release process yet. Keep `release_binding: null` until release conventions are explicitly designed.
+`tag-based`. `release-deploy` binds items, runs the default gate set (security, tests, cruft, docs, patterns), waits for readiness, drafts the changelog, tags `v<version>` and pushes to origin. Terminal-tier retention: `delete-refs` (default) — bound item bodies prune to git history at ship; the single summary doc lives at `.work/releases/<version>/release-<version>.md`.
 
 ## Review lane for verification-tagged stories
 

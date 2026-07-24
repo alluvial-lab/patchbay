@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-15
 updated: 2026-07-15
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 research_origin: null
 ---
 

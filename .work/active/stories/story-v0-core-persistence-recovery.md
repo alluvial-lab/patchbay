@@ -8,7 +8,7 @@ depends_on: [story-v0-core-persistence-rusqlite-impl]
 created: 2026-07-11
 updated: 2026-07-12
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Crash recovery and replay

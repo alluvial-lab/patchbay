@@ -8,7 +8,7 @@ depends_on: [feature-persistence-snapshot-model]
 created: 2026-07-07
 updated: 2026-07-07
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Retroactive design-gate audit — persistence, ordering, and snapshot model

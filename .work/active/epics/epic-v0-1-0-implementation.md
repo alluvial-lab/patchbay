@@ -8,7 +8,7 @@ parent: null
 created: 2026-07-11
 updated: 2026-07-16
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Epic: v0.1.0 implementation

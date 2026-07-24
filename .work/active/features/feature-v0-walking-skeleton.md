@@ -8,7 +8,7 @@ depends_on: [story-bootstrap-substrates]
 created: 2026-06-28
 updated: 2026-06-28
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Define the v0 walking skeleton

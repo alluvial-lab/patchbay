@@ -5,7 +5,7 @@ stage: done
 tags: [ux, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-web-server, feature-v0-presentation-component-layer, feature-v0-elicitation-response-contract, feature-v0-approval-response-contract]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-11
 updated: 2026-07-21

@@ -8,7 +8,7 @@ depends_on: [story-v0-core-acceptance-state-machine]
 created: 2026-07-12
 updated: 2026-07-13
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Acceptance pipeline and the three ports

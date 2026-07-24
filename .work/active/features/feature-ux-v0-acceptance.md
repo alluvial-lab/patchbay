@@ -8,7 +8,7 @@ depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-op
 created: 2026-06-28
 updated: 2026-07-06
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Define v0 web cockpit UX acceptance criteria

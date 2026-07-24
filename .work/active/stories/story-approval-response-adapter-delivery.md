@@ -5,7 +5,7 @@ stage: done
 tags: [protocol, verification, foundation]
 parent: feature-v0-approval-response-contract
 depends_on: [story-approval-response-proto-message, story-approval-response-core-validation]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-19
 updated: 2026-07-20

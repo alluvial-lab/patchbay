@@ -8,7 +8,7 @@ depends_on: [story-v0-core-persistence-workspace-and-port]
 created: 2026-07-11
 updated: 2026-07-11
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: rusqlite storage implementation + writer actor

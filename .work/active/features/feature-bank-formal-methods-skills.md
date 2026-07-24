@@ -8,7 +8,7 @@ depends_on: [feature-research-formal-methods-tooling]
 created: 2026-07-01
 updated: 2026-07-01
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 research_origin: formal-methods-tooling
 ---
 

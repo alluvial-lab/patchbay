@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-01
 updated: 2026-07-02
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Close the CSRF attempted-evidence trace gap + fix vocabulary-table SSOT drift

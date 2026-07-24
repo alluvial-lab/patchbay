@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-06
 updated: 2026-07-06
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Author the v0 .proto package

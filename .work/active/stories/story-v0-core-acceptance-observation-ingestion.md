@@ -8,7 +8,7 @@ depends_on: [story-v0-core-acceptance-state-machine, story-v0-core-acceptance-pi
 created: 2026-07-12
 updated: 2026-07-13
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Observation ingestion and command-state reflection

@@ -7,7 +7,7 @@ parent: feature-v0-web-cockpit
 depends_on: []
 created: 2026-07-20
 updated: 2026-07-20
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 ---
 

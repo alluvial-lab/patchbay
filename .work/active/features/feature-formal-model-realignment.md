@@ -8,7 +8,7 @@ depends_on: [feature-operator-presence-and-action-inventory, feature-formal-mode
 created: 2026-07-06
 updated: 2026-07-09
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Re-align seed formal models with the rolled-forward foundation

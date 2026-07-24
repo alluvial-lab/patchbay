@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-11
 updated: 2026-07-11
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Workspace scaffolding and storage port trait

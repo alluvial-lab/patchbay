@@ -5,7 +5,7 @@ stage: done
 tags: [protocol, bug, verification, foundation]
 parent: feature-v0-core-sessions
 depends_on: [story-v0-core-sessions-registry]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-13
 updated: 2026-07-16

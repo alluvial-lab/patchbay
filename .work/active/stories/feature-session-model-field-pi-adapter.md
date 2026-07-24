@@ -4,7 +4,7 @@ kind: story
 stage: done
 parent: feature-session-model-field
 depends_on: [feature-session-model-field-core-registry]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-24
 updated: 2026-07-24

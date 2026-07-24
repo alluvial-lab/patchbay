@@ -8,7 +8,7 @@ depends_on: [story-protocol-idl-conformance-vectors, story-protocol-idl-proto-pa
 created: 2026-07-06
 updated: 2026-07-06
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: CI traceability script + VERIFICATION.md reference

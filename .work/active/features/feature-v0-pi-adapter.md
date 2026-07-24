@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [epic-v0-core]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-11
 updated: 2026-07-16

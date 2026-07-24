@@ -8,7 +8,7 @@ depends_on: [feature-v0-walking-skeleton, feature-security-threat-model]
 created: 2026-06-28
 updated: 2026-07-07
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Decide lease scope for v0

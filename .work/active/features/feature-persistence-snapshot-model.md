@@ -8,7 +8,7 @@ depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot]
 created: 2026-06-28
 updated: 2026-06-28
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Define persistence, event ordering, and snapshot convergence

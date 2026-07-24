@@ -5,7 +5,7 @@ stage: done
 tags: [security, protocol, foundation]
 parent: feature-v0-core-authority
 depends_on: [story-v0-core-authority-registry, story-v0-core-authority-grant-check, story-v0-core-authority-ingest]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-13
 updated: 2026-07-14

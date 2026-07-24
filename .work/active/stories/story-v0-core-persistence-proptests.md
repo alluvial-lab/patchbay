@@ -8,7 +8,7 @@ depends_on: [story-v0-core-persistence-recovery]
 created: 2026-07-11
 updated: 2026-07-12
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Property tests for storage invariants

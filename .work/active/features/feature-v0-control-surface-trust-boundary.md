@@ -5,7 +5,7 @@ stage: done
 tags: [security, protocol]
 parent: epic-v0-1-0-implementation
 depends_on: [feature-v0-protocol-seam, feature-v0-core-authority, feature-v0-web-server]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-21
 updated: 2026-07-22

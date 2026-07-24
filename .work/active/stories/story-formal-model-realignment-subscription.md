@@ -8,7 +8,7 @@ depends_on: [story-formal-model-realignment-spawn]
 created: 2026-07-08
 updated: 2026-07-08
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Subscription authority (Unit SUB — promote into authority.qnt)

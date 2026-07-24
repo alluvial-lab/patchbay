@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-01
 updated: 2026-07-01
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Fix self-defining properties in the seed formal models

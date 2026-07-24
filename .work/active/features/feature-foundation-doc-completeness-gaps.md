@@ -8,7 +8,7 @@ depends_on: [feature-operator-presence-and-action-inventory]
 created: 2026-07-06
 updated: 2026-07-05
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Close foundation-doc completeness gaps from the O/O/E roll-forward review

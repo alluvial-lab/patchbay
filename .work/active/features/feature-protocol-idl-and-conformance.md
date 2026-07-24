@@ -8,7 +8,7 @@ depends_on: [feature-verification-contract-authority, feature-session-identity-a
 created: 2026-06-28
 updated: 2026-07-06
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Author v0 protocol IDL and conformance vectors

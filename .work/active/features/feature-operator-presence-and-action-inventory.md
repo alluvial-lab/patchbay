@@ -8,7 +8,7 @@ depends_on: [feature-v0-walking-skeleton, feature-command-state-ssot, feature-re
 created: 2026-07-02
 updated: 2026-07-05
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Feature: Sharpen operator-presence positioning and derive the operator↔harness↔agent action inventory

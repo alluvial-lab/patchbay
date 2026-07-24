@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, protocol]
 parent: feature-adapter-staleness-liveness
 depends_on: []
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-24
 updated: 2026-07-24

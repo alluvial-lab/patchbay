@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-06-28
 updated: 2026-06-28
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Story: Bootstrap work and research substrates

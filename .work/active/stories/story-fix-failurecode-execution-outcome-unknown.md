@@ -8,7 +8,7 @@ depends_on: []
 created: 2026-07-08
 updated: 2026-07-09
 gate_origin: null
-release_binding: null
+release_binding: v0.1.0
 ---
 
 # Fix: FailureCode proto missing `execution_outcome_unknown`

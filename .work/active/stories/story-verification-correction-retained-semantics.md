@@ -5,7 +5,7 @@ stage: done
 tags: [verification]
 parent: epic-public-product-contract-verification-claim-correction
 depends_on: [story-verification-correction-prose]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-10
 updated: 2026-07-10

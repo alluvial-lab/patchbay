@@ -5,7 +5,7 @@ stage: done
 tags: [ux, ui]
 parent: feature-cockpit-icon-set
 depends_on: [feature-cockpit-icon-set-design-system-conformance]
-release_binding: null
+release_binding: v0.1.0
 gate_origin: null
 created: 2026-07-24
 updated: 2026-07-24
