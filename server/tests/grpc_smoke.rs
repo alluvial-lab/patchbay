@@ -605,6 +605,7 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "smoke".to_owned(),
+            model: "provider/model".to_owned(),
             spawn_origin: None,
         },
     );

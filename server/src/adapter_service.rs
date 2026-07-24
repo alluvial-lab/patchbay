@@ -330,6 +330,7 @@ where
                     project: report.project,
                     cwd: report.cwd,
                     name: report.name,
+                    model: report.model,
                     spawn_origin: report.spawn_origin,
                 };
                 let result = session::ingest_session_report(
@@ -522,7 +523,8 @@ fn session_result_event_id(
         session::IngestResult::Registered { event_id }
         | session::IngestResult::ConnectivityChanged { event_id, .. }
         | session::IngestResult::ActivityChanged { event_id, .. }
-        | session::IngestResult::Relabeled { event_id } => Some(event_id),
+        | session::IngestResult::Relabeled { event_id }
+        | session::IngestResult::ModelChanged { event_id, .. } => Some(event_id),
         session::IngestResult::GenerationBumped {
             new_generation_event_id,
             ..

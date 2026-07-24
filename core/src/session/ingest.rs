@@ -8,7 +8,8 @@
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionRegistered, SessionRelabeled, SessionState, TypedCorrelation,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled, SessionState,
+    TypedCorrelation,
 };
 
 use crate::storage::{RecordedEvent, Storage};
@@ -34,6 +35,7 @@ pub struct SessionReport {
     pub project: String,
     pub cwd: String,
     pub name: String,
+    pub model: String,
     pub spawn_origin: Option<TypedCorrelation>,
 }
 
@@ -66,6 +68,12 @@ pub enum IngestResult {
     },
     /// Session metadata changed without changing session identity.
     Relabeled { event_id: EventId },
+    /// Current adapter-reported model changed without changing session identity.
+    ModelChanged {
+        event_id: EventId,
+        from: String,
+        to: String,
+    },
     /// More than one equal-generation delta was durably appended.
     DeltasApplied { event_ids: Vec<EventId> },
     /// The report exactly matched the current projection.
@@ -162,6 +170,7 @@ where
                 project: report.project,
                 cwd: report.cwd,
                 name: report.name,
+                model: report.model,
                 spawn_origin: report.spawn_origin,
             },
         );
@@ -190,6 +199,7 @@ where
                     project: report.project,
                     cwd: report.cwd,
                     name: report.name,
+                    model: report.model,
                 },
             );
             let event_id = storage
@@ -222,9 +232,11 @@ where
                 return Err(invalid_transition(current_activity, report.activity));
             }
 
+            let model_changed = current.model != report.model;
             let relabeled = metadata_changed(&current, &report);
             let change_count = usize::from(connectivity_changed)
                 + usize::from(activity_changed)
+                + usize::from(model_changed)
                 + usize::from(relabeled);
             if change_count == 0 {
                 return Ok(IngestResult::NoChange);
@@ -263,6 +275,25 @@ where
                             session_generation: Some(report.session_generation),
                             from: current.state.activity,
                             to: report.activity as i32,
+                        },
+                    );
+                    event_ids.push(
+                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                            .await?,
+                    );
+                    current = refreshed_current(session_lookup, &report).await?;
+                }
+
+                if current.model != report.model {
+                    let event = events::model_changed(
+                        authority_domain_id.clone(),
+                        SessionModelChanged {
+                            adapter_id: Some(report.adapter_id.clone()),
+                            deployment_scope: report.deployment_scope.clone(),
+                            runtime_session_id: Some(report.runtime_session_id.clone()),
+                            session_generation: Some(report.session_generation),
+                            from: current.model.clone(),
+                            to: report.model.clone(),
                         },
                     );
                     event_ids.push(
@@ -340,6 +371,27 @@ where
                 });
             }
 
+            if model_changed {
+                let from = current.model;
+                let to = report.model;
+                let event = events::model_changed(
+                    authority_domain_id.clone(),
+                    SessionModelChanged {
+                        adapter_id: Some(report.adapter_id),
+                        deployment_scope: report.deployment_scope,
+                        runtime_session_id: Some(report.runtime_session_id),
+                        session_generation: Some(report.session_generation),
+                        from: from.clone(),
+                        to: to.clone(),
+                    },
+                );
+                let event_id = storage
+                    .append(&authority_domain_id, events::encode(&event))
+                    .await?;
+                validate_event_id(&event_id, &authority_domain_id)?;
+                return Ok(IngestResult::ModelChanged { event_id, from, to });
+            }
+
             let event = events::relabeled(
                 authority_domain_id.clone(),
                 SessionRelabeled {
@@ -395,6 +447,7 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
             project: record.project.clone(),
             cwd: record.cwd.clone(),
             name: record.name.clone(),
+            model: record.model.clone(),
             spawn_origin: None,
         })
         .collect();

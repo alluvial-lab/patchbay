@@ -6,7 +6,7 @@
 
 use patchbay_contracts::patchbay::{
     session_state_event, AuthorityDomainId, SessionActivityChanged, SessionConnectivityChanged,
-    SessionGenerationBumped, SessionRegistered, SessionRelabeled, StoredEventKind,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled, StoredEventKind,
     StoredEventPayload,
 };
 use prost::Message;
@@ -70,6 +70,18 @@ pub fn relabeled(
     event(
         authority_domain_id,
         session_state_event::Mutation::Relabeled(mutation),
+    )
+}
+
+/// Construct a current-model delta.
+#[must_use]
+pub fn model_changed(
+    authority_domain_id: AuthorityDomainId,
+    mutation: SessionModelChanged,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::ModelChanged(mutation),
     )
 }
 

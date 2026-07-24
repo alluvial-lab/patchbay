@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field-core-registry
 kind: story
-stage: implementing
+stage: done
 parent: feature-session-model-field
 depends_on: [feature-session-model-field-proto-contract]
 release_binding: null
@@ -34,3 +34,13 @@ delta.
 
 Depends on the contract checkpoint. Adapter reporting and operator surfaces use
 the resulting snapshot/event semantics.
+
+## Implementation notes
+- Execution capability: inline single-owner implementation; the registry is the durable source of truth and its replay guards are the high-risk boundary.
+- Review weight: standard (default).
+- Files changed: session ingest/event/registry code and Rust session fixtures; adapter report mapping and snapshot materialization; server session fixtures.
+- Tests added/removed: model-only ingestion/rebuild and mismatch rejection tests; existing combined-delta and partial-append retry tests now include model changes. No tests removed.
+- Simplification: no second model-observation path; the existing session report and durable registry fold carry the state.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification: `cargo test -p patchbay-core --test sessions_ingest --test sessions_registry --test sessions_replay_resolver` (30 passed) and `cargo test -p patchbay-core-server --lib adapter_service::tests` (9 passed).

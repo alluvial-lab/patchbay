@@ -54,6 +54,7 @@ fn report(gen: u64, connectivity: SessionConnectivityState) -> SessionReport {
         project: "proj".to_string(),
         cwd: "/cwd".to_string(),
         name: "name".to_string(),
+        model: "provider/model".to_string(),
         spawn_origin: None,
     }
 }

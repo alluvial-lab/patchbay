@@ -1,7 +1,8 @@
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, Lsn, RuntimeSessionId,
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionRelabeled,
+    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
+    SessionRelabeled,
     SessionState, StoredEventKind, StoredEventPayload, TargetScope,
 };
 use patchbay_core::{
@@ -64,6 +65,7 @@ fn registration() -> SessionStateEvent {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "main".to_owned(),
+            model: "provider/model-1".to_owned(),
             spawn_origin: None,
         },
     )
@@ -96,6 +98,7 @@ fn registration_creates_a_live_session() {
     assert_eq!(record.project, "patchbay");
     assert_eq!(record.cwd, "/work/patchbay");
     assert_eq!(record.name, "main");
+    assert_eq!(record.model, "provider/model-1");
     assert_eq!(record.last_authoritative_lsn, Some(1));
     assert!(!record.tombstoned);
 }
@@ -160,6 +163,7 @@ fn folds_axis_changes_relabel_and_generation_bump() {
             project: "patchbay-next".to_owned(),
             cwd: "/work/patchbay-next".to_owned(),
             name: "replacement".to_owned(),
+            model: "provider/model-2".to_owned(),
         },
     );
     registry.observe(&recorded(5, &bump)).unwrap();
@@ -173,6 +177,7 @@ fn folds_axis_changes_relabel_and_generation_bump() {
     assert_eq!(live.project, "patchbay-next");
     assert_eq!(live.cwd, "/work/patchbay-next");
     assert_eq!(live.name, "replacement");
+    assert_eq!(live.model, "provider/model-2");
     assert_eq!(live.last_authoritative_lsn, Some(5));
 
     let tombstone = registry
@@ -219,6 +224,7 @@ fn generation_bump_without_initial_state_is_corrupt_record() {
             project: "new-project".to_owned(),
             cwd: "/work/new".to_owned(),
             name: "new-name".to_owned(),
+            model: "provider/model-2".to_owned(),
         },
     );
 
@@ -249,6 +255,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "other".to_owned(),
+            model: "provider/model-other".to_owned(),
             spawn_origin: None,
         },
     );
@@ -267,6 +274,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             project: "patchbay".to_owned(),
             cwd: "/work/patchbay".to_owned(),
             name: "main".to_owned(),
+            model: "provider/model-2".to_owned(),
         },
     );
 
@@ -331,7 +339,8 @@ fn reobserving_a_committed_prefix_is_idempotent() {
             project: "renamed".to_owned(),
             cwd: "/work/renamed".to_owned(),
             name: "renamed".to_owned(),
-        },
+            model: "provider/model-2".to_owned(),
+        }
     );
     let activity = events::activity_changed(
         domain(),
@@ -406,6 +415,47 @@ fn disallowed_activity_transition_is_corrupt_log() {
         registry.observe(&recorded(2, &invalid)),
         Err(SessionError::CorruptLog(_))
     ));
+}
+
+#[test]
+fn model_change_preserves_identity_and_rejects_mismatched_prior_value() {
+    let mut registry = SessionRegistry::new();
+    registry.observe(&recorded(1, &registration())).unwrap();
+
+    let changed = events::model_changed(
+        domain(),
+        SessionModelChanged {
+            adapter_id: Some(adapter()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime()),
+            session_generation: Some(generation(1)),
+            from: "provider/model-1".to_owned(),
+            to: "provider/model-2".to_owned(),
+        },
+    );
+    registry.observe(&recorded(2, &changed)).unwrap();
+
+    let record = registry.get_session(&identity(1)).unwrap();
+    assert_eq!(record.model, "provider/model-2");
+    assert_eq!(record.identity, identity(1));
+    assert_eq!(record.last_authoritative_lsn, Some(2));
+
+    let invalid = events::model_changed(
+        domain(),
+        SessionModelChanged {
+            adapter_id: Some(adapter()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime()),
+            session_generation: Some(generation(1)),
+            from: "provider/model-1".to_owned(),
+            to: "provider/model-3".to_owned(),
+        },
+    );
+    assert!(matches!(
+        registry.observe(&recorded(3, &invalid)),
+        Err(SessionError::CorruptLog(message)) if message.contains("expects prior model")
+    ));
+    assert_eq!(registry.get_session(&identity(1)).unwrap().model, "provider/model-2");
 }
 
 #[test]

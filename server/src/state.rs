@@ -165,6 +165,7 @@ impl ProjectionState {
                 observed_at: None,
                 tombstoned: record.tombstoned,
                 superseded_at_lsn: record.superseded_at_lsn.map(|value| Lsn { value }),
+                model: record.model,
             })
             .collect();
         let view_revisions = sessions

@@ -51,6 +51,7 @@ fn report(generation_value: u64) -> SessionReport {
         project: "patchbay".to_owned(),
         cwd: "/work/patchbay".to_owned(),
         name: "main".to_owned(),
+        model: "provider/model-1".to_owned(),
         spawn_origin: None,
     }
 }
@@ -196,6 +197,7 @@ async fn first_report_writes_registration() {
     assert_eq!(registered.deployment_scope, "machine-a");
     assert_eq!(registered.runtime_session_id, Some(runtime()));
     assert_eq!(registered.session_generation, Some(generation(1)));
+    assert_eq!(registered.model, "provider/model-1");
     assert_eq!(
         registered.initial_state.unwrap().connectivity(),
         SessionConnectivityState::Unknown
@@ -251,6 +253,7 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     assert_eq!(bump.project, "new-project");
     assert_eq!(bump.cwd, "/work/new");
     assert_eq!(bump.name, "new-name");
+    assert_eq!(bump.model, "provider/model-1");
 
     let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
     let tombstone = rebuilt
@@ -322,6 +325,34 @@ async fn equal_generation_activity_change_writes_delta() {
         decode(&committed[1]).mutation,
         Some(session_state_event::Mutation::ActivityChanged(_))
     ));
+}
+
+#[tokio::test]
+async fn equal_generation_model_change_writes_delta_and_rebuilds() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = SessionRegistry::new();
+    register(&storage, &mut registry, report(1)).await;
+    let mut changed = report(1);
+    changed.model = "provider/model-2".to_owned();
+
+    let result = ingest_session_report(&storage, &mut registry, changed).await.unwrap();
+    assert!(matches!(
+        result,
+        IngestResult::ModelChanged { ref from, ref to, .. }
+            if from == "provider/model-1" && to == "provider/model-2"
+    ));
+    let committed = events(&storage).await;
+    assert!(matches!(
+        decode(&committed[1]).mutation,
+        Some(session_state_event::Mutation::ModelChanged(_))
+    ));
+    registry.observe(&committed[1]).unwrap();
+    assert_eq!(registry.get_live_session(&adapter(), "machine-a", &runtime()).unwrap().model, "provider/model-2");
+    assert_eq!(
+        rebuild_from_log(&storage, &domain()).await.unwrap()
+            .get_live_session(&adapter(), "machine-a", &runtime()).unwrap().model,
+        "provider/model-2"
+    );
 }
 
 #[tokio::test]
@@ -402,6 +433,7 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
     changed.project = "patchbay-next".to_owned();
     changed.cwd = "/work/patchbay-next".to_owned();
     changed.name = "replacement".to_owned();
+    changed.model = "provider/model-2".to_owned();
 
     let result = ingest_session_report(&storage, &mut registry, changed)
         .await
@@ -409,10 +441,10 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
     let IngestResult::DeltasApplied { event_ids } = result else {
         panic!("a multi-field report must return the combined result");
     };
-    assert_eq!(event_ids.len(), 3);
+    assert_eq!(event_ids.len(), 4);
 
     let committed = events(&storage).await;
-    assert_eq!(committed.len(), 4);
+    assert_eq!(committed.len(), 5);
     assert!(matches!(
         decode(&committed[1]).mutation,
         Some(session_state_event::Mutation::ConnectivityChanged(_))
@@ -423,6 +455,10 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
     ));
     assert!(matches!(
         decode(&committed[3]).mutation,
+        Some(session_state_event::Mutation::ModelChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[4]).mutation,
         Some(session_state_event::Mutation::Relabeled(_))
     ));
 
@@ -449,6 +485,7 @@ async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
     changed.project = "patchbay-next".to_owned();
     changed.cwd = "/work/patchbay-next".to_owned();
     changed.name = "replacement".to_owned();
+    changed.model = "provider/model-2".to_owned();
 
     storage.fail_on_append(2);
     let error = ingest_session_report(&storage, &mut registry, changed.clone())
@@ -482,12 +519,12 @@ async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
         .await
         .expect("retry must append only the remaining deltas");
     let IngestResult::DeltasApplied { event_ids } = retry else {
-        panic!("retry must apply the remaining activity and metadata deltas");
+        panic!("retry must apply the remaining activity, model, and metadata deltas");
     };
-    assert_eq!(event_ids.len(), 2);
+    assert_eq!(event_ids.len(), 3);
 
     let committed = events(&storage).await;
-    assert_eq!(committed.len(), 4, "retry must not duplicate connectivity");
+    assert_eq!(committed.len(), 5, "retry must not duplicate connectivity");
     assert!(matches!(
         decode(&committed[1]).mutation,
         Some(session_state_event::Mutation::ConnectivityChanged(_))
@@ -498,6 +535,10 @@ async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
     ));
     assert!(matches!(
         decode(&committed[3]).mutation,
+        Some(session_state_event::Mutation::ModelChanged(_))
+    ));
+    assert!(matches!(
+        decode(&committed[4]).mutation,
         Some(session_state_event::Mutation::Relabeled(_))
     ));
 

@@ -74,9 +74,10 @@ fn any_session_report(
         "[a-z]{1,8}",
         "/[a-z]{1,8}",
         "[a-z]{1,8}",
+        "[a-z]{1,8}/[a-z]{1,8}",
     )
         .prop_map(
-            move |(session_generation, connectivity, activity, project, cwd, name)| SessionReport {
+            move |(session_generation, connectivity, activity, project, cwd, name, model)| SessionReport {
                 authority_domain_id: domain(),
                 adapter_id: adapter_id.clone(),
                 deployment_scope: "local".to_owned(),
@@ -87,6 +88,7 @@ fn any_session_report(
                 project,
                 cwd,
                 name,
+                model,
                 spawn_origin: None,
             },
         )
@@ -107,7 +109,8 @@ fn event_lsn(result: &IngestResult) -> Option<u64> {
         IngestResult::Registered { event_id }
         | IngestResult::ConnectivityChanged { event_id, .. }
         | IngestResult::ActivityChanged { event_id, .. }
-        | IngestResult::Relabeled { event_id } => event_id,
+        | IngestResult::Relabeled { event_id }
+        | IngestResult::ModelChanged { event_id, .. } => event_id,
         IngestResult::GenerationBumped {
             new_generation_event_id,
             ..
@@ -162,6 +165,7 @@ fn report_at(
         project: "project-a".to_owned(),
         cwd: "/work/a".to_owned(),
         name: "session-a".to_owned(),
+        model: "provider/model-a".to_owned(),
         spawn_origin: None,
     }
 }

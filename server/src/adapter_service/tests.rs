@@ -438,6 +438,7 @@ fn session_report(
         project: "patchbay".into(),
         cwd: "/work/patchbay".into(),
         name: "test".into(),
+        model: "provider/model".into(),
         spawn_origin: None,
     }
 }

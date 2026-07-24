@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use patchbay_contracts::patchbay::{
     session_state_event, AdapterId, AuthorityDomainId, Generation, RuntimeSessionId,
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionRelabeled,
+    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
+    SessionRelabeled,
     SessionState, StoredEventKind, TargetScope,
 };
 use prost::Message;
@@ -29,6 +30,7 @@ pub struct SessionRecord {
     pub project: String,
     pub cwd: String,
     pub name: String,
+    pub model: String,
     pub last_authoritative_lsn: Option<u64>,
     pub tombstoned: bool,
     pub superseded_at_lsn: Option<u64>,
@@ -130,6 +132,9 @@ impl SessionRegistry {
             }
             session_state_event::Mutation::Relabeled(mutation) => {
                 self.observe_relabeled(mutation, event_lsn)
+            }
+            session_state_event::Mutation::ModelChanged(mutation) => {
+                self.observe_model_changed(mutation, event_lsn)
             }
         }
     }
@@ -274,6 +279,7 @@ impl SessionRegistry {
                 project: mutation.project.clone(),
                 cwd: mutation.cwd.clone(),
                 name: mutation.name.clone(),
+                model: mutation.model.clone(),
                 last_authoritative_lsn: Some(event_lsn),
                 tombstoned: false,
                 superseded_at_lsn: None,
@@ -359,6 +365,7 @@ impl SessionRegistry {
         next.project.clone_from(&mutation.project);
         next.cwd.clone_from(&mutation.cwd);
         next.name.clone_from(&mutation.name);
+        next.model.clone_from(&mutation.model);
         next.last_authoritative_lsn = Some(event_lsn);
         next.tombstoned = false;
         next.superseded_at_lsn = None;
@@ -487,6 +494,41 @@ impl SessionRegistry {
         record.project.clone_from(&mutation.project);
         record.cwd.clone_from(&mutation.cwd);
         record.name.clone_from(&mutation.name);
+        record.last_authoritative_lsn = Some(event_lsn);
+        Ok(())
+    }
+
+    fn observe_model_changed(
+        &mut self,
+        mutation: &SessionModelChanged,
+        event_lsn: u64,
+    ) -> Result<(), SessionError> {
+        let identity = mutation_identity(
+            mutation.adapter_id.as_ref(),
+            &mutation.deployment_scope,
+            mutation.runtime_session_id.as_ref(),
+            mutation.session_generation.as_ref(),
+            "model change",
+            event_lsn,
+        )?;
+        if self.is_stale_replay(&identity, event_lsn)? {
+            return Ok(());
+        }
+
+        let record = self.live_record_mut(&identity, "model change", event_lsn)?;
+        if record
+            .last_authoritative_lsn
+            .is_some_and(|last_lsn| event_lsn <= last_lsn)
+        {
+            return Ok(());
+        }
+        if record.model != mutation.from {
+            return Err(SessionError::CorruptLog(format!(
+                "model change at LSN {event_lsn} expects prior model {:?}, but projected model is {:?}",
+                mutation.from, record.model
+            )));
+        }
+        record.model.clone_from(&mutation.to);
         record.last_authoritative_lsn = Some(event_lsn);
         Ok(())
     }

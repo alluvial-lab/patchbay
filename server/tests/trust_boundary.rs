@@ -640,6 +640,7 @@ async fn seeded_storage() -> RusqliteStorage {
                     project: "patchbay".to_owned(),
                     cwd: "/work/patchbay".to_owned(),
                     name: "trust-boundary-test".to_owned(),
+                    model: "provider/model".to_owned(),
                     spawn_origin: None,
                 },
             )),
