@@ -128,16 +128,21 @@ docs/
   GLOSSARY.md     terminology
 ```
 
-Planned future areas include:
+v0.1.0 repository layout:
 
 ```text
-specs/       TLA+/Quint and Alloy models
-contracts/   protocol IDL / schemas and generated conformance vectors
-crates/      Rust coordination core and daemon
-packages/    shared TypeScript client and operator domain
-apps/        responsive web cockpit, later Expo mobile app
-adapters/    Pi adapter first, additional adapters later
+specs/        TLA+/Quint and Alloy models
+contracts/    Protobuf contracts, generated bindings, and conformance vectors
+core/         Rust coordination-core domain and storage code
+server/       Rust coordination-core server
+web-server/   TypeScript HTTP/HTTPS control-surface server
+web-cockpit/  TypeScript browser cockpit and shared operator-domain code
+pi-adapter/   TypeScript Pi runtime adapter
+cli/          TypeScript setup, administration, and diagnostic CLI
 ```
+
+Additional adapters and control surfaces, including a native Expo app, are
+reserved seams; v0.1.0 does not represent them as current repository paths.
 
 ## Reading guide
 

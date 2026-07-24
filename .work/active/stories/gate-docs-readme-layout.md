@@ -1,7 +1,7 @@
 ---
 id: gate-docs-readme-layout
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -37,3 +37,9 @@ The v0.1.0 repository ships `specs/`, `contracts/`, the Rust core/server in `cor
 
 ## Required edit
 Replace the planned layout block with the actual v0.1.0 repository layout and reserve only genuinely future directories/capabilities without presenting them as current paths.
+
+## Completion
+Corrected `README.md` to list the shipped `specs/`, `contracts/`, `core/`,
+`server/`, `web-server/`, `web-cockpit/`, `pi-adapter/`, and `cli/` areas.
+Additional adapters and native control surfaces are now described as reserved
+seams rather than nonexistent current paths.
