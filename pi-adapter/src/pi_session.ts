@@ -74,6 +74,7 @@ export class PiSession {
   readonly #runtimeSessionId: string;
   readonly #transcriptLog = new TranscriptEventLog();
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
+  readonly #deltaOrdinals = new Map<string, number>();
   #generation: number;
   #turn = initialTurnSnapshot();
   #turnSequence = 0;
@@ -382,7 +383,7 @@ export class PiSession {
   #handleEvent(event: AgentSessionEvent, generation: number): void {
     if (event.type === "turn_start") this.#turnSequence += 1;
     this.#turn = reduceTurn(this.#turn, event, `turn-${this.#turnSequence}`);
-    const transcriptEvent = projectAgentEvent(event, this.#transcriptSessionId(generation));
+    const transcriptEvent = projectAgentEvent(event, this.#transcriptSessionId(generation), this.#deltaOrdinals);
     if (transcriptEvent) this.#append(transcriptEvent);
   }
 

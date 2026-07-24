@@ -5,6 +5,7 @@ import type { TranscriptEvent } from "./transcript_event.js";
 export function projectAgentEvent(
   event: AgentSessionEvent,
   sessionId: string,
+  deltaOrdinals?: Map<string, number>,
 ): TranscriptEvent | null {
   const now = Date.now();
   switch (event.type) {
@@ -37,12 +38,22 @@ export function projectAgentEvent(
       if (update["type"] !== "text_delta") return null;
       const delta = stringValue(update["delta"]);
       if (!delta) return null;
+      // The delta eventId must be unique per delta AND deterministic. The
+      // content length is NOT unique — consecutive deltas can share a partial
+      // content length (found in live use: the dedup dropped ~46% of deltas,
+      // scrambling the message). A per-message ordinal is unique and
+      // deterministic for the live stream (deltas only flow through this path;
+      // the snapshot replay uses projectSessionEntries and emits no deltas).
+      const ordinal = deltaOrdinals ? (deltaOrdinals.get(messageId) ?? 0) + 1 : 0;
+      deltaOrdinals?.set(messageId, ordinal);
       return {
         kind: "assistant_delta",
         eventId: deterministicTranscriptEventId(
           sessionId,
           "assistant_delta",
-          `${messageId}:${stringValue(update["type"]) ?? "delta"}:${stringValue(update["contentIndex"]) ?? stringifyContent(message["content"]).length}`,
+          deltaOrdinals
+            ? `${messageId}:${String(update["type"])}:${ordinal}`
+            : `${messageId}:${stringValue(update["type"]) ?? "delta"}:${stringValue(update["contentIndex"]) ?? stringifyContent(message["content"]).length}`,
         ),
         sessionId,
         ts,
