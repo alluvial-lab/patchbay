@@ -33,3 +33,9 @@ spikes/connect-tonic-interop/ts/src/gen/
 spikes/connect-tonic-interop/rust/src/gen/
 # throwaway self-signed TLS cert/key (regenerated with openssl)
 spikes/connect-tonic-interop/tls/
+
+# local cargo cache (CARGO_HOME override used by some build invocations)
+.cargo-cache/
+
+# live-testing scratch (screenshots, probes)
+.debug/
