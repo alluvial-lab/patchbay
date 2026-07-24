@@ -1,11 +1,22 @@
 ---
-id: backlog-icon-set-adoption
+id: feature-cockpit-icon-set
+kind: feature
+stage: drafting
+tags: [ux, design-system, ui, fast-follower]
+parent: null
+depends_on: []
+release_binding: null
+gate_origin: null
 created: 2026-07-23
-tags: [ux, design-system, fast-follower]
+updated: 2026-07-24
 research_origin: null
 ---
 
-# Backlog: adopt an icon set for the cockpit chrome
+# Feature: adopt an icon set for the cockpit chrome
+
+**Promoted 2026-07-24** into the pre-release fix wave. UI surface: design-system
+icon primitive in `.mockups/design-system/` plus application across the cockpit
+chrome; mocking happens at `feature-design` tier per the tier-ordering rule.
 
 Surfaced in live use (2026-07-23): the operator noted the composer's action
 buttons should be icons, not text — a paperclip for Attach, an arrow for Send
@@ -39,3 +50,8 @@ a few ad-hoc unicode glyphs and one inline SVG (the paperclip added in
 - Keep the single-file/no-build-step mockup convention in mind — an
   inline-SVG-sprite or inline-path approach fits better than an icon font or
   npm icon package with a build step.
+
+## Simplification opportunity
+
+Replaces the ad-hoc unicode glyphs and the one-off inline paperclip SVG with a
+single icon primitive; text-label buttons in the composer collapse to icons.

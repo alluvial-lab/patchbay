@@ -1,14 +1,24 @@
 ---
-id: backlog-adapter-staleness-full-coverage
-created: 2026-07-23
+id: feature-adapter-staleness-liveness
+kind: feature
+stage: drafting
 tags: [security, protocol, fast-follower]
+parent: null
+depends_on: []
+release_binding: null
+gate_origin: null
+created: 2026-07-23
+updated: 2026-07-24
 research_origin: null
 ---
 
-# Backlog: full-coverage adapter staleness (heartbeat / last-report-age, or long-poll delivery)
+# Feature: full-coverage adapter staleness (heartbeat / last-report-age, or long-poll delivery)
 
 Surfaced by the epic-v0-1-0-implementation maximum review, pass 3 (convergence,
 2026-07-23), as Important finding P3-I1 — parked, not a v0.1.0 blocker.
+**Promoted 2026-07-24**: proven to bite in real use during the v0.1.0 live-test
+arc (a turn stuck at `running` forever after an adapter restart mid-turn — the
+P3-N1 running-rot instance), so it joins the pre-release fix wave.
 
 ## The gap
 
@@ -46,3 +56,9 @@ Also fold in P3-N1 (commands rot at `running` after mid-execution death — the
 documented Q1a bound) and P3-N2 (per-poll full-log command rebuild — perf note
 for when the log grows). Documented limitation currently lives in
 `docs/RUNBOOK.md` § Known v0.1.0 limitations.
+
+## Simplification opportunity
+
+Option 2 (long-poll) may let the polling-fallback machinery collapse into one
+delivery model; whichever option lands should remove the documented
+"running-rot" limitation from `docs/RUNBOOK.md` § Known v0.1.0 limitations.

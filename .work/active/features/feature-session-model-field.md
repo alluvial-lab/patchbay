@@ -1,11 +1,20 @@
 ---
-id: backlog-session-model-field
-created: 2026-07-23
+id: feature-session-model-field
+kind: feature
+stage: drafting
 tags: [protocol, ux, fast-follower]
+parent: null
+depends_on: []
+release_binding: null
+gate_origin: null
+created: 2026-07-23
+updated: 2026-07-24
 research_origin: null
 ---
 
-# Backlog: surface the agent model in session reports
+# Feature: surface the agent model in session reports
+
+**Promoted 2026-07-24** into the pre-release fix wave.
 
 Surfaced in live use (2026-07-23): the operator asked "do we have a way to
 return what model the pi agent is running with?" The answer today: it's
@@ -41,3 +50,7 @@ A `model` field on the session report contract:
 - The quick alternative (emit a session-model observation, fold it into
   `SessionView.model`) requires no contract change but was rejected by the
   operator in favor of the proper field.
+
+## Simplification opportunity
+
+None identified — additive contract field plus plumbing.
