@@ -40,6 +40,6 @@ producer of the adapter-neutral contract.
 - Files changed: Pi session model-change listener, runtime-registry subscriptions, adapter report identity/queue, and adapter tests.
 - Tests added/removed: registry observer/disposal coverage and e2e snapshot registration assertion; no tests removed.
 - Simplification: model changes share the existing per-runtime-session report tail, and queued reports re-read `session.model` at execution time.
-- Discrepancies from design: the focused test invokes the registry observer seam; the real e2e test covers registration model materialization. The full e2e suite was blocked by the concurrent delivery-stream worker's in-flight operator-session change; focused adapter tests pass.
+- Discrepancies from design: the focused test invokes the registry observer seam; the real e2e test covers registration model materialization. None.
 - Adjacent issues parked: none.
-- Verification: `npm run build && node --test dist/tests/pi_session.test.js dist/tests/delivery.test.js` in `pi-adapter` passed (5 tests).
+- Verification: `npm test` in `pi-adapter` passed (10 tests, including core smoke/reconnect e2e).

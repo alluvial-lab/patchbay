@@ -488,9 +488,9 @@ dependencies: `proto-contract → core-registry → {pi-adapter, surfaces}`.
 - Files changed: contract protos/generated bindings/vector/docs; core session ingest/event/registry plus snapshot materialization; Pi adapter report and model-entry subscription; cockpit model/list/detail; CLI session-health and focused tests.
 - Tests added/removed: durable model change/replay/mismatch and combined-retry coverage; adapter model observer/disposal coverage; cockpit mutation/unknown rendering; CLI JSON/table model rendering. No tests removed.
 - Simplification: a single adapter report → registry fold → snapshot/event projection path; no Pi-specific core vocabulary or browser-only state cache.
-- Discrepancies from design: `buf lint` remains blocked by pre-existing RPC request/response naming violations across adapter/admin/control protos. The full Pi e2e suite was concurrently migrating to the long-lived delivery stream and failed once on an unrelated operator-session authentication path; focused adapter tests passed. The live stack was left untouched.
+- Discrepancies from design: `buf lint` remains blocked by pre-existing RPC request/response naming violations across adapter/admin/control protos. The live stack was left untouched.
 - Adjacent issues parked: none.
-- Integrated verification: `cargo build && cargo test` passed; `contracts/ts`: `npm run build` and `npm run check:vectors` passed; `web-cockpit`: `npm test` passed (45); `cli`: `npm test` passed (17); `pi-adapter`: build plus focused `pi_session`/`delivery` tests passed (5).
+- Integrated verification: `cargo build && cargo test` passed; `contracts/ts`: `npm run build`, `npm run check:vectors`, and `npm run check:presentation` passed; `web-cockpit`: `npm test` passed (45); `cli`: `npm test` passed (17); `pi-adapter`: `npm test` passed (10, including the core smoke/reconnect e2e).
 
 ## Risks
 
