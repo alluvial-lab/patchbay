@@ -1,7 +1,7 @@
 ---
 id: feature-cockpit-icon-set
 kind: feature
-stage: review
+stage: done
 tags: [ux, design-system, ui, fast-follower]
 parent: null
 depends_on: []
@@ -222,3 +222,13 @@ const interrupt = iconButton(document, "square", "Interrupt running operation", 
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
 - Integrated verification: `node contracts/scripts/check-presentation.mjs`, `node contracts/scripts/test-presentation-check.mjs`, and `cd web-cockpit && npm test` all passed (43 cockpit tests).
+
+## Review record (2026-07-24, standard weight, cross-model)
+
+Reviewer: fresh-context `openai-codex/gpt-5.6-sol` (implementer was `gpt-5.6-terra` — different model class). One balanced pass per standard weight.
+
+**Verdict:** APPROVE-WITH-IMPORTANT-FINDINGS — no blockers. Reserved seams intact (no delivery caret; Spawn/Attach visibly disabled), static-SVG construction safe (catalog-only path data, `createElementNS`, no interpolation), accessibility sound, all checks green.
+
+**Findings adjudicated:**
+- Important — `square` icon used sharp `M3 3h18v18H3z` instead of Lucide's rounded-corner square (acceptance-criterion fidelity + visible family inconsistency on Interrupt). **Fixed in-wave** (receiver-confirmed, trivial): path replaced with the rounded-rect path equivalent of Lucide's `<rect x="3" y="3" width="18" height="18" rx="2"/>` in `web-cockpit/src/ui/icons.ts` and the design-system showcase. Re-verified: cockpit 43/43, check-presentation + meta-tests green.
+- Blockers: none. Nits: none.

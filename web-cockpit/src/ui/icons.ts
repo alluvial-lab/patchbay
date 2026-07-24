@@ -25,7 +25,7 @@ export const LUCIDE_ICONS: Readonly<Record<IconName, IconDefinition>> = {
   "chevron-down": { paths: ["m6 9 6 6 6-6"] },
   "chevron-right": { paths: ["m9 18 6-6-6-6"] },
   x: { paths: ["m18 6-12 12", "m6 6 12 12"] },
-  square: { paths: ["M3 3h18v18H3z"] },
+  square: { paths: ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"] },
 };
 
 export type IconSize = "sm" | "md" | "lg";
