@@ -1,7 +1,7 @@
 ---
 id: feature-cockpit-icon-set
 kind: feature
-stage: implementing
+stage: review
 tags: [ux, design-system, ui, fast-follower]
 parent: null
 depends_on: []
@@ -212,3 +212,13 @@ const interrupt = iconButton(document, "square", "Interrupt running operation", 
 - **Icon-only accessibility:** a lost label would make an action invisible to assistive technology. Mitigate with factory-hidden SVGs, required labels at each control, showcase examples, and DOM assertions.
 - **Scope pressure from Spawn/Attach and delivery affordances:** the cockpit lacks a real spawn/attach entry flow and full delivery expansion is explicitly reserved. Disabled, honestly unavailable header controls and no delivery disclosure prevent a visual polish item from inventing authority or widening observability scope.
 - **Presentation-check drift:** adding only markup or only CSS could leave a nominal primitive unverified. The check/meta-test extension makes both sides required.
+
+## Implementation notes
+- Execution capability: direct-read only; one feature owner implemented the two dependent checkpoints against the named design-system, cockpit, and test interfaces.
+- Review weight: standard (default).
+- Files changed: `.mockups/design-system/tokens.css`, `.mockups/design-system/components.css`, `.mockups/design-system/components.html`, `contracts/scripts/check-presentation.mjs`, `contracts/scripts/test-presentation-check.mjs`, `web-cockpit/src/ui/icons.ts`, `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/src/ui/shell.ts`, `web-cockpit/src/ui/shell.css`, `web-cockpit/tests/shell.test.ts`.
+- Tests added/removed: presentation meta-test coverage for missing icon CSS/showcase artifacts; factory-shape and compile-time icon vocabulary tests; cockpit DOM assertions for icon accessibility, disabled sidebar controls, and unchanged compact delivery rendering.
+- Simplification: replaced the hand-built paperclip and repeated icon-control setup with a typed local Lucide catalog and one inline-SVG factory.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Integrated verification: `node contracts/scripts/check-presentation.mjs`, `node contracts/scripts/test-presentation-check.mjs`, and `cd web-cockpit && npm test` all passed (43 cockpit tests).
