@@ -110,9 +110,11 @@ surfaces (browser cockpit + CLI).
 
 ## Verification
 
-- Composed end-to-end smoke (boots core + adapter and drives
-  CLI login → instruct → live/working → completed/idle):
-  `cd e2e && npm test`.
+- Composed separate-process end-to-end smoke (run after changes across the
+  core, CLI, or Pi adapter; boots its own core + adapter and drives CLI login →
+  instruct → durable command completion → live/idle): `cd e2e && npm test`.
+  This complements the in-process Pi adapter integration suite rather than
+  replacing it.
 - Per-package suites: `cargo test --workspace`, `cd web-server && npm test`,
   `cd web-cockpit && npm test`, `cd cli && npm test`,
   `cd pi-adapter && npm test`, `cd contracts/ts && npm run check:vectors &&

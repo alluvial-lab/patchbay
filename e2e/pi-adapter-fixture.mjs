@@ -28,13 +28,9 @@ faux.setResponses([
   },
 ]);
 
-let stopped = false;
-process.once("SIGINT", () => {
-  stopped = true;
-});
-process.once("SIGTERM", () => {
-  stopped = true;
-});
+const controller = new AbortController();
+process.once("SIGINT", () => controller.abort());
+process.once("SIGTERM", () => controller.abort());
 
 const adapter = new AdapterProcess({
   coreAddress: requiredEnv("PATCHBAY_CORE_ADDR"),
@@ -94,11 +90,7 @@ const adapter = new AdapterProcess({
 try {
   await adapter.start();
   console.log(`PI_ADAPTER_READY ${runtimeSessionId}`);
-  while (!stopped) {
-    const delivered = await adapter.pollOnce();
-    if (delivered > 0) console.log(`PI_ADAPTER_PROCESSED ${delivered}`);
-    if (delivered === 0) await delay(50);
-  }
+  await adapter.run(controller.signal);
 } finally {
   await adapter.dispose();
 }
@@ -107,8 +99,4 @@ function requiredEnv(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
-}
-
-function delay(milliseconds) {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }

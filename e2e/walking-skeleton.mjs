@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const e2eRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(e2eRoot, "..");
@@ -96,18 +96,18 @@ try {
   const setup = await runCli(
     [
       "setup",
-      "--setup-secret",
-      setupSecret,
       "--operator-id",
       operatorId,
-      "--password",
-      operatorPassword,
       "--endpoint-id",
       "walking-setup",
       "--device-id",
       "walking-device",
     ],
-    cliEnv,
+    {
+      ...cliEnv,
+      PATCHBAY_SETUP_SECRET: setupSecret,
+      PATCHBAY_OPERATOR_PASSWORD: operatorPassword,
+    },
   );
   assert.equal(setup.code, 0, setup.stderr);
 
@@ -116,14 +116,12 @@ try {
       "login",
       "--operator-id",
       operatorId,
-      "--password",
-      operatorPassword,
       "--endpoint-id",
       "walking-login",
       "--device-id",
       "walking-device",
     ],
-    cliEnv,
+    { ...cliEnv, PATCHBAY_OPERATOR_PASSWORD: operatorPassword },
   );
   assert.equal(login.code, 0, login.stderr);
 
@@ -147,24 +145,22 @@ try {
     ],
     cliEnv,
   );
-  assert.equal(instruct.code, 0, instruct.stderr);
+  assert.equal(instruct.code, 0, `${instruct.stderr}\n${instruct.stdout}`);
   const submission = JSON.parse(instruct.stdout);
   assert.equal(submission.outcome, "accepted");
   assert.equal(submission.commandId, "walking-command");
 
-  const working = await waitForSessionActivity(cliEnv, "working", 5_000);
-  assert.equal(working.connectivity, "live");
-  await waitForMatch(
-    adapterOutput,
-    /PI_ADAPTER_PROCESSED [1-9]\d*/,
+  await waitForCommandCompletion(
+    cliEnv,
+    submission.acceptedLsn,
+    submission.commandId,
     10_000,
-    "Pi delivery completion",
   );
   const settled = await waitForSessionActivity(cliEnv, "idle", 5_000);
   assert.equal(settled.connectivity, "live");
 
   console.log(
-    "Walking skeleton: core → Pi adapter/AgentSession → CLI login/instruct → live working → completed/idle passed",
+    "Walking skeleton: core → Pi adapter/AgentSession → CLI login/instruct → durable completed/idle passed",
   );
 } finally {
   for (const child of children.reverse()) await terminate(child);
@@ -188,6 +184,51 @@ async function waitForSessionActivity(env, expected, timeoutMs) {
     await delay(25);
   }
   throw new Error(`session never reached ${expected}; last response: ${last}`);
+}
+
+async function waitForCommandCompletion(env, acceptedLsn, commandId, timeoutMs) {
+  assert.ok(acceptedLsn, "accepted submission must carry an LSN");
+  const [{ makeControlClient }, { CredentialStore }, protobuf, contracts] = await Promise.all([
+    import(pathToFileURL(join(cliRoot, "dist/src/core-client.js")).href),
+    import(pathToFileURL(join(cliRoot, "dist/src/credentials.js")).href),
+    import(pathToFileURL(join(cliRoot, "node_modules/@bufbuild/protobuf/dist/esm/index.js")).href),
+    import(pathToFileURL(join(cliRoot, "node_modules/@patchbay/contracts/dist/index.js")).href),
+  ]);
+  const client = makeControlClient(
+    env.PATCHBAY_CORE_ADDR,
+    env.PATCHBAY_CORE_SECRET,
+    new CredentialStore(env.PATCHBAY_CREDENTIALS_PATH),
+  );
+  const terminalStates = new Set([
+    contracts.OperationState.COMPLETED,
+    contracts.OperationState.REJECTED,
+    contracts.OperationState.FAILED,
+    contracts.OperationState.EXPIRED,
+    contracts.OperationState.CANCELLED,
+    contracts.OperationState.SUPERSEDED,
+  ]);
+  let cursor = BigInt(acceptedLsn);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for await (const event of client.subscribe({
+      authorityDomainId: { value: env.PATCHBAY_AUTHORITY_DOMAIN_ID },
+      cursor: { value: cursor },
+    })) {
+      cursor = event.eventId?.lsn?.value ?? cursor;
+      if (event.payload?.kind !== contracts.StoredEventKind.COMMAND_TRANSITION) continue;
+      const transition = protobuf.fromBinary(
+        contracts.CommandTransitionSchema,
+        event.payload.payload,
+      );
+      if (transition.commandId?.value !== commandId) continue;
+      if (transition.toState === contracts.OperationState.COMPLETED) return;
+      if (terminalStates.has(transition.toState)) {
+        throw new Error(`command ${commandId} terminalized as ${transition.toState}`);
+      }
+    }
+    await delay(25);
+  }
+  throw new Error(`command ${commandId} never reached durable completion after LSN ${cursor}`);
 }
 
 function oneSession(stdout) {
