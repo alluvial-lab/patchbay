@@ -39,6 +39,7 @@ export interface ApprovalRequest {
 }
 
 export type ApprovalHandler = (request: ApprovalRequest) => Promise<boolean> | boolean;
+export type SessionModelChangeListener = (model: string) => void;
 
 export interface PiSessionState {
   sessionId: string;
@@ -74,6 +75,7 @@ export class PiSession {
   readonly #runtimeSessionId: string;
   readonly #transcriptLog = new TranscriptEventLog();
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
+  readonly #modelChangeListeners = new Set<SessionModelChangeListener>();
   readonly #deltaOrdinals = new Map<string, number>();
   #generation: number;
   #turn = initialTurnSnapshot();
@@ -189,6 +191,11 @@ export class PiSession {
     return () => this.#listeners.delete(listener);
   }
 
+  onModelChange(listener: SessionModelChangeListener): () => void {
+    this.#modelChangeListeners.add(listener);
+    return () => this.#modelChangeListeners.delete(listener);
+  }
+
   transcriptEvents(): readonly TranscriptEvent[] {
     return this.#transcriptLog.forSession(this.#transcriptSessionId(this.#generation));
   }
@@ -300,6 +307,7 @@ export class PiSession {
     this.#disposed = true;
     this.#invalidateBinding();
     this.#listeners.clear();
+    this.#modelChangeListeners.clear();
     await this.#runtime.dispose();
   }
 
@@ -381,6 +389,9 @@ export class PiSession {
   }
 
   #handleEvent(event: AgentSessionEvent, generation: number): void {
+    if (event.type === "entry_appended" && event.entry.type === "model_change") {
+      this.#emitModelChange(`${event.entry.provider}/${event.entry.modelId}`);
+    }
     if (event.type === "turn_start") this.#turnSequence += 1;
     this.#turn = reduceTurn(this.#turn, event, `turn-${this.#turnSequence}`);
     const transcriptEvent = projectAgentEvent(event, this.#transcriptSessionId(generation), this.#deltaOrdinals);
@@ -390,6 +401,10 @@ export class PiSession {
   #append(event: TranscriptEvent): void {
     if (!this.#transcriptLog.append(event)) return;
     for (const listener of this.#listeners) listener(event);
+  }
+
+  #emitModelChange(model: string): void {
+    for (const listener of this.#modelChangeListeners) listener(model);
   }
 
   #transcriptSessionId(generation: number): string {

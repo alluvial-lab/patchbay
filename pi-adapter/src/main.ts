@@ -81,16 +81,23 @@ export class AdapterProcess {
     const session = await createSession(configured);
     let entry: RuntimeSessionEntry;
     try {
-      entry = this.#registry.register(configured, session, (observedEntry, event) => {
-        const identity = this.#identity(observedEntry);
-        const activeCommand = this.#activeCommands.get(observedEntry.runtimeSessionId);
-        const tail = this.#observationTails.get(observedEntry.runtimeSessionId) ?? Promise.resolve();
-        const next = tail
-          .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
-          .then(() => undefined);
-        this.#observationTails.set(observedEntry.runtimeSessionId, next);
-        this.#trackObservation(next);
-      });
+      entry = this.#registry.register(
+        configured,
+        session,
+        (observedEntry, event) => {
+          const identity = this.#identity(observedEntry);
+          const activeCommand = this.#activeCommands.get(observedEntry.runtimeSessionId);
+          const tail = this.#observationTails.get(observedEntry.runtimeSessionId) ?? Promise.resolve();
+          const next = tail
+            .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
+            .then(() => undefined);
+          this.#observationTails.set(observedEntry.runtimeSessionId, next);
+          this.#trackObservation(next);
+        },
+        (observedEntry) => {
+          this.#trackObservation(this.#queueSessionReport(observedEntry, SessionActivityState.IDLE));
+        },
+      );
     } catch (error) {
       await session.dispose();
       throw error;
@@ -102,8 +109,8 @@ export class AdapterProcess {
     for (const event of session.snapshotTranscript()) {
       await this.#core.ingestTranscript(this.#identity(entry), event);
     }
-    await this.#core.reportSession(
-      this.#identity(entry),
+    await this.#queueSessionReport(
+      entry,
       this.#options.adapterGeneration > 1
         ? SessionActivityState.UNKNOWN
         : SessionActivityState.IDLE,
@@ -208,10 +215,7 @@ export class AdapterProcess {
       const diagnostic = error instanceof Error ? error.message : String(error);
       await this.#core.ingestFailure(operation, failureCode, diagnostic);
       if (operation.kind === OperationKind.INSTRUCT) {
-        await this.#core.reportSession(
-          this.#identity(entry),
-          SessionActivityState.UNKNOWN,
-        );
+        await this.#queueSessionReport(entry, SessionActivityState.UNKNOWN);
       }
     } finally {
       if (commandId && this.#activeCommands.get(entry.runtimeSessionId) === commandId) {
@@ -246,7 +250,21 @@ export class AdapterProcess {
       project: entry.project ?? "",
       cwd: entry.cwd,
       name: entry.name ?? entry.runtimeSessionId,
+      model: normalizedModel(entry.session.getState().model),
     };
+  }
+
+  #queueSessionReport(
+    entry: RuntimeSessionEntry,
+    activity: SessionActivityState,
+    connectivity = SessionConnectivityState.LIVE,
+  ): Promise<void> {
+    const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
+    const next = tail
+      .then(() => this.#core.reportSession(this.#identity(entry), activity, connectivity))
+      .then(() => undefined);
+    this.#observationTails.set(entry.runtimeSessionId, next);
+    return next;
   }
 
   #trackObservation(promise: Promise<void>): void {
@@ -259,9 +277,28 @@ export class AdapterProcess {
   }
 }
 
+function normalizedModel(model: ReturnType<PiSession["getState"]>["model"]): string {
+  return model ? `${model.provider}/${model.id}` : "";
+}
+
 function requiredOperation(delivery: Delivery): Operation {
   if (!delivery.operation) throw new Error("delivery is missing operation");
   return delivery.operation;
+}
+
+function isRetryableTransportFailure(error: unknown): boolean {
+  return (
+    error instanceof ConnectError &&
+    [
+      Code.Canceled,
+      Code.Aborted,
+      Code.DeadlineExceeded,
+      Code.ResourceExhausted,
+      Code.Unavailable,
+    ].includes(
+      error.code,
+    )
+  );
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

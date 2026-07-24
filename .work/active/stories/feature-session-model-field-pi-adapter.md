@@ -1,7 +1,7 @@
 ---
 id: feature-session-model-field-pi-adapter
 kind: story
-stage: implementing
+stage: done
 parent: feature-session-model-field
 depends_on: [feature-session-model-field-core-registry]
 release_binding: null
@@ -33,3 +33,13 @@ the initial `session.model` value.
 
 Depends on the durable core model-state checkpoint; this is the Pi-specific
 producer of the adapter-neutral contract.
+
+## Implementation notes
+- Execution capability: inline single-owner implementation; Pi-specific entry handling remains confined to the adapter.
+- Review weight: standard (default).
+- Files changed: Pi session model-change listener, runtime-registry subscriptions, adapter report identity/queue, and adapter tests.
+- Tests added/removed: registry observer/disposal coverage and e2e snapshot registration assertion; no tests removed.
+- Simplification: model changes share the existing per-runtime-session report tail, and queued reports re-read `session.model` at execution time.
+- Discrepancies from design: the focused test invokes the registry observer seam; the real e2e test covers registration model materialization. The full e2e suite was blocked by the concurrent delivery-stream worker's in-flight operator-session change; focused adapter tests pass.
+- Adjacent issues parked: none.
+- Verification: `npm run build && node --test dist/tests/pi_session.test.js dist/tests/delivery.test.js` in `pi-adapter` passed (5 tests).

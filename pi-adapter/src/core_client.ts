@@ -383,3 +383,5 @@ function piCapabilityManifest() {
     ],
   });
 }
+  model: string;
+              model: identity.model,

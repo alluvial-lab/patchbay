@@ -70,13 +70,21 @@ test("DeliveryTranslator resolves committed approval decisions and rejects reser
 test("SessionRegistry owns complete runtime entries and observation wiring", async () => {
   const registry = new SessionRegistry();
   let transcriptListener: ((event: never) => void) | undefined;
+  let modelChangeListener: ((model: string) => void) | undefined;
   let unsubscribed = false;
+  let modelUnsubscribed = false;
   const session = {
     runtimeSessionId: "runtime-1",
     onTranscript(listener: (event: never) => void) {
       transcriptListener = listener;
       return () => {
         unsubscribed = true;
+      };
+    },
+    onModelChange(listener: (model: string) => void) {
+      modelChangeListener = listener;
+      return () => {
+        modelUnsubscribed = true;
       };
     },
     async dispose() {},
@@ -89,17 +97,31 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
     name: "dynamic",
   };
   let observedEntryName = "";
-  registry.register(config, session, (entry) => {
-    observedEntryName = entry.name ?? "";
-  });
+  let observedModel = "";
+  registry.register(
+    config,
+    session,
+    (entry) => {
+      observedEntryName = entry.name ?? "";
+    },
+    (_entry, model) => {
+      observedModel = model;
+    },
+  );
   const entry = registry.resolve("runtime-1");
   assert.equal(entry?.session, session);
   assert.equal(entry?.deploymentScope, "machine-a");
   transcriptListener?.({} as never);
   assert.equal(observedEntryName, "dynamic");
-  assert.throws(() => registry.register(config, session, () => undefined), /already registered/);
+  modelChangeListener?.("provider/model-2");
+  assert.equal(observedModel, "provider/model-2");
+  assert.throws(
+    () => registry.register(config, session, () => undefined, () => undefined),
+    /already registered/,
+  );
   await registry.dispose();
   assert.equal(unsubscribed, true);
+  assert.equal(modelUnsubscribed, true);
 });
 
 function operation(kind: OperationKind, payload = ""): Operation {

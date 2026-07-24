@@ -18,8 +18,11 @@ export type TranscriptObserver = (
   event: TranscriptEvent,
 ) => void;
 
+export type ModelChangeObserver = (entry: RuntimeSessionEntry, model: string) => void;
+
 interface OwnedRuntimeSessionEntry extends RuntimeSessionEntry {
   unsubscribeTranscript: () => void;
+  unsubscribeModelChange: () => void;
 }
 
 /** Complete runtime registry; future spawn adds entries through the same path. */
@@ -30,6 +33,7 @@ export class SessionRegistry {
     config: RuntimeSessionConfig,
     session: PiSession,
     observeTranscript: TranscriptObserver,
+    observeModelChange: ModelChangeObserver,
   ): RuntimeSessionEntry {
     const runtimeSessionId = config.runtimeSessionId;
     if (!runtimeSessionId) throw new Error("runtimeSessionId must not be empty");
@@ -43,9 +47,13 @@ export class SessionRegistry {
       ...config,
       session,
       unsubscribeTranscript: () => undefined,
+      unsubscribeModelChange: () => undefined,
     };
     entry.unsubscribeTranscript = session.onTranscript((event) =>
       observeTranscript(entry, event),
+    );
+    entry.unsubscribeModelChange = session.onModelChange((model) =>
+      observeModelChange(entry, model),
     );
     this.#entries.set(runtimeSessionId, entry);
     return entry;
@@ -63,6 +71,7 @@ export class SessionRegistry {
     const disposals: Promise<void>[] = [];
     for (const entry of this.#entries.values()) {
       entry.unsubscribeTranscript();
+      entry.unsubscribeModelChange();
       disposals.push(entry.session.dispose());
     }
     this.#entries.clear();
