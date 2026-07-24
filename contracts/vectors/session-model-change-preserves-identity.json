@@ -1,0 +1,51 @@
+{
+  "vector_id": "session-model-change-preserves-identity",
+  "property_id": "LabelsCannotOverrideIdentity",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "patchbay.SessionModelChanged.adapter_id",
+    "patchbay.SessionModelChanged.deployment_scope",
+    "patchbay.SessionModelChanged.runtime_session_id",
+    "patchbay.SessionModelChanged.session_generation",
+    "patchbay.SessionModelChanged.from",
+    "patchbay.SessionModelChanged.to",
+    "patchbay.Session.model"
+  ],
+  "description": "A durable model change replaces only current opaque model metadata and preserves the complete verified session identity tuple.",
+  "input": {
+    "session_model_changed_type": "patchbay.SessionModelChanged",
+    "session_model_changed": {
+      "adapter_id": { "value": "pi" },
+      "deployment_scope": "machine-a",
+      "runtime_session_id": { "value": "runtime-1" },
+      "session_generation": { "value": 4 },
+      "from": "provider-a/model-old",
+      "to": "provider-b/model-new"
+    },
+    "prior_session_type": "patchbay.Session",
+    "prior_session": {
+      "adapter_id": { "value": "pi" },
+      "deployment_scope": "machine-a",
+      "runtime_session_id": { "value": "runtime-1" },
+      "session_generation": { "value": 4 },
+      "model": "provider-a/model-old"
+    }
+  },
+  "expected_outcome": {
+    "snapshot_record_type": "patchbay.Session",
+    "snapshot_record": {
+      "adapter_id": { "value": "pi" },
+      "deployment_scope": "machine-a",
+      "runtime_session_id": { "value": "runtime-1" },
+      "session_generation": { "value": 4 },
+      "model": "provider-b/model-new"
+    },
+    "unchanged_identity_fields": [
+      "adapter_id",
+      "deployment_scope",
+      "runtime_session_id",
+      "session_generation"
+    ]
+  },
+  "invariant_check": "LabelsCannotOverrideIdentity: the model mutation carries and preserves the verified identity tuple while changing only current model metadata."
+}

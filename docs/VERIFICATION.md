@@ -333,6 +333,7 @@ Reserve the following conformance-vector families. Each is draft until its refer
 - `subscription-grant-checked`: subscription establish succeeds/fails by grant and records audit without OperationState.
 - `subscription-audited`: subscription allow/deny decisions create security audit records without creating Operation records.
 - `subscription-cursor-replay-authorized`: reconnect replay by cursor returns only events within the authorized subscription filter.
+- `session-model-change-preserves-identity`: a `SessionModelChanged` mutation changes only opaque current-model metadata while retaining adapter id, deployment scope, runtime session id, and generation; it exercises `LabelsCannotOverrideIdentity` as a draft wire-shape example.
 
 Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt` (see § Idempotent retry above for the boundary-vs-end-to-end scope statement); adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
 
@@ -441,7 +442,7 @@ Summary: 44 modeled properties (8 promoted, 36 draft), 3 reserved-unmodeled stat
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 24 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 25 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -467,7 +468,7 @@ Summary: 24 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `GrantAuthorityIsCommandKinds` | stated-normative | — | — |
 | `GrantAuthorityIsOperationKinds` | stated-normative | — | — |
 | `IdempotentLogReplay` | stated-normative | — | — |
-| `LabelsCannotOverrideIdentity` | stated-normative | — | — |
+| `LabelsCannotOverrideIdentity` | stated-normative | [session-model-change-preserves-identity](../contracts/vectors/session-model-change-preserves-identity.json) (draft) | patchbay.Session.model<br>patchbay.SessionModelChanged.adapter_id<br>patchbay.SessionModelChanged.deployment_scope<br>patchbay.SessionModelChanged.from<br>patchbay.SessionModelChanged.runtime_session_id<br>patchbay.SessionModelChanged.session_generation<br>patchbay.SessionModelChanged.to |
 | `LateEventNoRewrite` | stated-normative | — | — |
 | `LateGenerationInert` | stated-normative | — | — |
 | `LsnDeterminesTerminalWinner` | stated-normative | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |

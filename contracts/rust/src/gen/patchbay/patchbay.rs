@@ -681,6 +681,9 @@ pub struct Session {
     pub tombstoned: bool,
     #[prost(message, optional, tag = "13")]
     pub superseded_at_lsn: ::core::option::Option<Lsn>,
+    /// Current adapter-reported opaque provider/model id; empty means unavailable.
+    #[prost(string, tag = "14")]
+    pub model: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionState {
@@ -718,7 +721,7 @@ pub struct ViewRevision {
 pub struct SessionStateEvent {
     #[prost(message, optional, tag = "1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6")]
+    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6, 7")]
     pub mutation: ::core::option::Option<session_state_event::Mutation>,
 }
 /// Nested message and enum types in `SessionStateEvent`.
@@ -735,6 +738,8 @@ pub mod session_state_event {
         ActivityChanged(super::SessionActivityChanged),
         #[prost(message, tag = "6")]
         Relabeled(super::SessionRelabeled),
+        #[prost(message, tag = "7")]
+        ModelChanged(super::SessionModelChanged),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -760,6 +765,8 @@ pub struct SessionRegistered {
     /// descendant-grant reactor correlate the session to its spawn command.
     #[prost(message, optional, tag = "9")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
+    #[prost(string, tag = "10")]
+    pub model: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionGenerationBumped {
@@ -783,6 +790,8 @@ pub struct SessionGenerationBumped {
     pub cwd: ::prost::alloc::string::String,
     #[prost(string, tag = "9")]
     pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "10")]
+    pub model: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionConnectivityChanged {
@@ -830,6 +839,21 @@ pub struct SessionRelabeled {
     pub cwd: ::prost::alloc::string::String,
     #[prost(string, tag = "7")]
     pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionModelChanged {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(string, tag = "5")]
+    pub from: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub to: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1933,6 +1957,8 @@ pub struct SessionReport {
     pub name: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "10")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
+    #[prost(string, tag = "11")]
+    pub model: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ObservationRequest {

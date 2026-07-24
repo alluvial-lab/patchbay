@@ -19,6 +19,8 @@ message Session {
   google.protobuf.Timestamp observed_at = 11;
   bool tombstoned = 12;
   Lsn superseded_at_lsn = 13;
+  // Current adapter-reported opaque provider/model id; empty means unavailable.
+  string model = 14;
 }
 
 message SessionState {
@@ -67,6 +69,7 @@ message SessionStateEvent {
     SessionConnectivityChanged connectivity_changed = 4;
     SessionActivityChanged activity_changed = 5;
     SessionRelabeled relabeled = 6;
+    SessionModelChanged model_changed = 7;
   }
 }
 
@@ -83,6 +86,7 @@ message SessionRegistered {
   // adapter reports a session resulting from a spawn. Lets the authority
   // descendant-grant reactor correlate the session to its spawn command.
   TypedCorrelation spawn_origin = 9;
+  string model = 10;
 }
 
 message SessionGenerationBumped {
@@ -97,6 +101,7 @@ message SessionGenerationBumped {
   string project = 7;
   string cwd = 8;
   string name = 9;
+  string model = 10;
 }
 
 message SessionConnectivityChanged {
@@ -125,4 +130,13 @@ message SessionRelabeled {
   string project = 5;
   string cwd = 6;
   string name = 7;
+}
+
+message SessionModelChanged {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  string from = 5;
+  string to = 6;
 }
