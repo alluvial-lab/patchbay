@@ -1,7 +1,7 @@
 ---
 id: gate-docs-runbook-web-operator-config
 kind: story
-stage: implementing
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
@@ -28,3 +28,9 @@ foundation-doc-assertion
 
 ## Required edit
 Mark `PATCHBAY_OPERATOR_ID` as required for the web server, distinguish it from the optional password-hash fallback, and state the post-bootstrap core verification behavior accurately.
+
+## Completion
+Corrected the runbook environment table: `PATCHBAY_OPERATOR_ID` is required by
+the web server, while `PATCHBAY_OPERATOR_PASSWORD_HASH` is optional as a local
+password-verifier fallback. The normal v0.1.0 login path verifies the
+bootstrapped operator record at the core.

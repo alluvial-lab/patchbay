@@ -30,7 +30,8 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_WEB_BIND_ADDR` | web-server | no | HTTP listener for the cockpit. |
 | `PATCHBAY_TLS_CERT` / `PATCHBAY_TLS_KEY` | web-server | non-localhost | TLS for non-loopback binds (loopback uses the secure-cookie exception). |
 | `PATCHBAY_CREDENTIALS_PATH` | CLI | no | CLI credential store (0600). |
-| `PATCHBAY_OPERATOR_ID` / `PATCHBAY_OPERATOR_PASSWORD_HASH` | web-server | no | First-run fallback only; the core's operator record is the source of truth after bootstrap. |
+| `PATCHBAY_OPERATOR_ID` | web-server | yes | Configured operator identity for core password verification; the web server refuses startup without it. |
+| `PATCHBAY_OPERATOR_PASSWORD_HASH` | web-server | no | Optional local password-verifier fallback. Normal v0.1.0 login verifies the bootstrapped operator record at the core. |
 
 ## Startup order
 
