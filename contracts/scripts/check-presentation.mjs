@@ -73,7 +73,7 @@ const LOCKED_PRIMITIVES = [
   'connectivity-indicator', 'activity-indicator', 'session-status',
   'command-timeline', 'command-step', 'session-row', 'composer',
   'elicitation-card', 'failure-banner', 'retry-safety-indicator',
-  'delivery-line', 'attention-badge',
+  'delivery-line', 'attention-badge', 'icon',
 ];
 
 // Contrast pairs are NOT hand-maintained — they are DERIVED from the actual
@@ -487,9 +487,13 @@ async function checkBindings({ css, showcase, protoEnums }, errors) {
   }
 
   for (const primitive of extractCommentPrimitiveNames(css)) {
+    const selector = new RegExp(`\\.${primitive}(?:[\\s.{:#]|$)`);
+    if (!selector.test(cssStripped)) {
+      errors.push(`project-unique primitive ${primitive}: missing uncommented CSS class selector`);
+    }
     if (document) {
       if (!document.querySelector(`.${primitive}`)) errors.push(`project-unique primitive ${primitive}: missing showcase element`);
-    } else if (!new RegExp(`class="[^"]*\b${primitive}\b`).test(showcase)) {
+    } else if (!new RegExp(`class="[^"]*\\b${primitive}\\b`).test(showcase)) {
       errors.push(`project-unique primitive ${primitive}: missing showcase occurrence`);
     }
   }

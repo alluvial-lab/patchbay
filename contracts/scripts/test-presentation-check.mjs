@@ -62,8 +62,35 @@ try {
     throw new Error('meta-test: missing-binding fixture did not print the expected diagnostic');
   }
 
-  // NEGATIVE fixture 2: invisible-toast contrast (1:1) → must exit non-zero
+  // NEGATIVE fixture 2: missing locked icon CSS selector → must exit non-zero.
+  css = await readFile(path.join(designDir, 'components.css'), 'utf8');
+  css = css.replace('.icon {', '.icon-missing {');
+  await writeFile(path.join(fixture, 'components.css'), css);
+  const missingIconCss = runFixture(fixture);
+  if (missingIconCss.status === 0) {
+    throw new Error('meta-test: missing-icon-css fixture exited 0; expected non-zero');
+  }
+  if (!/project-unique primitive icon: missing uncommented CSS class selector/.test(missingIconCss.output)) {
+    throw new Error('meta-test: missing-icon-css fixture did not print the expected diagnostic');
+  }
+
+  // NEGATIVE fixture 3: missing icon showcase usage → must exit non-zero.
+  css = await readFile(path.join(designDir, 'components.css'), 'utf8');
+  await writeFile(path.join(fixture, 'components.css'), css);
+  let showcase = await readFile(path.join(fixture, 'components.html'), 'utf8');
+  showcase = showcase.replaceAll('class="icon', 'class="icon-missing');
+  await writeFile(path.join(fixture, 'components.html'), showcase);
+  const missingIconShowcase = runFixture(fixture);
+  if (missingIconShowcase.status === 0) {
+    throw new Error('meta-test: missing-icon-showcase fixture exited 0; expected non-zero');
+  }
+  if (!/project-unique primitive icon: missing showcase element/.test(missingIconShowcase.output)) {
+    throw new Error('meta-test: missing-icon-showcase fixture did not print the expected diagnostic');
+  }
+
+  // NEGATIVE fixture 4: invisible-toast contrast (1:1) → must exit non-zero
   // AND print the contrast diagnostic. This is the regression the check exists for.
+  await writeFile(path.join(fixture, 'components.html'), await readFile(path.join(designDir, 'components.html')));
   css = await readFile(path.join(designDir, 'components.css'), 'utf8');
   await writeFile(path.join(fixture, 'components.css'), css);
   let tokens = await readFile(path.join(fixture, 'tokens.css'), 'utf8');
@@ -81,7 +108,7 @@ try {
     throw new Error('meta-test: invisible-toast fixture did not print the expected contrast diagnostic');
   }
 
-  console.log('Presentation check meta-tests passed: baseline exits 0; missing-binding and invisible-toast fixtures exit non-zero with diagnostics.');
+  console.log('Presentation check meta-tests passed: baseline exits 0; missing-binding, icon CSS/showcase, and invisible-toast fixtures exit non-zero with diagnostics.');
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

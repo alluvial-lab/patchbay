@@ -59,6 +59,11 @@
   --font-size-2xl: 24px;
   --font-size-3xl: 32px;
 
+  /* Icon geometry — Lucide outline sizes */
+  --icon-size-sm: 14px;
+  --icon-size-md: 16px;
+  --icon-size-lg: 20px;
+
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
