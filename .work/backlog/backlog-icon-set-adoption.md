@@ -16,10 +16,13 @@ a few ad-hoc unicode glyphs and one inline SVG (the paperclip added in
 
 ## Shape
 
-- **Pick an icon set.** Open question the operator raised: "what do we use in
-  SNC/platform?" — resolve which set that is, or choose a standard one for
-  this console aesthetic (Lucide is the common modern fit; Heroicons and
-  Phosphor are the usual alternatives). Decision needed from the operator.
+- **Pick an icon set.** RESOLVED (2026-07-23): the operator's parallel
+  project `projects/SNC/platform` uses **Lucide** (`lucide-react`, 29 imports)
+  — use Lucide for the cockpit too, for cross-project consistency. Patchbay's
+  cockpit is vanilla TS with no build step, so use Lucide's SVG paths directly
+  as inline SVG (no `lucide-react`, no icon font, no npm icon package) — the
+  same shape as the paperclip stopgap in `4a903cd` (which is already the
+  Lucide paperclip path).
 - **Integrate it into the design system** (`.mockups/design-system/`), not ad
   hoc per-button: an icon primitive (`.icon`, size tokens, stroke conventions)
   in `components.css`, passing `check-presentation` (the conformance floor
