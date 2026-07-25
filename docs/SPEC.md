@@ -122,6 +122,20 @@ Explicitly rejected for v0.1.0: a dedicated per-command trace storage (would vio
 
 This scope is v0.1.0-only. A future milestone that needs query- or monitoring-oriented observability promotes the reserved seams through a scope act.
 
+## Post-v0.1.0 observability scope (dogfooding)
+
+`epic-observability-dogfooding` is the scope act anticipated above. It promotes the reserved seams needed for live single-operator inspection while dogfooding, under the standing constraints: the durable event log remains the single source of truth, observability reads are projections with no second writer, and no metrics pipeline is introduced.
+
+Committed post-v0.1.0 observability:
+
+- **core-diagnostics**: durable, queryable projections over the existing event log (audit records, command history, adapter status), backing the CLI `audit-query`, `inspect-command`, and `adapter-status` commands (the v0.1.0 honest stubs are fulfilled);
+- **adapter-process durable diagnostics**: the adapter writes a durable, configurable diagnostics log (attach, delivery, observation, and lifecycle errors) instead of losing them on process exit;
+- **adapter diagnostics as payload, surfaced in the cockpit**: adapters may report diagnostics to the core, which records them and presents adapter health, connection state, and recent diagnostic events within the cockpit's existing views.
+
+Still deferred (reserved seams): the per-command delivery-trace timeline UI; metrics (counters/histograms/throughput); a dedicated health/status dashboard; raw `event-inspect <lsn>`; SIEM export and long-retention compliance archives; the no-lifecycle bypass read of the audit log. Still rejected: dedicated per-command trace storage; a metrics pipeline as the primary observability substrate.
+
+This is dogfooding-scope observability for the single operator, not the v1.0.0 supported-diagnostics contract; documented diagnostics and health checks for other self-hosting operators remain with `epic-public-product-contract-self-hosted-operations`.
+
 ## Primary stack choices
 
 ### Core daemon
