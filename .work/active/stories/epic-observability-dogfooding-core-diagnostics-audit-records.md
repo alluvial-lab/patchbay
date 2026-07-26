@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics-audit-records
 kind: story
-stage: done
+stage: implementing
 tags: [observability, dogfooding, security]
 parent: epic-observability-dogfooding-core-diagnostics
 depends_on: []
@@ -47,6 +47,21 @@ redaction rules, and migration behavior.
 No sibling dependency. Complete this checkpoint before the diagnostics query
 surface consumes `AuditQuery`, `AuditPage`, `AuditSink`, or the versioned audit
 storage port.
+
+## Reopened (2026-07-26, orchestrator wave-1 verification)
+
+The first implementation wired only the login producer family
+(`LoginSucceeded`/`LoginFailed`). The acceptance evidence requires producers
+covering bootstrap/session/grant/authorization/command lifecycle, stale-event,
+adapter lifecycle, and authenticated control-surface integrity decisions. The
+implementing worker recorded this itself as a deviation ("broader canonical
+producer migration ... remain follow-up work"), so the `done` transition was
+premature. A follow-up worker owns completing the producer migration; this
+checkpoint returns to `done` only when that coverage is green.
+
+Additionally, wave integration verification found `pi-adapter` e2e failing
+(`accepted.acceptedLsn` undefined) after the audited-append change landed —
+diagnosis and fix ride with the same follow-up.
 
 ## Implementation notes
 
