@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics
 kind: feature
-stage: review
+stage: done
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
