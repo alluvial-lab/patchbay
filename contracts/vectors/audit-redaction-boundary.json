@@ -1,0 +1,20 @@
+{
+  "vector_id": "audit-redaction-boundary",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "AuditRecord.operator_session_hash",
+    "AuditRecord.source_network",
+    "AdapterCapabilitySummary.attachment_method_kind",
+    "CommandSummary"
+  ],
+  "description": "Audit and diagnostics DTO construction is an allowlist boundary: prompts, tokens, cookies, arbitrary metadata, and attachment descriptor bytes are not representable in the response family.",
+  "input": {
+    "sentinel_values": ["cookie", "csrf-token", "access-token", "password", "prompt", "attachment-descriptor"]
+  },
+  "expected_outcome": {
+    "durable_bytes_contain": ["typed identifiers", "bounded reason codes", "normalized source network"],
+    "durable_bytes_exclude": ["sentinel_values"]
+  },
+  "invariant_check": "Draft redaction-boundary evidence; Audit integrity remains stated-normative per docs/VERIFICATION.md."
+}

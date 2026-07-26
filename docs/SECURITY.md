@@ -211,7 +211,7 @@ Revocation never deletes command history. Late events after revocation are audit
 
 ## Audit events
 
-Security audit is part of v0.1.0. The walking skeleton emits redacted security audit lines to process stderr/stdout. A durable, queryable audit log is a reserved post-v0.1.0 core-diagnostics capability rather than a v0.1.0 storage claim.
+Security audit is part of v0.1.0. The walking skeleton emits redacted security audit lines to process stderr/stdout. The implemented post-v0.1.0 core-diagnostics capability adds a durable, queryable redacted audit index behind the core storage port; process stderr remains diagnostic-only.
 
 Audit records are distinct from durable command/session state-transition events. They may record rejected attempts, failed checks, and security decisions that do not create command records.
 
@@ -237,7 +237,7 @@ Audit records must not directly store raw session cookies, CSRF tokens, access t
 
 **This is the canonical no-log/redaction list for Patchbay.** Other docs (PROTOCOL, UX, ARCHITECTURE) summarize or point here; they do not maintain competing lists. Add new redacted fields to this list, not to a doc-local copy.
 
-The committed v0.1.0 `session-health` CLI projection reads canonical session state and does not create a raw-payload exposure path. `audit-query`, `inspect-command`, and `adapter-status` are reserved for the post-v0.1.0 core-diagnostics capability; their current CLI stubs exit non-zero with a prerequisite message rather than claiming data the core does not expose. When promoted, those projections must inherit the redaction boundary above: `inspect-command` must exclude prompt bodies and sensitive payloads, and `adapter-status` must exclude raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
+The committed v0.1.0 `session-health` CLI projection reads canonical session state and does not create a raw-payload exposure path. The core now exposes the post-v0.1.0 `audit-query`, `inspect-command`, and `adapter-status` projection contracts through the principal-gated `QueryDiagnostics` RPC; CLI consumption remains a separate feature. These projections inherit the redaction boundary above: `inspect-command` excludes prompt bodies and sensitive payloads, and `adapter-status` excludes raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
 ## Deployment posture
 

@@ -1,0 +1,21 @@
+{
+  "vector_id": "operation-query-diagnostics-lifecycle",
+  "property_id": "NoAcceptedToCompleted",
+  "promotion_status": "draft",
+  "proto_fields_constrained": [
+    "Operation.kind",
+    "QueryDiagnosticsRequest.operation",
+    "QueryDiagnosticsResponse.submission",
+    "DiagnosticsResult.as_of_lsn"
+  ],
+  "description": "A valid diagnostics query uses the durable accepted -> delivered -> completed lifecycle and records a correlated typed result before completion.",
+  "input": {
+    "operation_kind": "QUERY",
+    "result_schema_ref": "patchbay.DiagnosticsResult"
+  },
+  "expected_outcome": {
+    "states": ["accepted", "delivered", "completed"],
+    "forbidden_edge": "accepted -> completed"
+  },
+  "invariant_check": "Draft boundary vector; NoAcceptedToCompleted remains checked-model and is not promoted by this feature."
+}

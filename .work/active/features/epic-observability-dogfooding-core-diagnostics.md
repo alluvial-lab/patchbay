@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics
 kind: feature
-stage: implementing
+stage: review
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 # Core-diagnostics query capability
@@ -764,3 +764,61 @@ pub async fn execute_diagnostics_query<S: Storage, G: GrantCheck,
   as the primary substrate. The query RPC is surface-neutral and adapter status
   uses adapter-declared capabilities, so no parked multi-human/surface/mesh/skin
   direction is foreclosed.
+
+## Implementation summary
+
+Implemented the core-diagnostics contract, durable audit storage boundary, typed
+sink composition, replayable command/adapter projection, and principal-gated
+`ControlService.QueryDiagnostics` path.
+
+- `contracts/proto/patchbay/diagnostics.proto` is the wire source for the
+  canonical audit vocabulary, redacted audit record, bounded query families,
+  and typed result oneofs. Generated Rust/TypeScript artifacts and exports were
+  regenerated and committed.
+- SQLite now migrates versioned schemas `0 -> 1 -> 2`, preserves legacy data,
+  rejects malformed/future versions before migration, stores audit indexes in
+  the same writer transaction, and validates indexed rows against encoded
+  audit payloads on reads.
+- `core::audit` provides durable-first `AuditSink` composition; login records
+  are durably indexed before stderr diagnostic fanout. DTO construction is an
+  allowlist with structural redaction.
+- `core::diagnostics` folds command lifecycles and adapter registrations,
+  redacts capability descriptors, and resets adapter liveness to UNKNOWN on
+  rebuild. Query validation is fail-fast and domain/cursor/page bounded.
+- `QueryDiagnostics` uses an authority-domain target resolver only on its
+  dedicated endpoint, persists accepted/delivered/completed checkpoints and a
+  correlated `DiagnosticsResult` Observation, and exact retries replay the
+  durable result.
+- Draft lifecycle and redaction vectors were added; SECURITY.md now describes
+  durable core-diagnostics as implemented while retaining the canonical no-log
+  list.
+
+Verification evidence:
+
+- `cargo build --workspace --all-targets` — passed.
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd contracts/ts && npm run build` — passed.
+- `npm run check:vectors` and `npm run check:models` — passed.
+- `cd e2e && npm test` — passed.
+- `npm run check:drift` was attempted. It fails because the repository's
+  existing Buf generator output is not byte-identical to the committed
+  prost-build artifacts (it reorders/duplicates the established generated
+  module and adds a trailing generated newline); generated files were restored
+  to the committed cargo-compatible artifacts, so no unrelated generated drift
+  was silently accepted.
+
+Implementation deviations/discoveries:
+
+- The durable sink and storage APIs are complete, and login is wired through
+  the required durable-first composition. The broader canonical producer
+  migration (all grant/session/adapter/stale-event callsites to atomic audited
+  append) and the external control-surface audit ingress remain follow-up work;
+  they are not claimed by this implementation.
+- The query result path is implemented for all generated result families; the
+  adapter page currently reports the safe registration projection and UNKNOWN
+  after restart, with richer live session-count reconciliation reserved for the
+  adapter diagnostics feature.
+- The walking skeleton itself was not expanded with new diagnostic client
+  steps; the gRPC smoke test covers query lifecycle/retry and the existing
+  real-process skeleton remains green.
