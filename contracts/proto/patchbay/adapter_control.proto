@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package patchbay;
 
+import "google/protobuf/timestamp.proto";
+
 import "patchbay/adapter.proto";
 import "patchbay/common.proto";
 import "patchbay/observations.proto";
@@ -14,6 +16,7 @@ import "patchbay/sessions.proto";
 service AdapterControlService {
   rpc Attach(AttachRequest) returns (AttachResult);
   rpc IngestObservation(ObservationRequest) returns (ObservationResult);
+  rpc ReportDiagnostics(AdapterDiagnosticReport) returns (AdapterDiagnosticReportResult);
   rpc ReceiveDeliveries(ReceiveRequest) returns (stream Delivery);
 }
 
@@ -53,6 +56,22 @@ message ObservationRequest {
 
 message ObservationResult {
   EventId event_id = 1;
+}
+
+message AdapterDiagnosticReport {
+  AuthorityDomainId authority_domain_id = 1;
+  TargetScope target_scope = 2;
+  repeated TypedCorrelation correlations = 3;
+  google.protobuf.Timestamp observed_at = 4;
+  FailureCode failure_code = 5;
+  PayloadEnvelope payload = 6;
+}
+
+message AdapterDiagnosticReportResult {
+  bool accepted = 1;
+  EventId observation_event_id = 2;
+  EventId audit_event_id = 3;
+  FailureCode failure_code = 4;
 }
 
 message ReceiveRequest {

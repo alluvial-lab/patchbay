@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/adapter.proto.
  */
 export const file_patchbay_adapter: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSK3AwoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBI6ChBzbmFwc2hvdF9zdXBwb3J0GAQgASgOMiAucGF0Y2hiYXkuQWRhcHRlclNuYXBzaG90U3VwcG9ydBIcChRjYW5jZWxsYXRpb25fc3VwcG9ydBgFIAEoCBIjChtzZXNzaW9uX3JlcGxhY2VtZW50X3N1cHBvcnQYBiABKAgSOwoUaWRlbXBvdGVuY3lfc3RyZW5ndGgYByABKA4yHS5wYXRjaGJheS5JZGVtcG90ZW5jeVN0cmVuZ3RoEjUKEWF0dGFjaG1lbnRfbWV0aG9kGAggASgLMhoucGF0Y2hiYXkuQXR0YWNobWVudE1ldGhvZBIyChNrbm93bl9mYWlsdXJlX21vZGVzGAkgAygOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUicwoQQXR0YWNobWVudE1ldGhvZBIMCgRraW5kGAEgASgJEhIKCmRlc2NyaXB0b3IYAiABKAwSPQoXZGVzY3JpcHRvcl9jb250ZW50X3R5cGUYAyABKA4yHC5wYXRjaGJheS5QYXlsb2FkQ29udGVudFR5cGUi2gIKE0FkYXB0ZXJSZWdpc3RyYXRpb24SJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIpCgtlbmRwb2ludF9pZBgCIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgDIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEjAKEmFkYXB0ZXJfZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SLwoKY2FwYWJpbGl0eRgFIAEoCzIbLnBhdGNoYmF5LkFkYXB0ZXJDYXBhYmlsaXR5EiEKCmF0dGFjaF9sc24YBiABKAsyDS5wYXRjaGJheS5Mc24SLwoLYXR0YWNoZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKq4BChNJZGVtcG90ZW5jeVN0cmVuZ3RoEiQKIElERU1QT1RFTkNZX1NUUkVOR1RIX1VOU1BFQ0lGSUVEEAASHQoZSURFTVBPVEVOQ1lfU1RSRU5HVEhfTk9ORRABEi0KKUlERU1QT1RFTkNZX1NUUkVOR1RIX0FUX1BBVENIQkFZX0JPVU5EQVJZEAISIwofSURFTVBPVEVOQ1lfU1RSRU5HVEhfRU5EX1RPX0VORBADKrcBChZBZGFwdGVyU25hcHNob3RTdXBwb3J0EigKJEFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9VTlNQRUNJRklFRBAAEioKJkFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9BVVRIT1JJVEFUSVZFEAESJAogQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1BBUlRJQUwQAhIhCh1BREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfTk9ORRADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSKFBAoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBI6ChBzbmFwc2hvdF9zdXBwb3J0GAQgASgOMiAucGF0Y2hiYXkuQWRhcHRlclNuYXBzaG90U3VwcG9ydBIcChRjYW5jZWxsYXRpb25fc3VwcG9ydBgFIAEoCBIjChtzZXNzaW9uX3JlcGxhY2VtZW50X3N1cHBvcnQYBiABKAgSOwoUaWRlbXBvdGVuY3lfc3RyZW5ndGgYByABKA4yHS5wYXRjaGJheS5JZGVtcG90ZW5jeVN0cmVuZ3RoEjUKEWF0dGFjaG1lbnRfbWV0aG9kGAggASgLMhoucGF0Y2hiYXkuQXR0YWNobWVudE1ldGhvZBIyChNrbm93bl9mYWlsdXJlX21vZGVzGAkgAygOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSTAoUZGlhZ25vc3RpY19yZXBvcnRpbmcYCiABKAsyLi5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkiQAokQWRhcHRlckRpYWdub3N0aWNSZXBvcnRpbmdDYXBhYmlsaXR5EhgKEGRpYWdub3N0aWNfY29kZXMYASADKAkicwoQQXR0YWNobWVudE1ldGhvZBIMCgRraW5kGAEgASgJEhIKCmRlc2NyaXB0b3IYAiABKAwSPQoXZGVzY3JpcHRvcl9jb250ZW50X3R5cGUYAyABKA4yHC5wYXRjaGJheS5QYXlsb2FkQ29udGVudFR5cGUi2gIKE0FkYXB0ZXJSZWdpc3RyYXRpb24SJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIpCgtlbmRwb2ludF9pZBgCIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgDIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEjAKEmFkYXB0ZXJfZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SLwoKY2FwYWJpbGl0eRgFIAEoCzIbLnBhdGNoYmF5LkFkYXB0ZXJDYXBhYmlsaXR5EiEKCmF0dGFjaF9sc24YBiABKAsyDS5wYXRjaGJheS5Mc24SLwoLYXR0YWNoZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKq4BChNJZGVtcG90ZW5jeVN0cmVuZ3RoEiQKIElERU1QT1RFTkNZX1NUUkVOR1RIX1VOU1BFQ0lGSUVEEAASHQoZSURFTVBPVEVOQ1lfU1RSRU5HVEhfTk9ORRABEi0KKUlERU1QT1RFTkNZX1NUUkVOR1RIX0FUX1BBVENIQkFZX0JPVU5EQVJZEAISIwofSURFTVBPVEVOQ1lfU1RSRU5HVEhfRU5EX1RPX0VORBADKrcBChZBZGFwdGVyU25hcHNob3RTdXBwb3J0EigKJEFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9VTlNQRUNJRklFRBAAEioKJkFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9BVVRIT1JJVEFUSVZFEAESJAogQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1BBUlRJQUwQAhIhCh1BREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfTk9ORRADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.AdapterCapability
@@ -66,6 +66,11 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
    * @generated from field: repeated patchbay.FailureCode known_failure_modes = 9;
    */
   knownFailureModes: FailureCode[];
+
+  /**
+   * @generated from field: patchbay.AdapterDiagnosticReportingCapability diagnostic_reporting = 10;
+   */
+  diagnosticReporting?: AdapterDiagnosticReportingCapability | undefined;
 };
 
 /**
@@ -74,6 +79,23 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
  */
 export const AdapterCapabilitySchema: GenMessage<AdapterCapability> = /*@__PURE__*/
   messageDesc(file_patchbay_adapter, 0);
+
+/**
+ * @generated from message patchbay.AdapterDiagnosticReportingCapability
+ */
+export type AdapterDiagnosticReportingCapability = Message<"patchbay.AdapterDiagnosticReportingCapability"> & {
+  /**
+   * @generated from field: repeated string diagnostic_codes = 1;
+   */
+  diagnosticCodes: string[];
+};
+
+/**
+ * Describes the message patchbay.AdapterDiagnosticReportingCapability.
+ * Use `create(AdapterDiagnosticReportingCapabilitySchema)` to create a new message.
+ */
+export const AdapterDiagnosticReportingCapabilitySchema: GenMessage<AdapterDiagnosticReportingCapability> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter, 1);
 
 /**
  * @generated from message patchbay.AttachmentMethod
@@ -100,7 +122,7 @@ export type AttachmentMethod = Message<"patchbay.AttachmentMethod"> & {
  * Use `create(AttachmentMethodSchema)` to create a new message.
  */
 export const AttachmentMethodSchema: GenMessage<AttachmentMethod> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 1);
+  messageDesc(file_patchbay_adapter, 2);
 
 /**
  * @generated from message patchbay.AdapterRegistration
@@ -147,7 +169,7 @@ export type AdapterRegistration = Message<"patchbay.AdapterRegistration"> & {
  * Use `create(AdapterRegistrationSchema)` to create a new message.
  */
 export const AdapterRegistrationSchema: GenMessage<AdapterRegistration> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 2);
+  messageDesc(file_patchbay_adapter, 3);
 
 /**
  * @generated from enum patchbay.IdempotencyStrength

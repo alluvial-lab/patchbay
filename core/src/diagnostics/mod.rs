@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
     diagnostics_query, AdapterCapabilitySummary, AdapterDiagnosticState, AdapterId,
-    AdapterRegistration, AdapterStatus, AdapterStatusPage, AdapterStatusQuery, AuditQuery,
+    AdapterRegistration, AdapterStatus, AdapterStatusPage, AdapterStatusQuery, AuditEventKind,
+    AuditQuery, AuditRecord,
     AuthorityDomainId, CommandId, CommandInspection, CommandInspectionQuery,
     CommandInspectionResult, CommandHistoryEntry, CommandSummary, DiagnosticsQuery, EventId,
     FailureCode, Operation, OperationKind, OperationState, Observation, StoredEventKind,
@@ -18,12 +19,19 @@ use crate::{
     storage::{AuditPageSpec, RecordedEvent, StorageError, TargetKey},
 };
 
+pub mod adapter_report;
+pub use adapter_report::{
+    ingest_adapter_diagnostic, validate_adapter_diagnostic_report, AdapterDiagnosticReceipt,
+    AdapterDiagnosticRejection, ValidatedAdapterDiagnostic,
+};
+
 pub const AUDIT_DEFAULT_LIMIT: u16 = 100;
 pub const AUDIT_MAX_LIMIT: u16 = 500;
 pub const COMMAND_DEFAULT_LIMIT: u16 = 50;
 pub const COMMAND_MAX_LIMIT: u16 = 200;
 pub const ADAPTER_DEFAULT_LIMIT: u16 = 100;
 pub const ADAPTER_MAX_LIMIT: u16 = 500;
+pub const MAX_RECENT_ADAPTER_DIAGNOSTICS: usize = 100;
 pub const DIAGNOSTICS_SCHEMA: &str = "patchbay.DiagnosticsQuery";
 
 /// Resolver used only by the diagnostics execution path. Ordinary Submit
@@ -87,6 +95,8 @@ pub struct DiagnosticsProjection {
     commands: HashMap<CommandId, CommandTimeline>,
     adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
     live_adapters: std::collections::HashSet<AdapterId>,
+    recent_diagnostics: HashMap<AdapterId, Vec<patchbay_contracts::patchbay::AuditRecord>>,
+    last_lsn: u64,
 }
 
 impl DiagnosticsProjection {
@@ -96,6 +106,25 @@ impl DiagnosticsProjection {
     }
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let event_domain = event
+            .event_id
+            .authority_domain_id
+            .as_ref()
+            .ok_or_else(|| DiagnosticsError::CorruptEvent("event has no authority domain".to_owned()))?;
+        if event_domain.value.is_empty() {
+            return Err(DiagnosticsError::CorruptEvent("event has an empty authority domain".to_owned()));
+        }
+        let event_lsn = event
+            .event_id
+            .lsn
+            .as_ref()
+            .ok_or_else(|| DiagnosticsError::CorruptEvent("event has no LSN".to_owned()))?
+            .value;
+        if event_lsn <= self.last_lsn {
+            return Err(DiagnosticsError::CorruptEvent(
+                "diagnostics event LSN is not strictly increasing".to_owned(),
+            ));
+        }
         let kind = StoredEventKind::try_from(event.payload.kind)
             .map_err(|_| DiagnosticsError::CorruptEvent("unknown stored event kind".to_owned()))?;
         match kind {
@@ -165,6 +194,7 @@ impl DiagnosticsProjection {
                 }
             }
             StoredEventKind::Observation => self.observe_observation(event)?,
+            StoredEventKind::AuditRecord => self.observe_audit(event)?,
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
@@ -172,9 +202,55 @@ impl DiagnosticsProjection {
             | StoredEventKind::SessionState
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
-            | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => {}
         }
+        self.last_lsn = event_lsn;
+        Ok(())
+    }
+
+    fn observe_audit(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let record = AuditRecord::decode(event.payload.payload.as_slice())
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        if AuditEventKind::try_from(record.kind).ok() != Some(AuditEventKind::AdapterDiagnosticReported) {
+            return Ok(());
+        }
+        let detail = record.adapter_diagnostic.as_ref().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter diagnostic audit is missing safe detail".to_owned())
+        })?;
+        let adapter_id = detail.adapter_id.clone().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter diagnostic detail is missing adapter id".to_owned())
+        })?;
+        let severity = patchbay_contracts::patchbay::AdapterDiagnosticSeverity::try_from(detail.severity)
+            .map_err(|_| DiagnosticsError::CorruptEvent("adapter diagnostic severity is unknown".to_owned()))?;
+        let operation_kind = patchbay_contracts::patchbay::OperationKind::try_from(detail.operation_kind)
+            .map_err(|_| DiagnosticsError::CorruptEvent("adapter diagnostic operation kind is unknown".to_owned()))?;
+        if adapter_id.value.is_empty()
+            || detail.adapter_generation.is_none()
+            || detail.count == 0
+            || detail.count > 1000
+            || severity == patchbay_contracts::patchbay::AdapterDiagnosticSeverity::Unspecified
+            || record.reason_code.is_empty()
+        {
+            return Err(DiagnosticsError::CorruptEvent("adapter diagnostic audit detail is invalid".to_owned()));
+        }
+        let source = record.source_event_id.as_ref().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter diagnostic audit is missing source event".to_owned())
+        })?;
+        let source_lsn = source.lsn.as_ref().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter diagnostic audit source has no LSN".to_owned())
+        })?;
+        if source.authority_domain_id.as_ref() != event.event_id.authority_domain_id.as_ref()
+            || source_lsn.value >= event_lsn(event)
+        {
+            return Err(DiagnosticsError::CorruptEvent("adapter diagnostic source is not prior in the same domain".to_owned()));
+        }
+        let records = self.recent_diagnostics.entry(adapter_id).or_default();
+        records.push(record);
+        if records.len() > MAX_RECENT_ADAPTER_DIAGNOSTICS {
+            let remove = records.len() - MAX_RECENT_ADAPTER_DIAGNOSTICS;
+            records.drain(0..remove);
+        }
+        let _ = operation_kind;
         Ok(())
     }
 
@@ -210,6 +286,7 @@ impl DiagnosticsProjection {
         as_of: u64,
     ) -> Result<AdapterStatusPage, DiagnosticsError> {
         let limit = query.limit.unwrap_or(u32::from(ADAPTER_DEFAULT_LIMIT));
+        let recent_limit = validate_recent_diagnostic_limit(query.recent_diagnostic_limit)?;
         if limit == 0 || limit > u32::from(ADAPTER_MAX_LIMIT) {
             return Err(DiagnosticsError::InvalidQuery("adapter limit is out of bounds".to_owned()));
         }
@@ -238,7 +315,20 @@ impl DiagnosticsProjection {
                 attachment_method_kind: capability.attachment_method.as_ref().map_or_else(String::new, |method| method.kind.clone()),
                 attachment_descriptor_content_type: capability.attachment_method.as_ref().map_or(0, |method| method.descriptor_content_type),
                 known_failure_modes: capability.known_failure_modes.clone(),
+                diagnostic_reporting: capability.diagnostic_reporting.clone(),
             });
+            let recent_diagnostics = if recent_limit == 0 {
+                Vec::new()
+            } else {
+                self.recent_diagnostics
+                    .get(adapter_id)
+                    .into_iter()
+                    .flat_map(|records| records.iter().rev())
+                    .filter(|record| record.audit_event_id.as_ref().and_then(|id| id.lsn.as_ref()).is_some_and(|lsn| lsn.value <= as_of))
+                    .take(recent_limit)
+                    .cloned()
+                    .collect()
+            };
             AdapterStatus {
                 adapter_id: Some(adapter_id.clone()),
                 endpoint_id: registration.endpoint_id.clone(),
@@ -247,10 +337,10 @@ impl DiagnosticsProjection {
                 attach_event_id: Some(attach_event_id.clone()),
                 attached_at: registration.attached_at,
                 capability,
+                recent_diagnostics,
                 ..AdapterStatus::default()
             }
         }).collect();
-        let _ = as_of;
         Ok(AdapterStatusPage { adapters, next_after_adapter_id, has_more })
     }
 
@@ -327,6 +417,7 @@ pub fn validate_query(
                 return Err(DiagnosticsError::InvalidQuery("adapter filter contains an empty id".to_owned()));
             }
             validate_limit(query.limit, ADAPTER_DEFAULT_LIMIT, ADAPTER_MAX_LIMIT, "adapter")?;
+            validate_recent_diagnostic_limit(query.recent_diagnostic_limit)?;
             Ok(ValidatedDiagnosticsQuery::Adapters(query))
         }
     }
@@ -389,6 +480,20 @@ fn validate_cursor(cursor: &EventId, domain: &AuthorityDomainId, current_lsn: u6
         return Err(DiagnosticsError::InvalidQuery("cursor is beyond current LSN".to_owned()));
     }
     Ok(())
+}
+
+pub fn validate_recent_diagnostic_limit(value: Option<u32>) -> Result<usize, DiagnosticsError> {
+    match value {
+        None => Ok(0),
+        Some(value) if (1..=100).contains(&value) => Ok(value as usize),
+        Some(_) => Err(DiagnosticsError::InvalidQuery(
+            "recent diagnostic limit must be between 1 and 100".to_owned(),
+        )),
+    }
+}
+
+fn event_lsn(event: &RecordedEvent) -> u64 {
+    event.event_id.lsn.as_ref().map_or(0, |lsn| lsn.value)
 }
 
 fn validate_limit(limit: Option<u32>, default: u16, maximum: u16, name: &str) -> Result<(), DiagnosticsError> {

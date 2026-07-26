@@ -1682,6 +1682,15 @@ pub struct AdapterCapability {
     pub attachment_method: ::core::option::Option<AttachmentMethod>,
     #[prost(enumeration = "FailureCode", repeated, tag = "9")]
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "10")]
+    pub diagnostic_reporting: ::core::option::Option<
+        AdapterDiagnosticReportingCapability,
+    >,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterDiagnosticReportingCapability {
+    #[prost(string, repeated, tag = "1")]
+    pub diagnostic_codes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AttachmentMethod {
@@ -1856,6 +1865,34 @@ pub struct BootstrapResult {
     pub principal: ::core::option::Option<PrincipalCredential>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterDiagnosticPayload {
+    #[prost(string, tag = "1")]
+    pub code: ::prost::alloc::string::String,
+    #[prost(enumeration = "AdapterDiagnosticSeverity", tag = "2")]
+    pub severity: i32,
+    #[prost(message, optional, tag = "3")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "OperationKind", tag = "4")]
+    pub operation_kind: i32,
+    #[prost(uint32, tag = "5")]
+    pub count: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterDiagnosticDetail {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "AdapterDiagnosticSeverity", tag = "3")]
+    pub severity: i32,
+    #[prost(enumeration = "OperationKind", tag = "4")]
+    pub operation_kind: i32,
+    #[prost(uint32, tag = "5")]
+    pub count: u32,
+    #[prost(message, optional, tag = "6")]
+    pub adapter_observed_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AuditRecord {
     #[prost(message, optional, tag = "1")]
     pub audit_event_id: ::core::option::Option<EventId>,
@@ -1885,6 +1922,8 @@ pub struct AuditRecord {
     pub source_event_id: ::core::option::Option<EventId>,
     #[prost(string, tag = "14")]
     pub source_network: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "15")]
+    pub adapter_diagnostic: ::core::option::Option<AdapterDiagnosticDetail>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DiagnosticsQuery {
@@ -2040,6 +2079,8 @@ pub struct AdapterStatusQuery {
     pub after_adapter_id: ::prost::alloc::string::String,
     #[prost(uint32, optional, tag = "3")]
     pub limit: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub recent_diagnostic_limit: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterCapabilitySummary {
@@ -2065,8 +2106,12 @@ pub struct AdapterCapabilitySummary {
     pub attachment_descriptor_content_type: i32,
     #[prost(enumeration = "FailureCode", repeated, tag = "10")]
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "11")]
+    pub diagnostic_reporting: ::core::option::Option<
+        AdapterDiagnosticReportingCapability,
+    >,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {
     #[prost(message, optional, tag = "1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
@@ -2092,6 +2137,8 @@ pub struct AdapterStatus {
     pub offline_session_count: u32,
     #[prost(uint32, tag = "12")]
     pub failed_session_count: u32,
+    #[prost(message, repeated, tag = "13")]
+    pub recent_diagnostics: ::prost::alloc::vec::Vec<AuditRecord>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatusPage {
@@ -2165,6 +2212,7 @@ pub enum AuditEventKind {
     AdapterFailed = 35,
     LockdownEntered = 36,
     LockdownExited = 37,
+    AdapterDiagnosticReported = 38,
 }
 impl AuditEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2221,6 +2269,9 @@ impl AuditEventKind {
             Self::AdapterFailed => "AUDIT_EVENT_KIND_ADAPTER_FAILED",
             Self::LockdownEntered => "AUDIT_EVENT_KIND_LOCKDOWN_ENTERED",
             Self::LockdownExited => "AUDIT_EVENT_KIND_LOCKDOWN_EXITED",
+            Self::AdapterDiagnosticReported => {
+                "AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED"
+            }
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2284,6 +2335,41 @@ impl AuditEventKind {
             "AUDIT_EVENT_KIND_ADAPTER_FAILED" => Some(Self::AdapterFailed),
             "AUDIT_EVENT_KIND_LOCKDOWN_ENTERED" => Some(Self::LockdownEntered),
             "AUDIT_EVENT_KIND_LOCKDOWN_EXITED" => Some(Self::LockdownExited),
+            "AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED" => {
+                Some(Self::AdapterDiagnosticReported)
+            }
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AdapterDiagnosticSeverity {
+    Unspecified = 0,
+    Info = 1,
+    Warning = 2,
+    Error = 3,
+}
+impl AdapterDiagnosticSeverity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ADAPTER_DIAGNOSTIC_SEVERITY_UNSPECIFIED",
+            Self::Info => "ADAPTER_DIAGNOSTIC_SEVERITY_INFO",
+            Self::Warning => "ADAPTER_DIAGNOSTIC_SEVERITY_WARNING",
+            Self::Error => "ADAPTER_DIAGNOSTIC_SEVERITY_ERROR",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADAPTER_DIAGNOSTIC_SEVERITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ADAPTER_DIAGNOSTIC_SEVERITY_INFO" => Some(Self::Info),
+            "ADAPTER_DIAGNOSTIC_SEVERITY_WARNING" => Some(Self::Warning),
+            "ADAPTER_DIAGNOSTIC_SEVERITY_ERROR" => Some(Self::Error),
             _ => None,
         }
     }
@@ -2467,6 +2553,32 @@ pub mod observation_request {
 pub struct ObservationResult {
     #[prost(message, optional, tag = "1")]
     pub event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdapterDiagnosticReport {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(message, repeated, tag = "3")]
+    pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
+    #[prost(message, optional, tag = "4")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration = "FailureCode", tag = "5")]
+    pub failure_code: i32,
+    #[prost(message, optional, tag = "6")]
+    pub payload: ::core::option::Option<PayloadEnvelope>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterDiagnosticReportResult {
+    #[prost(bool, tag = "1")]
+    pub accepted: bool,
+    #[prost(message, optional, tag = "2")]
+    pub observation_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag = "3")]
+    pub audit_event_id: ::core::option::Option<EventId>,
+    #[prost(enumeration = "FailureCode", tag = "4")]
+    pub failure_code: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReceiveRequest {

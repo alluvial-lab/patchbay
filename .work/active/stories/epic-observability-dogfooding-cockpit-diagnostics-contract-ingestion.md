@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-cockpit-diagnostics-contract-ingestion
 kind: story
-stage: implementing
+stage: done
 tags: [observability, dogfooding, protocol]
 parent: epic-observability-dogfooding-cockpit-diagnostics
 depends_on: []
@@ -50,3 +50,27 @@ validation, redaction, pagination, and error behavior.
 No sibling dependency. It consumes the upstream core-diagnostics audited append,
 audit registry, projection, and `QueryDiagnostics` surface; do not create a
 second diagnostics log, table, or query service.
+
+## Implementation notes
+
+- Added the generated typed adapter diagnostic payload/report RPC and bounded
+  capability/status fields. Existing `AdapterCapability` already used field 10
+  for `known_failure_modes`, so the diagnostic capability was appended at field
+  11 in `AdapterCapabilitySummary` rather than reusing a wire number; this
+  preserves the landed core-diagnostics contract.
+- Added authenticated report validation and `Storage::append_audited` ingestion:
+  the adapter attachment supplies identity, endpoint, domain, and generation;
+  the payload contributes only the allowlisted code/severity/operation/count.
+  The source Observation and `ADAPTER_DIAGNOSTIC_REPORTED` audit record are one
+  transaction, with safe generated detail only.
+- Extended the existing diagnostics fold with newest-first recent records,
+  bounded to 100 in the projection and 1..=100 per query. Absent
+  `recent_diagnostic_limit` remains zero. Diagnostic records never participate
+  in lifecycle or liveness projections.
+- Added lexical registration validation for the adapter-declared diagnostic
+  code list (maximum 128 codes, `[a-z0-9_]{1,64}`).
+- Verification: `cargo check --workspace --all-targets`, targeted core/server
+  tests, contracts TypeScript build, `check:vectors`, and `check:models` pass.
+  `buf lint` must be run from `contracts/proto` because that is where this repo's
+  `buf.yaml` lives. Unrelated `cli/` edits from the concurrent worker were not
+  staged or modified.

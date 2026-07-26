@@ -16,6 +16,11 @@ message AdapterCapability {
   IdempotencyStrength idempotency_strength = 7;
   AttachmentMethod attachment_method = 8;
   repeated FailureCode known_failure_modes = 9;
+  AdapterDiagnosticReportingCapability diagnostic_reporting = 10;
+}
+
+message AdapterDiagnosticReportingCapability {
+  repeated string diagnostic_codes = 1;
 }
 
 enum IdempotencyStrength {

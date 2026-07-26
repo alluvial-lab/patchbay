@@ -492,6 +492,7 @@ fn audit_record_from_draft(
         correlation_id: draft.correlation_id,
         source_event_id: draft.source_event_id,
         source_network: draft.source_network,
+        adapter_diagnostic: draft.adapter_diagnostic,
     })
 }
 

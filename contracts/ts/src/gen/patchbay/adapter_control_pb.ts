@@ -4,13 +4,15 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { AdapterRegistration } from "./adapter_pb.js";
 import { file_patchbay_adapter } from "./adapter_pb.js";
-import type { AdapterId, AuthorityDomainId, EventId, Generation, Lsn, RuntimeSessionId, TypedCorrelation } from "./common_pb.js";
+import type { AdapterId, AuthorityDomainId, EventId, Generation, Lsn, PayloadEnvelope, RuntimeSessionId, TargetScope, TypedCorrelation } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { Observation } from "./observations_pb.js";
 import { file_patchbay_observations } from "./observations_pb.js";
-import type { Operation } from "./operations_pb.js";
+import type { FailureCode, Operation } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
 import type { SessionActivityState, SessionConnectivityState } from "./sessions_pb.js";
 import { file_patchbay_sessions } from "./sessions_pb.js";
@@ -20,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/adapter_control.proto.
  */
 export const file_patchbay_adapter_control: GenFile = /*@__PURE__*/
-  fileDesc("Ch5wYXRjaGJheS9hZGFwdGVyX2NvbnRyb2wucHJvdG8SCHBhdGNoYmF5ImEKDUF0dGFjaFJlcXVlc3QSMwoMcmVnaXN0cmF0aW9uGAEgASgLMh0ucGF0Y2hiYXkuQWRhcHRlclJlZ2lzdHJhdGlvbhIbChNhdHRhY2htZW50X2V2aWRlbmNlGAIgASgMImIKDEF0dGFjaFJlc3VsdBIQCghhY2NlcHRlZBgBIAEoCBIqCg9hdHRhY2hfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEhQKDGZhaWx1cmVfY29kZRgDIAEoCSKVAwoNU2Vzc2lvblJlcG9ydBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjgKDGNvbm5lY3Rpdml0eRgFIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRIwCghhY3Rpdml0eRgGIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlEg8KB3Byb2plY3QYByABKAkSCwoDY3dkGAggASgJEgwKBG5hbWUYCSABKAkSMAoMc3Bhd25fb3JpZ2luGAogASgLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhINCgVtb2RlbBgLIAEoCSK4AQoST2JzZXJ2YXRpb25SZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIxCg5zZXNzaW9uX3JlcG9ydBgCIAEoCzIXLnBhdGNoYmF5LlNlc3Npb25SZXBvcnRIABImCgVldmVudBgDIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uSABCDQoLb2JzZXJ2YXRpb24iOAoRT2JzZXJ2YXRpb25SZXN1bHQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkIlgKDlJlY2VpdmVSZXF1ZXN0EicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSHQoGY3Vyc29yGAIgASgLMg0ucGF0Y2hiYXkuTHNuImAKCERlbGl2ZXJ5EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbhIsChFkZWxpdmVyeV9ldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQy5wEKFUFkYXB0ZXJDb250cm9sU2VydmljZRI5CgZBdHRhY2gSFy5wYXRjaGJheS5BdHRhY2hSZXF1ZXN0GhYucGF0Y2hiYXkuQXR0YWNoUmVzdWx0Ek4KEUluZ2VzdE9ic2VydmF0aW9uEhwucGF0Y2hiYXkuT2JzZXJ2YXRpb25SZXF1ZXN0GhsucGF0Y2hiYXkuT2JzZXJ2YXRpb25SZXN1bHQSQwoRUmVjZWl2ZURlbGl2ZXJpZXMSGC5wYXRjaGJheS5SZWNlaXZlUmVxdWVzdBoSLnBhdGNoYmF5LkRlbGl2ZXJ5MAFiBnByb3RvMw", [file_patchbay_adapter, file_patchbay_common, file_patchbay_observations, file_patchbay_operations, file_patchbay_sessions]);
+  fileDesc("Ch5wYXRjaGJheS9hZGFwdGVyX2NvbnRyb2wucHJvdG8SCHBhdGNoYmF5ImEKDUF0dGFjaFJlcXVlc3QSMwoMcmVnaXN0cmF0aW9uGAEgASgLMh0ucGF0Y2hiYXkuQWRhcHRlclJlZ2lzdHJhdGlvbhIbChNhdHRhY2htZW50X2V2aWRlbmNlGAIgASgMImIKDEF0dGFjaFJlc3VsdBIQCghhY2NlcHRlZBgBIAEoCBIqCg9hdHRhY2hfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEhQKDGZhaWx1cmVfY29kZRgDIAEoCSKVAwoNU2Vzc2lvblJlcG9ydBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjgKDGNvbm5lY3Rpdml0eRgFIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRIwCghhY3Rpdml0eRgGIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlEg8KB3Byb2plY3QYByABKAkSCwoDY3dkGAggASgJEgwKBG5hbWUYCSABKAkSMAoMc3Bhd25fb3JpZ2luGAogASgLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhINCgVtb2RlbBgLIAEoCSK4AQoST2JzZXJ2YXRpb25SZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIxCg5zZXNzaW9uX3JlcG9ydBgCIAEoCzIXLnBhdGNoYmF5LlNlc3Npb25SZXBvcnRIABImCgVldmVudBgDIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uSABCDQoLb2JzZXJ2YXRpb24iOAoRT2JzZXJ2YXRpb25SZXN1bHQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkIrwCChdBZGFwdGVyRGlhZ25vc3RpY1JlcG9ydBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSKwoMdGFyZ2V0X3Njb3BlGAIgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSMAoMY29ycmVsYXRpb25zGAMgAygLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhIvCgtvYnNlcnZlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoMZmFpbHVyZV9jb2RlGAUgASgOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSKgoHcGF5bG9hZBgGIAEoCzIZLnBhdGNoYmF5LlBheWxvYWRFbnZlbG9wZSK6AQodQWRhcHRlckRpYWdub3N0aWNSZXBvcnRSZXN1bHQSEAoIYWNjZXB0ZWQYASABKAgSLwoUb2JzZXJ2YXRpb25fZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEikKDmF1ZGl0X2V2ZW50X2lkGAMgASgLMhEucGF0Y2hiYXkuRXZlbnRJZBIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZSJYCg5SZWNlaXZlUmVxdWVzdBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEh0KBmN1cnNvchgCIAEoCzINLnBhdGNoYmF5LkxzbiJgCghEZWxpdmVyeRImCglvcGVyYXRpb24YASABKAsyEy5wYXRjaGJheS5PcGVyYXRpb24SLAoRZGVsaXZlcnlfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkMsgCChVBZGFwdGVyQ29udHJvbFNlcnZpY2USOQoGQXR0YWNoEhcucGF0Y2hiYXkuQXR0YWNoUmVxdWVzdBoWLnBhdGNoYmF5LkF0dGFjaFJlc3VsdBJOChFJbmdlc3RPYnNlcnZhdGlvbhIcLnBhdGNoYmF5Lk9ic2VydmF0aW9uUmVxdWVzdBobLnBhdGNoYmF5Lk9ic2VydmF0aW9uUmVzdWx0El8KEVJlcG9ydERpYWdub3N0aWNzEiEucGF0Y2hiYXkuQWRhcHRlckRpYWdub3N0aWNSZXBvcnQaJy5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydFJlc3VsdBJDChFSZWNlaXZlRGVsaXZlcmllcxIYLnBhdGNoYmF5LlJlY2VpdmVSZXF1ZXN0GhIucGF0Y2hiYXkuRGVsaXZlcnkwAWIGcHJvdG8z", [file_google_protobuf_timestamp, file_patchbay_adapter, file_patchbay_common, file_patchbay_observations, file_patchbay_operations, file_patchbay_sessions]);
 
 /**
  * @generated from message patchbay.AttachRequest
@@ -192,6 +194,80 @@ export const ObservationResultSchema: GenMessage<ObservationResult> = /*@__PURE_
   messageDesc(file_patchbay_adapter_control, 4);
 
 /**
+ * @generated from message patchbay.AdapterDiagnosticReport
+ */
+export type AdapterDiagnosticReport = Message<"patchbay.AdapterDiagnosticReport"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from field: patchbay.TargetScope target_scope = 2;
+   */
+  targetScope?: TargetScope | undefined;
+
+  /**
+   * @generated from field: repeated patchbay.TypedCorrelation correlations = 3;
+   */
+  correlations: TypedCorrelation[];
+
+  /**
+   * @generated from field: google.protobuf.Timestamp observed_at = 4;
+   */
+  observedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: patchbay.FailureCode failure_code = 5;
+   */
+  failureCode: FailureCode;
+
+  /**
+   * @generated from field: patchbay.PayloadEnvelope payload = 6;
+   */
+  payload?: PayloadEnvelope | undefined;
+};
+
+/**
+ * Describes the message patchbay.AdapterDiagnosticReport.
+ * Use `create(AdapterDiagnosticReportSchema)` to create a new message.
+ */
+export const AdapterDiagnosticReportSchema: GenMessage<AdapterDiagnosticReport> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter_control, 5);
+
+/**
+ * @generated from message patchbay.AdapterDiagnosticReportResult
+ */
+export type AdapterDiagnosticReportResult = Message<"patchbay.AdapterDiagnosticReportResult"> & {
+  /**
+   * @generated from field: bool accepted = 1;
+   */
+  accepted: boolean;
+
+  /**
+   * @generated from field: patchbay.EventId observation_event_id = 2;
+   */
+  observationEventId?: EventId | undefined;
+
+  /**
+   * @generated from field: patchbay.EventId audit_event_id = 3;
+   */
+  auditEventId?: EventId | undefined;
+
+  /**
+   * @generated from field: patchbay.FailureCode failure_code = 4;
+   */
+  failureCode: FailureCode;
+};
+
+/**
+ * Describes the message patchbay.AdapterDiagnosticReportResult.
+ * Use `create(AdapterDiagnosticReportResultSchema)` to create a new message.
+ */
+export const AdapterDiagnosticReportResultSchema: GenMessage<AdapterDiagnosticReportResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter_control, 6);
+
+/**
  * @generated from message patchbay.ReceiveRequest
  */
 export type ReceiveRequest = Message<"patchbay.ReceiveRequest"> & {
@@ -211,7 +287,7 @@ export type ReceiveRequest = Message<"patchbay.ReceiveRequest"> & {
  * Use `create(ReceiveRequestSchema)` to create a new message.
  */
 export const ReceiveRequestSchema: GenMessage<ReceiveRequest> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 5);
+  messageDesc(file_patchbay_adapter_control, 7);
 
 /**
  * @generated from message patchbay.Delivery
@@ -233,7 +309,7 @@ export type Delivery = Message<"patchbay.Delivery"> & {
  * Use `create(DeliverySchema)` to create a new message.
  */
 export const DeliverySchema: GenMessage<Delivery> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 6);
+  messageDesc(file_patchbay_adapter_control, 8);
 
 /**
  * The adapter-facing service. Adapters are clients of the authoritative core
@@ -258,6 +334,14 @@ export const AdapterControlService: GenService<{
     methodKind: "unary";
     input: typeof ObservationRequestSchema;
     output: typeof ObservationResultSchema;
+  },
+  /**
+   * @generated from rpc patchbay.AdapterControlService.ReportDiagnostics
+   */
+  reportDiagnostics: {
+    methodKind: "unary";
+    input: typeof AdapterDiagnosticReportSchema;
+    output: typeof AdapterDiagnosticReportResultSchema;
   },
   /**
    * @generated from rpc patchbay.AdapterControlService.ReceiveDeliveries

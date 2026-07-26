@@ -21,8 +21,8 @@
 //! properties.
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuditEventKind, AuditPage, AuthorityDomainId, CommandId, EndpointId, EventId,
-    FailureCode, IdempotencyKey, Lsn, StoredEventPayload, TargetScope,
+    ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
+    EndpointId, EventId, FailureCode, IdempotencyKey, Lsn, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -95,6 +95,7 @@ pub struct AuditRecordDraft {
     pub correlation_id: String,
     pub source_event_id: Option<EventId>,
     pub source_network: String,
+    pub adapter_diagnostic: Option<AdapterDiagnosticDetail>,
 }
 
 impl AuditRecordDraft {
@@ -114,6 +115,7 @@ impl AuditRecordDraft {
             correlation_id: String::new(),
             source_event_id: None,
             source_network: String::new(),
+            adapter_diagnostic: None,
         }
     }
 

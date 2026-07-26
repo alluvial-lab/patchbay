@@ -7,13 +7,15 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, AdapterId, AttachRequest, AttachResult, AuthorityDomainId, Delivery,
-    Generation, ObservationRequest, ObservationResult, Operation, OperationState, ReceiveRequest,
+    observation_request, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
+    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
+    ObservationRequest, ObservationResult, Operation, OperationState, ReceiveRequest,
     SessionActivityState, SessionConnectivityState, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
+    diagnostics::{ingest_adapter_diagnostic, validate_adapter_diagnostic_report},
     adapter::{self, AdapterRegistry},
     authority::hash_principal_credential,
     session::{self, SessionRegistry, SessionReport},
@@ -551,6 +553,50 @@ where
                 .map_err(|_| Status::internal("generated invalid adapter attachment token"))?,
         );
         Ok(response)
+    }
+
+    async fn report_diagnostics(
+        &self,
+        request: Request<AdapterDiagnosticReport>,
+    ) -> Result<Response<AdapterDiagnosticReportResult>, Status> {
+        let authenticated_adapter = self.authenticate_request(&request).await?;
+        let report = request.into_inner();
+        let registration = {
+            let adapters = self.adapters.lock().await;
+            adapters
+                .get(&authenticated_adapter)
+                .ok_or_else(|| Status::unauthenticated("adapter attachment is not current; reattach required"))?
+                .registration
+                .clone()
+        };
+        let validated = match validate_adapter_diagnostic_report(
+            report,
+            &authenticated_adapter,
+            &registration,
+            crate::identity::now_timestamp()?,
+        ) {
+            Ok(validated) => validated,
+            Err(_) => {
+                return Ok(Response::new(AdapterDiagnosticReportResult {
+                    accepted: false,
+                    failure_code: FailureCode::ValidationFailed as i32,
+                    ..AdapterDiagnosticReportResult::default()
+                }));
+            }
+        };
+        let receipt = ingest_adapter_diagnostic(
+            &self.storage,
+            &self.authority_domain_id,
+            validated,
+        )
+        .await
+        .map_err(map_storage_error_to_status)?;
+        Ok(Response::new(AdapterDiagnosticReportResult {
+            accepted: true,
+            observation_event_id: Some(receipt.observation_event_id),
+            audit_event_id: Some(receipt.audit_event_id),
+            failure_code: FailureCode::Unspecified as i32,
+        }))
     }
 
     async fn ingest_observation(

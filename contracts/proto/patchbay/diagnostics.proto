@@ -48,6 +48,31 @@ enum AuditEventKind {
   AUDIT_EVENT_KIND_ADAPTER_FAILED = 35;
   AUDIT_EVENT_KIND_LOCKDOWN_ENTERED = 36;
   AUDIT_EVENT_KIND_LOCKDOWN_EXITED = 37;
+  AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED = 38;
+}
+
+enum AdapterDiagnosticSeverity {
+  ADAPTER_DIAGNOSTIC_SEVERITY_UNSPECIFIED = 0;
+  ADAPTER_DIAGNOSTIC_SEVERITY_INFO = 1;
+  ADAPTER_DIAGNOSTIC_SEVERITY_WARNING = 2;
+  ADAPTER_DIAGNOSTIC_SEVERITY_ERROR = 3;
+}
+
+message AdapterDiagnosticPayload {
+  string code = 1;
+  AdapterDiagnosticSeverity severity = 2;
+  Generation adapter_generation = 3;
+  OperationKind operation_kind = 4;
+  uint32 count = 5;
+}
+
+message AdapterDiagnosticDetail {
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
+  AdapterDiagnosticSeverity severity = 3;
+  OperationKind operation_kind = 4;
+  uint32 count = 5;
+  google.protobuf.Timestamp adapter_observed_at = 6;
 }
 
 message AuditRecord {
@@ -65,6 +90,7 @@ message AuditRecord {
   string correlation_id = 12;
   EventId source_event_id = 13;
   string source_network = 14;
+  AdapterDiagnosticDetail adapter_diagnostic = 15;
 }
 
 message DiagnosticsQuery {
@@ -159,6 +185,7 @@ message AdapterStatusQuery {
   repeated AdapterId adapter_ids = 1;
   string after_adapter_id = 2;
   optional uint32 limit = 3;
+  optional uint32 recent_diagnostic_limit = 4;
 }
 
 message AdapterCapabilitySummary {
@@ -172,6 +199,7 @@ message AdapterCapabilitySummary {
   string attachment_method_kind = 8;
   PayloadContentType attachment_descriptor_content_type = 9;
   repeated FailureCode known_failure_modes = 10;
+  AdapterDiagnosticReportingCapability diagnostic_reporting = 11;
 }
 
 message AdapterStatus {
@@ -187,6 +215,7 @@ message AdapterStatus {
   uint32 stale_session_count = 10;
   uint32 offline_session_count = 11;
   uint32 failed_session_count = 12;
+  repeated AuditRecord recent_diagnostics = 13;
 }
 
 message AdapterStatusPage {

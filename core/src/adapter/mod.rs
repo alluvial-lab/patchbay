@@ -441,10 +441,23 @@ fn validate_registration(registration: &AdapterRegistration) -> Result<(), Adapt
             "missing adapter_generation".into(),
         ));
     }
-    if registration.capability.is_none() {
-        return Err(AdapterError::InvalidRegistration(
-            "missing capability".into(),
-        ));
+    let capability = registration.capability.as_ref().ok_or_else(|| {
+        AdapterError::InvalidRegistration("missing capability".into())
+    })?;
+    if let Some(reporting) = capability.diagnostic_reporting.as_ref() {
+        if reporting.diagnostic_codes.len() > 128
+            || reporting.diagnostic_codes.iter().any(|code| {
+                code.is_empty()
+                    || code.len() > 64
+                    || !code.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            })
+        {
+            return Err(AdapterError::InvalidRegistration(
+                "diagnostic_codes must contain at most 128 values matching [a-z0-9_]{1,64}".into(),
+            ));
+        }
     }
     Ok(())
 }
