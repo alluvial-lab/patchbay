@@ -29,11 +29,13 @@ The checked-in `buf.gen.yaml` generates:
 - Rust prost code into `rust/src/gen/` via `protoc-gen-prost`.
 - TypeScript Protobuf-ES code into `ts/src/gen/` via `@bufbuild/protoc-gen-es`.
 
-The TypeScript generator is installed by `npm install` in `contracts/ts/`. The Rust prost generator used by `buf generate` is `protoc-gen-prost`:
+The TypeScript generator is installed by `npm install` in `contracts/ts/`. The Rust prost generator used by `buf generate` is `protoc-gen-prost`, **pinned** (the committed artifacts are its 0.5.0 output; a different version will report drift):
 
 ```sh
-cargo install protoc-gen-prost
+cargo install protoc-gen-prost --version 0.5.0 --locked
 ```
+
+Generator-of-record versions: buf 1.71.0, protoc-gen-prost 0.5.0, `@bufbuild/protoc-gen-es` per `ts/package.json`. CI runs the drift check with these pins; bumping a generator means regenerating and committing the new baseline in the same change.
 
 ## Generated-code drift check
 
