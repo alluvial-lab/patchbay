@@ -34,7 +34,8 @@ export async function adapterStatusCommand(
     return id;
   });
   if (new Set(adapterIds).size !== adapterIds.length) throw new Error("adapter ids must be unique");
-  if (options.afterAdapterId === "") throw new Error("--after-adapter-id must not be empty");
+  // Preserve an explicitly supplied opaque cursor, including an empty value;
+  // core owns cursor validation and must distinguish it from omission.
   const limit = parsePositiveLimit(options.limit, 500, "--limit");
   const query = create(DiagnosticsQuerySchema, {
     query: {

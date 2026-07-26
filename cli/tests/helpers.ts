@@ -2,6 +2,7 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
   AuthorityDomainIdSchema,
+  CommandIdSchema,
   EventIdSchema,
   GenerationSchema,
   LoadSnapshotResponseSchema,
@@ -12,6 +13,14 @@ import {
   SessionSchema,
   SessionSnapshotSchema,
   SessionStateSchema,
+  QueryDiagnosticsResponseSchema,
+  SubmissionOutcome,
+  SubmissionResultSchema,
+  OperationState,
+  type AuditPage,
+  type AdapterStatusPage,
+  type CommandInspectionResult,
+  type QueryDiagnosticsResponse,
   type Session,
 } from "@patchbay/contracts";
 import type { CliCredentials } from "../src/credentials.js";
@@ -67,6 +76,27 @@ export function snapshotResponse(sessions: Session[] = [session()]) {
       lsn: create(LsnSchema, { value: 7n }),
     }),
     snapshotPayload: toBinary(SessionSnapshotSchema, snapshot),
+  });
+}
+
+export function diagnosticsResponse(
+  resultCase: "audit" | "command" | "adapters",
+  value: AuditPage | CommandInspectionResult | AdapterStatusPage,
+  overrides: Partial<QueryDiagnosticsResponse> = {},
+): QueryDiagnosticsResponse {
+  return create(QueryDiagnosticsResponseSchema, {
+    ...overrides,
+    submission: overrides.submission ?? create(SubmissionResultSchema, {
+      outcome: SubmissionOutcome.ACCEPTED,
+      commandId: create(CommandIdSchema, { value: "query-command" }),
+      operationState: OperationState.COMPLETED,
+    }),
+    resultEventId: overrides.resultEventId ?? create(EventIdSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: DOMAIN }),
+      lsn: create(LsnSchema, { value: 12n }),
+    }),
+    asOfLsn: overrides.asOfLsn ?? create(LsnSchema, { value: 12n }),
+    result: { case: resultCase, value } as QueryDiagnosticsResponse["result"],
   });
 }
 

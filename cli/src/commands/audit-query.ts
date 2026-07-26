@@ -57,9 +57,9 @@ export async function auditQueryCommand(
     throw new Error("--since must be before --until");
   }
   const limit = parsePositiveLimit(options.limit, 500, "--limit");
-  const beforeEventId = options.beforeEvent
-    ? eventCursor(authorityDomainId, options.beforeEvent, "--before-event")
-    : undefined;
+  const beforeEventId = options.beforeEvent === undefined
+    ? undefined
+    : eventCursor(authorityDomainId, options.beforeEvent, "--before-event");
 
   const query = create(DiagnosticsQuerySchema, {
     query: {

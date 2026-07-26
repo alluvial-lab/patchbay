@@ -37,6 +37,22 @@ interface ParsedArguments {
 }
 
 const BOOLEAN_OPTIONS = new Set(["json"]);
+const DUPLICATE_VALUE_OPTIONS = new Set(["kind", "failure-code", "reason-code"]);
+const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values: readonly string[] }> = {
+  setup: { flags: [], values: ["operator-id", "endpoint-id", "device-id"] },
+  login: { flags: [], values: ["operator-id", "endpoint-id", "device-id"] },
+  logout: { flags: [], values: [] },
+  "session-health": { flags: ["json"], values: [] },
+  instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
+  cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
+  interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
+  "audit-query": { flags: ["json"], values: [
+    "kind", "actor-id", "endpoint-id", "command-id", "target", "failure-code",
+    "reason-code", "since", "until", "before-event", "limit",
+  ] },
+  "inspect-command": { flags: ["json"], values: ["audit-before-event", "audit-limit"] },
+  "adapter-status": { flags: ["json"], values: ["after-adapter-id", "limit"] },
+};
 const VALUE_OPTIONS = new Set([
   "operator-id",
   "endpoint-id",
@@ -76,6 +92,7 @@ export async function run(
     }
 
     const parsed = parseArguments(argv.slice(1));
+    validateCommandOptions(command, parsed);
     const store = new CredentialStore(config.credentialPath);
     const json = parsed.flags.has("json");
 
@@ -288,9 +305,23 @@ export function parseArguments(args: readonly string[]): ParsedArguments {
     if (value === undefined || value.startsWith("--")) {
       throw new Error(`--${rawName} requires a value`);
     }
+    if (DUPLICATE_VALUE_OPTIONS.has(rawName) && parsed.options.has(rawName)) {
+      throw new Error(`duplicate option: --${rawName}`);
+    }
     parsed.options.set(rawName, value);
   }
   return parsed;
+}
+
+function validateCommandOptions(command: string, parsed: ParsedArguments): void {
+  const grammar = COMMAND_OPTION_GRAMMAR[command];
+  if (!grammar) return;
+  for (const flag of parsed.flags) {
+    if (!grammar.flags.includes(flag)) throw new Error(`unknown option: --${flag} for ${command}`);
+  }
+  for (const option of parsed.options.keys()) {
+    if (!grammar.values.includes(option)) throw new Error(`unknown option: --${option} for ${command}`);
+  }
 }
 
 export function usage(): string {
@@ -316,11 +347,16 @@ export function usage(): string {
     "  audit-query [--kind K[,K...]] [--actor-id ID] [--endpoint-id ID] [--command-id ID]",
     "      [--target TARGET] [--failure-code C[,C...]] [--reason-code C[,C...]]",
     "      [--since RFC3339] [--until RFC3339] [--before-event LSN] [--limit 1..500] [--json]",
-    "      Query the redacted audit projection; --until and --before-event are exclusive.",
+    "      Query redacted audit records. --since is inclusive; --until and --before-event are exclusive.",
+    "      TARGET is authority-domain, fleet, actor=ID, adapter=ID, group=VALUE, resource=ID, or",
+    "      adapter=...;scope=...;runtime=...;generation=...; canonical runtime identity is percent-encoded.",
+    "      Enum lists are comma-separated.",
     "  inspect-command <command-id> [--audit-before-event LSN] [--audit-limit 1..200] [--json]",
-    "      Inspect command lifecycle and its redacted audit projection.",
+    "      Inspect command lifecycle and its redacted audit projection; the audit cursor is exclusive.",
     "  adapter-status [adapter-id ...] [--after-adapter-id ID] [--limit 1..500] [--json]",
-    "      Show adapter registry status; the adapter cursor is opaque and exclusive.",
+    "      Show adapter registry status; the opaque adapter cursor is exclusive.",
+    "      Empty results are successful (exit 0); exit codes are 0 success, 1 local/transport/protocol error,",
+    "      2 rejected before acceptance, 3 failed execution, and 4 unknown submission outcome.",
     "",
     "Target may be a unique runtime session id/name or the stable identity printed by",
     "session-health. Supply secrets with PATCHBAY_SETUP_SECRET and",

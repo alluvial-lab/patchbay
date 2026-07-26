@@ -32,9 +32,9 @@ export async function inspectCommandCommand(
 ): Promise<number> {
   if (!options.commandId.trim()) throw new Error("inspect-command command id must not be empty");
   const auditLimit = parsePositiveLimit(options.auditLimit, 200, "--audit-limit");
-  const auditBeforeEventId = options.auditBeforeEvent
-    ? eventCursor(authorityDomainId, options.auditBeforeEvent, "--audit-before-event")
-    : undefined;
+  const auditBeforeEventId = options.auditBeforeEvent === undefined
+    ? undefined
+    : eventCursor(authorityDomainId, options.auditBeforeEvent, "--audit-before-event");
   const query = create(DiagnosticsQuerySchema, {
     query: {
       case: "command",

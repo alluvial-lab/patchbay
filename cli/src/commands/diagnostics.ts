@@ -1,6 +1,7 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate, type Timestamp } from "@bufbuild/protobuf/wkt";
 import {
+  AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
   AdapterSnapshotSupport,
   AuditEventKind,
@@ -91,26 +92,18 @@ export async function runDiagnosticsCommand<K extends DiagnosticsResultCase>(
   if (!response.submission) throw new Error("core returned a diagnostics response without submission");
   const submission = response.submission;
   if (submission.outcome !== SubmissionOutcome.ACCEPTED) {
-    if (spec.json) {
-      output.stdout(JSON.stringify({
-        submission: submissionView(submission),
-        resultEventId: null,
-        asOfLsn: null,
-        result: null,
-      }));
-    } else {
-      const view = submissionView(submission);
-      output.stdout([
-        `outcome=${view.outcome}`,
-        `command=${view.commandId ?? "-"}`,
-        `state=${view.operationState}`,
-        `failure=${view.failureCode ?? "-"}`,
-        `lsn=${view.acceptedLsn ?? "-"}`,
-        `deduplicated=${String(view.deduplicated)}`,
-      ].join(" "));
-      if (view.diagnosticMessage) output.stderr(view.diagnosticMessage);
-    }
+    emitSubmissionFailure(submission, spec.json, output);
     return exitCodeForSubmission(submission.outcome);
+  }
+
+  // An accepted query still has a lifecycle. Only a completed query owns a
+  // result envelope; an execution failure must retain its submission detail.
+  if (submission.operationState === OperationState.FAILED) {
+    emitSubmissionFailure(submission, spec.json, output);
+    return 3;
+  }
+  if (submission.operationState !== OperationState.COMPLETED) {
+    throw new Error(`core returned an unexpected diagnostics operation state: ${enumLabel(OperationState, submission.operationState)}`);
   }
 
   const resultEventId = response.resultEventId;
@@ -166,13 +159,6 @@ export function eventCursor(authorityDomainId: string, raw: string | undefined, 
   });
 }
 
-export function makeEventCursor(authorityDomainId: string, raw: string, option: string): EventId {
-  if (!/^[1-9]\d*$/.test(raw)) throw new Error(`${option} must be a positive decimal LSN`);
-  const lsn = BigInt(raw);
-  if (lsn > MAX_U64) throw new Error(`${option} exceeds the uint64 LSN range`);
-  return eventCursor(authorityDomainId, raw, option)!;
-}
-
 export function parseGeneratedEnumList(
   registry: Record<string | number, string | number>,
   raw: string | undefined,
@@ -191,7 +177,8 @@ export function parseGeneratedEnumList(
     if (!normalized) throw new Error(`${option} contains an empty value`);
     const value = names.get(normalized);
     if (value === undefined || value === 0) throw new Error(`${option} contains an unknown or unspecified value: ${part}`);
-    if (!values.includes(value)) values.push(value);
+    if (values.includes(value)) throw new Error(`${option} contains a duplicate value: ${part}`);
+    values.push(value);
   }
   return values;
 }
@@ -246,6 +233,14 @@ export interface AuditRecordView {
   correlationId: string | null;
   sourceEventId: ReturnType<typeof eventIdView>;
   sourceNetwork: string | null;
+  adapterDiagnostic: {
+    adapterId: string | null;
+    adapterGeneration: string | null;
+    severity: string;
+    operationKind: string;
+    count: number;
+    adapterObservedAt: string | null;
+  } | null;
 }
 
 export function auditRecordView(record: AuditRecord): AuditRecordView {
@@ -264,6 +259,14 @@ export function auditRecordView(record: AuditRecord): AuditRecordView {
     correlationId: record.correlationId || null,
     sourceEventId: eventIdView(record.sourceEventId),
     sourceNetwork: record.sourceNetwork || null,
+    adapterDiagnostic: record.adapterDiagnostic ? {
+      adapterId: record.adapterDiagnostic.adapterId?.value || null,
+      adapterGeneration: record.adapterDiagnostic.adapterGeneration?.value.toString() ?? null,
+      severity: enumLabel(AdapterDiagnosticSeverity, record.adapterDiagnostic.severity),
+      operationKind: enumLabel(OperationKind, record.adapterDiagnostic.operationKind),
+      count: record.adapterDiagnostic.count,
+      adapterObservedAt: timestampView(record.adapterDiagnostic.adapterObservedAt),
+    } : null,
   };
 }
 
@@ -335,12 +338,34 @@ function bytesHex(value: Uint8Array): string {
   return Buffer.from(value).toString("hex");
 }
 
-function normalizeEnumName(value: string): string {
-  return value.trim().replace(/-/g, "_").toUpperCase();
+function emitSubmissionFailure(
+  submission: NonNullable<import("@patchbay/contracts").QueryDiagnosticsResponse["submission"]>,
+  json: boolean,
+  output: CliOutput,
+): void {
+  const view = submissionView(submission);
+  if (json) {
+    output.stdout(JSON.stringify({
+      submission: view,
+      resultEventId: null,
+      asOfLsn: null,
+      result: null,
+    }));
+    return;
+  }
+  output.stdout([
+    `outcome=${view.outcome}`,
+    `command=${view.commandId ?? "-"}`,
+    `state=${view.operationState}`,
+    `failure=${view.failureCode ?? "-"}`,
+    `lsn=${view.acceptedLsn ?? "-"}`,
+    `deduplicated=${String(view.deduplicated)}`,
+  ].join(" "));
+  if (view.diagnosticMessage) output.stderr(view.diagnosticMessage);
 }
 
-export function enumDisplay(registry: Record<number, string>, value: number): string {
-  return enumLabel(registry, value);
+function normalizeEnumName(value: string): string {
+  return value.trim().replace(/-/g, "_").toUpperCase();
 }
 
 export function adapterStatusPageView(page: AdapterStatusPage) {
@@ -363,8 +388,12 @@ export function adapterStatusPageView(page: AdapterStatusPage) {
         attachmentMethodKind: adapter.capability.attachmentMethodKind || null,
         attachmentDescriptorContentType: enumLabel(PayloadContentTypeRegistry, adapter.capability.attachmentDescriptorContentType),
         knownFailureModes: adapter.capability.knownFailureModes.map((value) => enumLabel(FailureCode, value)),
+        diagnosticReporting: adapter.capability.diagnosticReporting ? {
+          diagnosticCodes: [...adapter.capability.diagnosticReporting.diagnosticCodes],
+        } : null,
       } : null,
       lastLifecycleRecord: adapter.lastLifecycleRecord ? auditRecordView(adapter.lastLifecycleRecord) : null,
+      recentDiagnostics: adapter.recentDiagnostics.map(auditRecordView),
       liveSessionCount: adapter.liveSessionCount,
       staleSessionCount: adapter.staleSessionCount,
       offlineSessionCount: adapter.offlineSessionCount,

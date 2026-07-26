@@ -122,20 +122,36 @@ The responsive web cockpit prioritizes: a readable session list on phone; clear 
 
 ### CLI
 
-The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics.
+The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics. It never touches persistence directly; diagnostic reads are authority-domain `query` Operations handled by core (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery).
 
-The committed v0.1.0 diagnostic surface is `session-health`, a read-only projection of canonical session state with script-facing output. The CLI is a control surface and never touches persistence directly; core-owned reads remain behind the storage port (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery). The broader core-diagnostics query surface is reserved post-v0.1.0 rather than simulated from incomplete local data.
+The diagnostic commands are:
 
-| Command | v0.1.0 disposition | Surface / data source |
+| Command | Flags | Projection |
 |---|---|---|
-| `audit-query` | Reserved pending core-diagnostics. The v0.1.0 stub exits non-zero with a prerequisite message. | Future filter over a durable, queryable audit log by actor / command / target / time / outcome. |
-| `inspect-command <id>` | Reserved pending core-diagnostics. The v0.1.0 stub exits non-zero with a prerequisite message. | Future lifecycle + redacted audit-trail projection for one command, read via a core `query` Operation. |
-| `session-health` | Committed v0.1.0. | Session connectivity × activity axes — the full canonical `SessionConnectivityState` × `SessionActivityState` registries — for one or all sessions. |
-| `adapter-status` | Reserved pending core-diagnostics. The v0.1.0 stub exits non-zero with a prerequisite message. | Future adapter registry and redacted capability-manifest projection. |
+| `audit-query` | `--kind`, `--actor-id`, `--endpoint-id`, `--command-id`, `--target`, `--failure-code`, `--reason-code`, `--since`, `--until`, `--before-event`, `--limit 1..500`, `--json` | Redacted audit records and `{ hasMore, nextBeforeEvent }`; omitted limit uses the core default of 100 and the maximum is 500. |
+| `inspect-command <command-id>` | `--audit-before-event`, `--audit-limit 1..200`, `--json` | Command summary, lifecycle history, and nested redacted audit page; the command-related audit default is 50 and the maximum is 200. |
+| `adapter-status [adapter-id ...]` | `--after-adapter-id`, `--limit 1..500`, `--json` | Redacted adapter status, capabilities, recent diagnostics, and `{ hasMore, nextAfterAdapterId }`; omitted limit uses the core default of 100 and the maximum is 500. |
+| `session-health [session-id]` | `--json` | Session connectivity × activity axes — the full canonical registries — for one or all sessions. |
 
-When `inspect-command` is promoted, its delivery trace remains a **projection**, not an authoritative command state; canonical `CommandState` stays as defined in `docs/PROTOCOL.md`. The same snapshot-correctness rule applies: UI/presentation state is never authoritative (`docs/ARCHITECTURE.md` State and snapshot plane).
+`audit-query` accepts targets `authority-domain`, `fleet`, `actor=ID`,
+`adapter=ID`, `group=VALUE`, `resource=ID`, or the canonical runtime identity
+`adapter=...;scope=...;runtime=...;generation=...`. Enum filters are generated
+names in comma-separated lists; duplicate values and unknown values are
+rejected before the network call. `--since` is inclusive; `--until`,
+`--before-event`, and `--audit-before-event` are exclusive. Adapter cursors
+are opaque and exclusive.
 
-Also deferred to post-v0.1.0: the durable queryable audit log, `event-inspect <lsn>` (raw event at LSN), metrics (counters/histograms/throughput), a dedicated health/status dashboard, and SIEM export. These are reserved seams (`docs/SPEC.md` v0.1.0 observability scope), not silently absent.
+With `--json`, each diagnostic command emits one safe document shaped as
+`{ submission, resultEventId, asOfLsn, result }`; 64-bit values are decimal
+strings, timestamps are RFC 3339 or `null`, enums use canonical lower-case
+snake case, and sensitive payloads/descriptors are omitted. A completed typed
+empty page (or `found: false` from `inspect-command`) is a successful result
+and exits `0`. Exit codes are `0` completed success, `1` local validation,
+transport, protocol, or unexpected-lifecycle error, `2` pre-acceptance
+rejection, `3` accepted execution failure, and `4` unknown submission outcome.
+The delivery trace from `inspect-command` remains a projection, not an
+authoritative command state; canonical `CommandState` stays as defined in
+`docs/PROTOCOL.md`.
 
 ## Reserved seams
 

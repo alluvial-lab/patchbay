@@ -76,8 +76,26 @@ surfaces (browser cockpit + CLI).
   identity shown before submission).
 - `patchbay-cli cancel|interrupt <command-id>`.
 - `patchbay-cli logout`.
-- `audit-query` / `inspect-command` / `adapter-status` are reserved
-  post-v0.1.0 (stubbed; they need the core-diagnostics projection).
+- `patchbay-cli audit-query [flags]` — query the redacted audit projection.
+- `patchbay-cli inspect-command <command-id> [flags]` — inspect lifecycle and
+  related redacted audit history.
+- `patchbay-cli adapter-status [adapter-id ...] [flags]` — inspect adapter
+  state, capabilities, and recent diagnostics.
+
+Diagnostic flags are `audit-query --kind --actor-id --endpoint-id --command-id
+--target --failure-code --reason-code --since --until --before-event --limit
+1..500 --json`; `inspect-command --audit-before-event --audit-limit 1..200
+--json`; and `adapter-status --after-adapter-id --limit 1..500 --json`.
+`--since` is inclusive; time/cursor upper bounds are exclusive, and adapter
+cursors are opaque and exclusive. Audit pagination defaults to 100 (maximum
+500), command-related audit pagination defaults to 50 (maximum 200), and
+adapter-status pagination defaults to 100 (maximum 500). JSON uses the common
+`{ submission, resultEventId, asOfLsn, result }` envelope with decimal-string
+LSNs/generations, RFC 3339 timestamps or `null`, generated lower-case enum
+names, and redacted safe projections. Typed empty pages and `found: false` are
+successful and exit `0`. Exit codes are `0` success, `1` local/transport/
+protocol failure, `2` pre-acceptance rejection, `3` execution failure, and `4`
+unknown submission outcome.
 
 ## Known v0.1.0 limitations (honest, not defects)
 

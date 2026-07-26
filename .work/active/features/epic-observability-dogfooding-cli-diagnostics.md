@@ -696,3 +696,38 @@ Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
 
 Parked notes: runtime-target percent-encoding reversibility; unused
 `makeEventCursor`/`enumDisplay` re-exports (fix worker may delete as cleanup).
+
+## Review resolution
+
+1. **Post-acceptance failure misclassification** — `runDiagnosticsCommand`
+   now branches on both `SubmissionOutcome` and `OperationState`: accepted +
+   completed requires the expected typed result envelope, accepted + failed
+   emits the submission failure detail and exits 3, and every other accepted
+   lifecycle state fails closed with exit 1. Pre-acceptance outcomes retain
+   exits 2/3/4 and transport/protocol errors remain exit 1. Evidence:
+   `cli/src/commands/diagnostics.ts`; regression tests cover typed-empty,
+   rejection, accepted failure, and nonterminal lifecycle cases.
+2. **Per-command option grammar** — `cli/src/main.ts` now validates command
+   allowlists before client construction/network access, duplicate generated
+   enum options are rejected, and explicit cursor values are not dropped by
+   truthiness checks. Help documents target syntax and inclusive/exclusive
+   time/cursor semantics. Evidence: option-grammar, duplicate-enum, empty
+   opaque-cursor, omitted-limit, and help assertions in
+   `cli/tests/output-diagnostics.test.ts`.
+3. **JSON projections** — `auditRecordView` now includes the generated
+   `adapter_diagnostic` detail, capability projections include generated
+   `diagnostic_reporting`, and adapter status projections include
+   `recent_diagnostics`; enum and timestamp formatting uses existing safe
+   helpers. Evidence: `cli/src/commands/diagnostics.ts` projection and
+   redaction regression tests.
+4. **Regression evidence** — added generated-contract fixtures and 11
+   diagnostics boundary tests covering wire decoding, defaults, exit paths,
+   lifecycle oneof validation, safe projections, redaction, parser grammar,
+   duplicate enums, and cursor preservation. `cd cli && npm test`: 26 tests
+   pass.
+5. **Docs roll-forward** — `docs/UX.md` and `docs/RUNBOOK.md` now describe
+   all three commands, flags, JSON envelope, typed-empty success, pagination
+   defaults/maxima, and exit codes 0/1/2/3/4 without current-stub claims.
+
+The runtime-target percent-encoding reversibility note remains parked by
+request. No files outside the declared write scope were changed.
