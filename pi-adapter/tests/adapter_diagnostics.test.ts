@@ -62,6 +62,35 @@ test("diagnostics writes ordered JSONL with generated enum names and structural 
   }
 });
 
+test("credential-shaped bearer assignments redact values absent from configured secrets", async () => {
+  const directory = temporaryDirectory();
+  const path = join(directory, "adapter.log");
+  const bearer = "unconfigured-bearer-credential";
+  try {
+    const diagnostics = await openAdapterDiagnostics({
+      path,
+      adapterId: "pi",
+      adapterGeneration: 1,
+      secrets: ["a-different-configured-secret"],
+    });
+    diagnostics.record({
+      event: "adapter.started",
+      level: "info",
+      reason: `BEARER = ${bearer}`,
+    });
+    await diagnostics.close();
+
+    const [line] = readFileSync(path, "utf8")
+      .trimEnd()
+      .split("\n")
+      .map((value) => JSON.parse(value) as Record<string, unknown>);
+    assert.equal(line?.["reason"], "bearer=[REDACTED]");
+    assert.equal(readFileSync(path, "utf8").includes(bearer), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("diagnostics appends below the threshold and rotates at startup", async () => {
   const directory = temporaryDirectory();
   const path = join(directory, "adapter.log");

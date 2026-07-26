@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js";
+import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "../src/delivery.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
 import { PiSession } from "../src/pi_session.js";
@@ -233,6 +234,57 @@ test("AdapterProcess isolates broken diagnostics from lifecycle operations", asy
     await adapter.dispose();
     await adapter.dispose();
   } finally {
+    PatchbayCoreClient.prototype.attach = originalAttach;
+  }
+});
+
+test("AdapterProcess preserves a hostile registration failure while logging a safe fallback", async () => {
+  const records: AdapterDiagnosticInput[] = [];
+  const diagnostics = {
+    record(input: AdapterDiagnosticInput) {
+      records.push(input);
+    },
+    flush: async () => undefined,
+    close: async () => undefined,
+  };
+  const hostile = new Proxy({}, {
+    get(_target, property) {
+      if (property === "name" || property === "code" || property === "constructor") {
+        throw new Error(`hostile getter: ${String(property)}`);
+      }
+      return undefined;
+    },
+  });
+  const configured: PreprovisionedSession = {
+    cwd: process.cwd(),
+    runtimeSessionId: "runtime-hostile-error",
+    deploymentScope: "machine-a",
+    project: "patchbay",
+  };
+  const originalAttach = PatchbayCoreClient.prototype.attach;
+  PatchbayCoreClient.prototype.attach = async () => ({}) as EventId;
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "adapter-test-secret",
+    adapterGeneration: 1,
+    sessions: [],
+    createSession: async () => {
+      throw hostile;
+    },
+    diagnostics,
+  });
+  try {
+    await adapter.start();
+    await assert.rejects(
+      adapter.registerSession(configured),
+      (error: unknown) => error === hostile,
+    );
+    const failure = records.find((record) => record.event === "session.register.failed");
+    assert.deepEqual(failure?.error, { name: "Error", code: "DIAGNOSTIC_ERROR" });
+  } finally {
+    await adapter.dispose();
     PatchbayCoreClient.prototype.attach = originalAttach;
   }
 });

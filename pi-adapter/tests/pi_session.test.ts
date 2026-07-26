@@ -3,10 +3,13 @@ import test from "node:test";
 import { create } from "@bufbuild/protobuf";
 import { OperationKind, OperationSchema, type Operation } from "@patchbay/contracts";
 import {
+  AgentSession,
   AuthStorage,
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  type AgentSessionEvent,
+  type AgentSessionEventListener,
 } from "@earendil-works/pi-coding-agent";
 import {
   createFauxCore,
@@ -55,6 +58,13 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     ],
   });
 
+  const liveHookListeners: AgentSessionEventListener[] = [];
+  const originalSubscribe = AgentSession.prototype.subscribe;
+  AgentSession.prototype.subscribe = function (listener) {
+    const unsubscribe = originalSubscribe.call(this, listener);
+    liveHookListeners.push(listener);
+    return unsubscribe;
+  };
   const pi = await PiSession.create({
     cwd,
     runtimeSessionId: "runtime-1",
@@ -137,11 +147,19 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     assert.equal(pi.getState().idle, true);
     assert.ok(pi.getEntries().entries.length > 0);
     assert.ok(pi.getAvailableModels().some((candidate) => candidate.id === model.id));
-    const snapshot = pi.snapshotTranscript();
-    assert.deepEqual(
-      pi.snapshotTranscript(),
-      snapshot,
-      "replaying persisted Pi entries remains stable and duplicate-free",
+    const initialHook = liveHookListeners.at(-1);
+    assert.ok(initialHook, "PiSession subscribes to the live AgentSession hook");
+    const duplicateHookEvent = duplicateLiveHookEvent("live-duplicate-entry");
+    initialHook(duplicateHookEvent);
+    initialHook(duplicateHookEvent);
+    const initialLiveEvent = observed.find(
+      (event) => event.kind === "user_confirmed" && event.messageId === "live-duplicate-entry",
+    );
+    assert.ok(initialLiveEvent, "the first live hook event reaches the transcript listener");
+    assert.equal(
+      observed.filter((event) => event.eventId === initialLiveEvent.eventId).length,
+      1,
+      "duplicate live Pi hooks with one stable event id are delivered once",
     );
 
     await pi.setModel(provider, model.id);
@@ -158,6 +176,23 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     assert.equal(await pi.newSession(), 2);
     await oldContextRun.catch(() => undefined);
     assert.equal(pi.getState().generation, 2);
+    const replacementHook = liveHookListeners.at(-1);
+    assert.ok(replacementHook, "generation replacement binds a fresh live AgentSession hook");
+    const replacementHookEvent = duplicateLiveHookEvent("live-duplicate-entry");
+    replacementHook(replacementHookEvent);
+    replacementHook(replacementHookEvent);
+    const replacementLiveEvent = observed.find(
+      (event) =>
+        event.kind === "user_confirmed" &&
+        event.messageId === "live-duplicate-entry" &&
+        event.sessionId === "runtime-1:2",
+    );
+    assert.ok(replacementLiveEvent, "the reset generation accepts its first live event");
+    assert.equal(
+      observed.filter((event) => event.eventId === replacementLiveEvent.eventId).length,
+      1,
+      "duplicate live hooks remain deduplicated after generation reset",
+    );
     assert.notEqual(pi.getState().piSessionId, oldPiSessionId);
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
     assert.equal(
@@ -173,8 +208,21 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     await pi.cancel();
   } finally {
     await pi.dispose();
+    AgentSession.prototype.subscribe = originalSubscribe;
   }
 });
+
+function duplicateLiveHookEvent(entryId: string): AgentSessionEvent {
+  return {
+    type: "entry_appended",
+    entry: {
+      type: "message",
+      id: entryId,
+      timestamp: new Date("2026-01-02T03:04:05.000Z").toISOString(),
+      message: { role: "user", content: "live duplicate" },
+    },
+  } as unknown as AgentSessionEvent;
+}
 
 function approvalOperation(): Operation {
   return create(OperationSchema, { kind: OperationKind.APPROVAL_RESPONSE });

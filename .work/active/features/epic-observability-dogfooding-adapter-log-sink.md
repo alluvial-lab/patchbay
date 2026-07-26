@@ -605,3 +605,31 @@ Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
 Parked notes: maxPending+1 outstanding bound (fine); redaction test name
 overstates coverage; feature-level `npm test` evidence to be refreshed at fix
 time.
+
+## Review resolution
+
+Receiver-confirmed standard-pass blockers are resolved without changing the
+adapter-forwarding composition that shares `adapter_diagnostics.ts`:
+
+1. **Bearer-assignment redaction gap:** `#sanitize` now recognizes both
+   `Bearer <token>` and case-insensitive `bearer` assignment forms with `:` or
+   `=` (including surrounding whitespace). A temp-file sink test supplies an
+   unconfigured bearer value alongside a different configured secret and proves
+   the credential-shaped matcher removes it. Evidence: the test passed in both
+   full `cd pi-adapter && npm test` runs.
+2. **Non-total `diagnosticError`:** all `Error`/object name, code, and
+   constructor inspection is inside one guarded normalization boundary; any
+   throwing getter or hostile proxy returns the fixed safe
+   `{name: "Error", code: "DIAGNOSTIC_ERROR"}` fallback. A real
+   `AdapterProcess.registerSession` catch→log path now rejects with the exact
+   hostile original error while recording only that fallback. Evidence: the
+   hostile-registration test and both full suites passed.
+3. **Tautological transcript dedup test:** the real `AgentSession` hook
+   subscription is captured through the production `subscribe` path and fed
+   duplicate live `entry_appended` hooks with one stable entry id. The listener
+   receives one event in generation 1 and one event in generation 2 after
+   replacement resets dedup state; each duplicate pair is asserted once.
+   Evidence: the updated `pi_session.test.ts` passed in both full suites.
+
+Shared-file compatibility: the forwarding tests remained green in both runs
+(21/21 tests passed each time). No e2e timing flake occurred.

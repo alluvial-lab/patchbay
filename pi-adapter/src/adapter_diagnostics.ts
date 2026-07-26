@@ -52,6 +52,11 @@ export interface AdapterDiagnosticError {
   code?: string;
 }
 
+const DIAGNOSTIC_ERROR_FALLBACK: AdapterDiagnosticError = {
+  name: "Error",
+  code: "DIAGNOSTIC_ERROR",
+};
+
 export interface AdapterDiagnosticInput {
   event: AdapterDiagnosticEvent;
   level: AdapterDiagnosticLevel;
@@ -101,26 +106,32 @@ export function resolveAdapterLogPath(
 }
 
 export function diagnosticError(error: unknown): AdapterDiagnosticError {
-  if (error instanceof Error) {
-    const result: AdapterDiagnosticError = { name: error.name || "Error" };
-    const code = (error as Error & { code?: unknown }).code;
-    if (typeof code === "string" || typeof code === "number") result.code = String(code);
-    return result;
-  }
-  if (typeof error === "object" && error !== null) {
-    const value = error as { name?: unknown; code?: unknown; constructor?: { name?: unknown } };
-    const name = typeof value.name === "string"
-      ? value.name
-      : typeof value.constructor?.name === "string"
-        ? value.constructor.name
-        : "ThrownValue";
-    const result: AdapterDiagnosticError = { name };
-    if (typeof value.code === "string" || typeof value.code === "number") {
-      result.code = String(value.code);
+  try {
+    if (error instanceof Error) {
+      const result: AdapterDiagnosticError = { name: error.name || "Error" };
+      const code = (error as Error & { code?: unknown }).code;
+      if (typeof code === "string" || typeof code === "number") result.code = String(code);
+      return result;
     }
-    return result;
+    if (typeof error === "object" && error !== null) {
+      const value = error as { name?: unknown; code?: unknown; constructor?: { name?: unknown } };
+      const name = typeof value.name === "string"
+        ? value.name
+        : typeof value.constructor?.name === "string"
+          ? value.constructor.name
+          : "ThrownValue";
+      const result: AdapterDiagnosticError = { name };
+      if (typeof value.code === "string" || typeof value.code === "number") {
+        result.code = String(value.code);
+      }
+      return result;
+    }
+    return { name: typeof error === "string" ? "String" : typeof error };
+  } catch {
+    // Error objects and proxies are untrusted input; diagnostics must never
+    // replace the original adapter failure with a property-access failure.
+    return { ...DIAGNOSTIC_ERROR_FALLBACK };
   }
-  return { name: typeof error === "string" ? "String" : typeof error };
 }
 
 export async function openAdapterDiagnostics(
@@ -322,7 +333,7 @@ class FileAdapterDiagnostics implements AdapterDiagnostics {
     let sanitized = value;
     for (const secret of this.#secrets) sanitized = sanitized.split(secret).join("[REDACTED]");
     sanitized = sanitized
-      .replace(/\b(bearer)\s+[^,\s;]+/gi, "$1=[REDACTED]")
+      .replace(/\bbearer(?:\s*[:=]\s*|\s+)[^,\s;]+/gi, "bearer=[REDACTED]")
       .replace(
         /\b(token|password|passwd|secret|api[_-]?key|authorization|cookie|csrf|access[_-]?token|refresh[_-]?token)\s*[:=]\s*([^,\s;]+)/gi,
         "$1=[REDACTED]",
