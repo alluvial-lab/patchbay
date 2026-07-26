@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-cli-diagnostics
 kind: feature
-stage: implementing
+stage: review
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: [epic-observability-dogfooding-core-diagnostics]
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 # CLI diagnostics commands
@@ -638,3 +638,31 @@ implementation or verification clearer.
   store. The command presentation is CLI-specific above the surface-neutral
   generated response, so future desktop/mobile surfaces and other adapters are
   not foreclosed.
+
+## Implementation summary
+
+- Implemented the shared diagnostics query runner and generated-contract
+  protobuf boundary in `cli/src/commands/diagnostics.ts`, including the
+  authority-domain query Operation, credential context, five-minute validity
+  window, JSON-safe envelope, oneof validation, domain checks, and shared
+  exit-code handling.
+- Replaced the three stubs with flag-to-query builders and safe projections in
+  `cli/src/commands/audit-query.ts`, `cli/src/commands/inspect-command.ts`,
+  and `cli/src/commands/adapter-status.ts`. Added generated-enum parsing,
+  RFC3339/cursor/limit validation, strict canonical target parsing, complete
+  redacted JSON views, compact tables, and pagination notices.
+- Added shared table/event/timestamp/target formatting to `cli/src/output.ts`,
+  reused it from `session-health`, and wired dispatch, positional validation,
+  flags, and help text in `cli/src/main.ts`. Removed only the obsolete stub
+  regression test.
+- Verification: `cd cli && npm test` passed (16 tests, build plus Node test
+  runner). A direct generated-wire smoke check decoded the submitted payload
+  as `patchbay.DiagnosticsQuery` and confirmed `query` kind, authority-domain
+  target, and protobuf schema ref. `cd contracts/ts && npm run check:drift`
+  reports pre-existing generated-contract drift and was not repaired because
+  generated contracts are outside this worker's write scope; its incidental
+  generated-file changes were reverted.
+- Deviation: `docs/UX.md`, `docs/RUNBOOK.md`, and `docs/SECURITY.md` were not
+  edited because the worker's explicit write scope permits only `cli/` and
+  this feature file. The implementation therefore leaves the prose roll-forward
+  for the owning documentation scope rather than touching forbidden files.
