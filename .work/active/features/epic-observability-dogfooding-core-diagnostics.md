@@ -951,3 +951,11 @@ Verification evidence for this resolution:
 
 No consumer-impact adjustments were needed. The parked generated-contract
 drift and full-log retry-scan performance notes remain untouched.
+
+## Receiver note: lockdown producers (2026-07-26)
+
+Review blocker 2 included lockdown entry/exit producers. Adjudication: no
+lockdown control/decision surface exists in the v0.1.0+ codebase to wire them
+to — the SECURITY.md vocabulary names the events ahead of the capability. The
+producer obligation is deferred to the work that introduces lockdown; noted
+here so the audit-vocabulary coverage inventory remains honest.
