@@ -83,6 +83,23 @@ body > [data-patchbay-cockpit] {
   min-height: 0;
 }
 
+.cockpit .session-row__adapter-status,
+.cockpit .adapter-status,
+.cockpit .adapter-issue-summary {
+  font: var(--font-size-xs)/1.4 var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.cockpit .adapter-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cockpit .adapter-issue-summary {
+  padding: 0 var(--space-2);
+}
+
 .cockpit .session-detail {
   height: 100%; /* fill the desktop content row (not the viewport) so a banner
                   above doesn't push it into overflow */

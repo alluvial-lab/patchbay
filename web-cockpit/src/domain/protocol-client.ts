@@ -62,9 +62,9 @@ export function csrfInterceptor(readToken: () => string | undefined): Intercepto
     // Connect method names come from the proto declaration ("Submit", not
     // "submit") — a lowercase gate never matches, so the header would never
     // be sent and the web-server's CSRF guard rejects with 403.
-    if (request.method.name === "Submit") {
+    if (request.method.name === "Submit" || request.method.name === "QueryDiagnostics") {
       const token = readToken();
-      if (!token) throw new Error("Submit requires a session-bound CSRF token");
+      if (!token) throw new Error(`${request.method.name} requires a session-bound CSRF token`);
       request.header.set(CSRF_HEADER, token);
     }
     return next(request);

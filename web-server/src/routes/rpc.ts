@@ -6,6 +6,8 @@ import {
   AuditEventKind,
   LoadSnapshotRequestSchema,
   LoadSnapshotResponseSchema,
+  QueryDiagnosticsRequestSchema,
+  QueryDiagnosticsResponseSchema,
   RecordControlSurfaceAuditRequestSchema,
   SubmissionResultSchema,
   SubmitRequestSchema,
@@ -14,6 +16,7 @@ import {
   TimeWindowSchema,
 } from "@patchbay/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Operation } from "@patchbay/contracts";
 
 import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-auth.js";
 
@@ -53,26 +56,28 @@ export function registerRpcRoutes(
     async (request, reply) => {
       try {
         const input = fromBinary(SubmitRequestSchema, decodeRequestFrame(request.body));
-        if (input.operation) {
-          // The browser's sender claim is audit input, never authority. Replace
-          // it with the actor established by the server-side session record.
-          input.operation.sender = create(ActorEndpointRefSchema, {
-            actorId: { value: verified(request.verifiedOperator, "operator actor") },
-          });
-          // The browser clock is untrusted and may be skewed. Stamp the
-          // protocol window at this authenticated control-surface boundary.
-          const submittedAtMs = Date.now();
-          const submittedAt = timestampFromMs(submittedAtMs);
-          input.operation.submittedAt = submittedAt;
-          input.operation.validityWindow = create(TimeWindowSchema, {
-            startsAt: submittedAt,
-            expiresAt: timestampFromMs(submittedAtMs + DEFAULT_OPERATION_VALIDITY_MS),
-          });
-        }
+        stampVerifiedOperation(input.operation, request);
         const output = await app.coreClient.submit(input, {
           headers: coreHeaders(app, request, coreSecret),
         });
         return sendUnary(reply, toBinary(SubmissionResultSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/patchbay.ControlService/QueryDiagnostics",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(QueryDiagnosticsRequestSchema, decodeRequestFrame(request.body));
+        stampVerifiedOperation(input.operation, request);
+        const output = await app.coreClient.queryDiagnostics(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        return sendUnary(reply, toBinary(QueryDiagnosticsResponseSchema, output));
       } catch (error) {
         return sendRpcError(app, request, reply, error);
       }
@@ -126,6 +131,25 @@ export function registerRpcRoutes(
       }
     },
   );
+}
+
+function stampVerifiedOperation(
+  operation: Operation | undefined,
+  request: FastifyRequest,
+  nowMs = Date.now(),
+): void {
+  if (!operation) return;
+  // Browser sender and time are untrusted. Both lifecycle RPCs share the same
+  // verified compound-issuer stamping boundary.
+  operation.sender = create(ActorEndpointRefSchema, {
+    actorId: { value: verified(request.verifiedOperator, "operator actor") },
+  });
+  const submittedAt = timestampFromMs(nowMs);
+  operation.submittedAt = submittedAt;
+  operation.validityWindow = create(TimeWindowSchema, {
+    startsAt: submittedAt,
+    expiresAt: timestampFromMs(nowMs + DEFAULT_OPERATION_VALIDITY_MS),
+  });
 }
 
 function decodeRequestFrame(body: unknown): Uint8Array {

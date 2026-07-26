@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-cockpit-diagnostics-cockpit-composition
 kind: story
-stage: implementing
+stage: done
 tags: [observability, dogfooding, ui]
 parent: epic-observability-dogfooding-cockpit-diagnostics
 depends_on: [epic-observability-dogfooding-cockpit-diagnostics-adapter-forwarding]
@@ -55,3 +55,28 @@ Consumes the report/query fields established by
 representative Pi events established by
 `epic-observability-dogfooding-cockpit-diagnostics-adapter-forwarding`. It adds
 no dedicated diagnostics screen, dashboard, or delivery-trace timeline.
+
+## Implementation notes
+
+- Added the binary gRPC-Web `QueryDiagnostics` bridge with the same verified
+  sender, server-stamped validity window, compound issuer headers, and CSRF
+  gate as `Submit`. Added integration coverage proving forged browser identity
+  is replaced and QueryDiagnostics requires CSRF.
+- Added generated `DiagnosticsQuery` construction for the selected adapter
+  (`OperationKind.QUERY`, authority-domain target, unique id/key, recent limit
+  20), LSN-safe query/live merge keyed by source EventId, and snapshot-cleared
+  adapter status. Selection, reconciliation, and selected-session connectivity
+  changes trigger at most one in-flight adapter query; there is no timer or
+  liveness inference.
+- Composed adapter status and recent safe diagnostic evidence into the existing
+  session rows, detail header, and timeline. Adapter connection labels remain
+  separate from session connectivity; the explicit state mapping reuses the
+  existing connectivity indicator CSS/showcase bindings. Warning/error records
+  use canonical failure terms and informational records show only safe code,
+  generation, count, and observed time.
+- Extended `check-presentation.mjs` with a derived-member registry proving
+  `AdapterDiagnosticState` maps exhaustively to existing connectivity bindings;
+  no new protocol state, screen, route, or CSS state variant was added.
+- Verification: web-cockpit tests (50), web-server tests (25), contract
+  presentation/meta-tests, TypeScript builds, and the existing adapter/core
+  tests pass. Unrelated concurrent `cli/` changes were preserved.

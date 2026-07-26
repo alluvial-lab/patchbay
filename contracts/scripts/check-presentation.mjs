@@ -51,6 +51,16 @@ const REGISTRY = [
   },
 ];
 
+const DERIVED_REGISTRIES = [
+  {
+    enum: 'AdapterDiagnosticState',
+    file: 'diagnostics.proto',
+    protoPrefix: 'ADAPTER_DIAGNOSTIC_STATE_',
+    cssPrefix: 'connectivity-indicator',
+    members: [['unknown', 'unknown'], ['attached', 'live'], ['detached', 'offline'], ['failed', 'failed']],
+  },
+];
+
 const RETRY_MATRIX = [
   { failure: 'execution_outcome_unknown', strength: 'end-to-end', strengthProto: 'END_TO_END', safety: 'safe' },
   { failure: 'execution_outcome_unknown', strength: 'at-Patchbay-boundary', strengthProto: 'AT_PATCHBAY_BOUNDARY', safety: 'maybe' },
@@ -486,6 +496,22 @@ async function checkBindings({ css, showcase, protoEnums }, errors) {
     }
   }
 
+  for (const derived of DERIVED_REGISTRIES) {
+    const parsed = protoEnums.get(derived.enum);
+    const actual = parsed.map((item) => item.member);
+    const expected = derived.members.map(([member]) => member);
+    assertEqualMembers(expected, actual, derived.enum, errors);
+    for (const [member, cssMember] of derived.members) {
+      const className = `${derived.cssPrefix}--${cssMember}`;
+      if (!new RegExp(`\\.${className}(?=[\\s,{])`).test(cssStripped)) {
+        errors.push(`${derived.enum}: missing derived CSS binding .${className} for ${member}`);
+      }
+      if (document && !document.querySelector(`.${derived.cssPrefix}.${className}`)) {
+        errors.push(`${derived.enum}: missing showcase binding .${className} for ${member}`);
+      }
+    }
+  }
+
   for (const primitive of extractCommentPrimitiveNames(css)) {
     const selector = new RegExp(`\\.${primitive}(?:[\\s.{:#]|$)`);
     if (!selector.test(cssStripped)) {
@@ -628,6 +654,7 @@ function buildTraceabilityMarkdown(protoEnums) {
     '| Registry | Members bound | CSS | Showcase | Accessibility |',
     '|---|---|---|---|---|',
     ...rows,
+    ...DERIVED_REGISTRIES.map((entry) => `| ${entry.enum} → ${entry.cssPrefix} | ${entry.members.map(([member, cssMember]) => `${member}→${cssMember}`).join(', ')} | derived existing bindings | derived existing bindings | pass |`),
     '',
     'Retry-safety matrix: all `docs/UX.md` rows (execution_outcome_unknown × {end-to-end,at-Patchbay-boundary,none}; execution_failed × any; pre-execution failures target_offline/adapter_unavailable/delivery_rejected × any) cross-reference `FailureCode` and `IdempotencyStrength` and are documented in the showcase.',
     'Accessibility: WCAG contrast pairs and axe-core scan of `.mockups/design-system/components.html` pass.',
@@ -657,6 +684,7 @@ async function main() {
   const protoEnums = new Map();
   for (const entry of [
     ...REGISTRY,
+    ...DERIVED_REGISTRIES.map(({ enum: enumName, file, protoPrefix }) => ({ enum: enumName, file, protoPrefix })),
     { enum: 'FailureCode', file: 'operations.proto', protoPrefix: 'FAILURE_CODE_' },
     { enum: 'IdempotencyStrength', file: 'adapter.proto', protoPrefix: 'IDEMPOTENCY_STRENGTH_' },
   ]) {

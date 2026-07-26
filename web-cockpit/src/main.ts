@@ -6,6 +6,7 @@ import {
   LocalSubmissionState,
   OperationKind,
   OperationSchema,
+  QueryDiagnosticsRequestSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
   SubmitRequestSchema,
@@ -25,6 +26,10 @@ import {
   type ProtocolClient,
 } from "./domain/protocol-client.js";
 import { Reconciler } from "./domain/reconcile.js";
+import {
+  buildAdapterStatusQueryOperation,
+  mergeAdapterStatusResult,
+} from "./domain/adapter-diagnostics.js";
 import { createMobileElicitationSheet } from "./ui/elicitation.js";
 import { waitForOperatorLogin } from "./ui/login.js";
 import { createMarkdownRenderer } from "./ui/markdown.js";
@@ -100,6 +105,41 @@ function composeCockpit(
   const idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
   let submission: SubmissionFeedback | undefined;
   let shell!: CockpitShell;
+  const inFlightDiagnostics = new Set<string>();
+  let diagnosticRequestSequence = 0;
+
+  async function queryAdapterStatus(session: SessionView | undefined, reason: string): Promise<void> {
+    const adapterId = session?.identity.adapterId;
+    if (!adapterId) return;
+    const key = `${adapterId}:${reason}`;
+    if (inFlightDiagnostics.has(key)) return;
+    inFlightDiagnostics.add(key);
+    try {
+      const suffix = `${idFactory()}-${++diagnosticRequestSequence}`;
+      const operation = buildAdapterStatusQueryOperation(authorityDomainId, adapterId, {
+        commandId: `diagnostics-${suffix}`,
+        idempotencyKey: `diagnostics-${suffix}`,
+      });
+      const response = await protocol.client.queryDiagnostics(
+        create(QueryDiagnosticsRequestSchema, { operation }),
+      );
+      projection.model = mergeAdapterStatusResult(projection.model, response);
+      shell.update(projection.model);
+    } catch {
+      const current = projection.model.adapters.get(adapterId);
+      const adapters = new Map(projection.model.adapters);
+      adapters.set(adapterId, {
+        adapterId,
+        status: undefined,
+        asOfLsn: current?.asOfLsn ?? 0n,
+        recentDiagnostics: current?.recentDiagnostics ?? [],
+      });
+      projection.model = { ...projection.model, adapters };
+      shell.update(projection.model);
+    } finally {
+      inFlightDiagnostics.delete(key);
+    }
+  }
 
   async function submit(operation: Operation): Promise<void> {
     submission = { state: LocalSubmissionState.SUBMITTING };
@@ -134,6 +174,9 @@ function composeCockpit(
     markdown: createMarkdownRenderer(document.defaultView as unknown as Window),
     isMobile: options.isMobile,
     submission: () => submission,
+    onSelectionChange(session, reason) {
+      void queryAdapterStatus(session, reason);
+    },
     actions: {
       send(session, text) {
         return submit(buildInstructOperation(authorityDomainId, session, text, nextIds()));

@@ -30,6 +30,7 @@ import { hashPassword, SessionStore } from "../src/sessions.js";
 interface CoreCall {
   method:
     | "submit"
+    | "queryDiagnostics"
     | "subscribe"
     | "loadSnapshot"
     | "verifyOperatorPassword"
@@ -261,6 +262,32 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
   }
 });
 
+test("Connect-Web QueryDiagnostics shares Submit stamping and CSRF", async () => {
+  const fixture = makeFixture();
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
+  const { client, close } = await listen(fixture);
+  try {
+    await client.queryDiagnostics(
+      { operation: { sender: { actorId: { value: "forged-browser-actor" } } } },
+      {
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+          [CSRF_HEADER_NAME]: session.csrfSecret,
+        },
+      },
+    );
+    const call = fixture.calls.find((candidate) => candidate.method === "queryDiagnostics");
+    assert.ok(call);
+    assert.equal(call.headers.get("x-patchbay-operator-id"), operatorActorId);
+    const operation = (call.request as { operation?: { sender?: { actorId?: { value: string } }; submittedAt?: unknown; validityWindow?: unknown } }).operation;
+    assert.equal(operation?.sender?.actorId?.value, operatorActorId);
+    assert.ok(operation?.submittedAt);
+    assert.ok(operation?.validityWindow);
+  } finally {
+    await close();
+  }
+});
+
 test("Connect-Web Subscribe streams frames and reconnects from the supplied cursor", async () => {
   const fixture = makeFixture();
   const session = fixture.sessions.create(operatorActorId, "core-issued-session");
@@ -383,7 +410,8 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
         auditEventId: { authorityDomainId: { value: "default" }, lsn: { value: 1n } },
       });
     },
-    async queryDiagnostics() {
+    async queryDiagnostics(request, callOptions) {
+      calls.push({ method: "queryDiagnostics", request, headers: callHeaders(callOptions) });
       return create(QueryDiagnosticsResponseSchema);
     },
     async enrollControlSurfacePrincipal() {

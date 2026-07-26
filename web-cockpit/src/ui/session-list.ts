@@ -3,6 +3,7 @@ import {
   SessionConnectivityState,
 } from "@patchbay/contracts";
 
+import { renderAdapterStatus } from "../domain/adapter-diagnostics.js";
 import {
   rendersLive,
   sessionKey,
@@ -13,6 +14,7 @@ import {
 
 export interface SessionListOptions {
   selectedKey?: string;
+  adapters?: ReadonlyMap<string, import("../domain/model.js").AdapterView>; 
   onSelect(session: SessionView): void;
   filter?: string;
 }
@@ -39,7 +41,7 @@ export function renderSessionList(
   }
 
   for (const session of visible) {
-    list.append(renderSessionRow(document, session, options.selectedKey === sessionKey(session.identity), options.onSelect));
+    list.append(renderSessionRow(document, session, options.selectedKey === sessionKey(session.identity), options.onSelect, options.adapters?.get(session.identity.adapterId)));
   }
   return list;
 }
@@ -49,6 +51,7 @@ export function renderSessionRow(
   session: SessionView,
   selected: boolean,
   onSelect: (session: SessionView) => void,
+  adapter?: import("../domain/model.js").AdapterView,
 ): HTMLButtonElement {
   const row = document.createElement("button");
   row.type = "button";
@@ -66,6 +69,11 @@ export function renderSessionRow(
   const badges = document.createElement("span");
   badges.className = "session-row__badges";
   badges.append(renderSessionStatus(document, session));
+  if (adapter) {
+    const adapterStatus = renderAdapterStatus(document, adapter);
+    adapterStatus.classList.add("session-row__adapter-status");
+    badges.append(adapterStatus);
+  }
   if (session.needsYou && stableTarget(session)) {
     const attention = document.createElement("span");
     attention.className = "attention-badge";

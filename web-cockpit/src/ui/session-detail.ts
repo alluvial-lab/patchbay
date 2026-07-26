@@ -1,4 +1,5 @@
 import {
+  AdapterDiagnosticSeverity,
   FailureCode,
   LocalSubmissionState,
   OperationKind,
@@ -13,6 +14,7 @@ import {
   type CommandView,
   type ElicitationView,
   type ObservationView,
+  type AdapterDiagnosticView,
   type PresentationModel,
   type SessionIdentity,
   type SessionView,
@@ -25,6 +27,7 @@ import {
 import { renderIcon, type IconName } from "./icons.js";
 import type { MarkdownRenderer } from "./markdown.js";
 import { formatSessionIdentity, renderSessionStatus } from "./session-list.js";
+import { diagnosticsForSession, renderAdapterStatus } from "../domain/adapter-diagnostics.js";
 
 export interface SessionDetailActions {
   send?(session: SessionView, text: string): void | Promise<void>;
@@ -66,7 +69,7 @@ export function renderSessionDetail(
   detail.className = "session-detail";
   if (session) detail.dataset.sessionKey = sessionKey(session.identity);
 
-  const header = renderHeader(document, session, options.onBack);
+  const header = renderHeader(document, model, session, options.onBack);
   const timeline = document.createElement("div");
   timeline.className = "timeline";
   timeline.setAttribute("aria-live", "polite");
@@ -94,6 +97,7 @@ export function renderSessionDetail(
 
 function renderHeader(
   document: Document,
+  model: PresentationModel,
   session: SessionView | undefined,
   onBack: (() => void) | undefined,
 ): HTMLElement {
@@ -106,6 +110,23 @@ function renderHeader(
     header.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
     header.append(textElement(document, "span", "session-row__context", session.model ?? "Model unknown"));
     header.append(renderSessionStatus(document, session));
+    const adapter = model.adapters.get(session.identity.adapterId);
+    if (adapter) {
+      header.append(renderAdapterStatus(document, adapter));
+      const issues = diagnosticsForSession(adapter, session.identity).filter((diagnostic) => diagnostic.severity === AdapterDiagnosticSeverity.WARNING || diagnostic.severity === AdapterDiagnosticSeverity.ERROR);
+      if (adapter.status) {
+        header.append(textElement(
+          document,
+          "span",
+          "adapter-issue-summary",
+          issues.length > 0 ? "recent reported issue" : "no recent reported issues",
+        ));
+      } else {
+        const unavailable = textElement(document, "span", "adapter-issue-summary alert alert--warning", "adapter diagnostics unavailable");
+        unavailable.setAttribute("role", "status");
+        header.append(unavailable);
+      }
+    }
   } else {
     header.append(textElement(document, "span", "nav-bar__brand", "Select a session"));
   }
@@ -127,9 +148,13 @@ function renderTimeline(
   const observations = model.observations.filter((item) => sameIdentity(item.session, session.identity));
   const commands = [...model.commands.values()].filter((item) => sameIdentity(item.target, session.identity));
   const elicitations = [...model.elicitations.values()].filter((item) => sameIdentity(item.target, session.identity));
+  const diagnostics = diagnosticsForSession(model.adapters.get(session.identity.adapterId), session.identity);
   const associatedCommands = new Set<string>();
   const entries: TimelineEntry[] = [];
 
+  for (const diagnostic of diagnostics) {
+    entries.push({ lsn: diagnostic.lsn, type: "diagnostic", diagnostic });
+  }
   for (const observation of observations) {
     const command = observation.role === "operator"
       ? nearestCommand(observation, commands, associatedCommands)
@@ -169,7 +194,9 @@ function renderTimeline(
   }
 
   for (const entry of entries) {
-    if (entry.type === "observation") {
+    if (entry.type === "diagnostic") {
+      timeline.append(renderDiagnostic(document, entry.diagnostic));
+    } else if (entry.type === "observation") {
       timeline.append(renderObservation(document, entry.observation, entry.command, options));
     } else if (entry.type === "command") {
       timeline.append(renderCommandMessage(document, entry.command, options.actions));
@@ -188,10 +215,24 @@ function renderTimeline(
 }
 
 type TimelineEntry =
+  | { lsn: bigint; type: "diagnostic"; diagnostic: AdapterDiagnosticView }
   | { lsn: bigint; type: "observation"; observation: ObservationView; command?: CommandView }
   | { lsn: bigint; type: "command"; command: CommandView }
   | { lsn: bigint; type: "elicitation"; elicitation: ElicitationView }
   | { lsn: bigint; type: "elicitation-group"; elicitations: ElicitationView[] };
+
+function renderDiagnostic(document: Document, diagnostic: AdapterDiagnosticView): HTMLElement {
+  const wrapper = document.createElement("article");
+  wrapper.className = diagnostic.severity === AdapterDiagnosticSeverity.INFO ? "alert alert--info" : "failure-banner";
+  wrapper.dataset.diagnosticId = diagnostic.sourceEventId;
+  wrapper.setAttribute("role", diagnostic.severity === AdapterDiagnosticSeverity.INFO ? "status" : "alert");
+  const term = diagnostic.failureCode !== undefined ? failureCodeName(diagnostic.failureCode) : "adapter_diagnostic";
+  const detail = `Adapter ${diagnostic.adapterId} · generation ${diagnostic.adapterGeneration} · ${diagnostic.code} · count ${diagnostic.count}`;
+  wrapper.append(textElement(document, "span", "failure-banner__term", term));
+  wrapper.append(textElement(document, "p", "failure-banner__message", detail));
+  if (diagnostic.observedAt) wrapper.append(textElement(document, "time", "msg__footer", diagnostic.observedAt.toISOString()));
+  return wrapper;
+}
 
 function renderObservation(
   document: Document,

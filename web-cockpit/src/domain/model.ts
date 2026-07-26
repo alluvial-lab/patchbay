@@ -25,9 +25,12 @@ import {
   type SessionSnapshot,
   type SubscribeEvent,
   type TargetScope,
+  type AdapterStatus,
+  type AdapterDiagnosticSeverity,
 } from "@patchbay/contracts";
 
 import type { ReconcileProjection } from "./reconcile.js";
+import { foldAdapterDiagnosticObservation } from "./adapter-diagnostics.js";
 
 export interface SessionIdentity {
   adapterId: string;
@@ -98,6 +101,28 @@ export interface ObservationView {
   messageId?: string;
 }
 
+export interface AdapterDiagnosticView {
+  sourceEventId: string;
+  lsn: bigint;
+  adapterId: string;
+  adapterGeneration: bigint;
+  target?: SessionIdentity;
+  commandId?: string;
+  severity: AdapterDiagnosticSeverity;
+  code: string;
+  failureCode?: FailureCode;
+  operationKind?: OperationKind;
+  count: number;
+  observedAt?: Date;
+}
+
+export interface AdapterView {
+  adapterId: string;
+  status?: AdapterStatus;
+  asOfLsn: bigint;
+  recentDiagnostics: readonly AdapterDiagnosticView[];
+}
+
 export interface PresentationModel {
   authorityDomainId?: string;
   cursor: bigint;
@@ -105,6 +130,7 @@ export interface PresentationModel {
   sessions: Map<string, SessionView>;
   commands: Map<string, CommandView>;
   elicitations: Map<string, ElicitationView>;
+  adapters: Map<string, AdapterView>;
   observations: ObservationView[];
 }
 
@@ -115,6 +141,7 @@ export function emptyPresentationModel(): PresentationModel {
     sessions: new Map(),
     commands: new Map(),
     elicitations: new Map(),
+    adapters: new Map(),
     observations: [],
   };
 }
@@ -187,6 +214,7 @@ export function replaceFromSnapshot(
     sessions,
     commands: new Map(),
     elicitations: new Map(),
+    adapters: new Map(),
     observations: [],
   };
 
@@ -369,6 +397,10 @@ function foldElicitation(model: PresentationModel, elicitation: Elicitation, lsn
 }
 
 function foldObservation(model: PresentationModel, observation: Observation, lsn: bigint): void {
+  if (observation.payload?.schemaRef === "patchbay.AdapterDiagnosticPayload") {
+    foldAdapterDiagnosticObservation(model, observation, lsn);
+    return;
+  }
   const target = identityFromTarget(observation.targetScope);
   const transcript = decodeTranscriptEvent(observation);
   if (!transcript) return;
@@ -767,6 +799,7 @@ function cloneModel(model: PresentationModel): PresentationModel {
     sessions: new Map(model.sessions),
     commands: new Map(model.commands),
     elicitations: new Map(model.elicitations),
+    adapters: new Map(model.adapters),
     observations: [...model.observations],
   };
 }

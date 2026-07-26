@@ -19,6 +19,7 @@ import type { MarkdownRenderer } from "./markdown.js";
 
 export interface CockpitShellOptions {
   markdown: MarkdownRenderer;
+  onSelectionChange?(session: SessionView | undefined, reason: "initial" | "selection" | "reconcile" | "connectivity"): void;
   actions?: SessionDetailActions;
   elicitation?: ElicitationRenderOptions;
   submission?: () => SubmissionFeedback | undefined;
@@ -52,6 +53,9 @@ export function createCockpitShell(
   let mobileDetailOpen = false;
   let filter = "";
   let detail!: SessionDetailComponent;
+  let observedSelectedKey: string | undefined;
+  let observedReconciled = false;
+  let observedConnectivity: SessionConnectivityState | undefined;
   const isMobile = options.isMobile ?? (() => document.defaultView?.matchMedia?.("(max-width: 760px)").matches ?? false);
 
   const resize = () => applyLayout();
@@ -107,6 +111,21 @@ export function createCockpitShell(
       const timeline = root.querySelector<HTMLElement>(".timeline");
       if (timeline) timeline.scrollTop = timeline.scrollHeight;
     }
+    const selected = selectedSession();
+    const selectedIdentity = selected ? sessionKey(selected.identity) : undefined;
+    const reason = observedSelectedKey === undefined
+      ? "initial"
+      : observedSelectedKey !== selectedIdentity
+        ? "selection"
+        : !observedReconciled && model.reconciled
+          ? "reconcile"
+          : observedConnectivity !== selected?.connectivity
+            ? "connectivity"
+            : undefined;
+    observedSelectedKey = selectedIdentity;
+    observedReconciled = model.reconciled;
+    observedConnectivity = selected?.connectivity;
+    if (reason) queueMicrotask(() => options.onSelectionChange?.(selected, reason));
   }
 
   function isNearBottom(el: HTMLElement): boolean {
@@ -210,6 +229,7 @@ function renderSidebar(
     renderSessionList(document, model.sessions.values(), {
       selectedKey,
       filter,
+      adapters: model.adapters,
       onSelect: actions.select,
     }),
   );
