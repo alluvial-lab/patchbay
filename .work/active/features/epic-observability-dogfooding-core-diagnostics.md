@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics
 kind: feature
-stage: implementing
+stage: review
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
@@ -721,16 +721,23 @@ pub async fn execute_diagnostics_query<S: Storage, G: GrantCheck,
   durability across restart, and all three query families. No test is added for
   trivial enum getters or formatting wrappers.
 
-## Blocker (2026-07-26, orchestrator wave-1 verification)
+## Follow-up resolution (2026-07-26)
 
-Feature returned from `review` to `implementing`: child story
-`epic-observability-dogfooding-core-diagnostics-audit-records` was reopened
-(producer coverage is login-only; acceptance evidence requires the full
-canonical producer migration), and wave integration verification found the
-`pi-adapter` e2e failing (`accepted.acceptedLsn` undefined) after the
-audited-append change. A focused follow-up worker owns the producer migration
-plus the e2e diagnosis/fix; the feature re-advances to `review` after
-integrated verification is green.
+The bounced wave-1 verification is resolved. The audit-records story completed
+the canonical producer migration and added production composition coverage for
+atomic source-plus-audit appends, rejected submissions, adapter lifecycle and
+stale-event decisions, bootstrap/session/grant decisions, and authenticated
+control-surface integrity failures. The `RecordControlSurfaceAudit` contract
+and web middleware ingress keep attribution, timestamp, and operator-session
+material core-owned and redacted.
+
+The `pi-adapter` e2e failure was diagnosed against an actual running server: the
+response was a genuine validation rejection (`operation is missing
+validity_window`), not a malformed audited-append response. Acceptance
+validity-window enforcement had landed in `563b3b6`, while this older fixture
+still omitted `validity_window` and `submitted_at`; the fixture now supplies an
+active long-lived window and the original `acceptedLsn` assertion remains
+unchanged.
 
 ## Risks
 
@@ -779,8 +786,9 @@ integrated verification is green.
 ## Implementation summary
 
 Implemented the core-diagnostics contract, durable audit storage boundary, typed
-sink composition, replayable command/adapter projection, and principal-gated
-`ControlService.QueryDiagnostics` path.
+sink composition, replayable command/adapter projection, principal-gated
+`ControlService.QueryDiagnostics` path, and the bounced canonical producer
+migration.
 
 - `contracts/proto/patchbay/diagnostics.proto` is the wire source for the
   canonical audit vocabulary, redacted audit record, bounded query families,
@@ -803,6 +811,17 @@ sink composition, replayable command/adapter projection, and principal-gated
 - Draft lifecycle and redaction vectors were added; SECURITY.md now describes
   durable core-diagnostics as implemented while retaining the canonical no-log
   list.
+- `core::storage::AuditedStorage` is installed by the production server root;
+  source events from acceptance, command transitions, grants, bootstrap, and
+  adapter registration are paired with typed audit records in one writer
+  transaction. Rejected submissions and adapter/control-surface failures use
+  the required durable-first sink directly.
+- `RecordControlSurfaceAudit` is generated from `control.proto`; the web
+  middleware reports authenticated CSRF/Fetch-Metadata failures while the core
+  replaces attribution and hashes the verified operator-session evidence.
+- The follow-up corrected the pi-adapter fixture for the already-designed
+  validity-window acceptance contract. The original `acceptedLsn` assertion was
+  retained and the full real-process reconnect/restart e2e is green.
 
 Verification evidence:
 
@@ -811,7 +830,9 @@ Verification evidence:
 - `cargo clippy --workspace --all-targets -- -D warnings` — passed.
 - `cd contracts/ts && npm run build` — passed.
 - `npm run check:vectors` and `npm run check:models` — passed.
+- `cd pi-adapter && npm test` — passed (full suite, including the bounced e2e).
 - `cd e2e && npm test` — passed.
+- `cd web-server && npm test` — passed (24 tests, including integrity-audit ingress).
 - `npm run check:drift` was attempted. It fails because the repository's
   existing Buf generator output is not byte-identical to the committed
   prost-build artifacts (it reorders/duplicates the established generated
@@ -819,13 +840,8 @@ Verification evidence:
   to the committed cargo-compatible artifacts, so no unrelated generated drift
   was silently accepted.
 
-Implementation deviations/discoveries:
+Implementation discoveries:
 
-- The durable sink and storage APIs are complete, and login is wired through
-  the required durable-first composition. The broader canonical producer
-  migration (all grant/session/adapter/stale-event callsites to atomic audited
-  append) and the external control-surface audit ingress remain follow-up work;
-  they are not claimed by this implementation.
 - The query result path is implemented for all generated result families; the
   adapter page currently reports the safe registration projection and UNKNOWN
   after restart, with richer live session-count reconciliation reserved for the
@@ -833,3 +849,6 @@ Implementation deviations/discoveries:
 - The walking skeleton itself was not expanded with new diagnostic client
   steps; the gRPC smoke test covers query lifecycle/retry and the existing
   real-process skeleton remains green.
+- The e2e regression was a stale fixture exposed by acceptance validity-window
+  enforcement, not a production submission-response regression. No assertion
+  was weakened or removed.
