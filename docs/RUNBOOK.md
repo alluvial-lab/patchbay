@@ -20,6 +20,7 @@ surfaces (browser cockpit + CLI).
 |---|---|---|---|
 | `PATCHBAY_CORE_SECRET` | core, web-server, CLI | yes | Shared secret authenticating control surfaces as principals to the core (`x-patchbay-core-secret`). |
 | `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` | core, pi-adapter | yes | Adapter trust root for `AdapterControlService.Attach`. |
+| `PATCHBAY_ADAPTER_LOG` | pi-adapter | no (default `~/.local/state/patchbay/adapter.log`) | Durable adapter diagnostics log path. |
 | `PATCHBAY_AUTHORITY_DOMAIN_ID` | all | no (default `default`) | The authority domain. All processes must agree; the core rejects mismatches. |
 | `PATCHBAY_BIND_ADDR` | core | no | Network listener for `ControlService` + `AdapterControlService`. |
 | `PATCHBAY_ADMIN_BIND_ADDR` | core | no | Loopback-only listener for `AdminService` (bootstrap). Never network-reachable; the core refuses non-loopback admin binds. |
@@ -81,6 +82,12 @@ surfaces (browser cockpit + CLI).
   related redacted audit history.
 - `patchbay-cli adapter-status [adapter-id ...] [flags]` — inspect adapter
   state, capabilities, and recent diagnostics.
+
+The diagnostics CLI is VM-local in v0.1.0 because the core listener is
+loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, or
+`adapter-status` on the VM; workstation operators may use an SSH tunnel or run
+the CLI on the VM. Supported remote CLI transport is reserved for the future
+split-transport milestone.
 
 Diagnostic flags are `audit-query --kind --actor-id --endpoint-id --command-id
 --target --failure-code --reason-code --since --until --before-event --limit

@@ -19,17 +19,18 @@ v0.1.0 shipped the deliberately minimal observability slice: redacted process
 audit lines, CLI `session-health`, and web current-`CommandState` presentation,
 with the query- and monitoring-oriented seams reserved (`docs/SPEC.md` v0.1.0
 observability scope; `docs/PROTOCOL.md` extension seams registry). The operator
-is now dogfooding Patchbay as their daily driver and cannot inspect the system
-while it runs: adapter-process diagnostics die with the process, the three
-diagnostic CLI commands are honest stubs, and the cockpit shows nothing about
-adapter or connection health.
+is now dogfooding Patchbay as their daily driver: adapter-process diagnostics
+now have durable storage, the diagnostic CLI commands query core projections,
+and the cockpit surfaces adapter and connection health.
 
 This epic promotes the reserved observability seams needed for live
 single-operator inspection — the scope act the v0.1.0 scope statement
 anticipated. It succeeds the released `feature-observability-operator-admin`
 (the v0.1.0 slice) and stays inside the standing constraints: the durable event
 log remains the single source of truth, no second writer, no metrics pipeline
-as the primary substrate.
+as the primary substrate. CLI diagnostics are VM-local in this milestone;
+workstation operators run the CLI on the VM or use an SSH tunnel, while
+supported remote CLI transport rides the reserved split-transport milestone.
 
 It is deliberately **not** the v1.0.0 supported-diagnostics story. Documented
 diagnostics and health checks for other self-hosting operators remain with
@@ -44,9 +45,10 @@ sequenced ahead of the v1.0.0 work and does not assume its output.
   supported-diagnostics contract is a later hardening of the same machinery.
   Coupling them would bind the immediate unblock to a v1-staged epic.
 - **Topology is single-VM** — core, pi-adapter, and Pi sessions run on one VM;
-  the workstation side is only the cockpit (browser) and optionally the
-  operator CLI. All collection and storage work is local to the VM; the
-  workstation question is purely a surfacing question.
+  all collection and storage work is local to the VM. CLI diagnostics are
+  VM-local in this milestone: workstation operators use an SSH tunnel or run
+  the CLI on the VM. Supported remote CLI transport is reserved for the
+  split-transport milestone.
 - **The cockpit is the primary inspection surface** — it is what the operator
   has open while dogfooding. Observability that exists only in VM-local files
   forces SSH-side inspection; cockpit-facing surfacing is therefore prioritized
@@ -78,7 +80,8 @@ In priority order, as agreed with the operator:
    read-side projection; no second writer.
 3. **Fulfill the CLI stubs** — `audit-query`, `inspect-command`,
    `adapter-status` become real commands backed by core-diagnostics, giving a
-   workstation-native inspection path. Whether these route as `query`
+   VM-local inspection path; workstation operators use an SSH tunnel or run the
+   CLI on the VM. Whether these route as `query`
    Operations or a CLI-local read is a design-time call (the no-lifecycle
    bypass read remains a reserved seam until decided).
 4. **Adapter diagnostics forwarding + cockpit surfacing** — adapter diagnostics
@@ -98,9 +101,11 @@ In priority order, as agreed with the operator:
 ## Design decisions
 
 - **Diagnostics queries route through the core; no CLI-local bypass read.**
-  The operator CLI runs on the workstation while the SQLite store lives on
-  the VM, so a persistence-local read cannot serve the primary case — and
+  The CLI runs on the VM in this milestone while the SQLite store remains
+  VM-local, so a persistence-local read cannot serve the primary case — and
   PROTOCOL already bars control surfaces from touching persistence directly.
+  Workstation operators use an SSH tunnel or run the CLI on the VM; supported
+  remote CLI transport is reserved for the split-transport milestone.
   `session-health` sets the pattern (gRPC query against core, rendered
   projection). The no-lifecycle bypass-read seam stays reserved.
 - **Audit records gain durable persistence in core storage.** The committed

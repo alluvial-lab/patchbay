@@ -346,3 +346,25 @@ test("explicit empty opaque adapter cursor reaches the diagnostics wire", async 
   assert.equal(query.query.case, "adapters");
   if (query.query.case === "adapters") assert.equal(query.query.value.afterAdapterId, "");
 });
+
+test("adapter-status requests the bounded recent-diagnostics prefix by default", async () => {
+  const store = await credentialStore();
+  let operationPayload: Uint8Array | undefined;
+  const exit = await adapterStatusCommand(
+    { async queryDiagnostics(request: { operation?: { payload?: { payload?: Uint8Array } } }) {
+      operationPayload = request.operation?.payload?.payload;
+      return diagnosticsResponse("adapters", create(AdapterStatusPageSchema));
+    } } as never,
+    store,
+    DOMAIN,
+    { adapterIds: [], json: true },
+    captureOutput(),
+  );
+  assert.equal(exit, 0);
+  const query = fromBinary(DiagnosticsQuerySchema, operationPayload!);
+  assert.equal(query.query.case, "adapters");
+  if (query.query.case === "adapters") {
+    assert.equal(query.query.value.limit, undefined);
+    assert.equal(query.query.value.recentDiagnosticLimit, 100);
+  }
+});

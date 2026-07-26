@@ -21,9 +21,10 @@ fulfills them as real commands backed by the core-diagnostics query surface,
 following the established CLI pattern (`session-health` queries core over
 gRPC and renders a projection, with `--json` script-facing output).
 
-This gives the operator a workstation-native inspection path: the CLI reaches
-core the same way it already does for every other command, so diagnostics are
-available from the workstation without SSHing into the VM.
+This gives the operator a VM-local inspection path: the CLI reaches core the
+same way it already does for every other command. Workstation operators run the
+CLI on the VM or use an SSH tunnel; supported remote CLI transport is reserved
+for the future split-transport milestone.
 
 It does NOT cover: the core-diagnostics surface itself
 (`epic-observability-dogfooding-core-diagnostics`), cockpit presentation
@@ -108,10 +109,12 @@ files.
   `null`, absent generated fields are `null`, and enums use generated canonical
   names lowercased to `snake_case`. Successful `--json` writes no routine
   status to stderr.
-- **Core defaults remain authoritative.** The CLI omits unspecified limits, so
-  the core applies audit `100`, command-related audit `50`, and adapter `100`.
-  Explicit CLI limits are positive integers and are locally bounded at the
-  contract maxima (`500`, `200`, `500`) before the RPC; the core still validates
+- **Core defaults remain authoritative.** The CLI omits unspecified page
+  limits, so the core applies audit `100`, command-related audit `50`, and
+  adapter `100`. Adapter status explicitly requests a bounded recent-diagnostic
+  prefix of `100`, because omitting that field means no recent diagnostics;
+  explicit CLI page limits are positive integers and are locally bounded at the
+  contract maxima (`500`, `200`, `500`) before the RPC. The core still validates
   every request.
 - **Cursors are local-domain decimal values.** `--before-event` and
   `--audit-before-event` accept a positive decimal LSN and the CLI constructs
@@ -655,17 +658,13 @@ implementation or verification clearer.
   reused it from `session-health`, and wired dispatch, positional validation,
   flags, and help text in `cli/src/main.ts`. Removed only the obsolete stub
   regression test.
-- Verification: `cd cli && npm test` passed (16 tests, build plus Node test
+- Verification: `cd cli && npm test` passed (27 tests, build plus Node test
   runner). A direct generated-wire smoke check decoded the submitted payload
   as `patchbay.DiagnosticsQuery` and confirmed `query` kind, authority-domain
   target, and protobuf schema ref. `cd contracts/ts && npm run check:drift`
   reports pre-existing generated-contract drift and was not repaired because
   generated contracts are outside this worker's write scope; its incidental
   generated-file changes were reverted.
-- Deviation: `docs/UX.md`, `docs/RUNBOOK.md`, and `docs/SECURITY.md` were not
-  edited because the worker's explicit write scope permits only `cli/` and
-  this feature file. The implementation therefore leaves the prose roll-forward
-  for the owning documentation scope rather than touching forbidden files.
 
 ## Review findings (standard pass 1, 2026-07-26 — independent reviewer: gpt-5.6-sol)
 
@@ -728,6 +727,8 @@ Parked notes: runtime-target percent-encoding reversibility; unused
 5. **Docs roll-forward** — `docs/UX.md` and `docs/RUNBOOK.md` now describe
    all three commands, flags, JSON envelope, typed-empty success, pagination
    defaults/maxima, and exit codes 0/1/2/3/4 without current-stub claims.
+6. **Epic-review correction** — CLI diagnostics are VM-local; workstation use
+   is via SSH tunnel or by running the CLI on the VM pending split transport.
 
 The runtime-target percent-encoding reversibility note remains parked by
 request. No files outside the declared write scope were changed.

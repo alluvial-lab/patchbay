@@ -44,6 +44,9 @@ export async function adapterStatusCommand(
         adapterIds: adapterIds.map((value) => create(AdapterIdSchema, { value })),
         afterAdapterId: options.afterAdapterId,
         limit,
+        // Core's adapter page limit does not imply a recent-diagnostics prefix;
+        // request the bounded default explicitly so the projection includes it.
+        recentDiagnosticLimit: 100,
       }),
     },
   });
