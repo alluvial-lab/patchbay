@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding
 kind: epic
-stage: drafting
+stage: implementing
 tags: [observability, dogfooding]
 parent: null
 depends_on: []
@@ -56,7 +56,15 @@ sequenced ahead of the v1.0.0 work and does not assume its output.
   substrate. Everything in this epic is a projection over, or an addition to,
   the existing durable event log and process audit lines.
 
-## Decomposition seed (for epic-design)
+## Decomposition seed (realized above — retained for the record of the agreed priority order)
+
+1. Adapter durable log sink → `epic-observability-dogfooding-adapter-log-sink`
+2. Core-diagnostics query capability → `epic-observability-dogfooding-core-diagnostics`
+3. Fulfill the CLI stubs → `epic-observability-dogfooding-cli-diagnostics`
+4. Adapter diagnostics forwarding + cockpit surfacing → `epic-observability-dogfooding-cockpit-diagnostics`
+5. Deferred (remains reserved): delivery-trace timeline UI, metrics, dedicated health/status dashboard, `event-inspect <lsn>`, SIEM export.
+
+<details><summary>Original seed prose</summary>
 
 In priority order, as agreed with the operator:
 
@@ -84,6 +92,75 @@ In priority order, as agreed with the operator:
    metrics (counters/histograms/throughput), dedicated health/status
    dashboard, raw `event-inspect <lsn>`, SIEM export and long-retention
    archives.
+
+</details>
+
+## Design decisions
+
+- **Diagnostics queries route through the core; no CLI-local bypass read.**
+  The operator CLI runs on the workstation while the SQLite store lives on
+  the VM, so a persistence-local read cannot serve the primary case — and
+  PROTOCOL already bars control surfaces from touching persistence directly.
+  `session-health` sets the pattern (gRPC query against core, rendered
+  projection). The no-lifecycle bypass-read seam stays reserved.
+- **Audit records gain durable persistence in core storage.** The committed
+  "durable queryable audit log" cannot be served from stderr-only lines.
+  The core writes redacted audit records to storage behind the existing
+  ports (single-writer preserved); the SECURITY redaction list applies
+  unchanged; stderr lines remain as process diagnostics.
+- **No mockups at epic tier.** Cockpit surfacing composes adapter health
+  into existing views reusing the current CommandState/status presentation
+  patterns (mockup-first convention skip rule: feature-level UI cleanly
+  reusing existing components). The dedicated health/status dashboard —
+  the UI that would warrant mocks — remains a reserved seam. Feature design
+  on `epic-observability-dogfooding-cockpit-diagnostics` re-evaluates and
+  falls back to `/ux-ui-design:screens` if composition proves insufficient.
+- **Adapter log default location: XDG state dir** (`~/.local/state/patchbay/`),
+  overridable via `PATCHBAY_ADAPTER_LOG`. Routine, reversible; durable across
+  reboots unlike `/tmp`, outside the repo unlike the CWD.
+
+## Decomposition
+
+Split by capability along the inspection path: one adapter-local producer
+(log sink), one core foundation (durable audit records + query surface), and
+two parallel consumers (CLI, cockpit). The log sink and core-diagnostics are
+independent and can start immediately; both consumers wait only on
+core-diagnostics. This shape was chosen over a layer split
+(contracts/core/surface features) because each consumer capability needs its
+contract, core, and surface pieces to agree on one vocabulary.
+
+### Child features
+
+- `epic-observability-dogfooding-adapter-log-sink` — pi-adapter durable, configurable diagnostics log file — depends on: `[]`
+- `epic-observability-dogfooding-core-diagnostics` — durable audit records + queryable diagnostics projections in the core — depends on: `[]`
+- `epic-observability-dogfooding-cli-diagnostics` — fulfill `audit-query` / `inspect-command` / `adapter-status` against core-diagnostics — depends on: `[epic-observability-dogfooding-core-diagnostics]`
+- `epic-observability-dogfooding-cockpit-diagnostics` — adapter diagnostics forwarded to core as payload + cockpit presentation of adapter health — depends on: `[epic-observability-dogfooding-core-diagnostics]`
+
+### Simplification arcs
+
+- `epic-observability-dogfooding-cli-diagnostics` — deletes the three honest
+  stub commands and the released-artifact references in their messages.
+- `epic-observability-dogfooding-adapter-log-sink` — repositions or deletes
+  the process-local `TranscriptEventLog`.
+- `epic-observability-dogfooding-core-diagnostics` — consolidates audit
+  emission behind one sink abstraction (`StderrLoginAuditSink` becomes one
+  implementation, not the only channel).
+
+### Decomposition risks
+
+- **Core-diagnostics is the critical path** — both consumers block on it, and
+  it carries the epic's hardest design questions (audit-record storage
+  schema, query operation shapes, generalizing the login-audit trait to the
+  full audit vocabulary). Mitigation: its contract types land first in its
+  own design pass, unblocking consumer design before consumer implementation.
+- **Cockpit-diagnostics spans contract + core + web** — wide but one
+  capability; if its design pass finds it exceeding the 5-15 unit sizing
+  rule, split the presentation units into a child story rather than slicing
+  by layer.
+- **Priority vs dependency tension** — cockpit surfacing is the highest
+  dogfooding value but sits at the end of the longest chain. The adapter log
+  sink (priority 1) and CLI (priority 3) deliver inspection value earlier;
+  accept the ordering rather than distort the dependency graph.
 
 ## Simplification opportunity
 
