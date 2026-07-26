@@ -16,6 +16,7 @@ use patchbay_core::{
         ingest_operator_record, AuthorityError, AuthorityRegistry, GrantRecord, IssuerContext,
         OperatorError, OperatorRegistry,
     },
+    diagnostics::DiagnosticsProjection,
     session::SessionRegistry,
     storage::{RecordedEvent, Storage, StorageError},
 };
@@ -39,6 +40,7 @@ pub struct ProjectionState {
     target_resolver: LockedTargetResolver,
     state_lookup: LockedCommandStateLookup,
     elicitation_slots: LockedElicitationContractLookup,
+    diagnostics: Arc<Mutex<DiagnosticsProjection>>,
     operators: Arc<Mutex<OperatorRegistry>>,
     operator_sessions: OperatorSessionRegistry,
     last_applied_lsn: Arc<Mutex<u64>>,
@@ -68,6 +70,7 @@ impl ProjectionState {
         let mut sessions = SessionRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
+        let mut diagnostics = DiagnosticsProjection::new();
         let mut operators = OperatorRegistry::new();
         let mut last_applied_lsn = 0;
         for event in &events {
@@ -80,16 +83,21 @@ impl ProjectionState {
             elicitation_slots
                 .observe(event)
                 .map_err(|error| error.to_string())?;
+            diagnostics
+                .observe(event)
+                .map_err(|error| error.to_string())?;
             operators
                 .observe(event)
                 .map_err(|error| error.to_string())?;
         }
+        diagnostics.reset_adapter_liveness();
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
             target_resolver: LockedTargetResolver::new(sessions),
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
+            diagnostics: Arc::new(Mutex::new(diagnostics)),
             operators: Arc::new(Mutex::new(operators)),
             operator_sessions: OperatorSessionRegistry::new(operator_session_ttl)?,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
@@ -115,6 +123,25 @@ impl ProjectionState {
     #[must_use]
     pub fn elicitation_contract_lookup(&self) -> &LockedElicitationContractLookup {
         &self.elicitation_slots
+    }
+
+    pub async fn diagnostics_command_result(
+        &self,
+        command_id: &CommandId,
+    ) -> Option<patchbay_contracts::patchbay::CommandInspectionResult> {
+        self.diagnostics.lock().await.result_for_query(command_id)
+    }
+
+    pub async fn diagnostics_adapter_page(
+        &self,
+        query: &patchbay_contracts::patchbay::AdapterStatusQuery,
+        as_of: u64,
+    ) -> Result<patchbay_contracts::patchbay::AdapterStatusPage, patchbay_core::diagnostics::DiagnosticsError> {
+        self.diagnostics.lock().await.adapter_page(query, as_of)
+    }
+
+    pub async fn current_lsn(&self) -> u64 {
+        *self.last_applied_lsn.lock().await
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
@@ -224,6 +251,11 @@ impl ProjectionState {
             self.elicitation_slots
                 .observe(&event)
                 .await
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            self.diagnostics
+                .lock()
+                .await
+                .observe(&event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.operators
                 .lock()

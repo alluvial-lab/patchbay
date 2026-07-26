@@ -151,6 +151,11 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(map_write_err)?;
+    if version >= 1 {
+        validate_columns(db, "events", &["lsn", "authority_domain_id", "kind", "payload"])?;
+        validate_columns(db, "idempotency_keys", &["authority_domain_id", "key", "target", "lsn", "payload_bytes"])?;
+        validate_columns(db, "snapshots", &["authority_domain_id", "snapshot_lsn", "payload"])?;
+    }
     if version >= 2 || (version == 1 && table_exists(db, "audit_records")?) {
         validate_columns(
             db,

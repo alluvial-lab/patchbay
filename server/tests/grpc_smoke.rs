@@ -10,11 +10,12 @@ use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
     ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
-    Operation, OperationKind, OperationState, OperatorRecord, PrincipalEnrollment,
-    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionRegistered,
-    SessionSnapshot, SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
+    PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
+    SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
     SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
-    VerifyOperatorPasswordRequest,
+    VerifyOperatorPasswordRequest, diagnostics_query, query_diagnostics_response,
 };
 use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
@@ -350,6 +351,54 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
 }
 
 #[tokio::test]
+async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
+    let mut server = start_server().await;
+    let query = DiagnosticsQuery {
+        query: Some(diagnostics_query::Query::Audit(AuditQuery {
+            limit: Some(1),
+            ..AuditQuery::default()
+        })),
+    };
+    let request = QueryDiagnosticsRequest {
+        operation: Some(diagnostic_query_operation("diagnostic-query", "diagnostic-query-key", query)),
+    };
+    let first = server
+        .client
+        .query_diagnostics(authenticated_request(
+            request.clone(),
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("authorized diagnostics query must complete")
+        .into_inner();
+    let submission = first.submission.expect("query has submission");
+    assert_eq!(submission.outcome, SubmissionOutcome::Accepted as i32);
+    assert_eq!(submission.operation_state, OperationState::Completed as i32);
+    let result_event_id = first.result_event_id.clone().expect("query has durable result");
+    assert!(matches!(
+        first.result,
+        Some(query_diagnostics_response::Result::Audit(_))
+    ));
+
+    let retry = server
+        .client
+        .query_diagnostics(authenticated_request(
+            request,
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("exact query retry must complete")
+        .into_inner();
+    assert_eq!(retry.result_event_id, Some(result_event_id));
+    assert!(matches!(
+        retry.result,
+        Some(query_diagnostics_response::Result::Audit(_))
+    ));
+}
+
+#[tokio::test]
 async fn grant_subject_uses_verified_actor_not_operator_session() {
     let mut server = start_server().await;
     assert_ne!(server.operator_session, OPERATOR_ACTOR);
@@ -661,6 +710,23 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .append(&domain(), authority_events::grant(domain(), grant))
         .await
         .expect("grant fixture must append");
+    let query_grant = Grant {
+        grant_id: Some(GrantId { value: "operator-query-grant".to_owned() }),
+        authority_domain_id: Some(domain()),
+        subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::AuthorityDomain as i32,
+            ..TargetScope::default()
+        }),
+        allowed_operation_kinds: vec![OperationKind::Query as i32],
+        provenance: Some(GrantProvenance { reason: "diagnostics fixture".to_owned(), ..GrantProvenance::default() }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    };
+    storage
+        .append(&domain(), authority_events::grant(domain(), query_grant))
+        .await
+        .expect("query grant fixture must append");
 
     let operator = OperatorRecord {
         actor_id: Some(ActorId {
@@ -774,6 +840,29 @@ fn authenticated_request<T>(message: T, secret: &str, operator_session: &str) ->
             .expect("test principal secret is valid metadata"),
     );
     request
+}
+
+fn diagnostic_query_operation(command_id: &str, idempotency_key: &str, query: DiagnosticsQuery) -> Operation {
+    Operation {
+        command_id: Some(CommandId { value: command_id.to_owned() }),
+        authority_domain_id: Some(domain()),
+        sender: Some(ActorEndpointRef::default()),
+        recipient: Some(ActorEndpointRef::default()),
+        kind: OperationKind::Query as i32,
+        target_scope: Some(TargetScope { kind: TargetScopeKind::AuthorityDomain as i32, ..TargetScope::default() }),
+        idempotency_key: idempotency_key.to_owned(),
+        payload: Some(PayloadEnvelope {
+            payload: query.encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: "patchbay.DiagnosticsQuery".to_owned(),
+        }),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+            expires_at: Some(Timestamp { seconds: 253_402_300_799, nanos: 0 }),
+        }),
+        submitted_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+        ..Operation::default()
+    }
 }
 
 fn operation(command_id: &str, idempotency_key: &str) -> Operation {

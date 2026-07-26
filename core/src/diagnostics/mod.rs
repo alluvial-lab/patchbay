@@ -1,0 +1,416 @@
+//! Core-owned, replayable diagnostic projections and query validation.
+
+use std::collections::HashMap;
+
+use patchbay_contracts::patchbay::{
+    diagnostics_query, AdapterCapabilitySummary, AdapterDiagnosticState, AdapterId,
+    AdapterRegistration, AdapterStatus, AdapterStatusPage, AdapterStatusQuery, AuditQuery,
+    AuthorityDomainId, CommandId, CommandInspection, CommandInspectionQuery,
+    CommandInspectionResult, CommandHistoryEntry, CommandSummary, DiagnosticsQuery, EventId,
+    FailureCode, Operation, OperationKind, OperationState, Observation, StoredEventKind,
+    TargetScope, TargetScopeKind,
+};
+use prost::Message;
+use prost_types::Timestamp;
+
+use crate::{
+    acceptance::{TargetBinding, TargetNotFound, TargetResolver},
+    storage::{AuditPageSpec, RecordedEvent, StorageError, TargetKey},
+};
+
+pub const AUDIT_DEFAULT_LIMIT: u16 = 100;
+pub const AUDIT_MAX_LIMIT: u16 = 500;
+pub const COMMAND_DEFAULT_LIMIT: u16 = 50;
+pub const COMMAND_MAX_LIMIT: u16 = 200;
+pub const ADAPTER_DEFAULT_LIMIT: u16 = 100;
+pub const ADAPTER_MAX_LIMIT: u16 = 500;
+pub const DIAGNOSTICS_SCHEMA: &str = "patchbay.DiagnosticsQuery";
+
+/// Resolver used only by the diagnostics execution path. Ordinary Submit
+/// continues to use the session resolver and cannot turn a target kind into a
+/// core-local target.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AuthorityDomainTargetResolver;
+
+impl TargetResolver for AuthorityDomainTargetResolver {
+    async fn resolve(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        target_scope: &TargetScope,
+    ) -> Result<TargetBinding, TargetNotFound> {
+        if TargetScopeKind::try_from(target_scope.kind).ok() != Some(TargetScopeKind::AuthorityDomain) {
+            return Err(TargetNotFound::NotFound {
+                target: "diagnostics target is not an authority domain".to_owned(),
+            });
+        }
+        Ok(TargetBinding {
+            runtime_session_id: patchbay_contracts::patchbay::RuntimeSessionId {
+                value: format!("authority-domain:{}", authority_domain_id.value),
+            },
+            session_generation: patchbay_contracts::patchbay::Generation { value: 0 },
+            adapter_id: patchbay_contracts::patchbay::AdapterId {
+                value: "core-diagnostics".to_owned(),
+            },
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DiagnosticsError {
+    #[error("invalid diagnostics query: {0}")]
+    InvalidQuery(String),
+    #[error("corrupt diagnostics event: {0}")]
+    CorruptEvent(String),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+}
+
+#[derive(Debug, Clone)]
+pub enum ValidatedDiagnosticsQuery {
+    Audit(AuditPageSpec),
+    Command(CommandInspectionQuery),
+    Adapters(patchbay_contracts::patchbay::AdapterStatusQuery),
+}
+
+#[derive(Debug, Clone)]
+struct CommandTimeline {
+    summary: CommandSummary,
+    accepted_event_id: EventId,
+    current_state: OperationState,
+    failure_code: FailureCode,
+    terminal_event_id: Option<EventId>,
+    history: Vec<CommandHistoryEntry>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct DiagnosticsProjection {
+    commands: HashMap<CommandId, CommandTimeline>,
+    adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
+    live_adapters: std::collections::HashSet<AdapterId>,
+}
+
+impl DiagnosticsProjection {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let kind = StoredEventKind::try_from(event.payload.kind)
+            .map_err(|_| DiagnosticsError::CorruptEvent("unknown stored event kind".to_owned()))?;
+        match kind {
+            StoredEventKind::Operation => {
+                let operation = Operation::decode(event.payload.payload.as_slice())
+                    .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+                if operation.command_id.is_some() {
+                    let command_id = operation.command_id.clone().expect("checked above");
+                    let summary = CommandSummary {
+                        command_id: Some(command_id.clone()),
+                        sender: operation.sender,
+                        recipient: operation.recipient,
+                        kind: operation.kind,
+                        target_scope: operation.target_scope,
+                        correlations: operation.correlations,
+                        validity_window: operation.validity_window,
+                        submitted_at: operation.submitted_at,
+                    };
+                    self.commands.entry(command_id).or_insert_with(|| CommandTimeline {
+                        summary: summary.clone(),
+                        accepted_event_id: event.event_id.clone(),
+                        current_state: OperationState::Accepted,
+                        failure_code: FailureCode::Unspecified,
+                        terminal_event_id: None,
+                        history: vec![CommandHistoryEntry {
+                            event_id: Some(event.event_id.clone()),
+                            state: OperationState::Accepted as i32,
+                            failure_code: FailureCode::Unspecified as i32,
+                            occurred_at: summary.submitted_at,
+                            correlations: summary.correlations.clone(),
+                        }],
+                    });
+                }
+            }
+            StoredEventKind::CommandTransition => {
+                let transition = patchbay_contracts::patchbay::CommandTransition::decode(
+                    event.payload.payload.as_slice(),
+                )
+                .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+                let command_id = transition.command_id.ok_or_else(|| {
+                    DiagnosticsError::CorruptEvent("transition has no command id".to_owned())
+                })?;
+                let timeline = self.commands.get_mut(&command_id).ok_or_else(|| {
+                    DiagnosticsError::CorruptEvent("transition precedes command operation".to_owned())
+                })?;
+                let from = OperationState::try_from(transition.from_state)
+                    .map_err(|_| DiagnosticsError::CorruptEvent("unknown transition from_state".to_owned()))?;
+                let to = OperationState::try_from(transition.to_state)
+                    .map_err(|_| DiagnosticsError::CorruptEvent("unknown transition to_state".to_owned()))?;
+                if timeline.current_state != from {
+                    return Err(DiagnosticsError::CorruptEvent("transition from_state does not match projection".to_owned()));
+                }
+                timeline.current_state = to;
+                timeline.failure_code = FailureCode::try_from(transition.failure_code)
+                    .map_err(|_| DiagnosticsError::CorruptEvent("unknown transition failure_code".to_owned()))?;
+                if to != OperationState::Accepted {
+                    timeline.history.push(CommandHistoryEntry {
+                        event_id: Some(event.event_id.clone()),
+                        state: to as i32,
+                        failure_code: timeline.failure_code as i32,
+                        occurred_at: transition.committed_at,
+                        correlations: transition.correlations,
+                    });
+                }
+                if is_terminal(to) {
+                    timeline.terminal_event_id = Some(event.event_id.clone());
+                }
+            }
+            StoredEventKind::Observation => self.observe_observation(event)?,
+            StoredEventKind::Elicitation
+            | StoredEventKind::Grant
+            | StoredEventKind::DescendantGrant
+            | StoredEventKind::Revocation
+            | StoredEventKind::SessionState
+            | StoredEventKind::OperatorRecord
+            | StoredEventKind::ControlSurfacePrincipal
+            | StoredEventKind::AuditRecord
+            | StoredEventKind::Unspecified => {}
+        }
+        Ok(())
+    }
+
+    fn observe_observation(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let observation = Observation::decode(event.payload.payload.as_slice())
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        let Some(payload) = observation.payload.as_ref() else {
+            return Ok(());
+        };
+        if payload.schema_ref != "patchbay.AdapterRegistration" {
+            return Ok(());
+        }
+        let registration = AdapterRegistration::decode(payload.payload.as_slice())
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        let adapter_id = registration.adapter_id.clone().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter registration has no adapter id".to_owned())
+        })?;
+        self.adapters.insert(adapter_id.clone(), (registration, event.event_id.clone()));
+        self.live_adapters.insert(adapter_id);
+        Ok(())
+    }
+
+    /// Rebuilds intentionally do not infer current liveness from historical
+    /// registration records. A live process calls `observe` for a fresh
+    /// attachment after startup.
+    pub fn reset_adapter_liveness(&mut self) {
+        self.live_adapters.clear();
+    }
+
+    pub fn adapter_page(
+        &self,
+        query: &AdapterStatusQuery,
+        as_of: u64,
+    ) -> Result<AdapterStatusPage, DiagnosticsError> {
+        let limit = query.limit.unwrap_or(u32::from(ADAPTER_DEFAULT_LIMIT));
+        if limit == 0 || limit > u32::from(ADAPTER_MAX_LIMIT) {
+            return Err(DiagnosticsError::InvalidQuery("adapter limit is out of bounds".to_owned()));
+        }
+        let requested: std::collections::HashSet<_> = query.adapter_ids.iter().cloned().collect();
+        let mut records: Vec<_> = self.adapters.iter().filter(|(id, _)| {
+            (requested.is_empty() || requested.contains(id))
+                && id.value.as_str() > query.after_adapter_id.as_str()
+        }).collect();
+        records.sort_by(|(left, _), (right, _)| left.value.cmp(&right.value));
+        let has_more = records.len() > limit as usize;
+        records.truncate(limit as usize);
+        let next_after_adapter_id = if has_more {
+            records.last().map_or_else(String::new, |(id, _)| id.value.clone())
+        } else {
+            String::new()
+        };
+        let adapters = records.into_iter().map(|(adapter_id, (registration, attach_event_id))| {
+            let capability = registration.capability.as_ref().map(|capability| AdapterCapabilitySummary {
+                supported_operation_kinds: capability.supported_operation_kinds.clone(),
+                supported_target_spec_shapes: capability.supported_target_spec_shapes.clone(),
+                streaming_support: capability.streaming_support,
+                snapshot_support: capability.snapshot_support,
+                cancellation_support: capability.cancellation_support,
+                session_replacement_support: capability.session_replacement_support,
+                idempotency_strength: capability.idempotency_strength,
+                attachment_method_kind: capability.attachment_method.as_ref().map_or_else(String::new, |method| method.kind.clone()),
+                attachment_descriptor_content_type: capability.attachment_method.as_ref().map_or(0, |method| method.descriptor_content_type),
+                known_failure_modes: capability.known_failure_modes.clone(),
+            });
+            AdapterStatus {
+                adapter_id: Some(adapter_id.clone()),
+                endpoint_id: registration.endpoint_id.clone(),
+                adapter_generation: registration.adapter_generation,
+                state: if self.live_adapters.contains(adapter_id) { AdapterDiagnosticState::Attached as i32 } else { AdapterDiagnosticState::Unknown as i32 },
+                attach_event_id: Some(attach_event_id.clone()),
+                attached_at: registration.attached_at,
+                capability,
+                ..AdapterStatus::default()
+            }
+        }).collect();
+        let _ = as_of;
+        Ok(AdapterStatusPage { adapters, next_after_adapter_id, has_more })
+    }
+
+    #[must_use]
+    pub fn inspect_command(&self, id: &CommandId) -> Option<CommandInspection> {
+        self.commands.get(id).map(|timeline| CommandInspection {
+            command: Some(timeline.summary.clone()),
+            accepted_event_id: Some(timeline.accepted_event_id.clone()),
+            current_state: timeline.current_state as i32,
+            failure_code: timeline.failure_code as i32,
+            terminal_event_id: timeline.terminal_event_id.clone(),
+            history: timeline.history.clone(),
+            audit: None,
+        })
+    }
+
+    #[must_use]
+    pub fn result_for_query(&self, id: &CommandId) -> Option<CommandInspectionResult> {
+        Some(CommandInspectionResult {
+            found: self.commands.contains_key(id),
+            inspection: self.inspect_command(id),
+        })
+    }
+}
+
+fn is_terminal(state: OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Completed
+            | OperationState::Rejected
+            | OperationState::Failed
+            | OperationState::Expired
+            | OperationState::Cancelled
+            | OperationState::Superseded
+    )
+}
+
+pub fn validate_query(
+    operation: &Operation,
+    current_lsn: u64,
+) -> Result<ValidatedDiagnosticsQuery, DiagnosticsError> {
+    if OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Query) {
+        return Err(DiagnosticsError::InvalidQuery("operation kind must be QUERY".to_owned()));
+    }
+    let domain = operation.authority_domain_id.as_ref().filter(|id| !id.value.is_empty()).ok_or_else(|| DiagnosticsError::InvalidQuery("operation is missing authority domain".to_owned()))?;
+    let target = operation.target_scope.as_ref().ok_or_else(|| DiagnosticsError::InvalidQuery("query operation is missing target scope".to_owned()))?;
+    if TargetScopeKind::try_from(target.kind).ok() != Some(TargetScopeKind::AuthorityDomain) {
+        return Err(DiagnosticsError::InvalidQuery("diagnostics target must be an authority domain".to_owned()));
+    }
+    let payload = operation.payload.as_ref().ok_or_else(|| DiagnosticsError::InvalidQuery("query operation is missing payload".to_owned()))?;
+    if payload.schema_ref != DIAGNOSTICS_SCHEMA {
+        return Err(DiagnosticsError::InvalidQuery("query payload has the wrong schema_ref".to_owned()));
+    }
+    if payload.content_type != patchbay_contracts::patchbay::PayloadContentType::Protobuf as i32 {
+        return Err(DiagnosticsError::InvalidQuery("diagnostics payload must be protobuf".to_owned()));
+    }
+    let query = DiagnosticsQuery::decode(payload.payload.as_slice())
+        .map_err(|error| DiagnosticsError::InvalidQuery(format!("query payload is malformed: {error}")))?;
+    match query.query.ok_or_else(|| DiagnosticsError::InvalidQuery("diagnostics query is empty".to_owned()))? {
+        diagnostics_query::Query::Audit(query) => validate_audit_query(query, domain, current_lsn),
+        diagnostics_query::Query::Command(query) => {
+            let command_id = query.command_id.as_ref().filter(|id| !id.value.is_empty()).ok_or_else(|| DiagnosticsError::InvalidQuery("command query is missing command_id".to_owned()))?;
+            if let Some(cursor) = query.audit_before_event_id.as_ref() {
+                validate_cursor(cursor, domain, current_lsn)?;
+            }
+            validate_limit(query.audit_limit, COMMAND_DEFAULT_LIMIT, COMMAND_MAX_LIMIT, "command audit")?;
+            Ok(ValidatedDiagnosticsQuery::Command(CommandInspectionQuery {
+                command_id: Some(command_id.clone()),
+                ..query
+            }))
+        }
+        diagnostics_query::Query::Adapters(query) => {
+            if query.adapter_ids.iter().any(|id| id.value.is_empty()) {
+                return Err(DiagnosticsError::InvalidQuery("adapter filter contains an empty id".to_owned()));
+            }
+            validate_limit(query.limit, ADAPTER_DEFAULT_LIMIT, ADAPTER_MAX_LIMIT, "adapter")?;
+            Ok(ValidatedDiagnosticsQuery::Adapters(query))
+        }
+    }
+}
+
+fn validate_audit_query(
+    query: AuditQuery,
+    domain: &AuthorityDomainId,
+    current_lsn: u64,
+) -> Result<ValidatedDiagnosticsQuery, DiagnosticsError> {
+    for kind in &query.kinds {
+        let kind = patchbay_contracts::patchbay::AuditEventKind::try_from(*kind).map_err(|_| DiagnosticsError::InvalidQuery("audit filter contains an unknown kind".to_owned()))?;
+        if kind == patchbay_contracts::patchbay::AuditEventKind::Unspecified {
+            return Err(DiagnosticsError::InvalidQuery("audit filter contains unspecified kind".to_owned()));
+        }
+    }
+    for code in &query.failure_codes {
+        let code = FailureCode::try_from(*code).map_err(|_| DiagnosticsError::InvalidQuery("audit filter contains an unknown failure code".to_owned()))?;
+        if code == FailureCode::Unspecified {
+            return Err(DiagnosticsError::InvalidQuery("audit filter contains unspecified failure code".to_owned()));
+        }
+    }
+    if query.reason_codes.iter().any(|reason| reason.is_empty() || reason.len() > 64 || !reason.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')) {
+        return Err(DiagnosticsError::InvalidQuery("reason_codes must match [a-z0-9_]{1,64}".to_owned()));
+    }
+    validate_interval(query.occurred_from_inclusive.as_ref(), query.occurred_before_exclusive.as_ref())?;
+    if let Some(cursor) = query.before_event_id.as_ref() {
+        validate_cursor(cursor, domain, current_lsn)?;
+    }
+    validate_limit(query.limit, AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT, "audit")?;
+    let target = query.target_scope.as_ref().map(|scope| {
+        TargetKey::new(hex_scope(scope)).ok_or_else(|| DiagnosticsError::InvalidQuery("target filter has no canonical fields".to_owned()))
+    }).transpose()?;
+    Ok(ValidatedDiagnosticsQuery::Audit(AuditPageSpec {
+        kinds: query.kinds.into_iter().map(|kind| patchbay_contracts::patchbay::AuditEventKind::try_from(kind).expect("validated kind")).collect(),
+        actor_id: query.actor_id,
+        endpoint_id: query.endpoint_id,
+        command_id: query.command_id,
+        target,
+        failure_codes: query.failure_codes.into_iter().map(|code| FailureCode::try_from(code).expect("validated failure")).collect(),
+        reason_codes: query.reason_codes,
+        occurred_from: query.occurred_from_inclusive,
+        occurred_before: query.occurred_before_exclusive,
+        before_lsn: query.before_event_id.and_then(|id| id.lsn).map(|lsn| lsn.value),
+        limit: query.limit.map_or(AUDIT_DEFAULT_LIMIT, |limit| limit as u16),
+    }))
+}
+
+fn hex_scope(scope: &TargetScope) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    scope.encode_to_vec().iter().flat_map(|byte| [HEX[(byte >> 4) as usize] as char, HEX[(byte & 0x0f) as usize] as char]).collect()
+}
+
+fn validate_cursor(cursor: &EventId, domain: &AuthorityDomainId, current_lsn: u64) -> Result<(), DiagnosticsError> {
+    if cursor.authority_domain_id.as_ref() != Some(domain) {
+        return Err(DiagnosticsError::InvalidQuery("cursor belongs to another authority domain".to_owned()));
+    }
+    let lsn = cursor.lsn.as_ref().ok_or_else(|| DiagnosticsError::InvalidQuery("cursor is missing LSN".to_owned()))?.value;
+    if lsn > current_lsn {
+        return Err(DiagnosticsError::InvalidQuery("cursor is beyond current LSN".to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_limit(limit: Option<u32>, default: u16, maximum: u16, name: &str) -> Result<(), DiagnosticsError> {
+    if let Some(limit) = limit {
+        if limit == 0 || limit > u32::from(maximum) {
+            return Err(DiagnosticsError::InvalidQuery(format!("{name} limit must be between 1 and {maximum}")));
+        }
+    }
+    let _ = default;
+    Ok(())
+}
+
+fn validate_interval(from: Option<&Timestamp>, before: Option<&Timestamp>) -> Result<(), DiagnosticsError> {
+    for timestamp in [from, before].into_iter().flatten() {
+        if !(0..1_000_000_000).contains(&timestamp.nanos) {
+            return Err(DiagnosticsError::InvalidQuery("query timestamp is invalid".to_owned()));
+        }
+    }
+    if let (Some(from), Some(before)) = (from, before) {
+        if (from.seconds, from.nanos) >= (before.seconds, before.nanos) {
+            return Err(DiagnosticsError::InvalidQuery("query time interval is empty or reversed".to_owned()));
+        }
+    }
+    Ok(())
+}

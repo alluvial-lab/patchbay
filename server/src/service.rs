@@ -1,17 +1,20 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuditEventKind, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
-    EnrollControlSurfacePrincipalResult, EventId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
+    ActorId, AuditEventKind, AuthorityDomainId, CommandTransition, DiagnosticsResult,
+    EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
+    LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RevokeOperatorSessionRequest,
     RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
-    SubscribeEvent, SubscribeRequest,
+    SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
+    TypedCorrelation, typed_correlation, OperationState, FailureCode,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{IssuerContext, OperatorError},
+    diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
     storage::{AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
@@ -496,9 +499,143 @@ where
 
     async fn query_diagnostics(
         &self,
-        _request: Request<QueryDiagnosticsRequest>,
+        request: Request<QueryDiagnosticsRequest>,
     ) -> Result<Response<QueryDiagnosticsResponse>, Status> {
-        Err(Status::unimplemented("diagnostics query surface is not wired yet"))
+        let operation = request
+            .get_ref()
+            .operation
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("query diagnostics request is missing operation"))?;
+        let authority_domain_id = operation
+            .authority_domain_id
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("query operation is missing authority domain"))?;
+        self.require_configured_domain(&authority_domain_id)?;
+        let issuer = MetadataIssuerContext::from_request(
+            &request,
+            authority_domain_id.clone(),
+            &self.state,
+        )
+        .await?;
+        let operation = request
+            .into_inner()
+            .operation
+            .ok_or_else(|| Status::invalid_argument("query diagnostics request lost operation"))?;
+
+        let _submit_guard = self.state.submit_guard().await;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let current_lsn = self.state.current_lsn().await;
+        let validated = diagnostics::validate_query(&operation, current_lsn)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        let submission = acceptance::submit(
+            &self.storage,
+            self.state.grant_check(),
+            &AuthorityDomainTargetResolver,
+            self.state.state_lookup(),
+            self.state.elicitation_contract_lookup(),
+            &issuer,
+            operation.clone(),
+        )
+        .await
+        .map_err(map_acceptance_error_to_status)?;
+        if submission.outcome != SubmissionOutcome::Accepted as i32 {
+            return Ok(Response::new(QueryDiagnosticsResponse {
+                submission: Some(submission),
+                ..QueryDiagnosticsResponse::default()
+            }));
+        }
+        let command_id = submission
+            .command_id
+            .clone()
+            .ok_or_else(|| Status::internal("accepted query has no command id"))?;
+
+        if submission.deduplicated {
+            if let Some((result_event_id, result, response_result)) =
+                find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
+            {
+                return Ok(Response::new(QueryDiagnosticsResponse {
+                    submission: Some(submission),
+                    result_event_id: Some(result_event_id),
+                    as_of_lsn: result.as_of_lsn,
+                    result: Some(response_result),
+                }));
+            }
+            return Err(retryable_unavailable(
+                "accepted diagnostics query has no durable result yet".to_owned(),
+            ));
+        }
+
+        let delivered_event_id = append_query_transition(
+            &self.storage,
+            &authority_domain_id,
+            &command_id,
+            OperationState::Accepted,
+            OperationState::Delivered,
+        )
+        .await
+        .map_err(map_storage_error_to_status)?;
+        let as_of_lsn = delivered_event_id
+            .lsn
+            .ok_or_else(|| Status::internal("delivered query has no LSN"))?;
+        let (result, response_result) = materialize_diagnostics_result(
+            &self.storage,
+            &self.state,
+            &authority_domain_id,
+            validated,
+            as_of_lsn.value,
+        )
+        .await
+        .map_err(|error| Status::internal(error.to_string()))?;
+        let result_event_id = self
+            .storage
+            .append(
+                &authority_domain_id,
+                patchbay_contracts::patchbay::StoredEventPayload {
+                    kind: StoredEventKind::Observation as i32,
+                    payload: Observation {
+                        authority_domain_id: Some(authority_domain_id.clone()),
+                        kind: ObservationKind::Result as i32,
+                        correlations: vec![TypedCorrelation {
+                            r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+                        }],
+                        payload: Some(patchbay_contracts::patchbay::PayloadEnvelope {
+                            payload: result.encode_to_vec(),
+                            content_type: PayloadContentType::Protobuf as i32,
+                            schema_ref: "patchbay.DiagnosticsResult".to_owned(),
+                        }),
+                        ..Observation::default()
+                    }
+                    .encode_to_vec(),
+                },
+            )
+            .await
+            .map_err(map_storage_error_to_status)?;
+        append_query_transition(
+            &self.storage,
+            &authority_domain_id,
+            &command_id,
+            OperationState::Delivered,
+            OperationState::Completed,
+        )
+        .await
+        .map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+
+        let mut final_submission = submission;
+        final_submission.operation_state = OperationState::Completed as i32;
+        Ok(Response::new(QueryDiagnosticsResponse {
+            submission: Some(final_submission),
+            result_event_id: Some(result_event_id),
+            as_of_lsn: Some(as_of_lsn),
+            result: Some(response_result),
+        }))
     }
 }
 
@@ -546,6 +683,141 @@ impl<S> ControlServiceImpl<S> {
         }
         Ok(())
     }
+}
+
+async fn append_query_transition<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    command_id: &patchbay_contracts::patchbay::CommandId,
+    from: OperationState,
+    to: OperationState,
+) -> Result<EventId, StorageError> {
+    storage
+        .append(
+            authority_domain_id,
+            patchbay_contracts::patchbay::StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id.clone()),
+                    from_state: from as i32,
+                    to_state: to as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+}
+
+async fn materialize_diagnostics_result<S: Storage>(
+    storage: &S,
+    state: &ProjectionState,
+    authority_domain_id: &AuthorityDomainId,
+    query: ValidatedDiagnosticsQuery,
+    as_of_lsn: u64,
+) -> Result<(
+    DiagnosticsResult,
+    patchbay_contracts::patchbay::query_diagnostics_response::Result,
+), diagnostics::DiagnosticsError> {
+    let as_of = Some(Lsn { value: as_of_lsn });
+    match query {
+        ValidatedDiagnosticsQuery::Audit(spec) => {
+            let page = storage.query_audit(authority_domain_id, spec).await?;
+            Ok((
+                DiagnosticsResult {
+                    as_of_lsn: as_of,
+                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Audit(page.clone())),
+                },
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Audit(page),
+            ))
+        }
+        ValidatedDiagnosticsQuery::Command(query) => {
+            let command_id = query.command_id.clone().expect("validated command id");
+            let result = state
+                .diagnostics_command_result(&command_id)
+                .await
+                .unwrap_or(patchbay_contracts::patchbay::CommandInspectionResult {
+                    found: false,
+                    inspection: None,
+                });
+            Ok((
+                DiagnosticsResult {
+                    as_of_lsn: as_of,
+                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Command(result.clone())),
+                },
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(result),
+            ))
+        }
+        ValidatedDiagnosticsQuery::Adapters(query) => {
+            let page = state.diagnostics_adapter_page(&query, as_of_lsn).await?;
+            Ok((
+                DiagnosticsResult {
+                    as_of_lsn: as_of,
+                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(page.clone())),
+                },
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page),
+            ))
+        }
+    }
+}
+
+async fn find_diagnostics_result<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    command_id: &patchbay_contracts::patchbay::CommandId,
+) -> Result<
+    Option<(
+        EventId,
+        DiagnosticsResult,
+        patchbay_contracts::patchbay::query_diagnostics_response::Result,
+    )>,
+    Status,
+> {
+    let events = storage
+        .read_after(authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(map_storage_error_to_status)?;
+    for event in events {
+        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation) {
+            continue;
+        }
+        let observation = Observation::decode(event.payload.payload.as_slice())
+            .map_err(|error| Status::internal(format!("cannot decode observation: {error}")))?;
+        if observation
+            .payload
+            .as_ref()
+            .is_none_or(|payload| payload.schema_ref != "patchbay.DiagnosticsResult")
+            || !observation.correlations.iter().any(|correlation| {
+                matches!(
+                    correlation.r#ref.as_ref(),
+                    Some(typed_correlation::Ref::CommandId(id)) if id == command_id
+                )
+            })
+        {
+            continue;
+        }
+        let payload = observation.payload.expect("checked above");
+        let result = DiagnosticsResult::decode(payload.payload.as_slice())
+            .map_err(|error| Status::internal(format!("cannot decode diagnostics result: {error}")))?;
+        let response_result = match result
+            .result
+            .clone()
+            .ok_or_else(|| Status::internal("diagnostics result has no result"))?
+        {
+            patchbay_contracts::patchbay::diagnostics_result::Result::Audit(page) => {
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Audit(page)
+            }
+            patchbay_contracts::patchbay::diagnostics_result::Result::Command(result) => {
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(result)
+            }
+            patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(page) => {
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page)
+            }
+        };
+        return Ok(Some((event.event_id, result, response_result)));
+    }
+    Ok(None)
 }
 
 fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEvent> {

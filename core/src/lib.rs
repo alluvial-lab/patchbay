@@ -11,5 +11,6 @@ pub mod acceptance;
 pub mod audit;
 pub mod adapter;
 pub mod authority;
+pub mod diagnostics;
 pub mod session;
 pub mod storage;
