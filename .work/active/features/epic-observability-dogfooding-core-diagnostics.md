@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics
 kind: feature
-stage: review
+stage: implementing
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
@@ -720,6 +720,17 @@ pub async fn execute_diagnostics_query<S: Storage, G: GrantCheck,
 - **One real-process e2e extension** protects contract generation/client wiring,
   durability across restart, and all three query families. No test is added for
   trivial enum getters or formatting wrappers.
+
+## Blocker (2026-07-26, orchestrator wave-1 verification)
+
+Feature returned from `review` to `implementing`: child story
+`epic-observability-dogfooding-core-diagnostics-audit-records` was reopened
+(producer coverage is login-only; acceptance evidence requires the full
+canonical producer migration), and wave integration verification found the
+`pi-adapter` e2e failing (`accepted.acceptedLsn` undefined) after the
+audited-append change. A focused follow-up worker owns the producer migration
+plus the e2e diagnosis/fix; the feature re-advances to `review` after
+integrated verification is green.
 
 ## Risks
 
