@@ -852,3 +852,50 @@ Implementation discoveries:
 - The e2e regression was a stale fixture exposed by acceptance validity-window
   enforcement, not a production submission-response regression. No assertion
   was weakened or removed.
+
+## Review findings (standard pass 1, 2026-07-26 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Audit-kind inference misclassifies lifecycle outcomes** —
+   `core/src/storage/audited.rs` infers COMMAND_* / STALE_EVENT_IGNORED from
+   raw Observation envelopes before the domain decision exists; late results
+   for terminal commands are audited as COMPLETED/FAILED; SessionState
+   appends bypass audited append; adapter-detach session changes commit with
+   separate best-effort audit. Fix: move audit-kind selection to the domain
+   boundary that knows the decision; typed drafts into atomic audited
+   appends; one writer transaction for detach-related source+audit.
+2. **Missing SECURITY producers** — logout, operator-session renewal/expiry,
+   distinct authorization-failed kind, grant change/expiry,
+   target-generation mismatch, submission unknown, lockdown entry/exit have
+   no real producers; authorization denial is misfiled under generic
+   submission rejection. Fix: wire the missing kinds at existing decision
+   points with outcome-bearing kinds.
+3. **QueryDiagnostics lacks crash-safe lifecycle resumption** — retries of
+   accepted/delivered queries return UNAVAILABLE instead of resuming;
+   materialization errors don't terminalize as failed; result-without-
+   completion retries return nonterminal results. Fix: state-aware resumable
+   executor + fault-injection tests at each checkpoint.
+4. **Validation/prefix boundary violations** — persistence read via catch_up
+   before diagnostics validation; malformed queries map to transport errors
+   instead of pre-acceptance rejected submissions; result families lack one
+   consistent bounded durable prefix (audit SQL unbounded above, projections
+   omit interleaved ≤-prefix events). Fix: validate typed query fully before
+   persistence; single explicit as_of prefix for all three families.
+5. **Two query families materially incomplete** — command-inspection audit
+   pagination (50/200) validated but ignored (`audit: None` always); adapter
+   status ignores detach/failure audit and reports zero session counts as
+   authoritative. Fix: populate both from the bounded prefix.
+6. **Migration failure is not mutation-free + missing evidence** — v0 DB
+   stamped v1 before audit-table validation can fail; WAL pragmas applied
+   before malformed-schema rejection; no legacy-preservation/malformed/
+   fault-injection tests; sentinel assertions don't scan serialized output.
+   Fix: preflight validation before any persistent pragma/version write; add
+   the missing tests and real sentinel scans.
+
+Receiver carve-outs: the "align generation so check:drift passes" sub-item is
+the PRE-EXISTING repo generator skew parked as
+`idea-generated-contract-drift-ci-gap` — out of scope for this feature (it
+must not add new drift, but repo-wide drift repair is separately tracked).
+The `find_diagnostics_result` full-log scan on retry is parked as future perf
+work.
