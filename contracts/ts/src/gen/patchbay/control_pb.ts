@@ -8,7 +8,7 @@ import type { PrincipalCredential, PrincipalEnrollment } from "./admin_pb.js";
 import { file_patchbay_admin } from "./admin_pb.js";
 import type { ActorId, AuthorityDomainId, EventId, Lsn, OperatorSessionId, StoredEventPayload } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
-import type { QueryDiagnosticsRequestSchema, QueryDiagnosticsResponseSchema } from "./diagnostics_pb.js";
+import type { AuditEventKind, QueryDiagnosticsRequestSchema, QueryDiagnosticsResponseSchema } from "./diagnostics_pb.js";
 import { file_patchbay_diagnostics } from "./diagnostics_pb.js";
 import type { Operation, SubmissionResultSchema } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/control.proto.
  */
 export const file_patchbay_control: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDCKRAQodVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlcXVlc3QSLAoRb3BlcmF0b3JfYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhAKCHBhc3N3b3JkGAIgASgJEjAKCXByaW5jaXBhbBgDIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiigEKHFZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSOAoTb3BlcmF0b3Jfc2Vzc2lvbl9pZBgBIAEoCzIbLnBhdGNoYmF5Lk9wZXJhdG9yU2Vzc2lvbklkEjAKCXByaW5jaXBhbBgCIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbENyZWRlbnRpYWwiHgocUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVxdWVzdCIuChtSZXZva2VPcGVyYXRvclNlc3Npb25SZXN1bHQSDwoHcmV2b2tlZBgBIAEoCCJYCiRFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlcXVlc3QSMAoJcHJpbmNpcGFsGAEgASgLMh0ucGF0Y2hiYXkuUHJpbmNpcGFsRW5yb2xsbWVudCJXCiNFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlc3VsdBIwCglwcmluY2lwYWwYASABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsMpEFCg5Db250cm9sU2VydmljZRI9CgZTdWJtaXQSFy5wYXRjaGJheS5TdWJtaXRSZXF1ZXN0GhoucGF0Y2hiYXkuU3VibWlzc2lvblJlc3VsdBJDCglTdWJzY3JpYmUSGi5wYXRjaGJheS5TdWJzY3JpYmVSZXF1ZXN0GhgucGF0Y2hiYXkuU3Vic2NyaWJlRXZlbnQwARJNCgxMb2FkU25hcHNob3QSHS5wYXRjaGJheS5Mb2FkU25hcHNob3RSZXF1ZXN0Gh4ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVzcG9uc2USaQoWVmVyaWZ5T3BlcmF0b3JQYXNzd29yZBInLnBhdGNoYmF5LlZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXF1ZXN0GiYucGF0Y2hiYXkuVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlc3VsdBJmChVSZXZva2VPcGVyYXRvclNlc3Npb24SJi5wYXRjaGJheS5SZXZva2VPcGVyYXRvclNlc3Npb25SZXF1ZXN0GiUucGF0Y2hiYXkuUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVzdWx0En4KHUVucm9sbENvbnRyb2xTdXJmYWNlUHJpbmNpcGFsEi4ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0Gi0ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSWQoQUXVlcnlEaWFnbm9zdGljcxIhLnBhdGNoYmF5LlF1ZXJ5RGlhZ25vc3RpY3NSZXF1ZXN0GiIucGF0Y2hiYXkuUXVlcnlEaWFnbm9zdGljc1Jlc3BvbnNlYgZwcm90bzM", [file_patchbay_admin, file_patchbay_common, file_patchbay_diagnostics, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDCKRAQodVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlcXVlc3QSLAoRb3BlcmF0b3JfYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhAKCHBhc3N3b3JkGAIgASgJEjAKCXByaW5jaXBhbBgDIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiigEKHFZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSOAoTb3BlcmF0b3Jfc2Vzc2lvbl9pZBgBIAEoCzIbLnBhdGNoYmF5Lk9wZXJhdG9yU2Vzc2lvbklkEjAKCXByaW5jaXBhbBgCIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbENyZWRlbnRpYWwiHgocUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVxdWVzdCIuChtSZXZva2VPcGVyYXRvclNlc3Npb25SZXN1bHQSDwoHcmV2b2tlZBgBIAEoCCJYCiRFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlcXVlc3QSMAoJcHJpbmNpcGFsGAEgASgLMh0ucGF0Y2hiYXkuUHJpbmNpcGFsRW5yb2xsbWVudCJXCiNFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlc3VsdBIwCglwcmluY2lwYWwYASABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsIl8KIFJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXRSZXF1ZXN0EiYKBGtpbmQYASABKA4yGC5wYXRjaGJheS5BdWRpdEV2ZW50S2luZBITCgtyZWFzb25fY29kZRgCIAEoCSJOCiFSZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVzcG9uc2USKQoOYXVkaXRfZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkMocGCg5Db250cm9sU2VydmljZRI9CgZTdWJtaXQSFy5wYXRjaGJheS5TdWJtaXRSZXF1ZXN0GhoucGF0Y2hiYXkuU3VibWlzc2lvblJlc3VsdBJDCglTdWJzY3JpYmUSGi5wYXRjaGJheS5TdWJzY3JpYmVSZXF1ZXN0GhgucGF0Y2hiYXkuU3Vic2NyaWJlRXZlbnQwARJNCgxMb2FkU25hcHNob3QSHS5wYXRjaGJheS5Mb2FkU25hcHNob3RSZXF1ZXN0Gh4ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVzcG9uc2USaQoWVmVyaWZ5T3BlcmF0b3JQYXNzd29yZBInLnBhdGNoYmF5LlZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXF1ZXN0GiYucGF0Y2hiYXkuVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlc3VsdBJmChVSZXZva2VPcGVyYXRvclNlc3Npb24SJi5wYXRjaGJheS5SZXZva2VPcGVyYXRvclNlc3Npb25SZXF1ZXN0GiUucGF0Y2hiYXkuUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVzdWx0En4KHUVucm9sbENvbnRyb2xTdXJmYWNlUHJpbmNpcGFsEi4ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0Gi0ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSWQoQUXVlcnlEaWFnbm9zdGljcxIhLnBhdGNoYmF5LlF1ZXJ5RGlhZ25vc3RpY3NSZXF1ZXN0GiIucGF0Y2hiYXkuUXVlcnlEaWFnbm9zdGljc1Jlc3BvbnNlEnQKGVJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXQSKi5wYXRjaGJheS5SZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVxdWVzdBorLnBhdGNoYmF5LlJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXRSZXNwb25zZWIGcHJvdG8z", [file_patchbay_admin, file_patchbay_common, file_patchbay_diagnostics, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.SubmitRequest
@@ -244,6 +244,45 @@ export const EnrollControlSurfacePrincipalResultSchema: GenMessage<EnrollControl
   messageDesc(file_patchbay_control, 10);
 
 /**
+ * @generated from message patchbay.RecordControlSurfaceAuditRequest
+ */
+export type RecordControlSurfaceAuditRequest = Message<"patchbay.RecordControlSurfaceAuditRequest"> & {
+  /**
+   * @generated from field: patchbay.AuditEventKind kind = 1;
+   */
+  kind: AuditEventKind;
+
+  /**
+   * @generated from field: string reason_code = 2;
+   */
+  reasonCode: string;
+};
+
+/**
+ * Describes the message patchbay.RecordControlSurfaceAuditRequest.
+ * Use `create(RecordControlSurfaceAuditRequestSchema)` to create a new message.
+ */
+export const RecordControlSurfaceAuditRequestSchema: GenMessage<RecordControlSurfaceAuditRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 11);
+
+/**
+ * @generated from message patchbay.RecordControlSurfaceAuditResponse
+ */
+export type RecordControlSurfaceAuditResponse = Message<"patchbay.RecordControlSurfaceAuditResponse"> & {
+  /**
+   * @generated from field: patchbay.EventId audit_event_id = 1;
+   */
+  auditEventId?: EventId | undefined;
+};
+
+/**
+ * Describes the message patchbay.RecordControlSurfaceAuditResponse.
+ * Use `create(RecordControlSurfaceAuditResponseSchema)` to create a new message.
+ */
+export const RecordControlSurfaceAuditResponseSchema: GenMessage<RecordControlSurfaceAuditResponse> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 12);
+
+/**
  * The internal control-plane service the TS web server speaks to the Rust
  * core over gRPC/HTTP2. Browser-facing surfaces are a subset reachable
  * through the web server; control-surface methods are principal-gated.
@@ -313,6 +352,17 @@ export const ControlService: GenService<{
     methodKind: "unary";
     input: typeof QueryDiagnosticsRequestSchema;
     output: typeof QueryDiagnosticsResponseSchema;
+  },
+  /**
+   * The web/control-surface boundary submits only a bounded integrity outcome;
+   * the core replaces attribution and time from the verified compound issuer.
+   *
+   * @generated from rpc patchbay.ControlService.RecordControlSurfaceAudit
+   */
+  recordControlSurfaceAudit: {
+    methodKind: "unary";
+    input: typeof RecordControlSurfaceAuditRequestSchema;
+    output: typeof RecordControlSurfaceAuditResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_patchbay_control, 0);

@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics-audit-records
 kind: story
-stage: implementing
+stage: done
 tags: [observability, dogfooding, security]
 parent: epic-observability-dogfooding-core-diagnostics
 depends_on: []
@@ -91,3 +91,55 @@ Verification evidence for this checkpoint:
 - `cargo test -p patchbay-core-server --test grpc_smoke --test trust_boundary` — passed (14 tests).
 - `cargo clippy --workspace --all-targets -- -D warnings` — passed.
 - `cd contracts/ts && npm run build && npm run check:vectors && npm run check:models` — passed.
+
+## Follow-up completion (2026-07-26)
+
+The bounced verification is complete. The `pi-adapter` regression was rooted in
+an outdated e2e operation fixture, not the audited-append response path:
+`563b3b6` made `validity_window` and `submitted_at` required at acceptance, while
+the fixture still constructed the pre-enforcement Operation shape. The test
+assertion remains unchanged; the fixture now supplies an active, long-lived
+window. Running the real server + adapter e2e after that correction returned an
+accepted result with `acceptedLsn` and completed the full restart/reconnect flow.
+
+Production composition now installs `core::storage::AuditedStorage` at the
+server root. Its source-event classification upgrades ordinary production
+appends to `append_audited` / `append_dedup_audited`, so source and audit rows
+commit in the same SQLite writer transaction. Rejected submissions and
+control-surface integrity failures use the durable-first `AuditSink` directly.
+The control service's generated `RecordControlSurfaceAudit` ingress replaces
+caller attribution, timestamp, and session material with verified context and a
+hash before appending.
+
+### Producer coverage inventory
+
+| Decision point | Audit event kind(s) | Producer / file |
+| --- | --- | --- |
+| Bootstrap setup accepted/rejected and expiry | `BOOTSTRAP_STARTED`, `BOOTSTRAP_EXPIRED` | `server/src/admin_service.rs` |
+| Bootstrap durable completion | `BOOTSTRAP_COMPLETED` | `core/src/storage/audited.rs` for `OperatorRecord` |
+| Login success/failure | `LOGIN_SUCCEEDED`, `LOGIN_FAILED` | `server/src/service.rs` |
+| Operator session issue/revoke | `OPERATOR_SESSION_CREATED`, `OPERATOR_SESSION_REVOKED` | `server/src/admin_service.rs`, `server/src/service.rs` |
+| Control-surface integrity ingress | `CSRF_CHECK_FAILED`, `ORIGIN_CHECK_FAILED`, `FETCH_METADATA_CHECK_FAILED` | `web-server/src/middleware/csrf-auth.ts`, `web-server/src/routes/rpc.ts`, `server/src/service.rs` |
+| Grant issuance/revocation | `GRANT_CREATED`, `GRANT_REVOKED` | `core/src/storage/audited.rs` for grant/revocation source events |
+| Accepted command submission | `COMMAND_SUBMISSION_ACCEPTED` | `core/src/storage/audited.rs` for `Operation` |
+| Authorization/validation rejection | `COMMAND_SUBMISSION_REJECTED` | `server/src/service.rs` |
+| Command lifecycle transitions | `COMMAND_DELIVERED`, `COMMAND_RUNNING`, `COMMAND_COMPLETED`, `COMMAND_REJECTED`, `COMMAND_FAILED`, `COMMAND_EXPIRED`, `COMMAND_CANCELLED`, `COMMAND_SUPERSEDED` | `core/src/storage/audited.rs` for `CommandTransition` |
+| Stale generation / late-event rejection | `STALE_EVENT_IGNORED` | `server/src/adapter_service.rs` and observation classification in `core/src/storage/audited.rs` |
+| Adapter attach | `ADAPTER_ATTACHED` | `core/src/storage/audited.rs` for redacted registration Observation |
+| Adapter detach/failure | `ADAPTER_DETACHED`, `ADAPTER_FAILED` | `server/src/adapter_service.rs` |
+
+All allowlisted audit DTOs remain structurally redacted; no payload, prompt,
+credential, token, cookie, or attachment descriptor is copied into an audit
+draft or diagnostic stderr line.
+
+### Follow-up verification
+
+- `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd pi-adapter && npm test` — passed (full suite, including real-process e2e).
+- `cd e2e && npm test` — passed.
+- `cd contracts/ts && npm run build && npm run check:vectors && npm run check:models` — passed.
+- `cd web-server && npm test` — passed (24 tests, including durable integrity-ingress call assertions).
+
+Test integrity: no assertions were weakened, skipped, or deleted. The only e2e
+change supplies fields required by the already-landed validity-window security
+contract; the original `acceptedLsn` assertion remains the regression guard.

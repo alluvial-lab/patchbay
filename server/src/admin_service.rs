@@ -78,7 +78,25 @@ where
     ) -> Result<Response<BootstrapResult>, Status> {
         let request = request.into_inner();
         let mut setup = self.setup_secret.state.lock().await;
-        authorize_setup_secret(&setup, &request.setup_secret)?;
+        if let Err(error) = authorize_setup_secret(&setup, &request.setup_secret) {
+            let kind = if error.message().contains("expired") {
+                patchbay_contracts::patchbay::AuditEventKind::BootstrapExpired
+            } else {
+                patchbay_contracts::patchbay::AuditEventKind::BootstrapStarted
+            };
+            let mut draft = patchbay_core::storage::AuditRecordDraft::new(
+                now_timestamp()?,
+                kind,
+            );
+            draft.reason_code = if kind == patchbay_contracts::patchbay::AuditEventKind::BootstrapExpired {
+                "bootstrap_expired"
+            } else {
+                "bootstrap_setup_secret_rejected"
+            }
+            .to_owned();
+            self.control.record_audit(draft).await?;
+            return Err(error);
+        }
         if self.control.state.operator_exists().await {
             return Err(Status::already_exists(
                 "operator bootstrap has already completed",
@@ -86,6 +104,13 @@ where
         }
 
         let actor_id = required_actor(request.operator_actor_id)?;
+        let mut started = patchbay_core::storage::AuditRecordDraft::new(
+            now_timestamp()?,
+            patchbay_contracts::patchbay::AuditEventKind::BootstrapStarted,
+        );
+        started.actor_id = Some(actor_id.clone());
+        started.reason_code = "bootstrap_started".to_owned();
+        self.control.record_audit(started).await?;
         let enrollment = request
             .principal
             .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
@@ -170,7 +195,14 @@ where
             .await
             .map_err(map_storage_error_to_status)?;
 
-        let session_id = self.control.state.issue_operator_session(actor_id).await;
+        let session_id = self.control.state.issue_operator_session(actor_id.clone()).await;
+        let mut session_audit = patchbay_core::storage::AuditRecordDraft::new(
+            now_timestamp()?,
+            patchbay_contracts::patchbay::AuditEventKind::OperatorSessionCreated,
+        );
+        session_audit.actor_id = Some(actor_id);
+        session_audit.reason_code = "operator_session_created".to_owned();
+        self.control.record_audit(session_audit).await?;
         setup.consumed = true;
         Ok(Response::new(BootstrapResult {
             grant_id: Some(grant_id),

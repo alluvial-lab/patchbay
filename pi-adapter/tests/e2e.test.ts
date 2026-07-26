@@ -45,6 +45,7 @@ import {
   SubscribeRequestSchema,
   TargetScopeKind,
   TargetScopeSchema,
+  TimeWindowSchema,
   VerifyOperatorPasswordRequestSchema,
   type PrincipalCredential,
   type StoredEventPayload,
@@ -559,6 +560,11 @@ function operation(
     }),
     kind,
     targetScope: targetScope(generation),
+    validityWindow: create(TimeWindowSchema, {
+      startsAt: { seconds: 1n },
+      expiresAt: { seconds: 2_534_023_007_99n },
+    }),
+    submittedAt: { seconds: 1n },
     idempotencyKey: `${commandId}-key`,
     payload: create(PayloadEnvelopeSchema, {
       payload: new TextEncoder().encode(payload),

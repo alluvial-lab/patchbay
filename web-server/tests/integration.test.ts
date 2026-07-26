@@ -5,6 +5,8 @@ import {
   ControlService,
   LoadSnapshotResponseSchema,
   PrincipalCredentialSchema,
+  QueryDiagnosticsResponseSchema,
+  RecordControlSurfaceAuditResponseSchema,
   SubmissionOutcome,
   SubmissionResultSchema,
   SubmitRequestSchema,
@@ -26,7 +28,13 @@ import { buildApp, type WebServerConfig } from "../src/main.js";
 import { hashPassword, SessionStore } from "../src/sessions.js";
 
 interface CoreCall {
-  method: "submit" | "subscribe" | "loadSnapshot" | "verifyOperatorPassword" | "revokeOperatorSession";
+  method:
+    | "submit"
+    | "subscribe"
+    | "loadSnapshot"
+    | "verifyOperatorPassword"
+    | "revokeOperatorSession"
+    | "recordControlSurfaceAudit";
   request: unknown;
   headers: Headers;
 }
@@ -154,7 +162,7 @@ test("CsrfRejectsUnauthenticated: no cookie returns 401 before a core call", asy
 
 test("CsrfRejectsMissingProof: missing or wrong proof returns 403 before a core call", async () => {
   const fixture = makeFixture();
-  const session = fixture.sessions.create(operatorActorId);
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
   const cookie = `${SESSION_COOKIE_NAME}=${session.sessionId}`;
   const request = {
     method: "POST" as const,
@@ -171,7 +179,10 @@ test("CsrfRejectsMissingProof: missing or wrong proof returns 403 before a core 
 
   assert.equal(missing.statusCode, 403);
   assert.equal(wrong.statusCode, 403);
-  assert.equal(fixture.calls.length, 0);
+  assert.equal(
+    fixture.calls.filter((call) => call.method === "recordControlSurfaceAudit").length,
+    2,
+  );
   await fixture.app.close();
 });
 
@@ -361,6 +372,19 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
       });
       if (options.revokeError !== undefined) throw options.revokeError;
       return create(RevokeOperatorSessionResultSchema, { revoked: true });
+    },
+    async recordControlSurfaceAudit(request, callOptions) {
+      calls.push({
+        method: "recordControlSurfaceAudit",
+        request,
+        headers: callHeaders(callOptions),
+      });
+      return create(RecordControlSurfaceAuditResponseSchema, {
+        auditEventId: { authorityDomainId: { value: "default" }, lsn: { value: 1n } },
+      });
+    },
+    async queryDiagnostics() {
+      return create(QueryDiagnosticsResponseSchema);
     },
     async enrollControlSurfacePrincipal() {
       return create(EnrollControlSurfacePrincipalResultSchema);

@@ -9,6 +9,11 @@ export const CSRF_HEADER_NAME = "x-patchbay-csrf";
 export interface GuardOptions {
   requireCsrf?: boolean;
   trustedLoopbackProxy?: boolean;
+  onIntegrityFailure?: (
+    request: FastifyRequest,
+    kind: "csrf_check_failed" | "origin_check_failed" | "fetch_metadata_check_failed",
+    reasonCode: string,
+  ) => Promise<void>;
 }
 
 export function requireOperatorSession(
@@ -34,19 +39,33 @@ export function requireOperatorSession(
       return;
     }
 
+    // The active session is already the verified compound issuer. Populate
+    // the request before integrity checks so a rejected request can be
+    // durably attributed without trusting any browser claim.
+    setVerifiedSession(request, session);
     if (requireCsrf) {
       if (request.headers["sec-fetch-site"] === "cross-site") {
+        await reportIntegrityFailure(
+          options,
+          request,
+          "fetch_metadata_check_failed",
+          "cross_site_request",
+        );
         await reply.code(403).send({ error: "cross_site_request" });
         return;
       }
       const proof = request.headers[CSRF_HEADER_NAME];
       if (typeof proof !== "string" || !safeTokenEqual(proof, session.csrfSecret)) {
+        await reportIntegrityFailure(
+          options,
+          request,
+          "csrf_check_failed",
+          "csrf_proof_missing_or_invalid",
+        );
         await reply.code(403).send({ error: "csrf_proof_missing_or_invalid" });
         return;
       }
     }
-
-    setVerifiedSession(request, session);
   };
 }
 
@@ -79,6 +98,20 @@ function safeTokenEqual(actual: string, expected: string): boolean {
     return false;
   }
   return timingSafeEqual(actualBytes, expectedBytes);
+}
+
+async function reportIntegrityFailure(
+  options: GuardOptions,
+  request: FastifyRequest,
+  kind: "csrf_check_failed" | "origin_check_failed" | "fetch_metadata_check_failed",
+  reasonCode: string,
+): Promise<void> {
+  try {
+    await options.onIntegrityFailure?.(request, kind, reasonCode);
+  } catch {
+    // The request remains rejected. Core unavailability must not turn a
+    // failed browser-integrity check into an accepted mutation.
+  }
 }
 
 function setVerifiedSession(request: FastifyRequest, session: OperatorSession): void {

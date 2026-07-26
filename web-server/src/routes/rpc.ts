@@ -3,8 +3,10 @@ import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   ActorEndpointRefSchema,
+  AuditEventKind,
   LoadSnapshotRequestSchema,
   LoadSnapshotResponseSchema,
+  RecordControlSurfaceAuditRequestSchema,
   SubmissionResultSchema,
   SubmitRequestSchema,
   SubscribeEventSchema,
@@ -27,9 +29,27 @@ export function registerRpcRoutes(
     done(null, body);
   });
 
+  const guardOptions: GuardOptions = {
+    ...options,
+    onIntegrityFailure: async (request, kind, reasonCode) => {
+      const kindValue = {
+        csrf_check_failed: AuditEventKind.CSRF_CHECK_FAILED,
+        origin_check_failed: AuditEventKind.ORIGIN_CHECK_FAILED,
+        fetch_metadata_check_failed: AuditEventKind.FETCH_METADATA_CHECK_FAILED,
+      }[kind];
+      await app.coreClient.recordControlSurfaceAudit(
+        create(RecordControlSurfaceAuditRequestSchema, {
+          kind: kindValue,
+          reasonCode,
+        }),
+        { headers: coreHeaders(app, request, coreSecret) },
+      );
+    },
+  };
+
   app.post(
     "/patchbay.ControlService/Submit",
-    { preHandler: requireOperatorSession(app.sessions, options) },
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
     async (request, reply) => {
       try {
         const input = fromBinary(SubmitRequestSchema, decodeRequestFrame(request.body));
@@ -61,7 +81,7 @@ export function registerRpcRoutes(
 
   app.post(
     "/patchbay.ControlService/LoadSnapshot",
-    { preHandler: requireOperatorSession(app.sessions, { ...options, requireCsrf: false }) },
+    { preHandler: requireOperatorSession(app.sessions, { ...guardOptions, requireCsrf: false }) },
     async (request, reply) => {
       try {
         const input = fromBinary(LoadSnapshotRequestSchema, decodeRequestFrame(request.body));
@@ -77,7 +97,7 @@ export function registerRpcRoutes(
 
   app.post(
     "/patchbay.ControlService/Subscribe",
-    { preHandler: requireOperatorSession(app.sessions, { ...options, requireCsrf: false }) },
+    { preHandler: requireOperatorSession(app.sessions, { ...guardOptions, requireCsrf: false }) },
     async (request, reply) => {
       let input;
       try {

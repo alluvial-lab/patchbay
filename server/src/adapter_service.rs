@@ -13,10 +13,11 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
+    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     adapter::{self, AdapterRegistry},
     authority::hash_principal_credential,
     session::{self, SessionRegistry, SessionReport},
-    storage::{RecordedEvent, Storage},
+    storage::{AuditRecordDraft, RecordedEvent, Storage},
 };
 use prost::Message;
 use tokio::{
@@ -113,6 +114,7 @@ pub struct AdapterControlServiceImpl<S> {
     storage: S,
     authority_domain_id: AuthorityDomainId,
     evidence: AdapterEvidenceVerifier,
+    audit: Arc<dyn AuditSink>,
     adapters: Arc<Mutex<AdapterRegistry>>,
     commands: Arc<Mutex<CommandProjection>>,
     sessions: Arc<Mutex<SessionRegistry>>,
@@ -141,10 +143,15 @@ where
         let sessions = session::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
+        let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
+            Arc::new(DurableAuditSink::new(storage.clone(), authority_domain_id.clone())),
+            vec![Arc::new(StderrAuditSink)],
+        ));
         Ok(Self {
             storage,
             authority_domain_id,
             evidence,
+            audit,
             adapters: Arc::new(Mutex::new(adapters)),
             commands: Arc::new(Mutex::new(commands)),
             sessions: Arc::new(Mutex::new(sessions)),
@@ -503,9 +510,27 @@ where
         let attachment_token = random_token();
         let attachment_token_hash = hash_principal_credential(&attachment_token);
         let mut adapters = self.adapters.lock().await;
-        let event_id = adapter::ingest_registration(&self.storage, &mut adapters, registration)
+        let event_id = match adapter::ingest_registration(&self.storage, &mut adapters, registration)
             .await
-            .map_err(map_adapter_error)?;
+        {
+            Ok(event_id) => event_id,
+            Err(error) => {
+                let kind = if matches!(error, adapter::AdapterError::StaleGeneration { .. }) {
+                    patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored
+                } else {
+                    patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
+                };
+                record_adapter_audit(
+                    self.audit.as_ref(),
+                    kind,
+                    &adapter_id,
+                    None,
+                    "adapter_attach_rejected",
+                )
+                .await?;
+                return Err(map_adapter_error(error));
+            }
+        };
         // Keep registration acceptance and token replacement in one critical
         // section so a slower older attach cannot overwrite a newer fence.
         self.attachment_tokens
@@ -566,9 +591,27 @@ where
                     spawn_origin: report.spawn_origin,
                 };
                 let mut sessions = self.sessions.lock().await;
-                let result = session::ingest_session_report(&self.storage, &mut *sessions, report)
+                let result = match session::ingest_session_report(&self.storage, &mut *sessions, report)
                     .await
-                    .map_err(map_session_error)?;
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let kind = if matches!(error, session::SessionError::StaleGeneration { .. }) {
+                            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored
+                        } else {
+                            patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
+                        };
+                        record_adapter_audit(
+                            self.audit.as_ref(),
+                            kind,
+                            &authenticated_adapter,
+                            None,
+                            "session_report_rejected",
+                        )
+                        .await?;
+                        return Err(map_session_error(error));
+                    }
+                };
                 let rebuilt = session::rebuild_from_log(&self.storage, &domain)
                     .await
                     .map_err(map_session_error)?;
@@ -668,6 +711,7 @@ where
         let commands = Arc::clone(&self.commands);
         let sessions = Arc::clone(&self.sessions);
         let delivery_stream_epochs = Arc::clone(&self.delivery_stream_epochs);
+        let audit = Arc::clone(&self.audit);
         let stale_domain = domain.clone();
         let stale_adapter = authenticated_adapter.clone();
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
@@ -713,6 +757,26 @@ where
                 .await;
                 drop(epochs);
 
+                let reconciliation_failed = command_result.is_err() || session_result.is_err();
+                let audit_kind = if reconciliation_failed {
+                    patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
+                } else {
+                    patchbay_contracts::patchbay::AuditEventKind::AdapterDetached
+                };
+                if let Err(error) = record_adapter_audit(
+                    audit.as_ref(),
+                    audit_kind,
+                    &stale_adapter,
+                    None,
+                    if reconciliation_failed {
+                        "adapter_disconnect_reconciliation_failed"
+                    } else {
+                        "adapter_detached"
+                    },
+                )
+                .await {
+                    eprintln!("patchbay-core-server: failed to record adapter lifecycle audit: {error}");
+                }
                 if let Err(error) = command_result {
                     eprintln!(
                         "patchbay-core-server: failed to reconcile running commands after adapter disconnect: {error}"
@@ -779,6 +843,26 @@ fn session_result_event_id(
         session::IngestResult::DeltasApplied { event_ids } => event_ids.last().cloned(),
         session::IngestResult::NoChange => None,
     }
+}
+
+async fn record_adapter_audit(
+    audit: &dyn AuditSink,
+    kind: patchbay_contracts::patchbay::AuditEventKind,
+    adapter_id: &AdapterId,
+    failure_code: Option<patchbay_contracts::patchbay::FailureCode>,
+    reason: &str,
+) -> Result<(), Status> {
+    let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
+    draft.actor_id = Some(patchbay_contracts::patchbay::ActorId {
+        value: adapter_id.value.clone(),
+    });
+    draft.failure_code = failure_code;
+    draft.reason_code = reason.to_owned();
+    audit
+        .record(draft)
+        .await
+        .map_err(|error| Status::unavailable(error.to_string()))?;
+    Ok(())
 }
 
 fn map_adapter_error(error: adapter::AdapterError) -> Status {

@@ -4,16 +4,17 @@ use patchbay_contracts::patchbay::{
     ActorId, AuditEventKind, AuthorityDomainId, CommandTransition, DiagnosticsResult,
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
     LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
-    QueryDiagnosticsRequest, QueryDiagnosticsResponse, RevokeOperatorSessionRequest,
-    RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
+    QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
+    RecordControlSurfaceAuditResponse, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
+    StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
     SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
     TypedCorrelation, typed_correlation, OperationState, FailureCode,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
-    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
-    authority::{IssuerContext, OperatorError},
+    audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
+    authority::{hash_principal_credential, IssuerContext, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
     storage::{AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
@@ -189,10 +190,14 @@ where
             self.state.state_lookup(),
             self.state.elicitation_contract_lookup(),
             &issuer,
-            operation,
+            operation.clone(),
         )
         .await
         .map_err(map_acceptance_error_to_status)?;
+        if result.outcome == SubmissionOutcome::Rejected as i32 {
+            self.audit_submission_rejection(&issuer, &operation, &result)
+                .await?;
+        }
         if result.outcome == SubmissionOutcome::Accepted as i32 && !result.deduplicated {
             self.state
                 .catch_up(&self.storage, &authority_domain_id)
@@ -431,6 +436,13 @@ where
             Vec::new(),
         )
         .await?;
+        let mut session_audit = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::OperatorSessionCreated,
+        );
+        session_audit.actor_id = Some(actor_id.clone());
+        session_audit.reason_code = "operator_session_created".to_owned();
+        self.record_audit(session_audit).await?;
         Ok(Response::new(VerifyOperatorPasswordResult {
             operator_session_id: Some(operator_session_id),
             principal: Some(credential),
@@ -460,6 +472,13 @@ where
                 "operator session is no longer active",
             ));
         }
+        let mut session_audit = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::OperatorSessionRevoked,
+        );
+        session_audit.actor_id = Some(actor_id);
+        session_audit.reason_code = "operator_session_revoked".to_owned();
+        self.record_audit(session_audit).await?;
         Ok(Response::new(RevokeOperatorSessionResult { revoked }))
     }
 
@@ -494,6 +513,62 @@ where
             .map_err(map_storage_error_to_status)?;
         Ok(Response::new(EnrollControlSurfacePrincipalResult {
             principal: Some(credential),
+        }))
+    }
+
+    async fn record_control_surface_audit(
+        &self,
+        request: Request<RecordControlSurfaceAuditRequest>,
+    ) -> Result<Response<RecordControlSurfaceAuditResponse>, Status> {
+        let issuer = MetadataIssuerContext::from_request(
+            &request,
+            self.authority_domain_id.clone(),
+            &self.state,
+        )
+        .await?;
+        let request = request.into_inner();
+        let kind = patchbay_contracts::patchbay::AuditEventKind::try_from(request.kind)
+            .map_err(|_| Status::invalid_argument("unknown control-surface audit kind"))?;
+        if !matches!(
+            kind,
+            AuditEventKind::CsrfCheckFailed
+                | AuditEventKind::OriginCheckFailed
+                | AuditEventKind::FetchMetadataCheckFailed
+                | AuditEventKind::Logout
+                | AuditEventKind::OperatorSessionCreated
+                | AuditEventKind::OperatorSessionRenewed
+                | AuditEventKind::OperatorSessionExpired
+                | AuditEventKind::OperatorSessionRevoked
+        ) {
+            return Err(Status::invalid_argument(
+                "audit kind is not permitted for control-surface ingress",
+            ));
+        }
+        if request.reason_code.is_empty()
+            || request.reason_code.len() > 64
+            || !request
+                .reason_code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(Status::invalid_argument("reason_code must match [a-z0-9_]{1,64}"));
+        }
+        let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
+        draft.actor_id = issuer.verified_actor().cloned();
+        draft.endpoint_id = issuer.verified_endpoint().cloned();
+        draft.device_id = issuer.verified_device().cloned();
+        draft.operator_session_hash = hash_principal_credential(&issuer.operator_session_id().value);
+        draft.reason_code = request.reason_code;
+        let receipt = self
+            .audit
+            .record(draft)
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+        let AuditReceipt::Durable(audit_event_id) = receipt else {
+            return Err(Status::internal("control-surface audit was not durable"));
+        };
+        Ok(Response::new(RecordControlSurfaceAuditResponse {
+            audit_event_id: Some(audit_event_id),
         }))
     }
 
@@ -543,6 +618,8 @@ where
         .await
         .map_err(map_acceptance_error_to_status)?;
         if submission.outcome != SubmissionOutcome::Accepted as i32 {
+            self.audit_submission_rejection(&issuer, &operation, &submission)
+                .await?;
             return Ok(Response::new(QueryDiagnosticsResponse {
                 submission: Some(submission),
                 ..QueryDiagnosticsResponse::default()
@@ -640,6 +717,46 @@ where
 }
 
 impl<S> ControlServiceImpl<S> {
+    async fn audit_submission_rejection(
+        &self,
+        issuer: &dyn IssuerContext,
+        operation: &patchbay_contracts::patchbay::Operation,
+        result: &SubmissionResult,
+    ) -> Result<(), Status> {
+        let mut draft = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::CommandSubmissionRejected,
+        );
+        draft.actor_id = issuer.verified_actor().cloned();
+        draft.endpoint_id = issuer.verified_endpoint().cloned();
+        draft.device_id = issuer.verified_device().cloned();
+        draft.command_id = operation.command_id.clone();
+        draft.target_scope = operation.target_scope.clone();
+        draft.failure_code = FailureCode::try_from(result.failure_code)
+            .ok()
+            .filter(|code| *code != FailureCode::Unspecified);
+        draft.reason_code = "submission_rejected".to_owned();
+        self.audit
+            .record(draft)
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+        Ok(())
+    }
+
+    pub(crate) async fn record_audit(
+        &self,
+        mut draft: AuditRecordDraft,
+    ) -> Result<(), Status> {
+        if draft.occurred_at.seconds == 0 && draft.occurred_at.nanos == 0 {
+            draft.occurred_at = crate::identity::now_timestamp()?;
+        }
+        self.audit
+            .record(draft)
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+        Ok(())
+    }
+
     async fn audit_login(
         &self,
         actor_id: &ActorId,

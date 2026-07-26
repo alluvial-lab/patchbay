@@ -2392,6 +2392,18 @@ pub struct EnrollControlSurfacePrincipalResult {
     pub principal: ::core::option::Option<PrincipalCredential>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RecordControlSurfaceAuditRequest {
+    #[prost(enumeration = "AuditEventKind", tag = "1")]
+    pub kind: i32,
+    #[prost(string, tag = "2")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RecordControlSurfaceAuditResponse {
+    #[prost(message, optional, tag = "1")]
+    pub audit_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AttachRequest {
     #[prost(message, optional, tag = "1")]
     pub registration: ::core::option::Option<AdapterRegistration>,

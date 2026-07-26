@@ -1,7 +1,7 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::AuthorityDomainId;
-use patchbay_core::storage::RusqliteStorage;
+use patchbay_core::storage::{AuditedStorage, RusqliteStorage};
 use patchbay_core_server::{
     adapter_service::{AdapterControlServiceImpl, AdapterEvidenceVerifier},
     admin_service::{AdminServiceImpl, SetupSecret},
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_else(|_| DEFAULT_AUTHORITY_DOMAIN_ID.to_owned()),
     };
 
-    let storage = RusqliteStorage::open(&database_path)?;
+    let storage = AuditedStorage::new(RusqliteStorage::open(&database_path)?);
     let control_service = ControlServiceImpl::new_with_security(
         storage.clone(),
         authority_domain_id.clone(),

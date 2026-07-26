@@ -7,10 +7,12 @@
 //! See `docs/PROTOCOL.md` § "Persistence and recovery" and § "Snapshots and
 //! streams" for the semantics this module implements.
 
+pub mod audited;
 pub mod port;
 pub mod recovery;
 pub mod rusqlite;
 
+pub use audited::{audit_draft_for_source, AuditedStorage};
 pub use port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,

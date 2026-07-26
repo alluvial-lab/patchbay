@@ -22,6 +22,9 @@ service ControlService {
   // An already verified compound issuer may enroll another endpoint.
   rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
   rpc QueryDiagnostics(QueryDiagnosticsRequest) returns (QueryDiagnosticsResponse);
+  // The web/control-surface boundary submits only a bounded integrity outcome;
+  // the core replaces attribution and time from the verified compound issuer.
+  rpc RecordControlSurfaceAudit(RecordControlSurfaceAuditRequest) returns (RecordControlSurfaceAuditResponse);
 }
 
 message SubmitRequest {
@@ -72,4 +75,13 @@ message EnrollControlSurfacePrincipalRequest {
 
 message EnrollControlSurfacePrincipalResult {
   patchbay.PrincipalCredential principal = 1;
+}
+
+message RecordControlSurfaceAuditRequest {
+  patchbay.AuditEventKind kind = 1;
+  string reason_code = 2;
+}
+
+message RecordControlSurfaceAuditResponse {
+  patchbay.EventId audit_event_id = 1;
 }
