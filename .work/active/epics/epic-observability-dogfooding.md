@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding
 kind: epic
-stage: implementing
+stage: review
 tags: [observability, dogfooding]
 parent: null
 depends_on: []
@@ -189,3 +189,31 @@ contract, core, and surface pieces to agree on one vocabulary.
 - Parked-idea pressure: none of the four parked ideas is foreclosed — adapter
   diagnostics payload is adapter-declared, and cockpit presentation is a
   surface-declared feature, keeping adapter- and surface-neutrality intact.
+
+## Aggregate completion note (2026-07-26)
+
+All four child features are `done`. Realized delivery:
+
+- `adapter-log-sink` — durable JSONL diagnostics sink (bounded async queue,
+  rotation, XDG/env path, structural redaction, total error normalization);
+  TranscriptEventLog deleted. Review: 3 blockers found and fixed.
+- `core-diagnostics` — durable audit records as typed domain decisions with
+  atomic source+audit commit, versioned mutation-free migrations, resumable
+  QueryDiagnostics lifecycle with bounded prefixes, full SECURITY producer
+  coverage (lockdown deferred — no decision surface exists). Review: 6
+  blockers found and fixed.
+- `cli-diagnostics` — audit-query / inspect-command / adapter-status as real
+  commands; shared runner; exit-code discipline; UX.md/RUNBOOK.md rolled
+  forward. Review: 5 blockers found and fixed.
+- `cockpit-diagnostics` — adapter ReportDiagnostics ingestion (atomic
+  Observation + audit), best-effort abortable forwarding sharing the
+  AdapterDiagnostics port, cockpit composition into existing views with
+  monotonic as_of_lsn merge and explicit reconciliation signaling. Review: 5
+  blockers found and fixed.
+
+Verification at epic close: cargo workspace (30 suites) + clippy clean;
+cli 26, web-server 25, web-cockpit 53, pi-adapter 24, e2e walking skeleton,
+contracts vectors/models — all green. One intermittent pi-adapter e2e flake
+parked (idea-pi-adapter-e2e-intermittent-flake); pre-existing
+generated-contract drift parked (idea-generated-contract-drift-ci-gap);
+lockdown audit producers deferred to the lockdown capability.
