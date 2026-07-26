@@ -1,22 +1,22 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuditEventKind, AuthorityDomainId, CommandTransition, DiagnosticsResult,
+    ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition, DiagnosticsResult,
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
     LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
     RecordControlSurfaceAuditResponse, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
     StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
     SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
-    TypedCorrelation, typed_correlation, OperationState, FailureCode,
+    TypedCorrelation, typed_correlation, OperationKind, OperationState, FailureCode,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
-    acceptance::{self, AcceptanceError},
+    acceptance::{self, AcceptanceError, CommandStateLookup},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{hash_principal_credential, IssuerContext, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
-    storage::{AuditRecordDraft, RecordedEvent, Storage, StorageError},
+    storage::{AuditPageSpec, AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
 use tokio_stream::{self as stream, Stream};
@@ -183,7 +183,7 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
-        let result = acceptance::submit(
+        let result = match acceptance::submit(
             &self.storage,
             self.state.grant_check(),
             self.state.target_resolver(),
@@ -192,8 +192,13 @@ where
             &issuer,
             operation.clone(),
         )
-        .await
-        .map_err(map_acceptance_error_to_status)?;
+        .await {
+            Ok(result) => result,
+            Err(error) => {
+                self.audit_submission_unknown(&issuer, &operation).await?;
+                return Err(map_acceptance_error_to_status(error));
+            }
+        };
         if result.outcome == SubmissionOutcome::Rejected as i32 {
             self.audit_submission_rejection(&issuer, &operation, &result)
                 .await?;
@@ -597,16 +602,29 @@ where
             .operation
             .ok_or_else(|| Status::invalid_argument("query diagnostics request lost operation"))?;
 
+        // Decode and validate the typed query before any persistence read. A
+        // malformed query is a normal pre-acceptance rejection, not a gRPC
+        // framing error and not an opportunity to touch the log.
+        let current_lsn = self.state.current_lsn().await;
+        let validated = match diagnostics::validate_query(&operation, current_lsn) {
+            Ok(validated) => validated,
+            Err(error) => {
+                let submission = rejected_query_submission(&operation, error.to_string());
+                self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+                return Ok(Response::new(QueryDiagnosticsResponse {
+                    submission: Some(submission),
+                    ..QueryDiagnosticsResponse::default()
+                }));
+            }
+        };
+
         let _submit_guard = self.state.submit_guard().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
-        let current_lsn = self.state.current_lsn().await;
-        let validated = diagnostics::validate_query(&operation, current_lsn)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        let submission = acceptance::submit(
+        let submission = match acceptance::submit(
             &self.storage,
             self.state.grant_check(),
             &AuthorityDomainTargetResolver,
@@ -615,8 +633,13 @@ where
             &issuer,
             operation.clone(),
         )
-        .await
-        .map_err(map_acceptance_error_to_status)?;
+        .await {
+            Ok(result) => result,
+            Err(error) => {
+                self.audit_submission_unknown(&issuer, &operation).await?;
+                return Err(map_acceptance_error_to_status(error));
+            }
+        };
         if submission.outcome != SubmissionOutcome::Accepted as i32 {
             self.audit_submission_rejection(&issuer, &operation, &submission)
                 .await?;
@@ -630,43 +653,141 @@ where
             .clone()
             .ok_or_else(|| Status::internal("accepted query has no command id"))?;
 
-        if submission.deduplicated {
-            if let Some((result_event_id, result, response_result)) =
-                find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
-            {
+        if !submission.deduplicated {
+            self.state
+                .catch_up(&self.storage, &authority_domain_id)
+                .await
+                .map_err(map_storage_error_to_status)?;
+        }
+        let mut current = self
+            .state
+            .state_lookup()
+            .current_state(&command_id)
+            .await
+            .ok_or_else(|| Status::internal("accepted query is missing from the command projection"))?;
+
+        // Every checkpoint is reconciled under the submit gate. A retry that
+        // arrives after any durable prefix resumes the missing suffix instead
+        // of returning UNAVAILABLE merely because the first handler stopped.
+        let delivered_event_id = if current.state == OperationState::Accepted {
+            let event_id = append_query_transition(
+                &self.storage,
+                &authority_domain_id,
+                &command_id,
+                OperationState::Accepted,
+                OperationState::Delivered,
+            )
+            .await
+            .map_err(map_storage_error_to_status)?;
+            self.state
+                .catch_up(&self.storage, &authority_domain_id)
+                .await
+                .map_err(map_storage_error_to_status)?;
+            current = self
+                .state
+                .state_lookup()
+                .current_state(&command_id)
+                .await
+                .ok_or_else(|| Status::internal("delivered query is missing from the command projection"))?;
+            Some(event_id)
+        } else {
+            None
+        };
+        if !matches!(current.state, OperationState::Delivered) {
+            if current.state == OperationState::Completed {
+                if let Some((result_event_id, result, response_result)) =
+                    find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
+                {
+                    let mut completed = submission;
+                    completed.operation_state = OperationState::Completed as i32;
+                    return Ok(Response::new(QueryDiagnosticsResponse {
+                        submission: Some(completed),
+                        result_event_id: Some(result_event_id),
+                        as_of_lsn: result.as_of_lsn,
+                        result: Some(response_result),
+                    }));
+                }
+            }
+            if current.state != OperationState::Delivered {
+                let mut terminal = submission;
+                terminal.operation_state = current.state as i32;
+                terminal.failure_code = FailureCode::Unspecified as i32;
                 return Ok(Response::new(QueryDiagnosticsResponse {
-                    submission: Some(submission),
-                    result_event_id: Some(result_event_id),
-                    as_of_lsn: result.as_of_lsn,
-                    result: Some(response_result),
+                    submission: Some(terminal),
+                    ..QueryDiagnosticsResponse::default()
                 }));
             }
-            return Err(retryable_unavailable(
-                "accepted diagnostics query has no durable result yet".to_owned(),
-            ));
         }
 
-        let delivered_event_id = append_query_transition(
-            &self.storage,
-            &authority_domain_id,
-            &command_id,
-            OperationState::Accepted,
-            OperationState::Delivered,
-        )
-        .await
-        .map_err(map_storage_error_to_status)?;
-        let as_of_lsn = delivered_event_id
+        if let Some((result_event_id, result, response_result)) =
+            find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
+        {
+            // The result Observation is durable but the completion checkpoint
+            // may not be. Reconcile that checkpoint without rematerializing.
+            if current.state == OperationState::Delivered {
+                append_query_transition(
+                    &self.storage,
+                    &authority_domain_id,
+                    &command_id,
+                    OperationState::Delivered,
+                    OperationState::Completed,
+                )
+                .await
+                .map_err(map_storage_error_to_status)?;
+                self.state
+                    .catch_up(&self.storage, &authority_domain_id)
+                    .await
+                    .map_err(map_storage_error_to_status)?;
+            }
+            let mut completed = submission;
+            completed.operation_state = OperationState::Completed as i32;
+            return Ok(Response::new(QueryDiagnosticsResponse {
+                submission: Some(completed),
+                result_event_id: Some(result_event_id),
+                as_of_lsn: result.as_of_lsn,
+                result: Some(response_result),
+            }));
+        }
+
+        let as_of_lsn = find_delivered_checkpoint(&self.storage, &authority_domain_id, &command_id)
+            .await?
+            .or(delivered_event_id)
+            .ok_or_else(|| Status::internal("delivered query has no durable checkpoint"))?;
+        let as_of_lsn = as_of_lsn
             .lsn
             .ok_or_else(|| Status::internal("delivered query has no LSN"))?;
-        let (result, response_result) = materialize_diagnostics_result(
+        let (result, response_result) = match materialize_diagnostics_result(
             &self.storage,
             &self.state,
             &authority_domain_id,
             validated,
             as_of_lsn.value,
         )
-        .await
-        .map_err(|error| Status::internal(error.to_string()))?;
+        .await {
+            Ok(result) => result,
+            Err(error) => {
+                let failed = append_query_failure(
+                    &self.storage,
+                    &authority_domain_id,
+                    &command_id,
+                    error.to_string(),
+                )
+                .await
+                .map_err(map_storage_error_to_status)?;
+                self.state
+                    .catch_up(&self.storage, &authority_domain_id)
+                    .await
+                    .map_err(map_storage_error_to_status)?;
+                let mut failed_submission = submission;
+                failed_submission.operation_state = OperationState::Failed as i32;
+                failed_submission.failure_code = FailureCode::ExecutionFailed as i32;
+                let _ = failed;
+                return Ok(Response::new(QueryDiagnosticsResponse {
+                    submission: Some(failed_submission),
+                    ..QueryDiagnosticsResponse::default()
+                }));
+            }
+        };
         let result_event_id = self
             .storage
             .append(
@@ -717,15 +838,58 @@ where
 }
 
 impl<S> ControlServiceImpl<S> {
+    async fn audit_submission_unknown(
+        &self,
+        issuer: &dyn IssuerContext,
+        operation: &patchbay_contracts::patchbay::Operation,
+    ) -> Result<(), Status> {
+        let mut draft = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::CommandSubmissionUnknown,
+        );
+        draft.actor_id = issuer.verified_actor().cloned();
+        draft.endpoint_id = issuer.verified_endpoint().cloned();
+        draft.device_id = issuer.verified_device().cloned();
+        draft.command_id = operation.command_id.clone();
+        draft.target_scope = operation.target_scope.clone();
+        draft.reason_code = "submission_outcome_unknown".to_owned();
+        self.audit
+            .record(draft)
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+        Ok(())
+    }
+
     async fn audit_submission_rejection(
         &self,
         issuer: &dyn IssuerContext,
         operation: &patchbay_contracts::patchbay::Operation,
         result: &SubmissionResult,
     ) -> Result<(), Status> {
+        let expired_grant = if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::AuthorizationDenied) {
+            match (OperationKind::try_from(operation.kind).ok(), operation.target_scope.as_ref()) {
+                (Some(operation_kind), Some(target)) => {
+                    self.state.has_expired_grant(issuer, operation_kind, target).await
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        let kind = if expired_grant {
+            AuditEventKind::GrantExpired
+        } else if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::AuthorizationDenied) {
+            AuditEventKind::AuthorizationFailed
+        } else if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::TargetNotFound)
+            && operation.target_scope.as_ref().and_then(|target| target.session_generation.as_ref()).is_some()
+        {
+            AuditEventKind::TargetGenerationMismatch
+        } else {
+            AuditEventKind::CommandSubmissionRejected
+        };
         let mut draft = AuditRecordDraft::new(
             crate::identity::now_timestamp()?,
-            AuditEventKind::CommandSubmissionRejected,
+            kind,
         );
         draft.actor_id = issuer.verified_actor().cloned();
         draft.endpoint_id = issuer.verified_endpoint().cloned();
@@ -809,8 +973,17 @@ async fn append_query_transition<S: Storage>(
     from: OperationState,
     to: OperationState,
 ) -> Result<EventId, StorageError> {
+    let kind = match to {
+        OperationState::Delivered => AuditEventKind::CommandDelivered,
+        OperationState::Completed => AuditEventKind::CommandCompleted,
+        OperationState::Failed => AuditEventKind::CommandFailed,
+        _ => AuditEventKind::CommandSubmissionFailed,
+    };
+    let mut audit = AuditRecordDraft::new(crate::identity::now_timestamp().map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?, kind);
+    audit.command_id = Some(command_id.clone());
+    audit.reason_code = "query_state_transition".to_owned();
     storage
-        .append(
+        .append_decision(
             authority_domain_id,
             patchbay_contracts::patchbay::StoredEventPayload {
                 kind: StoredEventKind::CommandTransition as i32,
@@ -823,6 +996,40 @@ async fn append_query_transition<S: Storage>(
                 }
                 .encode_to_vec(),
             },
+            audit,
+        )
+        .await
+}
+
+async fn append_query_failure<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    command_id: &patchbay_contracts::patchbay::CommandId,
+    reason: String,
+) -> Result<EventId, StorageError> {
+    let mut audit = AuditRecordDraft::new(
+        crate::identity::now_timestamp().map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?,
+        AuditEventKind::CommandFailed,
+    );
+    audit.command_id = Some(command_id.clone());
+    audit.failure_code = Some(FailureCode::ExecutionFailed);
+    audit.reason_code = "diagnostics_materialization_failed".to_owned();
+    audit.correlation_id = reason.chars().take(128).collect();
+    storage
+        .append_decision(
+            authority_domain_id,
+            patchbay_contracts::patchbay::StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id.clone()),
+                    from_state: OperationState::Delivered as i32,
+                    to_state: OperationState::Failed as i32,
+                    failure_code: FailureCode::ExecutionFailed as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+            audit,
         )
         .await
 }
@@ -840,7 +1047,9 @@ async fn materialize_diagnostics_result<S: Storage>(
     let as_of = Some(Lsn { value: as_of_lsn });
     match query {
         ValidatedDiagnosticsQuery::Audit(spec) => {
-            let page = storage.query_audit(authority_domain_id, spec).await?;
+            let page = storage
+                .query_audit_through(authority_domain_id, spec, Lsn { value: as_of_lsn })
+                .await?;
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
@@ -851,23 +1060,32 @@ async fn materialize_diagnostics_result<S: Storage>(
         }
         ValidatedDiagnosticsQuery::Command(query) => {
             let command_id = query.command_id.clone().expect("validated command id");
-            let result = state
-                .diagnostics_command_result(&command_id)
-                .await
-                .unwrap_or(patchbay_contracts::patchbay::CommandInspectionResult {
-                    found: false,
-                    inspection: None,
-                });
+            let projection = state.diagnostics_at(storage, authority_domain_id, as_of_lsn).await?;
+            let mut inspection = projection.result_for_query(&command_id).unwrap_or(
+                patchbay_contracts::patchbay::CommandInspectionResult { found: false, inspection: None },
+            );
+            if let Some(command) = inspection.inspection.as_mut() {
+                let before_lsn = query.audit_before_event_id.as_ref().and_then(|id| id.lsn.as_ref()).map(|lsn| lsn.value);
+                let page = storage.query_audit_through(authority_domain_id, AuditPageSpec {
+                    kinds: Vec::new(), actor_id: None, endpoint_id: None,
+                    command_id: Some(command_id), target: None, failure_codes: Vec::new(),
+                    reason_codes: Vec::new(), occurred_from: None, occurred_before: None,
+                    before_lsn,
+                    limit: query.audit_limit.map_or(diagnostics::COMMAND_DEFAULT_LIMIT, |value| value as u16),
+                }, Lsn { value: as_of_lsn }).await?;
+                command.audit = Some(page);
+            }
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
-                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Command(result.clone())),
+                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Command(inspection.clone())),
                 },
-                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(result),
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(inspection),
             ))
         }
         ValidatedDiagnosticsQuery::Adapters(query) => {
-            let page = state.diagnostics_adapter_page(&query, as_of_lsn).await?;
+            let projection = state.diagnostics_at(storage, authority_domain_id, as_of_lsn).await?;
+            let page = projection.adapter_page(&query, as_of_lsn)?;
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
@@ -877,6 +1095,56 @@ async fn materialize_diagnostics_result<S: Storage>(
             ))
         }
     }
+}
+
+fn rejected_query_submission(
+    operation: &patchbay_contracts::patchbay::Operation,
+    diagnostic_message: String,
+) -> SubmissionResult {
+    SubmissionResult {
+        outcome: SubmissionOutcome::Rejected as i32,
+        command_id: operation.command_id.clone(),
+        operation_state: OperationState::Unspecified as i32,
+        failure_code: FailureCode::ValidationFailed as i32,
+        diagnostic_message,
+        accepted_lsn: None,
+        deduplicated: false,
+    }
+}
+
+async fn find_delivered_checkpoint<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    command_id: &patchbay_contracts::patchbay::CommandId,
+) -> Result<Option<EventId>, Status> {
+    let events = storage
+        .read_after(authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(map_storage_error_to_status)?;
+    let mut transition_checkpoint = None;
+    let mut audit_checkpoint = None;
+    for event in events {
+        match StoredEventKind::try_from(event.payload.kind).ok() {
+            Some(StoredEventKind::CommandTransition) => {
+                let transition = CommandTransition::decode(event.payload.payload.as_slice())
+                    .map_err(|error| Status::internal(format!("cannot decode query transition: {error}")))?;
+                if transition.command_id.as_ref() == Some(command_id)
+                    && OperationState::try_from(transition.to_state).ok() == Some(OperationState::Delivered)
+                {
+                    transition_checkpoint = Some(event.event_id);
+                }
+            }
+            Some(StoredEventKind::AuditRecord) => {
+                let record = AuditRecord::decode(event.payload.payload.as_slice())
+                    .map_err(|error| Status::internal(format!("cannot decode query audit: {error}")))?;
+                if record.source_event_id == transition_checkpoint {
+                    audit_checkpoint = Some(event.event_id);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(audit_checkpoint.or(transition_checkpoint))
 }
 
 async fn find_diagnostics_result<S: Storage>(

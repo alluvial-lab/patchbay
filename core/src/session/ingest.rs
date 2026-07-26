@@ -12,7 +12,7 @@ use patchbay_contracts::patchbay::{
     TypedCorrelation,
 };
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::{acceptance::Clock, storage::{RecordedEvent, Storage}};
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition, events, SessionError,
@@ -452,29 +452,41 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
         })
         .collect();
 
-    let mut event_ids = Vec::with_capacity(reports.len());
-    let mut ingest_error = None;
-    for report in reports {
-        match ingest_session_report(storage, registry, report).await {
-            Ok(IngestResult::ConnectivityChanged { event_id, .. }) => event_ids.push(event_id),
-            Ok(IngestResult::NoChange) => {}
-            Ok(other) => {
-                ingest_error = Some(SessionError::CorruptLog(format!(
-                    "stale connectivity report produced unexpected result {other:?}"
-                )));
-                break;
-            }
-            Err(error) => {
-                ingest_error = Some(error);
-                break;
-            }
-        }
+    let mut sources = Vec::with_capacity(reports.len());
+    for report in &reports {
+        let current = registry
+            .current_session(&report.adapter_id, &report.deployment_scope, &report.runtime_session_id)
+            .await
+            .ok_or_else(|| SessionError::CorruptLog("session disappeared during detach reconciliation".to_owned()))?;
+        sources.push(events::encode(&events::connectivity_changed(
+            authority_domain_id.clone(),
+            SessionConnectivityChanged {
+                adapter_id: Some(report.adapter_id.clone()),
+                deployment_scope: report.deployment_scope.clone(),
+                runtime_session_id: Some(report.runtime_session_id.clone()),
+                session_generation: Some(report.session_generation),
+                from: current.state.connectivity,
+                to: SessionConnectivityState::Stale as i32,
+            },
+        )));
     }
+    let mut audit = crate::storage::AuditRecordDraft::new(
+        crate::acceptance::SystemClock.now(),
+        patchbay_contracts::patchbay::AuditEventKind::AdapterDetached,
+    );
+    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId { value: adapter_id.value.clone() });
+    audit.reason_code = "adapter_detached".to_owned();
+    let event_ids = if sources.is_empty() {
+        storage.append_audit(authority_domain_id, audit).await?;
+        Vec::new()
+    } else {
+        storage
+            .append_batch_audited(authority_domain_id, sources, audit)
+            .await?
+            .source_event_ids
+    };
 
     *registry = super::rebuild_from_log(storage, authority_domain_id).await?;
-    if let Some(error) = ingest_error {
-        return Err(error);
-    }
     Ok(event_ids)
 }
 

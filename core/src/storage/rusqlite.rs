@@ -38,7 +38,8 @@ use rusqlite::{params_from_iter, types::Value, Connection};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::port::{
-    event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
+    event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
+    AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
@@ -124,25 +125,44 @@ fn validate_columns(db: &Connection, table: &str, required: &[&str]) -> Result<(
 }
 
 fn migrate(db: &mut Connection) -> Result<(), StorageError> {
-    // Inspect the version before changing connection/database pragmas. A
-    // future schema must be rejected without even a journal-mode mutation.
+    // Complete every schema check before changing a persistent pragma or
+    // user_version. A malformed legacy database must remain byte-for-byte
+    // untouched so an operator can repair or inspect it safely.
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(map_write_err)?;
     if version > LATEST_SCHEMA_VERSION {
         return Err(StorageError::UnsupportedSchemaVersion(version));
     }
+    let base_tables = ["events", "idempotency_keys", "snapshots"];
+    let any_base = base_tables
+        .iter()
+        .map(|name| table_exists(db, name))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|exists| exists);
+    if (version == 0 && any_base) || version >= 1 {
+        validate_columns(db, "events", &["lsn", "authority_domain_id", "kind", "payload"])?;
+        validate_columns(db, "idempotency_keys", &["authority_domain_id", "key", "target", "lsn", "payload_bytes"])?;
+        validate_columns(db, "snapshots", &["authority_domain_id", "snapshot_lsn", "payload"])?;
+    }
+    let audit_exists = table_exists(db, "audit_records")?;
+    if version >= 2 || audit_exists {
+        validate_columns(
+            db,
+            "audit_records",
+            &[
+                "authority_domain_id", "audit_lsn", "occurred_at_seconds",
+                "occurred_at_nanos", "kind", "actor_id", "endpoint_id",
+                "command_id", "target_key", "failure_code", "reason_code",
+                "source_lsn",
+            ],
+        )?;
+    }
+
     db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
         .map_err(map_write_err)?;
     if version == 0 {
-        let any_existing = table_exists(db, "events")?
-            || table_exists(db, "idempotency_keys")?
-            || table_exists(db, "snapshots")?;
-        if any_existing {
-            validate_columns(db, "events", &["lsn", "authority_domain_id", "kind", "payload"])?;
-            validate_columns(db, "idempotency_keys", &["authority_domain_id", "key", "target", "lsn", "payload_bytes"])?;
-            validate_columns(db, "snapshots", &["authority_domain_id", "snapshot_lsn", "payload"])?;
-        }
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_1).map_err(map_write_err)?;
         tx.execute_batch("PRAGMA user_version = 1").map_err(map_write_err)?;
@@ -151,31 +171,6 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(map_write_err)?;
-    if version >= 1 {
-        validate_columns(db, "events", &["lsn", "authority_domain_id", "kind", "payload"])?;
-        validate_columns(db, "idempotency_keys", &["authority_domain_id", "key", "target", "lsn", "payload_bytes"])?;
-        validate_columns(db, "snapshots", &["authority_domain_id", "snapshot_lsn", "payload"])?;
-    }
-    if version >= 2 || (version == 1 && table_exists(db, "audit_records")?) {
-        validate_columns(
-            db,
-            "audit_records",
-            &[
-                "authority_domain_id",
-                "audit_lsn",
-                "occurred_at_seconds",
-                "occurred_at_nanos",
-                "kind",
-                "actor_id",
-                "endpoint_id",
-                "command_id",
-                "target_key",
-                "failure_code",
-                "reason_code",
-                "source_lsn",
-            ],
-        )?;
-    }
     if version < 2 {
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_2).map_err(map_write_err)?;
@@ -223,6 +218,12 @@ enum WriterCommand {
         source: StoredEventPayload,
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<AuditedDedupOutcome, StorageError>>,
+    },
+    AppendBatchAudited {
+        authority_domain_id: String,
+        sources: Vec<StoredEventPayload>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<AuditedBatchAppend, StorageError>>,
     },
 }
 
@@ -362,6 +363,15 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                     source,
                     audit,
                 );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendBatchAudited {
+                authority_domain_id,
+                sources,
+                audit,
+                reply,
+            } => {
+                let result = do_append_batch_audited(&mut db, &authority_domain_id, sources, audit);
                 let _ = reply.send(result);
             }
         }
@@ -603,6 +613,34 @@ fn do_append_audited(
     Ok(AuditedAppend { source_event_id, audit_event_id })
 }
 
+fn do_append_batch_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    sources: Vec<StoredEventPayload>,
+    mut audit: AuditRecordDraft,
+) -> Result<AuditedBatchAppend, StorageError> {
+    if sources.is_empty() {
+        return Err(StorageError::InvalidAuditRecord(
+            "audited batch must contain at least one source event".to_owned(),
+        ));
+    }
+    audit.source_event_id = None;
+    audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
+    let tx = db.transaction().map_err(map_write_err)?;
+    let mut source_event_ids = Vec::with_capacity(sources.len());
+    for source in sources {
+        let (lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+        source_event_ids.push(event_id(
+            AuthorityDomainId { value: authority_domain_id.to_owned() },
+            lsn as u64,
+        ));
+    }
+    audit.source_event_id = source_event_ids.last().cloned();
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(AuditedBatchAppend { source_event_ids, audit_event_id })
+}
+
 fn do_append_dedup_audited(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -785,6 +823,7 @@ fn query_audit_sync(
     db: &Connection,
     authority_domain_id: &AuthorityDomainId,
     spec: AuditPageSpec,
+    as_of_lsn: Option<u64>,
 ) -> Result<AuditPage, StorageError> {
     validate_audit_spec(&spec)?;
     let max_lsn: i64 = db
@@ -794,6 +833,12 @@ fn query_audit_sync(
             |row| row.get(0),
         )
         .map_err(map_read_err)?;
+    if let Some(as_of_lsn) = as_of_lsn {
+        let as_of_lsn = lsn_to_i64(as_of_lsn)?;
+        if as_of_lsn > max_lsn {
+            return Err(StorageError::InvalidAuditCursor(format!("prefix LSN {as_of_lsn} is beyond current LSN {max_lsn}")));
+        }
+    }
     if let Some(before_lsn) = spec.before_lsn {
         let before_lsn = lsn_to_i64(before_lsn).map_err(|_| StorageError::InvalidAuditCursor("cursor exceeds SQLite range".to_owned()))?;
         if before_lsn > max_lsn {
@@ -803,6 +848,10 @@ fn query_audit_sync(
 
     let mut clauses = vec!["a.authority_domain_id = ?".to_owned()];
     let mut values = vec![Value::Text(authority_domain_id.value.clone())];
+    if let Some(as_of_lsn) = as_of_lsn {
+        clauses.push("a.audit_lsn <= ?".to_owned());
+        values.push(Value::Integer(lsn_to_i64(as_of_lsn)?));
+    }
     if let Some(before_lsn) = spec.before_lsn {
         clauses.push("a.audit_lsn < ?".to_owned());
         values.push(Value::Integer(lsn_to_i64(before_lsn)?));
@@ -851,7 +900,8 @@ fn query_audit_sync(
         "SELECT a.audit_lsn, a.occurred_at_seconds, a.occurred_at_nanos, a.kind,
                 a.actor_id, a.endpoint_id, a.command_id, a.target_key,
                 a.failure_code, a.reason_code, a.source_lsn, e.kind, e.payload
-         FROM audit_records a JOIN events e ON e.lsn = a.audit_lsn
+         FROM audit_records a JOIN events e
+           ON e.authority_domain_id = a.authority_domain_id AND e.lsn = a.audit_lsn
          WHERE {} ORDER BY a.audit_lsn DESC LIMIT ?",
         clauses.join(" AND ")
     );
@@ -981,18 +1031,219 @@ impl Storage for RusqliteStorage {
         authority_domain_id: &AuthorityDomainId,
         cursor: Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.read_events(authority_domain_id, cursor, None).await
+    }
+
+    async fn read_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+        as_of_lsn: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.read_events(authority_domain_id, cursor, Some(as_of_lsn)).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::WriteSnapshot {
+                authority_domain_id: authority_domain_id.value.clone(),
+                snapshot_lsn: snapshot_lsn.value,
+                payload: snapshot_payload,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_string()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_string()))?
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        let db = self.read_db.lock().await;
+        let row_result = match at_or_before {
+            Some(lsn) => {
+                let lsn_i64 = lsn_to_i64(lsn.value)?;
+                db.query_row(
+                    "SELECT snapshot_lsn, payload FROM snapshots
+                     WHERE authority_domain_id = ?1 AND snapshot_lsn <= ?2
+                     ORDER BY snapshot_lsn DESC LIMIT 1",
+                    rusqlite::params![authority_domain_id.value, lsn_i64],
+                    |row| {
+                        Ok(StoredSnapshot {
+                            event_id: event_id(
+                                AuthorityDomainId {
+                                    value: authority_domain_id.value.clone(),
+                                },
+                                row.get::<_, i64>(0)? as u64,
+                            ),
+                            payload: row.get(1)?,
+                        })
+                    },
+                )
+            }
+            None => db.query_row(
+                "SELECT snapshot_lsn, payload FROM snapshots
+                 WHERE authority_domain_id = ?1
+                 ORDER BY snapshot_lsn DESC LIMIT 1",
+                rusqlite::params![authority_domain_id.value],
+                |row| {
+                    Ok(StoredSnapshot {
+                        event_id: event_id(
+                            AuthorityDomainId {
+                                value: authority_domain_id.value.clone(),
+                            },
+                            row.get::<_, i64>(0)? as u64,
+                        ),
+                        payload: row.get(1)?,
+                    })
+                },
+            ),
+        };
+        match row_result {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_read_err(e)),
+        }
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<EventId, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendAudit {
+                authority_domain_id: authority_domain_id.value.clone(),
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                source,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_batch_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        sources: Vec<StoredEventPayload>,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedBatchAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendBatchAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                sources,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_dedup_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedDedupOutcome, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendDedupAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                key: key.value.clone(),
+                target: target.as_str().to_owned(),
+                source,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn query_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        spec: AuditPageSpec,
+    ) -> Result<AuditPage, StorageError> {
+        let db = self.read_db.lock().await;
+        query_audit_sync(&db, authority_domain_id, spec, None)
+    }
+
+    async fn query_audit_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        spec: AuditPageSpec,
+        as_of_lsn: Lsn,
+    ) -> Result<AuditPage, StorageError> {
+        let db = self.read_db.lock().await;
+        query_audit_sync(&db, authority_domain_id, spec, Some(as_of_lsn.value))
+    }
+}
+
+#[allow(dead_code)]
+impl RusqliteStorage {
+    async fn read_events(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+        upper_bound: Option<Lsn>,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
         let cursor_i64 = lsn_to_i64(cursor.value)?;
+        let upper_bound_i64 = upper_bound.map(|lsn| lsn_to_i64(lsn.value)).transpose()?;
         let db = self.read_db.lock().await;
         let mut stmt = db
             .prepare(
                 "SELECT lsn, kind, payload FROM events
                  WHERE authority_domain_id = ?1 AND lsn > ?2
+                   AND (?3 IS NULL OR lsn <= ?3)
                  ORDER BY lsn",
             )
             .map_err(map_read_err)?;
         let rows = stmt
             .query_map(
-                rusqlite::params![authority_domain_id.value, cursor_i64],
+                rusqlite::params![authority_domain_id.value, cursor_i64, upper_bound_i64],
                 |row| {
                     let lsn: i64 = row.get(0)?;
                     let sql_kind: i32 = row.get(1)?;
@@ -1170,7 +1421,7 @@ impl Storage for RusqliteStorage {
         spec: AuditPageSpec,
     ) -> Result<AuditPage, StorageError> {
         let db = self.read_db.lock().await;
-        query_audit_sync(&db, authority_domain_id, spec)
+        query_audit_sync(&db, authority_domain_id, spec, None)
     }
 }
 

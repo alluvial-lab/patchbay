@@ -132,6 +132,46 @@ impl ProjectionState {
         self.diagnostics.lock().await.result_for_query(command_id)
     }
 
+    /// Rebuild diagnostics from the one durable prefix selected by the query.
+    /// This prevents interleaved later events from leaking into a result.
+    pub async fn diagnostics_at<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        as_of_lsn: u64,
+    ) -> Result<DiagnosticsProjection, StorageError> {
+        let live_adapters: Vec<_> = self.diagnostics.lock().await.live_adapter_ids().cloned().collect();
+        let events = storage
+            .read_through(authority_domain_id, Lsn { value: 0 }, Lsn { value: as_of_lsn })
+            .await?;
+        let mut projection = DiagnosticsProjection::new();
+        for event in events {
+            projection
+                .observe(&event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        }
+        // Historical registration is not proof of current liveness. The
+        // caller's live projection is the only source for fresh attachment
+        // evidence; keep UNKNOWN for a rebuilt prefix after restart.
+        projection.reset_adapter_liveness();
+        for adapter_id in live_adapters {
+            let attach_lsn = projection
+                .adapter_page(
+                    &patchbay_contracts::patchbay::AdapterStatusQuery::default(),
+                    as_of_lsn,
+                )
+                .ok()
+                .and_then(|page| page.adapters.into_iter().find(|status| status.adapter_id.as_ref() == Some(&adapter_id)))
+                .and_then(|status| status.attach_event_id)
+                .and_then(|event_id| event_id.lsn)
+                .map(|lsn| lsn.value);
+            if attach_lsn.is_some_and(|lsn| lsn <= as_of_lsn) {
+                projection.mark_adapter_live(adapter_id);
+            }
+        }
+        Ok(projection)
+    }
+
     pub async fn diagnostics_adapter_page(
         &self,
         query: &patchbay_contracts::patchbay::AdapterStatusQuery,
@@ -323,6 +363,27 @@ impl ProjectionState {
             .await
             .get_grant(grant_id)
             .cloned()
+    }
+
+    pub async fn has_expired_grant(
+        &self,
+        issuer: &dyn IssuerContext,
+        operation_kind: OperationKind,
+        target_scope: &TargetScope,
+    ) -> bool {
+        let Some(actor) = issuer.verified_actor() else { return false; };
+        let Some(endpoint) = issuer.verified_endpoint() else { return false; };
+        let domain = issuer.authority_domain_id();
+        let issuer_ref = patchbay_core::authority::IssuerRef {
+            actor,
+            endpoint: Some(endpoint),
+            authority_domain_id: domain,
+        };
+        self.grant_check
+            .inner
+            .lock()
+            .await
+            .has_expired_grant(&issuer_ref, operation_kind, target_scope)
     }
 
     pub async fn ingest_grant<S: Storage>(

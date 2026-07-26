@@ -518,7 +518,7 @@ where
             Ok(event_id) => event_id,
             Err(error) => {
                 let kind = if matches!(error, adapter::AdapterError::StaleGeneration { .. }) {
-                    patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored
+                    patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch
                 } else {
                     patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
                 };
@@ -643,7 +643,7 @@ where
                     Ok(result) => result,
                     Err(error) => {
                         let kind = if matches!(error, session::SessionError::StaleGeneration { .. }) {
-                            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored
+                            patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch
                         } else {
                             patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
                         };
@@ -804,24 +804,21 @@ where
                 drop(epochs);
 
                 let reconciliation_failed = command_result.is_err() || session_result.is_err();
-                let audit_kind = if reconciliation_failed {
-                    patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
-                } else {
-                    patchbay_contracts::patchbay::AuditEventKind::AdapterDetached
-                };
-                if let Err(error) = record_adapter_audit(
-                    audit.as_ref(),
-                    audit_kind,
-                    &stale_adapter,
-                    None,
-                    if reconciliation_failed {
-                        "adapter_disconnect_reconciliation_failed"
-                    } else {
-                        "adapter_detached"
-                    },
-                )
-                .await {
-                    eprintln!("patchbay-core-server: failed to record adapter lifecycle audit: {error}");
+                // A successful detach is audited by
+                // mark_adapter_sessions_stale in the same writer transaction
+                // as the session degradation source events. Only the failure
+                // path has no paired source and needs a standalone audit.
+                if reconciliation_failed {
+                    if let Err(error) = record_adapter_audit(
+                        audit.as_ref(),
+                        patchbay_contracts::patchbay::AuditEventKind::AdapterFailed,
+                        &stale_adapter,
+                        None,
+                        "adapter_disconnect_reconciliation_failed",
+                    )
+                    .await {
+                        eprintln!("patchbay-core-server: failed to record adapter lifecycle audit: {error}");
+                    }
                 }
                 if let Err(error) = command_result {
                     eprintln!(

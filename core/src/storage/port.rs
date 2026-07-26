@@ -242,6 +242,14 @@ pub struct AuditPageSpec {
     pub limit: u16,
 }
 
+/// The result of appending a group of source events and one lifecycle audit
+/// record in one writer transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditedBatchAppend {
+    pub source_event_ids: Vec<EventId>,
+    pub audit_event_id: EventId,
+}
+
 /// Errors at the storage boundary.
 ///
 /// This type is deliberately backend-neutral: it does not carry `rusqlite::Error`
@@ -403,6 +411,28 @@ pub trait Storage: Send + Sync {
         cursor: Lsn,
     ) -> impl std::future::Future<Output = Result<Vec<RecordedEvent>, StorageError>> + Send;
 
+    /// Read the authority-domain log through one explicit durable prefix.
+    /// Backends should push the upper bound into their query; the default is
+    /// retained for small test ports and remains correct by filtering.
+    fn read_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+        as_of_lsn: Lsn,
+    ) -> impl std::future::Future<Output = Result<Vec<RecordedEvent>, StorageError>> + Send {
+        async move {
+            if as_of_lsn.value < cursor.value {
+                return Ok(Vec::new());
+            }
+            Ok(self
+                .read_after(authority_domain_id, cursor)
+                .await?
+                .into_iter()
+                .filter(|event| event.event_id.lsn.as_ref().is_some_and(|lsn| lsn.value <= as_of_lsn.value))
+                .collect())
+        }
+    }
+
     /// Write a snapshot materialized at the given LSN.
     ///
     /// # Consistent-prefix obligation
@@ -460,6 +490,18 @@ pub trait Storage: Send + Sync {
         async { Err(StorageError::UnsupportedOperation) }
     }
 
+    /// Append a domain decision. Production decorators override this to pair
+    /// the source and audit; bare storage ports retain the historical source
+    /// append behavior used by focused domain tests.
+    fn append_decision(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<EventId, StorageError>> + Send {
+        async move { self.append(authority_domain_id, source).await }
+    }
+
     /// Atomically append a deduplicated source event and audit. A duplicate
     /// source still receives the new submission audit record.
     fn append_dedup_audited(
@@ -473,6 +515,19 @@ pub trait Storage: Send + Sync {
         async { Err(StorageError::UnsupportedOperation) }
     }
 
+    /// Atomically append several related source events and their lifecycle
+    /// audit record. This is used for adapter-detach reconciliation, where
+    /// session degradation and the detach decision must not split across
+    /// transactions.
+    fn append_batch_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _sources: Vec<StoredEventPayload>,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<AuditedBatchAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
     /// Read a bounded, descending audit page from the derived index.
     fn query_audit(
         &self,
@@ -480,6 +535,16 @@ pub trait Storage: Send + Sync {
         _spec: AuditPageSpec,
     ) -> impl std::future::Future<Output = Result<AuditPage, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Read an audit page through one explicit durable prefix.
+    fn query_audit_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        spec: AuditPageSpec,
+        _as_of_lsn: Lsn,
+    ) -> impl std::future::Future<Output = Result<AuditPage, StorageError>> + Send {
+        async move { self.query_audit(authority_domain_id, spec).await }
     }
 }
 

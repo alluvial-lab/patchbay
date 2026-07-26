@@ -14,7 +14,10 @@ use prost::Message;
 
 use crate::storage::RecordedEvent;
 
-use super::{AuthorityError, GrantProvenanceKind, GrantRecord, DESCENDANT_GRANT_ALLOWED_KINDS};
+use super::{
+    grant_matches_request, AuthorityError, GrantProvenanceKind, GrantRecord, IssuerRef,
+    DESCENDANT_GRANT_ALLOWED_KINDS,
+};
 
 /// The current in-memory grant state for one authority-domain log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -67,9 +70,26 @@ impl AuthorityRegistry {
         self.grants.get(grant_id)
     }
 
+    pub fn grants(&self) -> impl Iterator<Item = &GrantRecord> {
+        self.grants.values()
+    }
+
     /// Iterate over grants that have not been revoked.
     pub fn live_grants(&self) -> impl Iterator<Item = &GrantRecord> {
         self.grants.values().filter(|grant| grant.is_live())
+    }
+
+    /// Return whether an expired, otherwise matching grant explains a denial.
+    #[must_use]
+    pub fn has_expired_grant(
+        &self,
+        issuer: &IssuerRef<'_>,
+        operation_kind: OperationKind,
+        target_scope: &TargetScope,
+    ) -> bool {
+        self.grants.values().any(|grant| {
+            grant.is_expired() && grant_matches_request(grant, issuer, operation_kind, target_scope)
+        })
     }
 
     fn observe_grant(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {

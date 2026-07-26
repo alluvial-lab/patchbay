@@ -899,3 +899,55 @@ the PRE-EXISTING repo generator skew parked as
 must not add new drift, but repo-wide drift repair is separately tracked).
 The `find_diagnostics_result` full-log scan on retry is parked as future perf
 work.
+
+## Review resolution
+
+Receiver-confirmed blockers from standard pass 1 are resolved in the corrective
+implementation commit:
+
+1. **Audit-kind inference** — `core/src/storage/audited.rs` no longer infers
+   lifecycle outcomes from raw Observation envelopes. Accepted command,
+   transition, adapter-registration, session, grant, and stale-candidate
+   decisions use typed `append_decision` drafts; adapter detach pairs the
+   session degradation source events and `ADAPTER_DETACHED` audit in one
+   writer transaction. Evidence: acceptance observation and workspace
+   audit/storage tests pass.
+2. **SECURITY producers** — authorization denials use
+   `AUTHORIZATION_FAILED`, target generation failures use
+   `TARGET_GENERATION_MISMATCH`, unknown submission outcomes use
+   `COMMAND_SUBMISSION_UNKNOWN`, grant create/change/revoke decisions are
+   typed, and web logout plus origin/session lifecycle ingress calls the
+   existing `RecordControlSurfaceAudit` RPC. Evidence: cargo/server tests and
+   the web-server suite pass; no consumer files were changed.
+3. **Resumable query lifecycle** — `QueryDiagnostics` validates before
+   catch-up, reconciles accepted/delivered checkpoints under the submit gate,
+   reuses a durable result, terminalizes materialization failures as
+   `failed`, and completes a durable-result-without-completion retry. The
+   gRPC lifecycle/retry test remains green.
+4. **Validation and bounded prefix** — protobuf timestamp seconds and nanos,
+   typed query filters, cursors, and limits are fail-fast validated before
+   persistence reads. `read_through` and `query_audit_through` apply one
+   explicit `as_of_lsn` to projection folds and audit SQL.
+5. **Query families** — command inspection now fills its bounded audit page;
+   adapter projection folds lifecycle audits and session state into lifecycle
+   state/counts, while restart rebuilds remain UNKNOWN until fresh attach.
+6. **Migration/evidence** — schema validation now completes before persistent
+   WAL/user_version mutation. Added legacy-preservation and malformed-schema
+   no-mutation tests; audit/storage atomicity and redaction/index integrity
+   tests remain green.
+
+Verification evidence for this resolution:
+
+- `cargo build --workspace --all-targets` — passed.
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd contracts/ts && npm run build && npm run check:vectors && npm run check:models` — passed.
+- `cd web-server && npm test` — passed (25 tests).
+- `cd web-cockpit && npm test` — passed (50 tests).
+- `cd cli && npm test` — passed (16 tests).
+- `cd pi-adapter && npm test` — first run hit the documented intermittent
+  SQLite-lock timing flake; one identical-code retry passed (21 tests).
+- `cd e2e && npm test` — passed.
+
+No consumer-impact adjustments were needed. The parked generated-contract
+drift and full-log retry-scan performance notes remain untouched.

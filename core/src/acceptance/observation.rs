@@ -12,7 +12,7 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 
-use crate::storage::Storage;
+use crate::{acceptance::Clock, storage::Storage};
 
 use super::{allowed_transition, AcceptanceError, OperationStateExt};
 
@@ -89,15 +89,6 @@ where
 {
     let authority_domain_id = validate_authority_domain(&observation)?;
     let observation_kind = ObservationKind::try_from(observation.kind).ok();
-    let observation_payload = StoredEventPayload {
-        kind: StoredEventKind::Observation as i32,
-        payload: observation.encode_to_vec(),
-    };
-    let observation_event_id = storage
-        .append(authority_domain_id, observation_payload)
-        .await?;
-    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
-
     let Some(candidate) = derive_transition(&observation) else {
         if matches!(
             observation_kind,
@@ -108,26 +99,57 @@ where
                     .to_owned(),
             ));
         }
+        let observation_event_id = storage
+            .append(
+                authority_domain_id,
+                StoredEventPayload {
+                    kind: StoredEventKind::Observation as i32,
+                    payload: observation.encode_to_vec(),
+                },
+            )
+            .await?;
+        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
         return Ok(IngestResult::Recorded {
             event_id: observation_event_id,
         });
     };
 
-    let snapshot = state_lookup
-        .current_state(&candidate.command_id)
-        .await
-        .ok_or_else(|| {
-            AcceptanceError::CorruptRecord(format!(
+    // Resolve the command before persistence. The resulting decision is the
+    // only authority allowed to select the audit kind; a raw Observation
+    // envelope cannot distinguish a completion from a stale late result.
+    let observation_payload = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: observation.encode_to_vec(),
+    };
+    let snapshot = match state_lookup.current_state(&candidate.command_id).await {
+        Some(snapshot) => snapshot,
+        None => {
+            // Preserve the evidence before reporting a corrupt correlation.
+            storage.append(authority_domain_id, observation_payload).await?;
+            return Err(AcceptanceError::CorruptRecord(format!(
                 "observation references unknown command {:?}",
                 candidate.command_id
-            ))
-        })?;
-
+            )));
+        }
+    };
     if snapshot.state.is_terminal() {
+        let mut audit = crate::storage::AuditRecordDraft::new(
+            crate::acceptance::SystemClock.now(),
+            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+        );
+        audit.command_id = Some(candidate.command_id.clone());
+        audit.failure_code = Some(FailureCode::StaleEvent);
+        audit.reason_code = "late_terminal_observation".to_owned();
+        let observation_event_id = storage
+            .append_decision(authority_domain_id, observation_payload, audit)
+            .await?;
         return Ok(IngestResult::StaleCandidate {
             observation_event_id,
         });
     }
+
+    let observation_event_id = storage.append(authority_domain_id, observation_payload).await?;
+    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
 
     // Repeated status reports are useful evidence but do not represent a new
     // lifecycle transition.
@@ -145,7 +167,7 @@ where
     }
 
     let transition = CommandTransition {
-        command_id: Some(candidate.command_id),
+        command_id: Some(candidate.command_id.clone()),
         to_state: candidate.to_state as i32,
         from_state: snapshot.state as i32,
         failure_code: candidate.failure_code as i32,
@@ -165,8 +187,25 @@ where
         kind: StoredEventKind::CommandTransition as i32,
         payload: transition.encode_to_vec(),
     };
+    let audit_kind = match candidate.to_state {
+        OperationState::Delivered => patchbay_contracts::patchbay::AuditEventKind::CommandDelivered,
+        OperationState::Running => patchbay_contracts::patchbay::AuditEventKind::CommandRunning,
+        OperationState::Completed => patchbay_contracts::patchbay::AuditEventKind::CommandCompleted,
+        OperationState::Rejected => patchbay_contracts::patchbay::AuditEventKind::CommandRejected,
+        OperationState::Failed => patchbay_contracts::patchbay::AuditEventKind::CommandFailed,
+        OperationState::Expired => patchbay_contracts::patchbay::AuditEventKind::CommandExpired,
+        OperationState::Cancelled => patchbay_contracts::patchbay::AuditEventKind::CommandCancelled,
+        OperationState::Superseded => patchbay_contracts::patchbay::AuditEventKind::CommandSuperseded,
+        OperationState::Accepted | OperationState::Unspecified => {
+            return Err(AcceptanceError::CorruptRecord("observation selected a non-transition state".to_owned()));
+        }
+    };
+    let mut audit = crate::storage::AuditRecordDraft::new(crate::acceptance::SystemClock.now(), audit_kind);
+    audit.command_id = Some(candidate.command_id.clone());
+    audit.failure_code = (candidate.failure_code != FailureCode::Unspecified).then_some(candidate.failure_code);
+    audit.reason_code = "command_state_transition".to_owned();
     let transition_event_id = storage
-        .append(authority_domain_id, transition_payload)
+        .append_decision(authority_domain_id, transition_payload, audit)
         .await?;
     validate_event_id(
         &transition_event_id,

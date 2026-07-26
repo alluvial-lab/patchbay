@@ -16,6 +16,7 @@ use prost_types::Timestamp;
 
 use crate::{
     acceptance::{TargetBinding, TargetNotFound, TargetResolver},
+    session::{effective_connectivity, SessionRegistry},
     storage::{AuditPageSpec, RecordedEvent, StorageError, TargetKey},
 };
 
@@ -95,6 +96,9 @@ pub struct DiagnosticsProjection {
     commands: HashMap<CommandId, CommandTimeline>,
     adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
     live_adapters: std::collections::HashSet<AdapterId>,
+    lifecycle: HashMap<AdapterId, AuditRecord>,
+    sessions: SessionRegistry,
+    restarted: bool,
     recent_diagnostics: HashMap<AdapterId, Vec<patchbay_contracts::patchbay::AuditRecord>>,
     last_lsn: u64,
 }
@@ -195,11 +199,15 @@ impl DiagnosticsProjection {
             }
             StoredEventKind::Observation => self.observe_observation(event)?,
             StoredEventKind::AuditRecord => self.observe_audit(event)?,
+            StoredEventKind::SessionState => {
+                self.sessions
+                    .observe(event)
+                    .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+            }
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
-            | StoredEventKind::SessionState
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::Unspecified => {}
@@ -211,7 +219,15 @@ impl DiagnosticsProjection {
     fn observe_audit(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
         let record = AuditRecord::decode(event.payload.payload.as_slice())
             .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
-        if AuditEventKind::try_from(record.kind).ok() != Some(AuditEventKind::AdapterDiagnosticReported) {
+        let kind = AuditEventKind::try_from(record.kind)
+            .map_err(|_| DiagnosticsError::CorruptEvent("unknown audit event kind".to_owned()))?;
+        if matches!(kind, AuditEventKind::AdapterAttached | AuditEventKind::AdapterDetached | AuditEventKind::AdapterFailed) {
+            if let Some(adapter_id) = record.actor_id.clone().filter(|id| !id.value.is_empty()).map(|id| AdapterId { value: id.value }) {
+                self.lifecycle.insert(adapter_id, record.clone());
+            }
+            return Ok(());
+        }
+        if kind != AuditEventKind::AdapterDiagnosticReported {
             return Ok(());
         }
         let detail = record.adapter_diagnostic.as_ref().ok_or_else(|| {
@@ -270,6 +286,7 @@ impl DiagnosticsProjection {
         })?;
         self.adapters.insert(adapter_id.clone(), (registration, event.event_id.clone()));
         self.live_adapters.insert(adapter_id);
+        self.restarted = false;
         Ok(())
     }
 
@@ -278,6 +295,16 @@ impl DiagnosticsProjection {
     /// attachment after startup.
     pub fn reset_adapter_liveness(&mut self) {
         self.live_adapters.clear();
+        self.restarted = true;
+    }
+
+    pub fn live_adapter_ids(&self) -> impl Iterator<Item = &AdapterId> {
+        self.live_adapters.iter()
+    }
+
+    pub fn mark_adapter_live(&mut self, adapter_id: AdapterId) {
+        self.live_adapters.insert(adapter_id);
+        self.restarted = false;
     }
 
     pub fn adapter_page(
@@ -329,16 +356,46 @@ impl DiagnosticsProjection {
                     .cloned()
                     .collect()
             };
+            let (live_session_count, stale_session_count, offline_session_count, failed_session_count) =
+                self.sessions
+                    .sessions()
+                    .filter(|session| session.identity.adapter_id == *adapter_id)
+                    .fold((0_u32, 0_u32, 0_u32, 0_u32), |mut counts, session| {
+                        match effective_connectivity(session.state) {
+                            patchbay_contracts::patchbay::SessionConnectivityState::Live => counts.0 += 1,
+                            patchbay_contracts::patchbay::SessionConnectivityState::Stale => counts.1 += 1,
+                            patchbay_contracts::patchbay::SessionConnectivityState::Offline => counts.2 += 1,
+                            patchbay_contracts::patchbay::SessionConnectivityState::Failed => counts.3 += 1,
+                            patchbay_contracts::patchbay::SessionConnectivityState::Unknown
+                            | patchbay_contracts::patchbay::SessionConnectivityState::Unspecified => {}
+                        }
+                        counts
+                    });
+            let state = if self.live_adapters.contains(adapter_id) {
+                AdapterDiagnosticState::Attached
+            } else if self.restarted {
+                AdapterDiagnosticState::Unknown
+            } else {
+                match self.lifecycle.get(adapter_id).and_then(|record| AuditEventKind::try_from(record.kind).ok()) {
+                    Some(AuditEventKind::AdapterDetached) => AdapterDiagnosticState::Detached,
+                    Some(AuditEventKind::AdapterFailed) => AdapterDiagnosticState::Failed,
+                    _ => AdapterDiagnosticState::Unknown,
+                }
+            };
             AdapterStatus {
                 adapter_id: Some(adapter_id.clone()),
                 endpoint_id: registration.endpoint_id.clone(),
                 adapter_generation: registration.adapter_generation,
-                state: if self.live_adapters.contains(adapter_id) { AdapterDiagnosticState::Attached as i32 } else { AdapterDiagnosticState::Unknown as i32 },
+                state: state as i32,
                 attach_event_id: Some(attach_event_id.clone()),
                 attached_at: registration.attached_at,
                 capability,
+                last_lifecycle_record: self.lifecycle.get(adapter_id).cloned(),
+                live_session_count,
+                stale_session_count,
+                offline_session_count,
+                failed_session_count,
                 recent_diagnostics,
-                ..AdapterStatus::default()
             }
         }).collect();
         Ok(AdapterStatusPage { adapters, next_after_adapter_id, has_more })
@@ -507,8 +564,12 @@ fn validate_limit(limit: Option<u32>, default: u16, maximum: u16, name: &str) ->
 }
 
 fn validate_interval(from: Option<&Timestamp>, before: Option<&Timestamp>) -> Result<(), DiagnosticsError> {
+    const MIN_SECONDS: i64 = -62_135_596_800;
+    const MAX_SECONDS: i64 = 253_402_300_799;
     for timestamp in [from, before].into_iter().flatten() {
-        if !(0..1_000_000_000).contains(&timestamp.nanos) {
+        if !(MIN_SECONDS..=MAX_SECONDS).contains(&timestamp.seconds)
+            || !(0..1_000_000_000).contains(&timestamp.nanos)
+        {
             return Err(DiagnosticsError::InvalidQuery("query timestamp is invalid".to_owned()));
         }
     }

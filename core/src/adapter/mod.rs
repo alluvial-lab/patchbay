@@ -16,7 +16,7 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use crate::{
-    acceptance::CommandIndex,
+    acceptance::{Clock, CommandIndex},
     storage::{RecordedEvent, Storage},
 };
 
@@ -187,7 +187,7 @@ pub async fn ingest_registration<S: Storage>(
         kind: ObservationKind::Event as i32,
         target_scope: Some(TargetScope {
             kind: TargetScopeKind::Adapter as i32,
-            adapter_id: Some(adapter_id),
+            adapter_id: Some(adapter_id.clone()),
             ..Default::default()
         }),
         payload: Some(PayloadEnvelope {
@@ -201,12 +201,25 @@ pub async fn ingest_registration<S: Storage>(
         kind: StoredEventKind::Observation as i32,
         payload: observation.encode_to_vec(),
     };
-    let event_id = storage
-        .append(&authority_domain_id, payload.clone())
-        .await?;
+    let mut audit = crate::storage::AuditRecordDraft::new(
+        crate::acceptance::SystemClock.now(),
+        patchbay_contracts::patchbay::AuditEventKind::AdapterAttached,
+    );
+    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId { value: adapter_id.value.clone() });
+    audit.endpoint_id = redacted.endpoint_id.clone();
+    audit.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_id),
+        ..Default::default()
+    });
+    audit.reason_code = "adapter_attached".to_owned();
+    let event_id = storage.append_decision(&authority_domain_id, payload, audit).await?;
     registry.observe(&RecordedEvent {
         event_id: event_id.clone(),
-        payload,
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: observation.encode_to_vec(),
+        },
     })?;
     Ok(event_id)
 }
@@ -260,8 +273,16 @@ pub async fn fail_running_commands_for_adapter<S: Storage>(
 
     let mut event_ids = Vec::with_capacity(candidates.len());
     for (command_id, correlations) in candidates {
+        let command_id_for_audit = command_id.clone();
+        let mut audit = crate::storage::AuditRecordDraft::new(
+            crate::acceptance::SystemClock.now(),
+            patchbay_contracts::patchbay::AuditEventKind::CommandFailed,
+        );
+        audit.command_id = Some(command_id_for_audit);
+        audit.failure_code = Some(FailureCode::ExecutionOutcomeUnknown);
+        audit.reason_code = "adapter_disconnect".to_owned();
         let event_id = storage
-            .append(
+            .append_decision(
                 authority_domain_id,
                 StoredEventPayload {
                     kind: StoredEventKind::CommandTransition as i32,
@@ -275,6 +296,7 @@ pub async fn fail_running_commands_for_adapter<S: Storage>(
                     }
                     .encode_to_vec(),
                 },
+                audit,
             )
             .await?;
         event_ids.push(event_id);
@@ -341,9 +363,15 @@ pub async fn ingest_delivery_acknowledgement<S: Storage>(
     // and begin execution. A re-ack is a no-op, never a delivered -> delivered
     // transition.
     let transition_event_id = if record.state == OperationState::Accepted {
+        let mut audit = crate::storage::AuditRecordDraft::new(
+            crate::acceptance::SystemClock.now(),
+            patchbay_contracts::patchbay::AuditEventKind::CommandDelivered,
+        );
+        audit.command_id = Some(command_id.clone());
+        audit.reason_code = "delivery_acknowledged".to_owned();
         Some(
             storage
-                .append(
+                .append_decision(
                     authority_domain_id,
                     StoredEventPayload {
                         kind: StoredEventKind::CommandTransition as i32,
@@ -357,6 +385,7 @@ pub async fn ingest_delivery_acknowledgement<S: Storage>(
                         }
                         .encode_to_vec(),
                     },
+                    audit,
                 )
                 .await?,
         )

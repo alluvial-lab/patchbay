@@ -4,7 +4,7 @@ import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-au
 
 export function registerCsrfTokenRoute(
   app: FastifyInstance,
-  options: Pick<GuardOptions, "trustedLoopbackProxy"> = {},
+  options: Pick<GuardOptions, "trustedLoopbackProxy" | "onSessionLifecycle" | "renewOnAuthenticated"> = {},
 ): void {
   app.get(
     "/csrf-token",

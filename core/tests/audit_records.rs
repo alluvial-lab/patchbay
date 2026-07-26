@@ -1,4 +1,5 @@
 use patchbay_contracts::patchbay::{AuditEventKind, AuthorityDomainId, StoredEventKind, StoredEventPayload};
+use prost::Message;
 use patchbay_core::storage::{
     AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, RusqliteStorage, Storage, StorageError,
     TargetKey,
@@ -104,6 +105,58 @@ async fn audited_append_and_dedup_keep_source_and_audit_atomic() {
     }
     let events = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 3, "source plus one audit per submission");
+}
+
+#[test]
+fn malformed_legacy_schema_is_rejected_without_mutation() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("malformed.sqlite3");
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE events (lsn INTEGER PRIMARY KEY, authority_domain_id TEXT NOT NULL, kind INTEGER NOT NULL);\n             CREATE TABLE idempotency_keys (authority_domain_id TEXT NOT NULL, key TEXT NOT NULL, target TEXT NOT NULL, lsn INTEGER NOT NULL, payload_bytes BLOB NOT NULL);\n             CREATE TABLE snapshots (authority_domain_id TEXT NOT NULL, snapshot_lsn INTEGER NOT NULL, payload BLOB NOT NULL);",
+        )
+        .unwrap();
+    }
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        RusqliteStorage::open(path.to_str().unwrap()),
+        Err(StorageError::MalformedSchema(_))
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    assert_eq!(version, 0, "preflight failure must not stamp the baseline");
+}
+
+#[tokio::test]
+async fn legacy_data_survives_versioned_migration() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("legacy.sqlite3");
+    let payload = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: vec![9, 8, 7],
+    };
+    let encoded = payload.encode_to_vec();
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE events (lsn INTEGER PRIMARY KEY, authority_domain_id TEXT NOT NULL, kind INTEGER NOT NULL, payload BLOB NOT NULL);\n             CREATE TABLE idempotency_keys (authority_domain_id TEXT NOT NULL, key TEXT NOT NULL, target TEXT NOT NULL, lsn INTEGER NOT NULL, payload_bytes BLOB NOT NULL);\n             CREATE TABLE snapshots (authority_domain_id TEXT NOT NULL, snapshot_lsn INTEGER NOT NULL, payload BLOB NOT NULL);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO events (lsn, authority_domain_id, kind, payload) VALUES (1, ?1, ?2, ?3)",
+            rusqlite::params!["main", StoredEventKind::Observation as i32, encoded],
+        )
+        .unwrap();
+    }
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    let events = storage
+        .read_after(&domain("main"), patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload, payload);
 }
 
 #[test]

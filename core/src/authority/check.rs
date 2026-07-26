@@ -4,7 +4,7 @@ use patchbay_contracts::patchbay::{AuthorityDomainId, OperationKind, TargetScope
 
 use crate::acceptance::{Authorized, GrantCheck, GrantDenied};
 
-use super::{grant_authorizes, AuthorityRegistry, IssuerContext, IssuerRef};
+use super::{grant_authorizes, grant_matches_request, AuthorityRegistry, IssuerContext, IssuerRef};
 
 /// Adapt the authority registry to acceptance's grant-check port.
 ///
@@ -36,6 +36,12 @@ impl GrantCheck for AuthorityRegistry {
             endpoint: issuer.verified_endpoint(),
             authority_domain_id,
         };
+        if let Some(grant) = self
+            .grants()
+            .find(|grant| grant.is_expired() && grant_matches_request(grant, &issuer_ref, operation_kind, target_scope))
+        {
+            return Err(no_grant(&format!("expired grant {:?}", grant.grant_id), operation_kind, target_scope));
+        }
         self.live_grants()
             .find(|grant| grant_authorizes(grant, &issuer_ref, operation_kind, target_scope))
             .map(|grant| Authorized {

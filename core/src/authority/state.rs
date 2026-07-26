@@ -4,6 +4,7 @@ use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
     GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The in-memory grant record derived from the durable authority log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +47,19 @@ impl GrantRecord {
     /// domain does not yet have a clock port.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        !self.is_revoked()
+        !self.is_revoked() && !self.is_expired()
+    }
+
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        let Some(expires_at) = self.expires_at.as_ref() else {
+            return false;
+        };
+        let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return false;
+        };
+        (expires_at.seconds, expires_at.nanos)
+            <= (now.as_secs() as i64, now.subsec_nanos() as i32)
     }
 }
 
@@ -99,8 +112,17 @@ pub fn grant_authorizes(
     operation_kind: OperationKind,
     target_scope: &TargetScope,
 ) -> bool {
-    grant.is_live()
-        && grant.authority_domain_id == *issuer.authority_domain_id
+    grant.is_live() && grant_matches_request(grant, issuer, operation_kind, target_scope)
+}
+
+#[must_use]
+pub fn grant_matches_request(
+    grant: &GrantRecord,
+    issuer: &IssuerRef<'_>,
+    operation_kind: OperationKind,
+    target_scope: &TargetScope,
+) -> bool {
+    grant.authority_domain_id == *issuer.authority_domain_id
         && grant.subject_actor_id == *issuer.actor
         && grant_endpoint_matches(grant, issuer)
         && grant.allowed_operation_kinds.contains(&operation_kind)

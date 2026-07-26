@@ -32,6 +32,11 @@ export interface SessionRouteOptions {
   passwordVerifier?: PasswordVerifier;
   operatorAuthenticator?: OperatorAuthenticator;
   operatorSessionRevoker?: OperatorSessionRevoker;
+  controlSurfaceAuditor?: (
+    kind: "logout",
+    reasonCode: string,
+    coreSessionId: string | undefined,
+  ) => Promise<void>;
   trustedLoopbackProxy?: boolean;
 }
 
@@ -107,6 +112,11 @@ export function registerSessionRoutes(
     { preHandler: requireOperatorSession(sessions, options) },
     async (request, reply) => {
       const coreSessionId = request.verifiedCoreSessionId;
+      try {
+        await options.controlSurfaceAuditor?.("logout", "operator_logout", coreSessionId);
+      } catch {
+        request.log.warn("core logout audit failed");
+      }
       if (coreSessionId && options.operatorSessionRevoker) {
         try {
           await options.operatorSessionRevoker(coreSessionId);

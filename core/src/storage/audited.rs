@@ -206,12 +206,44 @@ where
         authority_domain_id: &AuthorityDomainId,
         payload: StoredEventPayload,
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        // A generic Observation envelope cannot determine whether a result is
+        // a completion, a stale candidate, or merely evidence. SessionState is
+        // different: it is already a domain-owned lifecycle mutation and must
+        // never bypass the paired writer boundary.
         let kind = StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
-        if matches!(kind, StoredEventKind::SessionState | StoredEventKind::Elicitation) {
-            return self.inner.append(authority_domain_id, payload).await;
+        if kind == StoredEventKind::SessionState {
+            let mut audit = AuditRecordDraft::new(
+                SystemClock.now(),
+                AuditEventKind::AdapterAttached,
+            );
+            audit.reason_code = "session_state_changed".to_owned();
+            return self
+                .inner
+                .append_audited(authority_domain_id, payload, audit)
+                .await
+                .map(|result| result.source_event_id);
         }
-        let audit = audit_draft_for_source(&payload)?;
-        self.inner.append_audited(authority_domain_id, payload, audit).await.map(|result| result.source_event_id)
+        // Operation acceptance and authority/bootstrap records have a
+        // decision fixed by their domain writer, so their typed allowlisted
+        // drafts are safe here. Observations and transitions never enter this
+        // inference path.
+        if matches!(
+            kind,
+            StoredEventKind::Operation
+                | StoredEventKind::Grant
+                | StoredEventKind::DescendantGrant
+                | StoredEventKind::Revocation
+                | StoredEventKind::OperatorRecord
+                | StoredEventKind::ControlSurfacePrincipal
+        ) {
+            let audit = audit_draft_for_source(&payload)?;
+            return self
+                .inner
+                .append_audited(authority_domain_id, payload, audit)
+                .await
+                .map(|result| result.source_event_id);
+        }
+        self.inner.append(authority_domain_id, payload).await
     }
 
     async fn append_dedup(
@@ -222,7 +254,11 @@ where
         payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
         let audit = audit_draft_for_source(&payload)?;
-        match self.inner.append_dedup_audited(authority_domain_id, key, target, payload, audit).await? {
+        match self
+            .inner
+            .append_dedup_audited(authority_domain_id, key, target, payload, audit)
+            .await?
+        {
             AuditedDedupOutcome::Appended(result) => Ok(DedupOutcome::Appended(result.source_event_id)),
             AuditedDedupOutcome::Duplicate { source_event_id, .. } => Ok(DedupOutcome::Duplicate(source_event_id)),
         }
@@ -234,6 +270,15 @@ where
         cursor: patchbay_contracts::patchbay::Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
         self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn read_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: patchbay_contracts::patchbay::Lsn,
+        as_of_lsn: patchbay_contracts::patchbay::Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_through(authority_domain_id, cursor, as_of_lsn).await
     }
 
     async fn write_snapshot(
@@ -270,6 +315,18 @@ where
         self.inner.append_audited(authority_domain_id, source, audit).await
     }
 
+    async fn append_decision(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner
+            .append_audited(authority_domain_id, source, audit)
+            .await
+            .map(|result| result.source_event_id)
+    }
+
     async fn append_dedup_audited(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -281,11 +338,29 @@ where
         self.inner.append_dedup_audited(authority_domain_id, key, target, source, audit).await
     }
 
+    async fn append_batch_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        sources: Vec<StoredEventPayload>,
+        audit: AuditRecordDraft,
+    ) -> Result<super::AuditedBatchAppend, StorageError> {
+        self.inner.append_batch_audited(authority_domain_id, sources, audit).await
+    }
+
     async fn query_audit(
         &self,
         authority_domain_id: &AuthorityDomainId,
         spec: AuditPageSpec,
     ) -> Result<patchbay_contracts::patchbay::AuditPage, StorageError> {
         self.inner.query_audit(authority_domain_id, spec).await
+    }
+
+    async fn query_audit_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        spec: AuditPageSpec,
+        as_of_lsn: patchbay_contracts::patchbay::Lsn,
+    ) -> Result<patchbay_contracts::patchbay::AuditPage, StorageError> {
+        self.inner.query_audit_through(authority_domain_id, spec, as_of_lsn).await
     }
 }

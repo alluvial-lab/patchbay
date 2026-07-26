@@ -26,7 +26,7 @@ const DEFAULT_OPERATION_VALIDITY_MS = 5 * 60 * 1_000;
 export function registerRpcRoutes(
   app: FastifyInstance,
   coreSecret: string,
-  options: Pick<GuardOptions, "trustedLoopbackProxy"> = {},
+  options: Pick<GuardOptions, "trustedLoopbackProxy" | "onSessionLifecycle"> = {},
 ): void {
   app.addContentTypeParser(GRPC_WEB_CONTENT_TYPE, { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);

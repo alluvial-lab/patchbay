@@ -184,11 +184,11 @@ where
         .await
     {
         Ok(authorized) => authorized,
-        Err(_) => {
+        Err(error) => {
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
                 FailureCode::AuthorizationDenied,
-                "operation is not authorized for this verified issuer and target".to_owned(),
+                error.to_string(),
             ));
         }
     };

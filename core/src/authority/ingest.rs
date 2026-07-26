@@ -10,7 +10,7 @@ use patchbay_contracts::patchbay::{
     Revocation, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::{acceptance::Clock, storage::{AuditRecordDraft, RecordedEvent, Storage}};
 
 use super::{
     events, AuthorityError, AuthorityRegistry, GrantProjection, DESCENDANT_GRANT_ALLOWED_KINDS,
@@ -35,9 +35,21 @@ where
         "grant",
     )?;
 
+    let grant_id = grant.grant_id.clone();
     let payload = events::grant(authority_domain_id.clone(), grant);
     preflight_creation(&payload, authority_domain_id)?;
-    append_and_warm(storage, projection, authority_domain_id, payload).await
+    let kind = if projection.current_grant(&grant_id.expect("validated grant id")).await.is_some() {
+        patchbay_contracts::patchbay::AuditEventKind::GrantChanged
+    } else {
+        patchbay_contracts::patchbay::AuditEventKind::GrantCreated
+    };
+    let mut audit = AuditRecordDraft::new(crate::acceptance::SystemClock.now(), kind);
+    audit.reason_code = if kind == patchbay_contracts::patchbay::AuditEventKind::GrantChanged {
+        "grant_changed"
+    } else {
+        "grant_created"
+    }.to_owned();
+    append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
 }
 
 /// Validate, durably append, and project an auto-issued descendant grant.
@@ -117,7 +129,12 @@ where
     }
 
     let payload = events::revocation(authority_domain_id.clone(), revocation);
-    append_and_warm(storage, projection, authority_domain_id, payload).await
+    let mut audit = AuditRecordDraft::new(
+        crate::acceptance::SystemClock.now(),
+        patchbay_contracts::patchbay::AuditEventKind::GrantRevoked,
+    );
+    audit.reason_code = "grant_revoked".to_owned();
+    append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
 }
 
 async fn append_and_warm<S, L>(
@@ -139,6 +156,23 @@ where
         event_id: event_id.clone(),
         payload,
     })?;
+    Ok(event_id)
+}
+
+async fn append_and_warm_decision<S, L>(
+    storage: &S,
+    projection: &mut L,
+    authority_domain_id: &AuthorityDomainId,
+    payload: StoredEventPayload,
+    audit: AuditRecordDraft,
+) -> Result<EventId, AuthorityError>
+where
+    S: Storage,
+    L: GrantProjection,
+{
+    let event_id = storage.append_decision(authority_domain_id, payload.clone(), audit).await?;
+    validate_event_id(&event_id, authority_domain_id)?;
+    projection.observe(&RecordedEvent { event_id: event_id.clone(), payload })?;
     Ok(event_id)
 }
 

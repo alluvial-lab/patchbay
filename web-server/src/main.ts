@@ -4,6 +4,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { create } from "@bufbuild/protobuf";
+import {
+  AuditEventKind,
+  RecordControlSurfaceAuditRequestSchema,
+} from "@patchbay/contracts";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -141,11 +146,31 @@ export function buildApp(options: AppOptions): FastifyInstance {
         coreClient,
         corePrincipals,
       ),
+      controlSurfaceAuditor: coreControlSurfaceAudit(
+        options.config,
+        coreClient,
+        corePrincipals,
+      ),
       trustedLoopbackProxy: options.config.trustedLoopbackProxy,
     },
   );
-  const secureTransport = { trustedLoopbackProxy: options.config.trustedLoopbackProxy };
-  registerCsrfTokenRoute(app, secureTransport);
+  const secureTransport = {
+    trustedLoopbackProxy: options.config.trustedLoopbackProxy,
+    onSessionLifecycle: async (
+      request: import("fastify").FastifyRequest,
+      kind: "operator_session_renewed" | "operator_session_expired",
+      reasonCode: string,
+    ) => {
+      const coreSessionId = request.verifiedCoreSessionId;
+      if (!coreSessionId) return;
+      await coreControlSurfaceAudit(
+        options.config,
+        coreClient,
+        corePrincipals,
+      )(kind, reasonCode, coreSessionId);
+    },
+  };
+  registerCsrfTokenRoute(app, { ...secureTransport, renewOnAuthenticated: true });
   registerRpcRoutes(app, options.config.coreSecret, secureTransport);
   registerCockpitAssets(
     app,
@@ -270,6 +295,36 @@ function coreOperatorSessionRevoker(
     headers.set("x-patchbay-operator-id", principal.operatorActorId?.value ?? config.operatorId);
     headers.set("x-patchbay-operator-session-id", coreSessionId);
     await coreClient.revokeOperatorSession({}, { headers });
+  };
+}
+
+function coreControlSurfaceAudit(
+  config: WebServerConfig,
+  coreClient: CoreClient,
+  principals: CorePrincipalStore,
+): (
+  kind: "logout" | "operator_session_renewed" | "operator_session_expired",
+  reasonCode: string,
+  coreSessionId: string | undefined,
+) => Promise<void> {
+  return async (kind, reasonCode, coreSessionId) => {
+    const principal = principals.get();
+    if (!principal || !coreSessionId) return;
+    const kindValue = kind === "logout"
+      ? AuditEventKind.LOGOUT
+      : kind === "operator_session_renewed"
+        ? AuditEventKind.OPERATOR_SESSION_RENEWED
+        : AuditEventKind.OPERATOR_SESSION_EXPIRED;
+    const headers = new Headers();
+    headers.set("x-patchbay-core-secret", config.coreSecret);
+    headers.set("x-patchbay-principal-id", principal.principalId);
+    headers.set("x-patchbay-principal-secret", principal.secret);
+    headers.set("x-patchbay-operator-id", principal.operatorActorId?.value ?? config.operatorId);
+    headers.set("x-patchbay-operator-session-id", coreSessionId);
+    await coreClient.recordControlSurfaceAudit(
+      create(RecordControlSurfaceAuditRequestSchema, { kind: kindValue, reasonCode }),
+      { headers },
+    );
   };
 }
 
