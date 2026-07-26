@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { createClient, type Interceptor } from "@connectrpc/connect";
+import { Code, ConnectError, createClient, type Interceptor } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorEndpointRefSchema,
@@ -241,8 +241,9 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       }
     })();
 
-    // This acceptance happens after the old stream is fenced and before the
-    // production run loop can retry. It is the unseen tail the reconnect must catch up.
+    // This acceptance is the unseen tail the reconnect path must catch up;
+    // the durable terminal-state wait below synchronizes on that outcome
+    // instead of assuming a fixed retry delay.
     const caughtUp = await control.submit(
       create(SubmitRequestSchema, {
         operation: operation(
@@ -259,7 +260,22 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       OperationState.COMPLETED,
     );
     interrupterController.abort();
-    await interruptedStream;
+    assert.equal(interrupterController.signal.aborted, true);
+    let interruptedStreamOutcome: "fenced" | "aborted" = "fenced";
+    try {
+      await interruptedStream;
+    } catch (error: unknown) {
+      // The explicit abort is expected when the replacement stream is still
+      // live. If the adapter has already reconnected, the core's epoch fence
+      // ends this observer normally before the local abort reaches the RPC.
+      assert.ok(error instanceof ConnectError);
+      assert.equal(error.code, Code.Canceled);
+      interruptedStreamOutcome = "aborted";
+    }
+    assert.ok(
+      interruptedStreamOutcome === "aborted" || interruptedStreamOutcome === "fenced",
+      "replacement stream must end by the explicit abort or the core epoch fence",
+    );
 
     const reconnectCatchUpEvents = await readAfter(control, 0n);
     assert.deepEqual(

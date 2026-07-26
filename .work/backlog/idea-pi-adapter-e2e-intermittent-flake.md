@@ -20,3 +20,14 @@ product breakage, but unproven. Fix: make the e2e's waits condition-based
 serialize the e2e from the unit tests. Related: the v0.1.0 incident that
 leaked 201K SQLite temp files into /tmp (backlog-test-tempfile-hygiene) —
 check whether temp-file contention correlates with the flake.
+
+## Resolution
+
+The focused failure was test-side: the intentional abort of the replacement
+`receiveDeliveries` stream correctly produced Connect's `Code.Canceled`, but
+the test awaited that rejected promise as though normal completion were
+expected. The replacement-stream checkpoint is synchronized through the existing
+condition-based durable command-state waits rather than fixed sleeps, and the
+test now asserts the expected cancellation explicitly with `assert.rejects`.
+No production abort propagation bug was found; diagnostics RPC cancellation
+remains scoped to the forwarder's own request signal.

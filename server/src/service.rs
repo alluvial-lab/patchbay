@@ -711,7 +711,11 @@ where
             if current.state != OperationState::Delivered {
                 let mut terminal = submission;
                 terminal.operation_state = current.state as i32;
-                terminal.failure_code = FailureCode::Unspecified as i32;
+                terminal.failure_code = if current.state == OperationState::Failed {
+                    FailureCode::ExecutionFailed as i32
+                } else {
+                    FailureCode::Unspecified as i32
+                };
                 return Ok(Response::new(QueryDiagnosticsResponse {
                     submission: Some(terminal),
                     ..QueryDiagnosticsResponse::default()
@@ -765,12 +769,11 @@ where
         )
         .await {
             Ok(result) => result,
-            Err(error) => {
+            Err(_) => {
                 let failed = append_query_failure(
                     &self.storage,
                     &authority_domain_id,
                     &command_id,
-                    error.to_string(),
                 )
                 .await
                 .map_err(map_storage_error_to_status)?;
@@ -1005,16 +1008,18 @@ async fn append_query_failure<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
     command_id: &patchbay_contracts::patchbay::CommandId,
-    reason: String,
 ) -> Result<EventId, StorageError> {
     let mut audit = AuditRecordDraft::new(
         crate::identity::now_timestamp().map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?,
         AuditEventKind::CommandFailed,
     );
     audit.command_id = Some(command_id.clone());
+    // `ExecutionFailed` is the canonical failure vocabulary for an accepted
+    // operation whose diagnostic read could not be materialized. Keep the
+    // more specific materialization reason in the bounded reason-code field;
+    // never copy backend/error display text into an audit field.
     audit.failure_code = Some(FailureCode::ExecutionFailed);
     audit.reason_code = "diagnostics_materialization_failed".to_owned();
-    audit.correlation_id = reason.chars().take(128).collect();
     storage
         .append_decision(
             authority_domain_id,

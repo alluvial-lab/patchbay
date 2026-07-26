@@ -7,8 +7,8 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
-    ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
+    ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, CommandId,
+    CommandTransition, ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
     PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
@@ -53,14 +53,27 @@ const CONCURRENT_SUBMISSIONS: usize = 16;
 #[derive(Clone)]
 struct FailPostAppendReadOnceStorage {
     inner: RusqliteStorage,
+    fail_post_append_read: bool,
     fail_next_read: Arc<AtomicBool>,
+    fail_next_query_audit: Arc<AtomicBool>,
 }
 
 impl FailPostAppendReadOnceStorage {
     fn new(inner: RusqliteStorage) -> Self {
         Self {
             inner,
+            fail_post_append_read: true,
             fail_next_read: Arc::new(AtomicBool::new(false)),
+            fail_next_query_audit: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn failing_diagnostics_materialization(inner: RusqliteStorage) -> Self {
+        Self {
+            inner,
+            fail_post_append_read: false,
+            fail_next_read: Arc::new(AtomicBool::new(false)),
+            fail_next_query_audit: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -85,7 +98,7 @@ impl Storage for FailPostAppendReadOnceStorage {
             .inner
             .append_dedup(authority_domain_id, key, target, payload)
             .await?;
-        if matches!(&outcome, DedupOutcome::Appended(_)) {
+        if self.fail_post_append_read && matches!(&outcome, DedupOutcome::Appended(_)) {
             self.fail_next_read.store(true, Ordering::SeqCst);
         }
         Ok(outcome)
@@ -134,6 +147,18 @@ impl Storage for FailPostAppendReadOnceStorage {
         self.inner.append_audit(authority_domain_id, audit).await
     }
 
+    async fn append_decision(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<EventId, StorageError> {
+        self.inner
+            .append_audited(authority_domain_id, source, audit)
+            .await
+            .map(|result| result.source_event_id)
+    }
+
     async fn append_audited(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -161,6 +186,12 @@ impl Storage for FailPostAppendReadOnceStorage {
         authority_domain_id: &AuthorityDomainId,
         spec: AuditPageSpec,
     ) -> Result<patchbay_contracts::patchbay::AuditPage, StorageError> {
+        if self.fail_next_query_audit.swap(false, Ordering::SeqCst) {
+            return Err(StorageError::ReadFailed {
+                message: "injected diagnostics materialization failure".to_owned(),
+                retryable: true,
+            });
+        }
         self.inner.query_audit(authority_domain_id, spec).await
     }
 }
@@ -396,6 +427,117 @@ async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
         retry.result,
         Some(query_diagnostics_response::Result::Audit(_))
     ));
+}
+
+#[tokio::test]
+async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles() {
+    let directory = tempfile::tempdir().expect("test directory must be created");
+    let database_path = directory.path().join("patchbay.sqlite3");
+    let inner = RusqliteStorage::open(database_path.to_str().expect("UTF-8 test path"))
+        .expect("test storage must open");
+    seed_authority_and_session(&inner).await;
+    let storage = FailPostAppendReadOnceStorage::failing_diagnostics_materialization(inner.clone());
+    let (mut client, task, operator_session) = serve(storage).await;
+    let query = DiagnosticsQuery {
+        query: Some(diagnostics_query::Query::Audit(AuditQuery {
+            limit: Some(1),
+            ..AuditQuery::default()
+        })),
+    };
+    let request = QueryDiagnosticsRequest {
+        operation: Some(diagnostic_query_operation(
+            "diagnostics-materialization-failure",
+            "diagnostics-materialization-failure-key",
+            query,
+        )),
+    };
+
+    let first = client
+        .query_diagnostics(authenticated_request(
+            request.clone(),
+            SECRET,
+            &operator_session,
+        ))
+        .await
+        .expect("materialization failure must remain a durable query result")
+        .into_inner();
+    let first_submission = first.submission.expect("failed query has submission");
+    assert_eq!(first_submission.outcome, SubmissionOutcome::Accepted as i32);
+    assert_eq!(first_submission.operation_state, OperationState::Failed as i32);
+    assert_eq!(first_submission.failure_code, FailureCode::ExecutionFailed as i32);
+
+    let transitions = inner
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("durable query log must remain readable")
+        .into_iter()
+        .filter(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
+        .map(|event| CommandTransition::decode(event.payload.payload.as_slice()).expect("transition must decode"))
+        .filter(|transition| {
+            transition
+                .command_id
+                .as_ref()
+                .is_some_and(|id| id.value == "diagnostics-materialization-failure")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transitions.iter().map(|transition| transition.to_state).collect::<Vec<_>>(),
+        vec![
+            OperationState::Delivered as i32,
+            OperationState::Failed as i32,
+        ],
+        "materialization failure must durably terminalize the delivered query",
+    );
+    assert_eq!(
+        transitions[1].failure_code,
+        FailureCode::ExecutionFailed as i32,
+        "the transition uses the canonical accepted-operation failure code",
+    );
+
+    let failure_audit = inner
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::CommandFailed],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: Some(CommandId {
+                    value: "diagnostics-materialization-failure".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![FailureCode::ExecutionFailed],
+                reason_codes: vec!["diagnostics_materialization_failed".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("failure audit must be queryable");
+    assert_eq!(failure_audit.records.len(), 1);
+    let failure_audit_record = &failure_audit.records[0];
+    assert_eq!(failure_audit_record.reason_code, "diagnostics_materialization_failed");
+    assert_eq!(failure_audit_record.failure_code, FailureCode::ExecutionFailed as i32);
+    assert!(failure_audit_record.correlation_id.is_empty());
+
+    let retry = client
+        .query_diagnostics(authenticated_request(
+            request,
+            SECRET,
+            &operator_session,
+        ))
+        .await
+        .expect("retry must reconcile the durable failed terminal state")
+        .into_inner();
+    let retry_submission = retry.submission.expect("retry has submission");
+    assert_eq!(retry_submission.outcome, SubmissionOutcome::Accepted as i32);
+    assert!(retry_submission.deduplicated);
+    assert_eq!(retry_submission.operation_state, OperationState::Failed as i32);
+    assert_eq!(retry_submission.failure_code, FailureCode::ExecutionFailed as i32);
+    assert!(retry.result.is_none(), "a failed query has no materialized result");
+
+    task.abort();
 }
 
 #[tokio::test]
