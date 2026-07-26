@@ -584,3 +584,24 @@ single-stride implementation/review bundle.
   were made outside the owned paths to work around that blocker.
 - Code/tests/docs landed in commit `0934b9d` (`implement: epic-observability-dogfooding-adapter-log-sink`).
 - Nothing was parked for later.
+
+## Review findings (standard pass 1, 2026-07-26 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Bearer-assignment redaction gap** — `#sanitize` handles `Bearer <token>`
+   but not `bearer=<token>` (`adapter_diagnostics.ts`); reviewer reproduced an
+   emitted record containing an unconfigured bearer secret. Fix: recognize
+   `bearer\s*[:=]` shapes; test with a value absent from `secrets`.
+2. **`diagnosticError` is not total** — reading arbitrary `.name`/`.code`/
+   `.constructor.name` can throw (hostile getter) before the guarded
+   diagnostics call, altering adapter failure behavior. Fix: make
+   normalization total with a fixed code-only fallback; test throwing getters.
+3. **Transcript dedup test tautological** — `pi_session.test.ts` compares two
+   deterministic projections; never delivers duplicate live hooks. Fix:
+   inject duplicate hook events with the same stable id, assert one listener
+   event, including after generation reset.
+
+Parked notes: maxPending+1 outstanding bound (fine); redaction test name
+overstates coverage; feature-level `npm test` evidence to be refreshed at fix
+time.
