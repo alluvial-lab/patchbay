@@ -1,16 +1,18 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
+    ActorId, AuditEventKind, AuthorityDomainId, EnrollControlSurfacePrincipalRequest,
     EnrollControlSurfacePrincipalResult, EventId, LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
-    RevokeOperatorSessionRequest, RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome,
-    SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
+    QueryDiagnosticsRequest, QueryDiagnosticsResponse, RevokeOperatorSessionRequest,
+    RevokeOperatorSessionResult, StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
+    SubscribeEvent, SubscribeRequest,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError},
+    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{IssuerContext, OperatorError},
-    storage::{RecordedEvent, Storage, StorageError},
+    storage::{AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
 use tokio_stream::{self as stream, Stream};
@@ -83,9 +85,13 @@ pub struct ControlServiceImpl<S> {
     pub(crate) authority_domain_id: AuthorityDomainId,
     login_limiter: LoginLimiter,
     login_audit: Arc<dyn LoginAuditSink>,
+    audit: Arc<dyn AuditSink>,
 }
 
-impl<S: Storage> ControlServiceImpl<S> {
+impl<S> ControlServiceImpl<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     pub async fn new(storage: S, authority_domain_id: AuthorityDomainId) -> Result<Self, String> {
         Self::new_with_security(
             storage,
@@ -113,12 +119,21 @@ impl<S: Storage> ControlServiceImpl<S> {
             operator_session_ttl,
         )
         .await?;
+        let durable = Arc::new(DurableAuditSink::new(
+            storage.clone(),
+            authority_domain_id.clone(),
+        ));
+        let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
+            durable,
+            vec![Arc::new(StderrAuditSink)],
+        ));
         Ok(Self {
             storage,
             state,
             authority_domain_id,
             login_limiter,
             login_audit,
+            audit,
         })
     }
 
@@ -280,7 +295,8 @@ where
                 LoginAuditOutcome::Failure,
                 "password_required",
                 Vec::new(),
-            );
+            )
+            .await?;
             return Err(Status::invalid_argument("password must not be empty"));
         }
         let attempt = match self
@@ -295,7 +311,8 @@ where
                     LoginAuditOutcome::Failure,
                     "login_throttled",
                     limit.blocked_dimensions,
-                );
+                )
+                .await?;
                 return Err(Status::with_error_details(
                     Code::ResourceExhausted,
                     "operator password verification is throttled",
@@ -317,7 +334,8 @@ where
                     LoginAuditOutcome::Failure,
                     "verification_error",
                     Vec::new(),
-                );
+                )
+                .await?;
                 return Err(map_operator_error_to_status(error));
             }
         };
@@ -329,7 +347,8 @@ where
                 LoginAuditOutcome::Failure,
                 "invalid_credentials",
                 Vec::new(),
-            );
+            )
+            .await?;
             return Err(Status::unauthenticated("invalid operator credentials"));
         }
         let enrollment = match request.principal {
@@ -342,7 +361,8 @@ where
                     LoginAuditOutcome::Failure,
                     "principal_enrollment_required",
                     Vec::new(),
-                );
+                )
+                .await?;
                 return Err(Status::invalid_argument("principal enrollment is required"));
             }
         };
@@ -360,7 +380,8 @@ where
                     LoginAuditOutcome::Failure,
                     "principal_enrollment_invalid",
                     Vec::new(),
-                );
+                )
+                .await?;
                 return Err(error);
             }
         };
@@ -377,7 +398,8 @@ where
                 LoginAuditOutcome::Failure,
                 "principal_enrollment_failed",
                 Vec::new(),
-            );
+            )
+            .await?;
             return Err(map_operator_error_to_status(error));
         }
         if let Err(error) = self
@@ -392,7 +414,8 @@ where
                 LoginAuditOutcome::Failure,
                 "projection_catch_up_failed",
                 Vec::new(),
-            );
+            )
+            .await?;
             return Err(map_storage_error_to_status(error));
         }
         let operator_session_id = self.state.issue_operator_session(actor_id.clone()).await;
@@ -403,7 +426,8 @@ where
             LoginAuditOutcome::Success,
             "authenticated",
             Vec::new(),
-        );
+        )
+        .await?;
         Ok(Response::new(VerifyOperatorPasswordResult {
             operator_session_id: Some(operator_session_id),
             principal: Some(credential),
@@ -469,17 +493,38 @@ where
             principal: Some(credential),
         }))
     }
+
+    async fn query_diagnostics(
+        &self,
+        _request: Request<QueryDiagnosticsRequest>,
+    ) -> Result<Response<QueryDiagnosticsResponse>, Status> {
+        Err(Status::unimplemented("diagnostics query surface is not wired yet"))
+    }
 }
 
 impl<S> ControlServiceImpl<S> {
-    fn audit_login(
+    async fn audit_login(
         &self,
         actor_id: &ActorId,
         network_address: &str,
         outcome: LoginAuditOutcome,
         reason: &'static str,
         blocked_dimensions: Vec<LoginLimitDimension>,
-    ) {
+    ) -> Result<(), Status> {
+        let kind = match outcome {
+            LoginAuditOutcome::Success => AuditEventKind::LoginSucceeded,
+            LoginAuditOutcome::Failure => AuditEventKind::LoginFailed,
+        };
+        let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
+        draft.actor_id = Some(actor_id.clone());
+        if network_address != "unknown" {
+            draft.source_network = network_address.to_owned();
+        }
+        draft.reason_code = reason.to_owned();
+        self.audit
+            .record(draft)
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
         self.login_audit.record(LoginAuditEvent {
             operator_actor_id: actor_id.value.clone(),
             direct_socket_address: network_address.to_owned(),
@@ -487,6 +532,7 @@ impl<S> ControlServiceImpl<S> {
             reason,
             blocked_dimensions,
         });
+        Ok(())
     }
 
     pub(crate) fn require_configured_domain(
@@ -600,6 +646,14 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
             Status::invalid_argument(format!("snapshot LSN {lsn} is not committed"))
         }
         StorageError::InvalidEventKind => Status::internal("stored event kind is invalid"),
+        StorageError::InvalidAuditRecord(message) | StorageError::InvalidAuditCursor(message) => {
+            Status::invalid_argument(message)
+        }
+        StorageError::UnsupportedSchemaVersion(version) => {
+            Status::failed_precondition(format!("database schema version {version} is unsupported"))
+        }
+        StorageError::MalformedSchema(message) => Status::internal(message),
+        StorageError::UnsupportedOperation => Status::unimplemented("storage operation is unsupported"),
     }
 }
 

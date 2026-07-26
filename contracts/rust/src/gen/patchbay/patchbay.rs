@@ -278,6 +278,9 @@ pub enum StoredEventKind {
     OperatorRecord = 9,
     /// Enrolled, credential-backed control-surface principal (admin.proto).
     ControlSurfacePrincipal = 10,
+    /// Redacted security audit record (diagnostics.proto). The source event is
+    /// retained separately; this is a typed explanation/index record.
+    AuditRecord = 11,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -299,6 +302,7 @@ impl StoredEventKind {
             Self::ControlSurfacePrincipal => {
                 "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL"
             }
+            Self::AuditRecord => "STORED_EVENT_KIND_AUDIT_RECORD",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -317,6 +321,7 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL" => {
                 Some(Self::ControlSurfacePrincipal)
             }
+            "STORED_EVENT_KIND_AUDIT_RECORD" => Some(Self::AuditRecord),
             _ => None,
         }
     }
@@ -1849,6 +1854,474 @@ pub struct BootstrapResult {
     pub session_id: ::core::option::Option<OperatorSessionId>,
     #[prost(message, optional, tag = "3")]
     pub principal: ::core::option::Option<PrincipalCredential>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AuditRecord {
+    #[prost(message, optional, tag = "1")]
+    pub audit_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag = "2")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration = "AuditEventKind", tag = "3")]
+    pub kind: i32,
+    #[prost(message, optional, tag = "4")]
+    pub actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "5")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "6")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(bytes = "vec", tag = "7")]
+    pub operator_session_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "8")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "9")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(enumeration = "FailureCode", tag = "10")]
+    pub failure_code: i32,
+    #[prost(string, tag = "11")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(string, tag = "12")]
+    pub correlation_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "13")]
+    pub source_event_id: ::core::option::Option<EventId>,
+    #[prost(string, tag = "14")]
+    pub source_network: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DiagnosticsQuery {
+    #[prost(oneof = "diagnostics_query::Query", tags = "1, 2, 3")]
+    pub query: ::core::option::Option<diagnostics_query::Query>,
+}
+/// Nested message and enum types in `DiagnosticsQuery`.
+pub mod diagnostics_query {
+    #[allow(clippy::large_enum_variant)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Query {
+        #[prost(message, tag = "1")]
+        Audit(super::AuditQuery),
+        #[prost(message, tag = "2")]
+        Command(super::CommandInspectionQuery),
+        #[prost(message, tag = "3")]
+        Adapters(super::AdapterStatusQuery),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDiagnosticsRequest {
+    #[prost(message, optional, tag = "1")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDiagnosticsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub submission: ::core::option::Option<SubmissionResult>,
+    #[prost(message, optional, tag = "2")]
+    pub result_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag = "3")]
+    pub as_of_lsn: ::core::option::Option<Lsn>,
+    #[prost(oneof = "query_diagnostics_response::Result", tags = "4, 5, 6")]
+    pub result: ::core::option::Option<query_diagnostics_response::Result>,
+}
+/// Nested message and enum types in `QueryDiagnosticsResponse`.
+pub mod query_diagnostics_response {
+    #[allow(clippy::large_enum_variant)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Result {
+        #[prost(message, tag = "4")]
+        Audit(super::AuditPage),
+        #[prost(message, tag = "5")]
+        Command(super::CommandInspectionResult),
+        #[prost(message, tag = "6")]
+        Adapters(super::AdapterStatusPage),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AuditQuery {
+    #[prost(enumeration = "AuditEventKind", repeated, tag = "1")]
+    pub kinds: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "2")]
+    pub actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "3")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "4")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "5")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(enumeration = "FailureCode", repeated, tag = "6")]
+    pub failure_codes: ::prost::alloc::vec::Vec<i32>,
+    #[prost(string, repeated, tag = "7")]
+    pub reason_codes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "8")]
+    pub occurred_from_inclusive: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "9")]
+    pub occurred_before_exclusive: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "10")]
+    pub before_event_id: ::core::option::Option<EventId>,
+    #[prost(uint32, optional, tag = "11")]
+    pub limit: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AuditPage {
+    #[prost(message, repeated, tag = "1")]
+    pub records: ::prost::alloc::vec::Vec<AuditRecord>,
+    #[prost(message, optional, tag = "2")]
+    pub next_before_event_id: ::core::option::Option<EventId>,
+    #[prost(bool, tag = "3")]
+    pub has_more: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommandInspectionQuery {
+    #[prost(message, optional, tag = "1")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "2")]
+    pub audit_before_event_id: ::core::option::Option<EventId>,
+    #[prost(uint32, optional, tag = "3")]
+    pub audit_limit: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommandSummary {
+    #[prost(message, optional, tag = "1")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "2")]
+    pub sender: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "3")]
+    pub recipient: ::core::option::Option<ActorEndpointRef>,
+    #[prost(enumeration = "OperationKind", tag = "4")]
+    pub kind: i32,
+    #[prost(message, optional, tag = "5")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(message, repeated, tag = "6")]
+    pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
+    #[prost(message, optional, tag = "7")]
+    pub validity_window: ::core::option::Option<TimeWindow>,
+    #[prost(message, optional, tag = "8")]
+    pub submitted_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommandHistoryEntry {
+    #[prost(message, optional, tag = "1")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(enumeration = "OperationState", tag = "2")]
+    pub state: i32,
+    #[prost(enumeration = "FailureCode", tag = "3")]
+    pub failure_code: i32,
+    #[prost(message, optional, tag = "4")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, repeated, tag = "5")]
+    pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommandInspection {
+    #[prost(message, optional, tag = "1")]
+    pub command: ::core::option::Option<CommandSummary>,
+    #[prost(message, optional, tag = "2")]
+    pub accepted_event_id: ::core::option::Option<EventId>,
+    #[prost(enumeration = "OperationState", tag = "3")]
+    pub current_state: i32,
+    #[prost(enumeration = "FailureCode", tag = "4")]
+    pub failure_code: i32,
+    #[prost(message, optional, tag = "5")]
+    pub terminal_event_id: ::core::option::Option<EventId>,
+    #[prost(message, repeated, tag = "6")]
+    pub history: ::prost::alloc::vec::Vec<CommandHistoryEntry>,
+    #[prost(message, optional, tag = "7")]
+    pub audit: ::core::option::Option<AuditPage>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommandInspectionResult {
+    #[prost(bool, tag = "1")]
+    pub found: bool,
+    #[prost(message, optional, tag = "2")]
+    pub inspection: ::core::option::Option<CommandInspection>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdapterStatusQuery {
+    #[prost(message, repeated, tag = "1")]
+    pub adapter_ids: ::prost::alloc::vec::Vec<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub after_adapter_id: ::prost::alloc::string::String,
+    #[prost(uint32, optional, tag = "3")]
+    pub limit: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterCapabilitySummary {
+    #[prost(enumeration = "OperationKind", repeated, tag = "1")]
+    pub supported_operation_kinds: ::prost::alloc::vec::Vec<i32>,
+    #[prost(string, repeated, tag = "2")]
+    pub supported_target_spec_shapes: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
+    #[prost(bool, tag = "3")]
+    pub streaming_support: bool,
+    #[prost(enumeration = "AdapterSnapshotSupport", tag = "4")]
+    pub snapshot_support: i32,
+    #[prost(bool, tag = "5")]
+    pub cancellation_support: bool,
+    #[prost(bool, tag = "6")]
+    pub session_replacement_support: bool,
+    #[prost(enumeration = "IdempotencyStrength", tag = "7")]
+    pub idempotency_strength: i32,
+    #[prost(string, tag = "8")]
+    pub attachment_method_kind: ::prost::alloc::string::String,
+    #[prost(enumeration = "PayloadContentType", tag = "9")]
+    pub attachment_descriptor_content_type: i32,
+    #[prost(enumeration = "FailureCode", repeated, tag = "10")]
+    pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterStatus {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "3")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "AdapterDiagnosticState", tag = "4")]
+    pub state: i32,
+    #[prost(message, optional, tag = "5")]
+    pub attach_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag = "6")]
+    pub attached_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "7")]
+    pub capability: ::core::option::Option<AdapterCapabilitySummary>,
+    #[prost(message, optional, tag = "8")]
+    pub last_lifecycle_record: ::core::option::Option<AuditRecord>,
+    #[prost(uint32, tag = "9")]
+    pub live_session_count: u32,
+    #[prost(uint32, tag = "10")]
+    pub stale_session_count: u32,
+    #[prost(uint32, tag = "11")]
+    pub offline_session_count: u32,
+    #[prost(uint32, tag = "12")]
+    pub failed_session_count: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdapterStatusPage {
+    #[prost(message, repeated, tag = "1")]
+    pub adapters: ::prost::alloc::vec::Vec<AdapterStatus>,
+    #[prost(string, tag = "2")]
+    pub next_after_adapter_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub has_more: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DiagnosticsResult {
+    #[prost(message, optional, tag = "1")]
+    pub as_of_lsn: ::core::option::Option<Lsn>,
+    #[prost(oneof = "diagnostics_result::Result", tags = "2, 3, 4")]
+    pub result: ::core::option::Option<diagnostics_result::Result>,
+}
+/// Nested message and enum types in `DiagnosticsResult`.
+pub mod diagnostics_result {
+    #[allow(clippy::large_enum_variant)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Result {
+        #[prost(message, tag = "2")]
+        Audit(super::AuditPage),
+        #[prost(message, tag = "3")]
+        Command(super::CommandInspectionResult),
+        #[prost(message, tag = "4")]
+        Adapters(super::AdapterStatusPage),
+    }
+}
+/// Canonical security audit vocabulary. Values are outcome-bearing so a
+/// producer cannot combine an event name with an unrelated outcome string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AuditEventKind {
+    Unspecified = 0,
+    BootstrapStarted = 1,
+    BootstrapCompleted = 2,
+    BootstrapExpired = 3,
+    LoginSucceeded = 4,
+    LoginFailed = 5,
+    Logout = 6,
+    OperatorSessionCreated = 7,
+    OperatorSessionRenewed = 8,
+    OperatorSessionExpired = 9,
+    OperatorSessionRevoked = 10,
+    CsrfCheckFailed = 11,
+    OriginCheckFailed = 12,
+    FetchMetadataCheckFailed = 13,
+    AuthorizationFailed = 14,
+    GrantCreated = 15,
+    GrantChanged = 16,
+    GrantExpired = 17,
+    GrantRevoked = 18,
+    CommandSubmissionAccepted = 19,
+    CommandSubmissionRejected = 20,
+    CommandSubmissionFailed = 21,
+    CommandSubmissionUnknown = 22,
+    CommandDelivered = 23,
+    CommandRunning = 24,
+    CommandCompleted = 25,
+    CommandRejected = 26,
+    CommandFailed = 27,
+    CommandExpired = 28,
+    CommandCancelled = 29,
+    CommandSuperseded = 30,
+    TargetGenerationMismatch = 31,
+    StaleEventIgnored = 32,
+    AdapterAttached = 33,
+    AdapterDetached = 34,
+    AdapterFailed = 35,
+    LockdownEntered = 36,
+    LockdownExited = 37,
+}
+impl AuditEventKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "AUDIT_EVENT_KIND_UNSPECIFIED",
+            Self::BootstrapStarted => "AUDIT_EVENT_KIND_BOOTSTRAP_STARTED",
+            Self::BootstrapCompleted => "AUDIT_EVENT_KIND_BOOTSTRAP_COMPLETED",
+            Self::BootstrapExpired => "AUDIT_EVENT_KIND_BOOTSTRAP_EXPIRED",
+            Self::LoginSucceeded => "AUDIT_EVENT_KIND_LOGIN_SUCCEEDED",
+            Self::LoginFailed => "AUDIT_EVENT_KIND_LOGIN_FAILED",
+            Self::Logout => "AUDIT_EVENT_KIND_LOGOUT",
+            Self::OperatorSessionCreated => "AUDIT_EVENT_KIND_OPERATOR_SESSION_CREATED",
+            Self::OperatorSessionRenewed => "AUDIT_EVENT_KIND_OPERATOR_SESSION_RENEWED",
+            Self::OperatorSessionExpired => "AUDIT_EVENT_KIND_OPERATOR_SESSION_EXPIRED",
+            Self::OperatorSessionRevoked => "AUDIT_EVENT_KIND_OPERATOR_SESSION_REVOKED",
+            Self::CsrfCheckFailed => "AUDIT_EVENT_KIND_CSRF_CHECK_FAILED",
+            Self::OriginCheckFailed => "AUDIT_EVENT_KIND_ORIGIN_CHECK_FAILED",
+            Self::FetchMetadataCheckFailed => {
+                "AUDIT_EVENT_KIND_FETCH_METADATA_CHECK_FAILED"
+            }
+            Self::AuthorizationFailed => "AUDIT_EVENT_KIND_AUTHORIZATION_FAILED",
+            Self::GrantCreated => "AUDIT_EVENT_KIND_GRANT_CREATED",
+            Self::GrantChanged => "AUDIT_EVENT_KIND_GRANT_CHANGED",
+            Self::GrantExpired => "AUDIT_EVENT_KIND_GRANT_EXPIRED",
+            Self::GrantRevoked => "AUDIT_EVENT_KIND_GRANT_REVOKED",
+            Self::CommandSubmissionAccepted => {
+                "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_ACCEPTED"
+            }
+            Self::CommandSubmissionRejected => {
+                "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_REJECTED"
+            }
+            Self::CommandSubmissionFailed => "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_FAILED",
+            Self::CommandSubmissionUnknown => {
+                "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_UNKNOWN"
+            }
+            Self::CommandDelivered => "AUDIT_EVENT_KIND_COMMAND_DELIVERED",
+            Self::CommandRunning => "AUDIT_EVENT_KIND_COMMAND_RUNNING",
+            Self::CommandCompleted => "AUDIT_EVENT_KIND_COMMAND_COMPLETED",
+            Self::CommandRejected => "AUDIT_EVENT_KIND_COMMAND_REJECTED",
+            Self::CommandFailed => "AUDIT_EVENT_KIND_COMMAND_FAILED",
+            Self::CommandExpired => "AUDIT_EVENT_KIND_COMMAND_EXPIRED",
+            Self::CommandCancelled => "AUDIT_EVENT_KIND_COMMAND_CANCELLED",
+            Self::CommandSuperseded => "AUDIT_EVENT_KIND_COMMAND_SUPERSEDED",
+            Self::TargetGenerationMismatch => {
+                "AUDIT_EVENT_KIND_TARGET_GENERATION_MISMATCH"
+            }
+            Self::StaleEventIgnored => "AUDIT_EVENT_KIND_STALE_EVENT_IGNORED",
+            Self::AdapterAttached => "AUDIT_EVENT_KIND_ADAPTER_ATTACHED",
+            Self::AdapterDetached => "AUDIT_EVENT_KIND_ADAPTER_DETACHED",
+            Self::AdapterFailed => "AUDIT_EVENT_KIND_ADAPTER_FAILED",
+            Self::LockdownEntered => "AUDIT_EVENT_KIND_LOCKDOWN_ENTERED",
+            Self::LockdownExited => "AUDIT_EVENT_KIND_LOCKDOWN_EXITED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AUDIT_EVENT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "AUDIT_EVENT_KIND_BOOTSTRAP_STARTED" => Some(Self::BootstrapStarted),
+            "AUDIT_EVENT_KIND_BOOTSTRAP_COMPLETED" => Some(Self::BootstrapCompleted),
+            "AUDIT_EVENT_KIND_BOOTSTRAP_EXPIRED" => Some(Self::BootstrapExpired),
+            "AUDIT_EVENT_KIND_LOGIN_SUCCEEDED" => Some(Self::LoginSucceeded),
+            "AUDIT_EVENT_KIND_LOGIN_FAILED" => Some(Self::LoginFailed),
+            "AUDIT_EVENT_KIND_LOGOUT" => Some(Self::Logout),
+            "AUDIT_EVENT_KIND_OPERATOR_SESSION_CREATED" => {
+                Some(Self::OperatorSessionCreated)
+            }
+            "AUDIT_EVENT_KIND_OPERATOR_SESSION_RENEWED" => {
+                Some(Self::OperatorSessionRenewed)
+            }
+            "AUDIT_EVENT_KIND_OPERATOR_SESSION_EXPIRED" => {
+                Some(Self::OperatorSessionExpired)
+            }
+            "AUDIT_EVENT_KIND_OPERATOR_SESSION_REVOKED" => {
+                Some(Self::OperatorSessionRevoked)
+            }
+            "AUDIT_EVENT_KIND_CSRF_CHECK_FAILED" => Some(Self::CsrfCheckFailed),
+            "AUDIT_EVENT_KIND_ORIGIN_CHECK_FAILED" => Some(Self::OriginCheckFailed),
+            "AUDIT_EVENT_KIND_FETCH_METADATA_CHECK_FAILED" => {
+                Some(Self::FetchMetadataCheckFailed)
+            }
+            "AUDIT_EVENT_KIND_AUTHORIZATION_FAILED" => Some(Self::AuthorizationFailed),
+            "AUDIT_EVENT_KIND_GRANT_CREATED" => Some(Self::GrantCreated),
+            "AUDIT_EVENT_KIND_GRANT_CHANGED" => Some(Self::GrantChanged),
+            "AUDIT_EVENT_KIND_GRANT_EXPIRED" => Some(Self::GrantExpired),
+            "AUDIT_EVENT_KIND_GRANT_REVOKED" => Some(Self::GrantRevoked),
+            "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_ACCEPTED" => {
+                Some(Self::CommandSubmissionAccepted)
+            }
+            "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_REJECTED" => {
+                Some(Self::CommandSubmissionRejected)
+            }
+            "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_FAILED" => {
+                Some(Self::CommandSubmissionFailed)
+            }
+            "AUDIT_EVENT_KIND_COMMAND_SUBMISSION_UNKNOWN" => {
+                Some(Self::CommandSubmissionUnknown)
+            }
+            "AUDIT_EVENT_KIND_COMMAND_DELIVERED" => Some(Self::CommandDelivered),
+            "AUDIT_EVENT_KIND_COMMAND_RUNNING" => Some(Self::CommandRunning),
+            "AUDIT_EVENT_KIND_COMMAND_COMPLETED" => Some(Self::CommandCompleted),
+            "AUDIT_EVENT_KIND_COMMAND_REJECTED" => Some(Self::CommandRejected),
+            "AUDIT_EVENT_KIND_COMMAND_FAILED" => Some(Self::CommandFailed),
+            "AUDIT_EVENT_KIND_COMMAND_EXPIRED" => Some(Self::CommandExpired),
+            "AUDIT_EVENT_KIND_COMMAND_CANCELLED" => Some(Self::CommandCancelled),
+            "AUDIT_EVENT_KIND_COMMAND_SUPERSEDED" => Some(Self::CommandSuperseded),
+            "AUDIT_EVENT_KIND_TARGET_GENERATION_MISMATCH" => {
+                Some(Self::TargetGenerationMismatch)
+            }
+            "AUDIT_EVENT_KIND_STALE_EVENT_IGNORED" => Some(Self::StaleEventIgnored),
+            "AUDIT_EVENT_KIND_ADAPTER_ATTACHED" => Some(Self::AdapterAttached),
+            "AUDIT_EVENT_KIND_ADAPTER_DETACHED" => Some(Self::AdapterDetached),
+            "AUDIT_EVENT_KIND_ADAPTER_FAILED" => Some(Self::AdapterFailed),
+            "AUDIT_EVENT_KIND_LOCKDOWN_ENTERED" => Some(Self::LockdownEntered),
+            "AUDIT_EVENT_KIND_LOCKDOWN_EXITED" => Some(Self::LockdownExited),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AdapterDiagnosticState {
+    Unspecified = 0,
+    Unknown = 1,
+    Attached = 2,
+    Detached = 3,
+    Failed = 4,
+}
+impl AdapterDiagnosticState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ADAPTER_DIAGNOSTIC_STATE_UNSPECIFIED",
+            Self::Unknown => "ADAPTER_DIAGNOSTIC_STATE_UNKNOWN",
+            Self::Attached => "ADAPTER_DIAGNOSTIC_STATE_ATTACHED",
+            Self::Detached => "ADAPTER_DIAGNOSTIC_STATE_DETACHED",
+            Self::Failed => "ADAPTER_DIAGNOSTIC_STATE_FAILED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADAPTER_DIAGNOSTIC_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "ADAPTER_DIAGNOSTIC_STATE_UNKNOWN" => Some(Self::Unknown),
+            "ADAPTER_DIAGNOSTIC_STATE_ATTACHED" => Some(Self::Attached),
+            "ADAPTER_DIAGNOSTIC_STATE_DETACHED" => Some(Self::Detached),
+            "ADAPTER_DIAGNOSTIC_STATE_FAILED" => Some(Self::Failed),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubmitRequest {

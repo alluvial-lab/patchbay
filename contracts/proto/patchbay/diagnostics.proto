@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/adapter.proto";
+import "patchbay/common.proto";
+import "patchbay/operations.proto";
+
+// Canonical security audit vocabulary. Values are outcome-bearing so a
+// producer cannot combine an event name with an unrelated outcome string.
+enum AuditEventKind {
+  AUDIT_EVENT_KIND_UNSPECIFIED = 0;
+  AUDIT_EVENT_KIND_BOOTSTRAP_STARTED = 1;
+  AUDIT_EVENT_KIND_BOOTSTRAP_COMPLETED = 2;
+  AUDIT_EVENT_KIND_BOOTSTRAP_EXPIRED = 3;
+  AUDIT_EVENT_KIND_LOGIN_SUCCEEDED = 4;
+  AUDIT_EVENT_KIND_LOGIN_FAILED = 5;
+  AUDIT_EVENT_KIND_LOGOUT = 6;
+  AUDIT_EVENT_KIND_OPERATOR_SESSION_CREATED = 7;
+  AUDIT_EVENT_KIND_OPERATOR_SESSION_RENEWED = 8;
+  AUDIT_EVENT_KIND_OPERATOR_SESSION_EXPIRED = 9;
+  AUDIT_EVENT_KIND_OPERATOR_SESSION_REVOKED = 10;
+  AUDIT_EVENT_KIND_CSRF_CHECK_FAILED = 11;
+  AUDIT_EVENT_KIND_ORIGIN_CHECK_FAILED = 12;
+  AUDIT_EVENT_KIND_FETCH_METADATA_CHECK_FAILED = 13;
+  AUDIT_EVENT_KIND_AUTHORIZATION_FAILED = 14;
+  AUDIT_EVENT_KIND_GRANT_CREATED = 15;
+  AUDIT_EVENT_KIND_GRANT_CHANGED = 16;
+  AUDIT_EVENT_KIND_GRANT_EXPIRED = 17;
+  AUDIT_EVENT_KIND_GRANT_REVOKED = 18;
+  AUDIT_EVENT_KIND_COMMAND_SUBMISSION_ACCEPTED = 19;
+  AUDIT_EVENT_KIND_COMMAND_SUBMISSION_REJECTED = 20;
+  AUDIT_EVENT_KIND_COMMAND_SUBMISSION_FAILED = 21;
+  AUDIT_EVENT_KIND_COMMAND_SUBMISSION_UNKNOWN = 22;
+  AUDIT_EVENT_KIND_COMMAND_DELIVERED = 23;
+  AUDIT_EVENT_KIND_COMMAND_RUNNING = 24;
+  AUDIT_EVENT_KIND_COMMAND_COMPLETED = 25;
+  AUDIT_EVENT_KIND_COMMAND_REJECTED = 26;
+  AUDIT_EVENT_KIND_COMMAND_FAILED = 27;
+  AUDIT_EVENT_KIND_COMMAND_EXPIRED = 28;
+  AUDIT_EVENT_KIND_COMMAND_CANCELLED = 29;
+  AUDIT_EVENT_KIND_COMMAND_SUPERSEDED = 30;
+  AUDIT_EVENT_KIND_TARGET_GENERATION_MISMATCH = 31;
+  AUDIT_EVENT_KIND_STALE_EVENT_IGNORED = 32;
+  AUDIT_EVENT_KIND_ADAPTER_ATTACHED = 33;
+  AUDIT_EVENT_KIND_ADAPTER_DETACHED = 34;
+  AUDIT_EVENT_KIND_ADAPTER_FAILED = 35;
+  AUDIT_EVENT_KIND_LOCKDOWN_ENTERED = 36;
+  AUDIT_EVENT_KIND_LOCKDOWN_EXITED = 37;
+}
+
+message AuditRecord {
+  EventId audit_event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  AuditEventKind kind = 3;
+  ActorId actor_id = 4;
+  DeviceId device_id = 5;
+  EndpointId endpoint_id = 6;
+  bytes operator_session_hash = 7;
+  CommandId command_id = 8;
+  TargetScope target_scope = 9;
+  FailureCode failure_code = 10;
+  string reason_code = 11;
+  string correlation_id = 12;
+  EventId source_event_id = 13;
+  string source_network = 14;
+}
+
+message DiagnosticsQuery {
+  oneof query {
+    AuditQuery audit = 1;
+    CommandInspectionQuery command = 2;
+    AdapterStatusQuery adapters = 3;
+  }
+}
+
+message QueryDiagnosticsRequest { Operation operation = 1; }
+message QueryDiagnosticsResponse {
+  SubmissionResult submission = 1;
+  EventId result_event_id = 2;
+  Lsn as_of_lsn = 3;
+  oneof result {
+    AuditPage audit = 4;
+    CommandInspectionResult command = 5;
+    AdapterStatusPage adapters = 6;
+  }
+}
+
+message AuditQuery {
+  repeated AuditEventKind kinds = 1;
+  ActorId actor_id = 2;
+  EndpointId endpoint_id = 3;
+  CommandId command_id = 4;
+  TargetScope target_scope = 5;
+  repeated FailureCode failure_codes = 6;
+  repeated string reason_codes = 7;
+  google.protobuf.Timestamp occurred_from_inclusive = 8;
+  google.protobuf.Timestamp occurred_before_exclusive = 9;
+  EventId before_event_id = 10;
+  optional uint32 limit = 11;
+}
+
+message AuditPage {
+  repeated AuditRecord records = 1;
+  EventId next_before_event_id = 2;
+  bool has_more = 3;
+}
+
+message CommandInspectionQuery {
+  CommandId command_id = 1;
+  EventId audit_before_event_id = 2;
+  optional uint32 audit_limit = 3;
+}
+
+message CommandSummary {
+  CommandId command_id = 1;
+  ActorEndpointRef sender = 2;
+  ActorEndpointRef recipient = 3;
+  OperationKind kind = 4;
+  TargetScope target_scope = 5;
+  repeated TypedCorrelation correlations = 6;
+  TimeWindow validity_window = 7;
+  google.protobuf.Timestamp submitted_at = 8;
+}
+
+message CommandHistoryEntry {
+  EventId event_id = 1;
+  OperationState state = 2;
+  FailureCode failure_code = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  repeated TypedCorrelation correlations = 5;
+}
+
+message CommandInspection {
+  CommandSummary command = 1;
+  EventId accepted_event_id = 2;
+  OperationState current_state = 3;
+  FailureCode failure_code = 4;
+  EventId terminal_event_id = 5;
+  repeated CommandHistoryEntry history = 6;
+  AuditPage audit = 7;
+}
+
+message CommandInspectionResult {
+  bool found = 1;
+  CommandInspection inspection = 2;
+}
+
+enum AdapterDiagnosticState {
+  ADAPTER_DIAGNOSTIC_STATE_UNSPECIFIED = 0;
+  ADAPTER_DIAGNOSTIC_STATE_UNKNOWN = 1;
+  ADAPTER_DIAGNOSTIC_STATE_ATTACHED = 2;
+  ADAPTER_DIAGNOSTIC_STATE_DETACHED = 3;
+  ADAPTER_DIAGNOSTIC_STATE_FAILED = 4;
+}
+
+message AdapterStatusQuery {
+  repeated AdapterId adapter_ids = 1;
+  string after_adapter_id = 2;
+  optional uint32 limit = 3;
+}
+
+message AdapterCapabilitySummary {
+  repeated OperationKind supported_operation_kinds = 1;
+  repeated string supported_target_spec_shapes = 2;
+  bool streaming_support = 3;
+  AdapterSnapshotSupport snapshot_support = 4;
+  bool cancellation_support = 5;
+  bool session_replacement_support = 6;
+  IdempotencyStrength idempotency_strength = 7;
+  string attachment_method_kind = 8;
+  PayloadContentType attachment_descriptor_content_type = 9;
+  repeated FailureCode known_failure_modes = 10;
+}
+
+message AdapterStatus {
+  AdapterId adapter_id = 1;
+  EndpointId endpoint_id = 2;
+  Generation adapter_generation = 3;
+  AdapterDiagnosticState state = 4;
+  EventId attach_event_id = 5;
+  google.protobuf.Timestamp attached_at = 6;
+  AdapterCapabilitySummary capability = 7;
+  AuditRecord last_lifecycle_record = 8;
+  uint32 live_session_count = 9;
+  uint32 stale_session_count = 10;
+  uint32 offline_session_count = 11;
+  uint32 failed_session_count = 12;
+}
+
+message AdapterStatusPage {
+  repeated AdapterStatus adapters = 1;
+  string next_after_adapter_id = 2;
+  bool has_more = 3;
+}
+
+message DiagnosticsResult {
+  Lsn as_of_lsn = 1;
+  oneof result {
+    AuditPage audit = 2;
+    CommandInspectionResult command = 3;
+    AdapterStatusPage adapters = 4;
+  }
+}

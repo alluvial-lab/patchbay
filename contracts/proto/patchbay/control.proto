@@ -4,6 +4,7 @@ package patchbay;
 
 import "patchbay/admin.proto";
 import "patchbay/common.proto";
+import "patchbay/diagnostics.proto";
 import "patchbay/operations.proto";
 
 // The internal control-plane service the TS web server speaks to the Rust
@@ -20,6 +21,7 @@ service ControlService {
   rpc RevokeOperatorSession(RevokeOperatorSessionRequest) returns (RevokeOperatorSessionResult);
   // An already verified compound issuer may enroll another endpoint.
   rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
+  rpc QueryDiagnostics(QueryDiagnosticsRequest) returns (QueryDiagnosticsResponse);
 }
 
 message SubmitRequest {

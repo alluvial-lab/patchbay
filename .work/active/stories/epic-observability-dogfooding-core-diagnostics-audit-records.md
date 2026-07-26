@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-core-diagnostics-audit-records
 kind: story
-stage: implementing
+stage: done
 tags: [observability, dogfooding, security]
 parent: epic-observability-dogfooding-core-diagnostics
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 # Durable canonical audit records
@@ -47,3 +47,32 @@ redaction rules, and migration behavior.
 No sibling dependency. Complete this checkpoint before the diagnostics query
 surface consumes `AuditQuery`, `AuditPage`, `AuditSink`, or the versioned audit
 storage port.
+
+## Implementation notes
+
+- Added `diagnostics.proto` as the generated source for the canonical audit
+  vocabulary and redacted `AuditRecord` contract, including the query/result
+  wire types and the `StoredEventKind::AUDIT_RECORD` discriminator. Rust and
+  TypeScript artifacts are regenerated from the shared schema; Rust build
+  generation explicitly permits the intentionally large diagnostics oneofs.
+- Added versioned SQLite migrations (`0 -> 1 -> 2`) with `PRAGMA user_version`,
+  schema-shape validation, future-version fail-closed behavior, WAL/FULL
+  durability, and a derived `audit_records` index. The index is transactionally
+  maintained and every read validates its indexed columns against the encoded
+  audit event before returning a page.
+- Added typed `AuditRecordDraft`, atomic source-plus-audit and deduplicated
+  append storage operations, descending bounded filter/cursor reads, and
+  reopen/future-schema/audited-append evidence in `core/tests/audit_records.rs`.
+- Added the core `AuditSink` family: durable sink, explicit diagnostic stderr
+  sink, and a required durable-first fanout. Control-service login auditing now
+  composes the durable sink before its legacy stderr-compatible observer.
+- Existing storage test doubles were extended to forward the new optional
+  storage operations; no production tests were weakened or removed.
+
+Verification evidence for this checkpoint:
+
+- `cargo test -p patchbay-core --test audit_records` — passed (3 tests).
+- `cargo test -p patchbay-core --test rusqlite_storage --test storage_port_smoke` — passed (27 tests).
+- `cargo test -p patchbay-core-server --test grpc_smoke --test trust_boundary` — passed (14 tests).
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd contracts/ts && npm run build && npm run check:vectors && npm run check:models` — passed.

@@ -118,6 +118,7 @@ impl OperatorRegistry {
             | StoredEventKind::Revocation
             | StoredEventKind::SessionState
             | StoredEventKind::CommandTransition
+            | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => Ok(()),
         }
     }

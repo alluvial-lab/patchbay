@@ -20,14 +20,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "../proto/patchbay/adapter.proto",
         "../proto/patchbay/admin.proto",
         "../proto/patchbay/control.proto",
+        "../proto/patchbay/diagnostics.proto",
         "../proto/patchbay/adapter_control.proto",
     ];
 
     let mut config = prost_build::Config::new();
-    config.enum_attribute(
+    for oneof in [
         ".patchbay.ObservationRequest.observation",
-        "#[allow(clippy::large_enum_variant)]",
-    );
+        ".patchbay.DiagnosticsQuery.query",
+        ".patchbay.QueryDiagnosticsResponse.result",
+        ".patchbay.DiagnosticsResult.result",
+    ] {
+        config.enum_attribute(oneof, "#[allow(clippy::large_enum_variant)]");
+    }
     config
         .out_dir(out_dir)
         .compile_protos(&protos, &["../proto"])?;

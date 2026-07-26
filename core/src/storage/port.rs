@@ -21,8 +21,10 @@
 //! properties.
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, EventId, IdempotencyKey, Lsn, StoredEventPayload,
+    ActorId, AuditEventKind, AuditPage, AuthorityDomainId, CommandId, EndpointId, EventId,
+    FailureCode, IdempotencyKey, Lsn, StoredEventPayload, TargetScope,
 };
+use prost_types::Timestamp;
 
 /// A canonical, non-empty target identity for idempotency-key scoping.
 ///
@@ -71,6 +73,171 @@ pub struct RecordedEvent {
 pub struct StoredSnapshot {
     pub event_id: EventId,
     pub payload: Vec<u8>,
+}
+
+/// The allowlisted input to a durable audit record.
+///
+/// This type intentionally has no payload, arbitrary metadata, credential,
+/// token, prompt, attachment, or descriptor field. Producers must construct a
+/// typed draft before storage can assign the audit event id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditRecordDraft {
+    pub occurred_at: Timestamp,
+    pub kind: AuditEventKind,
+    pub actor_id: Option<ActorId>,
+    pub device_id: Option<patchbay_contracts::patchbay::DeviceId>,
+    pub endpoint_id: Option<EndpointId>,
+    pub operator_session_hash: Vec<u8>,
+    pub command_id: Option<CommandId>,
+    pub target_scope: Option<TargetScope>,
+    pub failure_code: Option<FailureCode>,
+    pub reason_code: String,
+    pub correlation_id: String,
+    pub source_event_id: Option<EventId>,
+    pub source_network: String,
+}
+
+impl AuditRecordDraft {
+    #[must_use]
+    pub fn new(occurred_at: Timestamp, kind: AuditEventKind) -> Self {
+        Self {
+            occurred_at,
+            kind,
+            actor_id: None,
+            device_id: None,
+            endpoint_id: None,
+            operator_session_hash: Vec::new(),
+            command_id: None,
+            target_scope: None,
+            failure_code: None,
+            reason_code: String::new(),
+            correlation_id: String::new(),
+            source_event_id: None,
+            source_network: String::new(),
+        }
+    }
+
+    /// Validate the structural redaction boundary before durable append.
+    pub fn validate(&self, authority_domain_id: &AuthorityDomainId) -> Result<(), StorageError> {
+        if self.kind == AuditEventKind::Unspecified {
+            return Err(StorageError::InvalidAuditRecord(
+                "audit event kind is unspecified".to_owned(),
+            ));
+        }
+        if AuditEventKind::try_from(self.kind as i32).is_err() {
+            return Err(StorageError::InvalidAuditRecord(
+                "audit event kind is unknown".to_owned(),
+            ));
+        }
+        validate_timestamp(&self.occurred_at)?;
+        if !self.operator_session_hash.is_empty() && self.operator_session_hash.len() != 32 {
+            return Err(StorageError::InvalidAuditRecord(
+                "operator_session_hash must be empty or exactly 32 bytes".to_owned(),
+            ));
+        }
+        validate_bounded_code("reason_code", &self.reason_code)?;
+        if self.correlation_id.len() > 128
+            || !self.correlation_id.chars().all(|c| c.is_ascii_graphic() && c != '=')
+        {
+            return Err(StorageError::InvalidAuditRecord(
+                "correlation_id must contain at most 128 safe characters".to_owned(),
+            ));
+        }
+        if !self.source_network.is_empty() {
+            let parsed = self.source_network.parse::<std::net::IpAddr>().map_err(|_| {
+                StorageError::InvalidAuditRecord("source_network must be a normalized IP".to_owned())
+            })?;
+            if parsed.to_string() != self.source_network {
+                return Err(StorageError::InvalidAuditRecord(
+                    "source_network must be normalized".to_owned(),
+                ));
+            }
+        }
+        if let Some(source) = &self.source_event_id {
+            if source.authority_domain_id.as_ref() != Some(authority_domain_id)
+                || source.lsn.is_none()
+            {
+                return Err(StorageError::InvalidAuditRecord(
+                    "source_event_id has the wrong domain or no LSN".to_owned(),
+                ));
+            }
+        }
+        if let Some(failure_code) = self.failure_code {
+            if FailureCode::try_from(failure_code as i32).is_err()
+                || failure_code == FailureCode::Unspecified
+            {
+                return Err(StorageError::InvalidAuditRecord(
+                    "failure_code must be a known non-unspecified value".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_bounded_code_for_query(value: &str) -> Result<(), StorageError> {
+    validate_bounded_code("reason_code", value)
+}
+
+fn validate_bounded_code(name: &str, value: &str) -> Result<(), StorageError> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.len() > 64 || !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+        return Err(StorageError::InvalidAuditRecord(format!(
+            "{name} must match [a-z0-9_]{{1,64}}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_timestamp_for_query(timestamp: &Timestamp) -> Result<(), StorageError> {
+    validate_timestamp(timestamp)
+}
+
+fn validate_timestamp(timestamp: &Timestamp) -> Result<(), StorageError> {
+    const MIN_SECONDS: i64 = -62_135_596_800;
+    const MAX_SECONDS: i64 = 253_402_300_799;
+    if !(MIN_SECONDS..=MAX_SECONDS).contains(&timestamp.seconds)
+        || !(0..1_000_000_000).contains(&timestamp.nanos)
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "occurred_at is not a valid protobuf Timestamp".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// A durable audit append that also identifies the source event when one was
+/// written in the same transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditedAppend {
+    pub source_event_id: EventId,
+    pub audit_event_id: EventId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditedDedupOutcome {
+    Appended(AuditedAppend),
+    Duplicate {
+        source_event_id: EventId,
+        audit_event_id: EventId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditPageSpec {
+    pub kinds: Vec<AuditEventKind>,
+    pub actor_id: Option<ActorId>,
+    pub endpoint_id: Option<EndpointId>,
+    pub command_id: Option<CommandId>,
+    pub target: Option<TargetKey>,
+    pub failure_codes: Vec<FailureCode>,
+    pub reason_codes: Vec<String>,
+    pub occurred_from: Option<Timestamp>,
+    pub occurred_before: Option<Timestamp>,
+    pub before_lsn: Option<u64>,
+    pub limit: u16,
 }
 
 /// Errors at the storage boundary.
@@ -135,6 +302,21 @@ pub enum StorageError {
     /// can deserialize it unambiguously.
     #[error("stored event kind is unspecified or unknown")]
     InvalidEventKind,
+
+    #[error("invalid audit record: {0}")]
+    InvalidAuditRecord(String),
+
+    #[error("invalid audit cursor: {0}")]
+    InvalidAuditCursor(String),
+
+    #[error("database schema version {0} is newer than supported")]
+    UnsupportedSchemaVersion(u32),
+
+    #[error("malformed database schema: {0}")]
+    MalformedSchema(String),
+
+    #[error("storage operation is unsupported by this backend")]
+    UnsupportedOperation,
 }
 
 /// The outcome of an idempotent append ([`Storage::append_dedup`]).
@@ -256,6 +438,47 @@ pub trait Storage: Send + Sync {
         authority_domain_id: &AuthorityDomainId,
         at_or_before: Option<Lsn>,
     ) -> impl std::future::Future<Output = Result<Option<StoredSnapshot>, StorageError>> + Send;
+
+    /// Append a redacted audit record without a source event.
+    fn append_audit(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<EventId, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append a source event and its distinct audit record.
+    fn append_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _source: StoredEventPayload,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append a deduplicated source event and audit. A duplicate
+    /// source still receives the new submission audit record.
+    fn append_dedup_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _key: &IdempotencyKey,
+        _target: &TargetKey,
+        _source: StoredEventPayload,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<AuditedDedupOutcome, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Read a bounded, descending audit page from the derived index.
+    fn query_audit(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _spec: AuditPageSpec,
+    ) -> impl std::future::Future<Output = Result<AuditPage, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
 }
 
 /// Helper: construct an `EventId` from its components.

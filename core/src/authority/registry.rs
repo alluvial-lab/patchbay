@@ -56,6 +56,7 @@ impl AuthorityRegistry {
             | StoredEventKind::CommandTransition
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
+            | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => Ok(()),
         }
     }

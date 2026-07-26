@@ -103,6 +103,7 @@ impl ElicitationSlotLayer {
             | StoredEventKind::SessionState
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
+            | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => Ok(()),
         }
     }

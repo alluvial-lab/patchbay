@@ -156,6 +156,9 @@ enum StoredEventKind {
   STORED_EVENT_KIND_OPERATOR_RECORD = 9;
   // Enrolled, credential-backed control-surface principal (admin.proto).
   STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL = 10;
+  // Redacted security audit record (diagnostics.proto). The source event is
+  // retained separately; this is a typed explanation/index record.
+  STORED_EVENT_KIND_AUDIT_RECORD = 11;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

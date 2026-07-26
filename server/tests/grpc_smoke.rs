@@ -20,8 +20,8 @@ use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
     session::events as session_events,
     storage::{
-        DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
-        TargetKey,
+        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
+        RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
     },
 };
 use patchbay_core_server::{
@@ -123,6 +123,44 @@ impl Storage for FailPostAppendReadOnceStorage {
         self.inner
             .load_latest_snapshot(authority_domain_id, at_or_before)
             .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
+    }
+
+    async fn append_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        self.inner.append_audited(authority_domain_id, source, audit).await
+    }
+
+    async fn append_dedup_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedDedupOutcome, StorageError> {
+        self.inner
+            .append_dedup_audited(authority_domain_id, key, target, source, audit)
+            .await
+    }
+
+    async fn query_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        spec: AuditPageSpec,
+    ) -> Result<patchbay_contracts::patchbay::AuditPage, StorageError> {
+        self.inner.query_audit(authority_domain_id, spec).await
     }
 }
 

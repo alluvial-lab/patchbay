@@ -651,6 +651,7 @@ dependencies = [
 name = "patchbay-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
  "patchbay-contracts",
  "proptest",
