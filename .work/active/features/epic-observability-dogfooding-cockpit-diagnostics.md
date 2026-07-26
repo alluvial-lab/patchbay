@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-cockpit-diagnostics
 kind: feature
-stage: implementing
+stage: review
 tags: [observability, dogfooding, ui]
 parent: epic-observability-dogfooding
 depends_on: [epic-observability-dogfooding-core-diagnostics]
@@ -919,3 +919,64 @@ acceptance checkpoints, not separate worker assignments by default.
   cockpit-owned, preserving adapter- and surface-neutrality. Authority-domain
   ids and generated targets remain in every durable/query identity; none of the
   parked multi-human, desktop, mesh, or skin directions is foreclosed.
+
+## Implementation summary
+
+Implemented the feature across the three child checkpoints:
+
+- **Contract ingestion (`f392c17`)** — generated adapter capability/report
+  contracts; fail-closed authenticated report validation; safe source
+  Observation plus `ADAPTER_DIAGNOSTIC_REPORTED` audit record via one atomic
+  `append_audited`; and replayable newest-first recent diagnostics bounded by
+  the query/projection limits. Adapter identity, endpoint, domain, and
+  generation come from the current authenticated attachment.
+- **Adapter forwarding (`d19489a`)** — reused the landed
+  `AdapterDiagnostics` port and JSONL event registry. The single
+  `PI_FORWARDED_DIAGNOSTIC_CODES` mapping drives both the Pi manifest and the
+  best-effort forwarder. The queue is sequential, rate/capacity bounded,
+  coalescing, timeout-limited, non-retrying, and sink-failure isolated. It
+  never sends messages, stacks, prompts, transcript/tool content, or arbitrary
+  metadata and never invokes attachment refresh.
+- **Cockpit composition (`0a8782b`)** — added authenticated binary
+  gRPC-Web `QueryDiagnostics` with shared Submit stamping/CSRF, generated query
+  operations with recent limit 20, source-EventId/LSN-safe model merging, and
+  composition into existing session rows/detail/timeline primitives. Adapter
+  status is explicitly separate from session liveness and maps exhaustively to
+  existing connectivity presentation bindings; no new screen, route, dashboard,
+  protocol state, or CSS state variant was introduced.
+- **Foundation roll-forward** — updated the protocol extension registry,
+  security allowlist/redaction statement, Pi manifest declaration, and generated
+  UX presentation traceability. Mockups remain intentionally skipped because
+  the feature reuses existing cockpit views.
+
+### Sink-vocabulary reconciliation
+
+The landed sibling sink's `AdapterDiagnosticEvent` registry remains the one
+instrumentation vocabulary. Forwarding promotes only the mapped operational
+subset and maps it to adapter-owned bounded wire codes. In particular,
+`delivery.failed` maps to `pi_delivery_failed`, `delivery.rejected` to
+`pi_delivery_rejected`, subscription retry/unavailability map to
+`pi_delivery_subscription_retrying`/`pi_delivery_subscription_failed`, and
+local observation failures map to `pi_observation_failed` or
+`pi_observation_flush_failed`. No parallel event channel or core enum was
+created; unmapped local events remain JSONL-only by design.
+
+### Verification and deviations
+
+- Passed `cargo build --workspace --all-targets`, `cargo test --workspace`, and
+  `cargo clippy --workspace --all-targets -- -D warnings`.
+- Passed contracts TypeScript build, vectors/models/presentation checks,
+  web-server tests (25), web-cockpit tests (50), and the walking-skeleton e2e.
+  The isolated Pi real-process e2e passes; the existing parallel `pi-adapter`
+  `npm test` has an intermittent cancellation in that e2e, recorded in the
+  adapter story rather than hidden by test changes.
+- `contracts/proto` `buf lint` still reports the repository's existing RPC
+  request/response naming violations (including the exact designed diagnostic
+  report names); no unrelated contract renaming was performed. The known
+  pre-existing TypeScript generated-drift failure remains untouched.
+- The landed server has no injectable clock port, so report ingestion uses the
+  existing core `now_timestamp()` boundary for the audit timestamp; adapter
+  `observed_at` remains separate evidence. This is an implementation seam
+  limitation, not a liveness policy.
+- No tests were deleted, weakened, skipped, or made conditional. No work was
+  parked.

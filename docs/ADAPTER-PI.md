@@ -100,6 +100,17 @@ This is the core of the checklist. It maps each committed v0.1.0 `OperationKind`
 
 **Snapshot-tier declaration:** the Pi adapter declares `snapshot = partial`. Pi persisted entries projected as transcript events via `session_sync` → `session_history` provide recent/current state, not arbitrary historical reconstruction. The core reconciles reconnects against this tier per the degraded-behavior rules in `docs/PROTOCOL.md` (Adapter snapshot capability tiers); it never fabricates a snapshot from cached state.
 
+**Post-v0.1.0 diagnostic-reporting declaration:** the Pi manifest declares
+`diagnostic_reporting.diagnostic_codes` from one adapter-owned mapping registry:
+`pi_adapter_started`, `pi_adapter_stopping`, `pi_adapter_attach_failed`,
+`pi_session_register_failed`, `pi_session_dispose_failed`,
+`pi_delivery_subscription_failed`, `pi_delivery_subscription_retrying`,
+`pi_delivery_rejected`, `pi_delivery_failed`, `pi_observation_failed`, and
+`pi_observation_flush_failed`. Reports are safe, bounded, best effort, and
+forwarded through the authenticated `ReportDiagnostics` seam. They do not
+implement heartbeat, freshness, last-report-age, or any other liveness policy;
+connection state remains the core's authenticated attachment/stream projection.
+
 > `pair_request` is transport/pairing, **not** an `attach` wire action. It is classified in §7.
 
 ## 5. Discovery, send, stream, reconnect, and status parity

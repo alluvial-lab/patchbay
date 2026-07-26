@@ -68,7 +68,7 @@ its event registry.
 - Production `AdapterProcess` composition enables forwarding only at the
   environment composition root; unit/integration test adapters retain the
   injectable local sink by default. A throwing sink cannot veto a healthy sink.
-- Verification: `npm test` passes after retrying one transient real-process
-  e2e cancellation; the isolated forwarder tests prove safe mapping,
-  coalescing, and sink isolation. The first full run's e2e cancellation was
-  pre-existing/flaky and was not used to weaken tests.
+- Verification: the forwarder tests and all other Pi tests pass; the real-process
+  e2e passes when run in isolation. The package's parallel `npm test` run has a
+  pre-existing intermittent cancellation in that e2e, which was recorded rather
+  than weakening or skipping the test.

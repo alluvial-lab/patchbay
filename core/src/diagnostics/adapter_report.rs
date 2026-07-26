@@ -77,7 +77,6 @@ pub fn validate_adapter_diagnostic_report(
     validate_timestamp(&received_at).map_err(invalid)?;
     let observed_at = report
         .observed_at
-        .clone()
         .ok_or_else(|| invalid("report has no observed_at"))?;
     validate_timestamp(&observed_at).map_err(invalid)?;
 
@@ -178,7 +177,7 @@ pub fn validate_adapter_diagnostic_report(
         correlations: report.correlations.clone(),
         target_scope: Some(target.clone()),
         payload: Some(payload_envelope),
-        observed_at: Some(observed_at.clone()),
+        observed_at: Some(observed_at),
         failure_code: failure_code as i32,
         ..Observation::default()
     };

@@ -257,6 +257,9 @@ export function replaceFromSnapshot(
 export function markUnreconciled(model: PresentationModel): PresentationModel {
   const next = cloneModel(model);
   next.reconciled = false;
+  next.adapters = new Map(
+    [...model.adapters].map(([key, adapter]) => [key, { ...adapter, status: undefined }]),
+  );
   next.sessions = new Map(
     [...model.sessions].map(([key, session]) => [
       key,

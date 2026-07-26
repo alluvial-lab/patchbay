@@ -239,6 +239,8 @@ Audit records must not directly store raw session cookies, CSRF tokens, access t
 
 The committed v0.1.0 `session-health` CLI projection reads canonical session state and does not create a raw-payload exposure path. The core now exposes the post-v0.1.0 `audit-query`, `inspect-command`, and `adapter-status` projection contracts through the principal-gated `QueryDiagnostics` RPC; CLI consumption remains a separate feature. These projections inherit the redaction boundary above: `inspect-command` excludes prompt bodies and sensitive payloads, and `adapter-status` excludes raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
+The committed post-v0.1.0 adapter-reporting extension has a structural allowlist: the generated diagnostic payload contains only adapter-declared `code`, severity, adapter generation, optional OperationKind, and bounded count. Target scope, at most one typed command correlation, observed time, and canonical failure code are separate generated fields. It has no message, stack, cause, prompt, transcript, tool result, attachment, descriptor, path, model, token, credential, or arbitrary metadata field. The core replaces adapter identity, endpoint, authority domain, and generation from the authenticated attachment and atomically appends the safe source Observation with its `ADAPTER_DIAGNOSTIC_REPORTED` audit record. Forwarding is best effort and non-retrying; a report cannot establish liveness or endanger the adapter control loop.
+
 ## Deployment posture
 
 Allowed v0.1.0 deployments:

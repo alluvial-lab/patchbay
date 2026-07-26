@@ -4,10 +4,11 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, typed_correlation, AdapterCapability, AdapterRegistration,
-    AdapterSnapshotSupport, AttachRequest, AuthorityDomainId, CommandId, EndpointId, FailureCode,
+    observation_request, typed_correlation, AdapterCapability, AdapterDiagnosticPayload,
+    AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
+    AdapterSnapshotSupport, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
-    PayloadEnvelope, ReceiveRequest, RuntimeSessionId, SessionActivityState,
+    PayloadContentType, PayloadEnvelope, ReceiveRequest, RuntimeSessionId, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
 };
@@ -107,6 +108,60 @@ impl Storage for BlockingReadStorage {
             .load_latest_snapshot(authority_domain_id, at_or_before)
             .await
     }
+}
+
+#[tokio::test]
+async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    let response = service
+        .report_diagnostics(authenticated_with_attachment_token(
+            AdapterDiagnosticReport {
+                authority_domain_id: Some(domain.clone()),
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::Adapter as i32,
+                    adapter_id: Some(adapter_id()),
+                    ..Default::default()
+                }),
+                observed_at: Some(prost_types::Timestamp { seconds: 2, nanos: 0 }),
+                payload: Some(PayloadEnvelope {
+                    payload: AdapterDiagnosticPayload {
+                        code: "pi_adapter_started".into(),
+                        severity: AdapterDiagnosticSeverity::Info as i32,
+                        adapter_generation: Some(Generation { value: 1 }),
+                        count: 1,
+                        ..Default::default()
+                    }
+                    .encode_to_vec(),
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: "patchbay.AdapterDiagnosticPayload".into(),
+                }),
+                ..Default::default()
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("report succeeds")
+        .into_inner();
+    assert!(response.accepted);
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.expect("events read");
+    assert_eq!(events.iter().filter(|event| event.payload.kind == StoredEventKind::Observation as i32).count(), 2, "registration plus diagnostic source");
+    let diagnostic_source = response.observation_event_id.expect("source id");
+    let audit_id = response.audit_event_id.expect("audit id");
+    let audit = events.iter().find(|event| event.event_id == audit_id).expect("audit event");
+    let audit = patchbay_contracts::patchbay::AuditRecord::decode(audit.payload.payload.as_slice()).expect("audit decodes");
+    assert_eq!(audit.kind, AuditEventKind::AdapterDiagnosticReported as i32);
+    assert_eq!(audit.source_event_id, Some(diagnostic_source));
+    assert_eq!(audit.reason_code, "pi_adapter_started");
+    assert!(audit.adapter_diagnostic.is_some());
 }
 
 #[tokio::test]
