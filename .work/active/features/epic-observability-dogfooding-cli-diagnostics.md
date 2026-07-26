@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-cli-diagnostics
 kind: feature
-stage: review
+stage: done
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: [epic-observability-dogfooding-core-diagnostics]
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # CLI diagnostics commands
@@ -720,7 +720,7 @@ Parked notes: runtime-target percent-encoding reversibility; unused
    `recent_diagnostics`; enum and timestamp formatting uses existing safe
    helpers. Evidence: `cli/src/commands/diagnostics.ts` projection and
    redaction regression tests.
-4. **Regression evidence** — added generated-contract fixtures and 11
+4. **Regression evidence** — added generated-contract fixtures and 10
    diagnostics boundary tests covering wire decoding, defaults, exit paths,
    lifecycle oneof validation, safe projections, redaction, parser grammar,
    duplicate enums, and cursor preservation. `cd cli && npm test`: 26 tests
