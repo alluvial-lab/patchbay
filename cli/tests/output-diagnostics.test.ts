@@ -7,9 +7,6 @@ import {
   SessionSchema,
   SubmissionResultSchema,
 } from "@patchbay/contracts";
-import { adapterStatusCommand } from "../src/commands/adapter-status.js";
-import { auditQueryCommand } from "../src/commands/audit-query.js";
-import { inspectCommandCommand } from "../src/commands/inspect-command.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
 import { parseArguments, run, usage } from "../src/main.js";
 import { exitCodeForSubmission, printSubmissionResult } from "../src/output.js";
@@ -77,17 +74,6 @@ test("session-health renders unavailable model as null in JSON and unknown in ta
   );
   assert.match(table.out[0]!, /MODEL/);
   assert.match(table.out[1]!, /Model unknown/);
-});
-
-test("deep diagnostics are honest non-zero stubs", () => {
-  for (const command of [auditQueryCommand, inspectCommandCommand, adapterStatusCommand]) {
-    const output = captureOutput();
-    assert.notEqual(command(output), 0);
-    assert.equal(
-      output.err[0],
-      "requires core-diagnostics (not yet implemented); see feature-v0-cli Unit 3b",
-    );
-  }
 });
 
 test("secret-bearing arguments are rejected without echoing their value", async () => {

@@ -2,8 +2,12 @@ import {
   FailureCode,
   OperationState,
   SubmissionOutcome,
+  type EventId,
   type SubmissionResult,
+  type TargetScope,
 } from "@patchbay/contracts";
+import { TargetScopeKind } from "@patchbay/contracts";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import type { CliOutput } from "./main.js";
 
 export interface SubmissionView {
@@ -79,4 +83,55 @@ export function enumLabel(
   value: number,
 ): string {
   return (registry[value] ?? `UNRECOGNIZED_${value}`).toLowerCase();
+}
+
+export interface TableSection {
+  title?: string;
+  headers: readonly string[];
+  rows: readonly (readonly string[])[];
+}
+
+export function printTableSection(section: TableSection, output: CliOutput): void {
+  if (section.title) output.stdout(section.title);
+  const widths = section.headers.map((header, index) =>
+    Math.max(header.length, ...section.rows.map((row) => row[index]?.length ?? 0)),
+  );
+  output.stdout(section.headers.map((header, index) => header.padEnd(widths[index]!)).join("  "));
+  for (const row of section.rows) {
+    output.stdout(row.map((value, index) => value.padEnd(widths[index]!)).join("  "));
+  }
+}
+
+export interface EventIdView {
+  authorityDomainId: string | null;
+  lsn: string | null;
+}
+
+export function eventIdView(eventId: EventId | undefined): EventIdView | null {
+  if (!eventId) return null;
+  return {
+    authorityDomainId: eventId.authorityDomainId?.value || null,
+    lsn: eventId.lsn?.value.toString() ?? null,
+  };
+}
+
+export function timestampView(value: Timestamp | undefined): string | null {
+  if (!value) return null;
+  const milliseconds = Number(value.seconds) * 1_000 + value.nanos / 1_000_000;
+  if (!Number.isFinite(milliseconds)) return null;
+  return new Date(milliseconds).toISOString();
+}
+
+export function targetScopeView(value: TargetScope | undefined): unknown {
+  if (!value) return null;
+  return {
+    kind: enumLabel(TargetScopeKind, value.kind),
+    actorId: value.actorId?.value || null,
+    adapterId: value.adapterId?.value || null,
+    runtimeSessionId: value.runtimeSessionId?.value || null,
+    sessionGeneration: value.sessionGeneration?.value.toString() ?? null,
+    deploymentScope: value.deploymentScope || null,
+    projectOrGroup: value.projectOrGroup || null,
+    resourceId: value.resourceId || null,
+  };
 }

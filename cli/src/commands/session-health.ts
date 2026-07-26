@@ -5,6 +5,7 @@ import {
 } from "@patchbay/contracts";
 import type { ControlClient } from "../core-client.js";
 import type { CliOutput } from "../main.js";
+import { printTableSection } from "../output.js";
 import { canonicalSessionIdentity, loadSessions, resolveSession } from "./sessions.js";
 
 export interface SessionHealthOptions {
@@ -72,19 +73,14 @@ function printTable(
   rows: ReturnType<typeof sessionHealthView>[],
   output: CliOutput,
 ): void {
-  const headers = ["IDENTITY", "CONNECTIVITY", "ACTIVITY", "MODEL", "NAME"];
-  const values = rows.map((row) => [
-    row.identity,
-    row.connectivity,
-    row.activity,
-    row.model ?? "Model unknown",
-    row.name ?? "-",
-  ]);
-  const widths = headers.map((header, index) =>
-    Math.max(header.length, ...values.map((row) => row[index]!.length)),
-  );
-  output.stdout(headers.map((header, index) => header.padEnd(widths[index]!)).join("  "));
-  for (const row of values) {
-    output.stdout(row.map((value, index) => value.padEnd(widths[index]!)).join("  "));
-  }
+  printTableSection({
+    headers: ["IDENTITY", "CONNECTIVITY", "ACTIVITY", "MODEL", "NAME"],
+    rows: rows.map((row) => [
+      row.identity,
+      row.connectivity,
+      row.activity,
+      row.model ?? "Model unknown",
+      row.name ?? "-",
+    ]),
+  }, output);
 }

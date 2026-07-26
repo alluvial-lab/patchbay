@@ -43,6 +43,18 @@ const VALUE_OPTIONS = new Set([
   "device-id",
   "idempotency-key",
   "command-id",
+  "kind",
+  "actor-id",
+  "target",
+  "failure-code",
+  "reason-code",
+  "since",
+  "until",
+  "before-event",
+  "limit",
+  "audit-before-event",
+  "audit-limit",
+  "after-adapter-id",
 ]);
 
 export const consoleOutput: CliOutput = {
@@ -190,11 +202,55 @@ export async function run(
         );
 
       case "audit-query":
-        return auditQueryCommand(output);
+        requirePositionals(command, parsed.positionals, 0, 0);
+        return await auditQueryCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            kinds: parsed.options.get("kind"),
+            actorId: parsed.options.get("actor-id"),
+            endpointId: parsed.options.get("endpoint-id"),
+            commandId: parsed.options.get("command-id"),
+            target: parsed.options.get("target"),
+            failureCodes: parsed.options.get("failure-code"),
+            reasonCodes: parsed.options.get("reason-code"),
+            since: parsed.options.get("since"),
+            until: parsed.options.get("until"),
+            beforeEvent: parsed.options.get("before-event"),
+            limit: parsed.options.get("limit"),
+            json,
+          },
+          output,
+        );
       case "inspect-command":
-        return inspectCommandCommand(output);
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await inspectCommandCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            commandId: parsed.positionals[0]!,
+            auditBeforeEvent: parsed.options.get("audit-before-event"),
+            auditLimit: parsed.options.get("audit-limit"),
+            json,
+          },
+          output,
+        );
       case "adapter-status":
-        return adapterStatusCommand(output);
+        requirePositionals(command, parsed.positionals, 0, Number.MAX_SAFE_INTEGER);
+        return await adapterStatusCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            adapterIds: parsed.positionals,
+            afterAdapterId: parsed.options.get("after-adapter-id"),
+            limit: parsed.options.get("limit"),
+            json,
+          },
+          output,
+        );
       default:
         throw new Error(`unknown command: ${command}`);
     }
@@ -257,9 +313,14 @@ export function usage(): string {
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",
     "  interrupt <command-id> [--idempotency-key K] [--command-id ID] [--json]",
-    "  audit-query        Requires core-diagnostics (stub)",
-    "  inspect-command    Requires core-diagnostics (stub)",
-    "  adapter-status     Requires core-diagnostics (stub)",
+    "  audit-query [--kind K[,K...]] [--actor-id ID] [--endpoint-id ID] [--command-id ID]",
+    "      [--target TARGET] [--failure-code C[,C...]] [--reason-code C[,C...]]",
+    "      [--since RFC3339] [--until RFC3339] [--before-event LSN] [--limit 1..500] [--json]",
+    "      Query the redacted audit projection; --until and --before-event are exclusive.",
+    "  inspect-command <command-id> [--audit-before-event LSN] [--audit-limit 1..200] [--json]",
+    "      Inspect command lifecycle and its redacted audit projection.",
+    "  adapter-status [adapter-id ...] [--after-adapter-id ID] [--limit 1..500] [--json]",
+    "      Show adapter registry status; the adapter cursor is opaque and exclusive.",
     "",
     "Target may be a unique runtime session id/name or the stable identity printed by",
     "session-health. Supply secrets with PATCHBAY_SETUP_SECRET and",
