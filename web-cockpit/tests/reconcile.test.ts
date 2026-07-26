@@ -3,7 +3,9 @@ import test from "node:test";
 
 import { create, toBinary, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import {
+  AdapterDiagnosticState,
   AdapterIdSchema,
+  AdapterStatusSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
   ElicitationIdSchema,
@@ -79,6 +81,7 @@ class RecordingProjection implements ReconcileProjection {
 test("stream breaks rebuild the projection prefix before resuming from the snapshot cursor", async () => {
   const projection = new RecordingProjection();
   const cursors: bigint[] = [];
+  const reconciliationSignals: string[] = [];
   let subscription = 0;
   const client: ReconcileClient = {
     subscribe(request) {
@@ -94,7 +97,10 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
     },
   };
 
-  const reconciler = new Reconciler(client, projection, { retryDelayMs: 0 });
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    onReconciliationComplete: (reason) => reconciliationSignals.push(reason),
+  });
   const received: bigint[] = [];
   for await (const next of reconciler.subscribe(DOMAIN)) {
     received.push(eventLsn(next));
@@ -106,6 +112,7 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
   assert.deepEqual(cursors, [0n, 0n, 1n]);
   assert.equal(reconciler.currentCursor, 2n);
   assert.deepEqual(projection.marks, ["stream-break"]);
+  assert.deepEqual(reconciliationSignals, ["stream-reconnect"]);
 });
 
 test("clean completion at the durable tail stays reconciled and re-subscribes", async () => {
@@ -137,10 +144,9 @@ test("clean completion at the durable tail stays reconciled and re-subscribes", 
   assert.equal(reconciler.currentCursor, 2n);
 });
 
-test("an event gap adopts the current snapshot and filtered visible prefix", async () => {
+test("filtered audit-record holes do not replace the projection snapshot", async () => {
   const controller = new AbortController();
   const projection = new RecordingProjection();
-  const snapshotRequests: LoadSnapshotRequest[] = [];
   let subscription = 0;
   const client: ReconcileClient = {
     subscribe(request) {
@@ -148,10 +154,8 @@ test("an event gap adopts the current snapshot and filtered visible prefix", asy
       assert.equal(request.cursor!.value, 0n);
       return values([operationEvent(1n), observationEvent(4n)]);
     },
-    async loadSnapshot(request) {
-      snapshotRequests.push(request);
-      assert.equal(projection.visibleConnectivity, SessionConnectivityState.STALE);
-      return snapshotResponse(4n);
+    async loadSnapshot() {
+      assert.fail("a successful filtered stream must not trigger snapshot replacement");
     },
   };
 
@@ -160,19 +164,17 @@ test("an event gap adopts the current snapshot and filtered visible prefix", asy
     delay: async () => controller.abort(),
   });
   for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
-    // The first event is delivered normally; the event at four is included in
-    // the authoritative prefix replay that repairs the filtered gap.
+    // LSNs 2 and 3 are filtered authority/audit records.
   }
 
-  assert.equal(subscription, 2);
+  assert.equal(subscription, 1);
   assert.deepEqual(projection.folded, [1n, 4n]);
-  assert.equal(projection.snapshots, 1);
-  assert.equal(snapshotRequests[0]!.atOrBefore, undefined);
+  assert.equal(projection.snapshots, 0);
   assert.equal(reconciler.currentCursor, 4n);
-  assert.deepEqual(projection.marks, ["event-gap"]);
+  assert.deepEqual(projection.marks, []);
 });
 
-test("filtered authority-record holes reconcile the model and unlock the snapshot session", async () => {
+test("filtered authority-record holes preserve the reconciled model", async () => {
   const controller = new AbortController();
   const projection = new PresentationProjection();
   const prefix = [operationEvent(1n), observationEvent(4n)];
@@ -183,9 +185,8 @@ test("filtered authority-record holes reconcile the model and unlock the snapsho
       assert.equal(request.cursor!.value, 0n);
       return values(prefix);
     },
-    async loadSnapshot(request) {
-      assert.equal(request.atOrBefore, undefined);
-      return snapshotResponse(4n);
+    async loadSnapshot() {
+      assert.fail("filtered authority records are not stream loss");
     },
   };
 
@@ -194,17 +195,47 @@ test("filtered authority-record holes reconcile the model and unlock the snapsho
     delay: async () => controller.abort(),
   });
   for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
-    // Drain until the repaired stream reaches its normal polling boundary.
+    // Drain until the normal polling boundary.
   }
 
   const session = [...projection.model.sessions.values()][0];
-  assert.equal(subscription, 2);
+  assert.equal(subscription, 1);
   assert.equal(projection.model.reconciled, true);
   assert.equal(projection.model.cursor, 4n);
   assert.equal(reconciler.currentCursor, 4n);
   assert.equal(projection.model.commands.has("command-1"), true);
   assert.equal(projection.model.observations.some((item) => item.id === "message-1"), true);
-  assert.equal(stableTarget(session), true, "the composer target must be unlocked");
+  assert.equal(stableTarget(session), false, "no session snapshot was needed for a filtered hole");
+});
+
+test("a diagnostics query lifecycle hole preserves its just-returned adapter status", async () => {
+  const controller = new AbortController();
+  const projection = new PresentationProjection();
+  projection.model.authorityDomainId = DOMAIN.value;
+  projection.model.adapters.set("pi", {
+    adapterId: "pi",
+    status: create(AdapterStatusSchema, { state: AdapterDiagnosticState.ATTACHED }),
+    asOfLsn: 5n,
+    recentDiagnostics: [],
+  });
+  const client: ReconcileClient = {
+    subscribe(request) {
+      assert.equal(request.cursor!.value, 0n);
+      return values([operationEvent(1n), observationEvent(4n)]);
+    },
+    async loadSnapshot() {
+      assert.fail("query lifecycle audit records are filtered, not stream loss");
+    },
+  };
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    delay: async () => controller.abort(),
+  });
+  for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
+    // The query's own audit records occupy the hidden LSNs 2 and 3.
+  }
+  assert.equal(projection.model.adapters.get("pi")?.status?.state, AdapterDiagnosticState.ATTACHED);
+  assert.equal(projection.model.cursor, 4n);
 });
 
 test("snapshot reconciliation replays non-session events hidden behind the higher snapshot LSN", async () => {

@@ -6,7 +6,9 @@ import {
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
   AdapterStatusPageSchema,
+  AdapterStatusSchema,
   AuthorityDomainIdSchema,
+  OperationState,
   DiagnosticsQuerySchema,
   FailureCode,
   ObservationKind,
@@ -17,6 +19,7 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   QueryDiagnosticsResponseSchema,
+  SubmissionOutcome,
 } from "@patchbay/contracts";
 import {
   adapterConnectionPresentation,
@@ -68,6 +71,47 @@ test("live diagnostics merge by source LSN and never changes adapter connectivit
     result: { case: "adapters", value: create(AdapterStatusPageSchema) },
   }));
   assert.equal(merged.adapters.get("pi")?.recentDiagnostics[0]?.lsn, 12n);
+});
+
+test("rejected and incomplete queries clear cached status instead of retaining stale attachment", () => {
+  const model = emptyPresentationModel();
+  model.adapters.set("pi", {
+    adapterId: "pi",
+    status: create(AdapterStatusSchema, { state: AdapterDiagnosticState.ATTACHED }),
+    asOfLsn: 20n,
+    recentDiagnostics: [],
+  });
+  const rejected = mergeAdapterStatusResult(model, create(QueryDiagnosticsResponseSchema, {
+    submission: { outcome: SubmissionOutcome.REJECTED, operationState: OperationState.UNSPECIFIED },
+  }), "pi");
+  assert.equal(rejected.adapters.get("pi")?.status, undefined);
+
+  const incomplete = mergeAdapterStatusResult(model, create(QueryDiagnosticsResponseSchema, {
+    submission: { outcome: SubmissionOutcome.ACCEPTED, operationState: OperationState.FAILED },
+    result: { case: "adapters", value: create(AdapterStatusPageSchema) },
+  }), "pi");
+  assert.equal(incomplete.adapters.get("pi")?.status, undefined);
+});
+
+test("older completed query cannot overwrite a newer failed status", () => {
+  const model = emptyPresentationModel();
+  model.adapters.set("pi", {
+    adapterId: "pi",
+    status: create(AdapterStatusSchema, { state: AdapterDiagnosticState.FAILED }),    asOfLsn: 20n,
+    recentDiagnostics: [],
+  });
+  const older = mergeAdapterStatusResult(model, create(QueryDiagnosticsResponseSchema, {
+    submission: { outcome: SubmissionOutcome.ACCEPTED, operationState: OperationState.COMPLETED },
+    asOfLsn: create(LsnSchema, { value: 10n }),
+    result: {
+      case: "adapters",
+      value: create(AdapterStatusPageSchema, {
+        adapters: [{ adapterId: { value: "pi" }, state: AdapterDiagnosticState.ATTACHED }],
+      }),
+    },
+  }), "pi");
+  assert.equal(older.adapters.get("pi")?.status?.state, AdapterDiagnosticState.FAILED);
+  assert.equal(older.adapters.get("pi")?.asOfLsn, 20n);
 });
 
 test("all adapter diagnostic states map to existing connectivity presentation", () => {

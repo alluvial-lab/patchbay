@@ -63,8 +63,13 @@ interface PendingReport {
   count: number;
 }
 
+type ReportDiagnostic = (
+  value: AdapterDiagnosticReport,
+  signal?: AbortSignal,
+) => Promise<AdapterDiagnosticReportResult>;
+
 export class CoreDiagnosticsForwarder implements AdapterDiagnostics {
-  readonly #report: (value: AdapterDiagnosticReport) => Promise<AdapterDiagnosticReportResult>;
+  readonly #report: ReportDiagnostic;
   readonly #context: ForwarderContext;
   readonly #maxPending: number;
   readonly #intervalMs: number;
@@ -75,10 +80,11 @@ export class CoreDiagnosticsForwarder implements AdapterDiagnostics {
   readonly #pending = new Map<string, PendingReport>();
   #draining: Promise<void> | undefined;
   #lastSentAt: number | undefined;
+  #activeAbortController: AbortController | undefined;
   #closed = false;
 
   constructor(
-    report: (value: AdapterDiagnosticReport) => Promise<AdapterDiagnosticReportResult>,
+    report: ReportDiagnostic,
     context: ForwarderContext,
     options: CoreDiagnosticsForwarderOptions = {},
   ) {
@@ -130,11 +136,19 @@ export class CoreDiagnosticsForwarder implements AdapterDiagnostics {
 
   async close(): Promise<void> {
     if (this.#closed) return;
-    try {
-      await this.flush();
-    } finally {
-      this.#closed = true;
-      this.#pending.clear();
+    // Abort before waiting so close cannot leave a Connect call alive behind a
+    // bounded flush. The in-flight drain remains sequential and observes the
+    // abort through the transport's signal.
+    this.#closed = true;
+    this.#pending.clear();
+    this.#activeAbortController?.abort(new Error("diagnostic forwarder closed"));
+    const drain = this.#draining;
+    if (drain) {
+      try {
+        await withTimeout(drain, this.#maxFlushMs);
+      } catch {
+        // Close is deliberately bounded and non-throwing.
+      }
     }
   }
 
@@ -210,10 +224,21 @@ export class CoreDiagnosticsForwarder implements AdapterDiagnostics {
         }
       }
       this.#lastSentAt = this.#now().getTime();
+      const controller = new AbortController();
+      this.#activeAbortController = controller;
       try {
-        await withTimeout(this.#report(first[1].report), this.#reportTimeoutMs);
+        await reportWithCancellation(
+          this.#report,
+          first[1].report,
+          controller,
+          this.#reportTimeoutMs,
+        );
       } catch {
         // No retry, no recursive failure report, and no control-loop impact.
+      } finally {
+        if (this.#activeAbortController === controller) {
+          this.#activeAbortController = undefined;
+        }
       }
     }
   }
@@ -356,18 +381,48 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function reportWithCancellation(
+  report: ReportDiagnostic,
+  value: AdapterDiagnosticReport,
+  controller: AbortController,
+  timeoutMs: number,
+): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  const request = report(value, controller.signal);
   try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("diagnostic report timed out")), timeoutMs);
+    await Promise.race([
+      request,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort(new Error("diagnostic report timed out"));
+          resolve();
+        }, timeoutMs);
       }),
     ]);
+    if (timedOut) {
+      // Connect rejects promptly when its signal is aborted. Awaiting the
+      // request here is important: the next sequential report must not begin
+      // while the timed-out network call is still active.
+      await request;
+    }
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut) controller.abort();
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("operation timed out")), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function delay(milliseconds: number): Promise<void> {

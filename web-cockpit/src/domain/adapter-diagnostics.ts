@@ -10,8 +10,10 @@ import {
   FailureCode,
   OperationKind,
   OperationSchema,
+  OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  SubmissionOutcome,
   TargetScopeKind,
   TargetScopeSchema,
   type AuthorityDomainId,
@@ -80,25 +82,74 @@ export function buildAdapterStatusQueryOperation(
 export function mergeAdapterStatusResult(
   model: PresentationModel,
   response: QueryDiagnosticsResponse,
+  requestedAdapterId?: string,
 ): PresentationModel {
-  if (response.result.case !== "adapters") return model;
-  const asOfLsn = response.asOfLsn?.value ?? 0n;
   const next = cloneModel(model);
-  for (const status of response.result.value.adapters) {
+  const responseAsOfLsn = response.asOfLsn?.value;
+  const asOfLsn = responseAsOfLsn ?? 0n;
+  const submission = response.submission;
+  const acceptedAndCompleted =
+    submission?.outcome === SubmissionOutcome.ACCEPTED &&
+    submission.operationState === OperationState.COMPLETED &&
+    responseAsOfLsn !== undefined;
+  const page = response.result.case === "adapters" ? response.result.value : undefined;
+
+  // A rejected/failed/incomplete query is a normal protocol value, not a
+  // transport exception. It cannot authorize retaining a cached attachment.
+  // Keep newer live diagnostic evidence, but clear the status for the adapter
+  // whose query failed (or all statuses for callers without a request key).
+  if (!acceptedAndCompleted || !page) {
+    const adapterIds = requestedAdapterId
+      ? [requestedAdapterId]
+      : [...next.adapters.keys()];
+    for (const adapterId of adapterIds) {
+      const current = next.adapters.get(adapterId);
+      if (!current) continue;
+      next.adapters.set(adapterId, { ...current, status: undefined });
+    }
+    return next;
+  }
+
+  const returned = new Set<string>();
+  for (const status of page.adapters) {
     const adapterId = status.adapterId?.value;
     if (!adapterId) continue;
+    returned.add(adapterId);
     const current = next.adapters.get(adapterId);
     const historical = status.recentDiagnostics
       .map((record) => diagnosticFromAudit(record))
       .filter((record): record is AdapterDiagnosticView => Boolean(record));
-    const live = current?.recentDiagnostics.filter((record) => record.lsn > asOfLsn) ?? [];
+    const currentAsOfLsn = current?.asOfLsn ?? 0n;
+    const responseIsAtLeastAsFresh = asOfLsn >= currentAsOfLsn;
     next.adapters.set(adapterId, {
       adapterId,
-      status,
-      asOfLsn,
-      recentDiagnostics: dedupeDiagnostics([...historical, ...live]).slice(0, 20),
+      // A delayed response must not roll a newer live status backward.
+      status: responseIsAtLeastAsFresh ? status : current?.status,
+      asOfLsn: responseIsAtLeastAsFresh ? asOfLsn : currentAsOfLsn,
+      recentDiagnostics: dedupeDiagnostics([
+        ...historical,
+        ...(current?.recentDiagnostics ?? []),
+      ]).slice(0, 20),
     });
   }
+
+  // A successful completed response with no matching adapter is still not an
+  // adapter result for the requested target. Do not leave an old ATTACHED
+  // status visible in that case.
+  if (requestedAdapterId && !returned.has(requestedAdapterId)) {
+    const current = next.adapters.get(requestedAdapterId);
+    if (current) next.adapters.set(requestedAdapterId, { ...current, status: undefined });
+  }
+  return next;
+}
+
+export function clearAdapterStatus(
+  model: PresentationModel,
+  adapterId: string,
+): PresentationModel {
+  const next = cloneModel(model);
+  const current = next.adapters.get(adapterId);
+  if (current) next.adapters.set(adapterId, { ...current, status: undefined });
   return next;
 }
 

@@ -164,8 +164,11 @@ export class PatchbayCoreClient {
 
   /** Diagnostics deliberately bypass #postAttach: they cannot refresh auth or
    * compete with control traffic, and a failed report is best effort. */
-  reportDiagnostic(report: AdapterDiagnosticReport): Promise<AdapterDiagnosticReportResult> {
-    return this.#client.reportDiagnostics(report);
+  reportDiagnostic(
+    report: AdapterDiagnosticReport,
+    signal?: AbortSignal,
+  ): Promise<AdapterDiagnosticReportResult> {
+    return this.#client.reportDiagnostics(report, signal ? { signal } : undefined);
   }
 
   async reportSession(

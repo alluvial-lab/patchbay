@@ -95,10 +95,12 @@ struct CommandTimeline {
 pub struct DiagnosticsProjection {
     commands: HashMap<CommandId, CommandTimeline>,
     adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
-    live_adapters: std::collections::HashSet<AdapterId>,
+    /// Lifecycle state observed since the current process started. Historical
+    /// lifecycle records are deliberately not copied into this map: they are
+    /// evidence, not proof of current attachment after a restart.
+    current_process_adapters: HashMap<AdapterId, AdapterDiagnosticState>,
     lifecycle: HashMap<AdapterId, AuditRecord>,
     sessions: SessionRegistry,
-    restarted: bool,
     recent_diagnostics: HashMap<AdapterId, Vec<patchbay_contracts::patchbay::AuditRecord>>,
     last_lsn: u64,
 }
@@ -223,7 +225,17 @@ impl DiagnosticsProjection {
             .map_err(|_| DiagnosticsError::CorruptEvent("unknown audit event kind".to_owned()))?;
         if matches!(kind, AuditEventKind::AdapterAttached | AuditEventKind::AdapterDetached | AuditEventKind::AdapterFailed) {
             if let Some(adapter_id) = record.actor_id.clone().filter(|id| !id.value.is_empty()).map(|id| AdapterId { value: id.value }) {
-                self.lifecycle.insert(adapter_id, record.clone());
+                self.lifecycle.insert(adapter_id.clone(), record.clone());
+                // This map is empty after a rebuild. Therefore only lifecycle
+                // records observed by the running process can establish a
+                // current state; replayed pre-restart records remain history.
+                let state = match kind {
+                    AuditEventKind::AdapterAttached => AdapterDiagnosticState::Attached,
+                    AuditEventKind::AdapterDetached => AdapterDiagnosticState::Detached,
+                    AuditEventKind::AdapterFailed => AdapterDiagnosticState::Failed,
+                    _ => unreachable!("lifecycle kind was checked above"),
+                };
+                self.current_process_adapters.insert(adapter_id, state);
             }
             return Ok(());
         }
@@ -285,26 +297,41 @@ impl DiagnosticsProjection {
             DiagnosticsError::CorruptEvent("adapter registration has no adapter id".to_owned())
         })?;
         self.adapters.insert(adapter_id.clone(), (registration, event.event_id.clone()));
-        self.live_adapters.insert(adapter_id);
-        self.restarted = false;
+        self.current_process_adapters.insert(adapter_id, AdapterDiagnosticState::Attached);
         Ok(())
     }
 
     /// Rebuilds intentionally do not infer current liveness from historical
-    /// registration records. A live process calls `observe` for a fresh
-    /// attachment after startup.
+    /// registration or lifecycle records. A live process calls `observe` for
+    /// fresh attachment/lifecycle evidence after startup.
     pub fn reset_adapter_liveness(&mut self) {
-        self.live_adapters.clear();
-        self.restarted = true;
+        self.current_process_adapters.clear();
     }
 
+    /// The server uses this set to carry current-process evidence into an
+    /// as-of projection. It includes fresh detached/failed states as well as
+    /// attached states; the name is retained for the existing server port.
     pub fn live_adapter_ids(&self) -> impl Iterator<Item = &AdapterId> {
-        self.live_adapters.iter()
+        self.current_process_adapters.keys()
     }
 
     pub fn mark_adapter_live(&mut self, adapter_id: AdapterId) {
-        self.live_adapters.insert(adapter_id);
-        self.restarted = false;
+        // `diagnostics_at` resets freshness before copying the set from the
+        // hot projection. Re-read the lifecycle state from the selected
+        // durable prefix so an as-of query preserves a fresh detach/failure
+        // instead of blindly turning every copied adapter into ATTACHED.
+        let state = self
+            .lifecycle
+            .get(&adapter_id)
+            .and_then(|record| AuditEventKind::try_from(record.kind).ok())
+            .map(|kind| match kind {
+                AuditEventKind::AdapterAttached => AdapterDiagnosticState::Attached,
+                AuditEventKind::AdapterDetached => AdapterDiagnosticState::Detached,
+                AuditEventKind::AdapterFailed => AdapterDiagnosticState::Failed,
+                _ => AdapterDiagnosticState::Attached,
+            })
+            .unwrap_or(AdapterDiagnosticState::Attached);
+        self.current_process_adapters.insert(adapter_id, state);
     }
 
     pub fn adapter_page(
@@ -371,17 +398,14 @@ impl DiagnosticsProjection {
                         }
                         counts
                     });
-            let state = if self.live_adapters.contains(adapter_id) {
-                AdapterDiagnosticState::Attached
-            } else if self.restarted {
-                AdapterDiagnosticState::Unknown
-            } else {
-                match self.lifecycle.get(adapter_id).and_then(|record| AuditEventKind::try_from(record.kind).ok()) {
-                    Some(AuditEventKind::AdapterDetached) => AdapterDiagnosticState::Detached,
-                    Some(AuditEventKind::AdapterFailed) => AdapterDiagnosticState::Failed,
-                    _ => AdapterDiagnosticState::Unknown,
-                }
-            };
+            // Only current-process evidence may establish a live adapter
+            // state. Historical lifecycle records remain visible as audit
+            // history but are UNKNOWN after reset/restart.
+            let state = self
+                .current_process_adapters
+                .get(adapter_id)
+                .copied()
+                .unwrap_or(AdapterDiagnosticState::Unknown);
             AdapterStatus {
                 adapter_id: Some(adapter_id.clone()),
                 endpoint_id: registration.endpoint_id.clone(),

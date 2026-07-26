@@ -28,6 +28,7 @@ import {
 import { Reconciler } from "./domain/reconcile.js";
 import {
   buildAdapterStatusQueryOperation,
+  clearAdapterStatus,
   mergeAdapterStatusResult,
 } from "./domain/adapter-diagnostics.js";
 import { createMobileElicitationSheet } from "./ui/elicitation.js";
@@ -100,11 +101,23 @@ function composeCockpit(
   options: ComposeOptions,
 ): CockpitApp {
   const projection = new PresentationProjection();
-  const reconciler = new Reconciler(protocol.client, projection);
   const abort = new AbortController();
+  let shell!: CockpitShell;
+  const reconciler = new Reconciler(protocol.client, projection, {
+    // Reconciliation is a domain signal, not a shell-render edge. A snapshot
+    // can briefly make model.reconciled=false without producing a render, so
+    // diagnostics refreshes must subscribe to the completed reconnect itself.
+    onReconciliationComplete() {
+      if (!shell) return;
+      const selectedKey = shell.selectedSessionKey;
+      const selected = selectedKey
+        ? projection.model.sessions.get(selectedKey)
+        : undefined;
+      void queryAdapterStatus(selected, "reconcile");
+    },
+  });
   const idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
   let submission: SubmissionFeedback | undefined;
-  let shell!: CockpitShell;
   const inFlightDiagnostics = new Set<string>();
   let diagnosticRequestSequence = 0;
 
@@ -123,18 +136,13 @@ function composeCockpit(
       const response = await protocol.client.queryDiagnostics(
         create(QueryDiagnosticsRequestSchema, { operation }),
       );
-      projection.model = mergeAdapterStatusResult(projection.model, response);
+      // Rejected/failed query responses are ordinary protocol values. The
+      // merge validates accepted+completed+adapter-result and clears the
+      // cached status while retaining newer live diagnostics.
+      projection.model = mergeAdapterStatusResult(projection.model, response, adapterId);
       shell.update(projection.model);
     } catch {
-      const current = projection.model.adapters.get(adapterId);
-      const adapters = new Map(projection.model.adapters);
-      adapters.set(adapterId, {
-        adapterId,
-        status: undefined,
-        asOfLsn: current?.asOfLsn ?? 0n,
-        recentDiagnostics: current?.recentDiagnostics ?? [],
-      });
-      projection.model = { ...projection.model, adapters };
+      projection.model = clearAdapterStatus(projection.model, adapterId);
       shell.update(projection.model);
     } finally {
       inFlightDiagnostics.delete(key);

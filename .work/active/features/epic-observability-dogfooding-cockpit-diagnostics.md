@@ -1019,3 +1019,50 @@ Temporal-integration finding (recorded): ingestion composes consistently with
 the final typed-audit-decision substrate (typed AuditRecordDraft →
 append_audited, no envelope inference); the four inconsistency points above
 are the blockers.
+
+## Review resolution
+
+1. **Fresh adapter lifecycle projection** — `core/src/diagnostics/mod.rs` now tracks
+   per-adapter current-process evidence separately from replayed lifecycle history.
+   Fresh attach/detach/failure records project ATTACHED/DETACHED/FAILED and clear
+   the prior live state; reset/rebuild clears that evidence so historical records
+   remain UNKNOWN. `core/tests/diagnostics_projection.rs` covers attach→detach,
+   attach→failure, restart honesty, and bounded recent diagnostics.
+2. **Cockpit query authority and LSN monotonicity** —
+   `web-cockpit/src/domain/adapter-diagnostics.ts` accepts status only for an
+   accepted+completed query with an adapter result and an `as_of_lsn`; rejected,
+   failed, incomplete, missing, or non-adapter results clear cached status while
+   retaining diagnostics. Equal/newer responses replace status, older responses
+   retain newer status and live evidence. `web-cockpit/tests/adapter-diagnostics.test.ts`
+   covers rejected clearing and FAILED@20 versus ATTACHED@10.
+3. **Reconciliation signal and filtered gaps** —
+   `web-cockpit/src/domain/reconcile.ts` no longer treats successful LSN holes as
+   stream loss because the operator stream filters authority/audit records; only
+   transport/fold failures snapshot-reconcile. It emits an explicit completed
+   stream-reconnect callback, consumed by `web-cockpit/src/main.ts`; shell render
+   transitions in `web-cockpit/src/ui/shell.ts` no longer drive diagnostic refresh.
+   `web-cockpit/tests/reconcile.test.ts` covers the filtered query-lifecycle hole,
+   status preservation, and the explicit reconnect signal.
+4. **Forwarder cancellation** — `pi-adapter/src/core_diagnostics_forwarder.ts`
+   creates one AbortController per RPC, aborts on timeout and close, and awaits
+   cancellation before the sequential drain starts another report.
+   `pi-adapter/src/core_client.ts` passes the signal through Connect RPC and
+   `pi-adapter/src/main.ts` supplies it. Forwarder tests cover active-call
+   capacity, timeout cancellation, close cancellation, rate/capacity bounds,
+   rejection isolation, and sink isolation.
+5. **Cross-layer evidence** — `pi-adapter/tests/e2e.test.ts` now exercises the
+   real forwarded `pi_adapter_started` report, QueryDiagnostics, core restart,
+   durable recent-record recovery, UNKNOWN-before-reattach, and ATTACHED-after-
+   reattach. `contracts/vectors/audit-redaction-boundary.json` and generated
+   `docs/VERIFICATION.md` trace the adapter diagnostic allowlist and sentinel
+   exclusions. Projection and forwarder regression suites provide the remaining
+   recent-diagnostic, detach/failure, capacity, timeout, rejection, and close
+   evidence. No proto changes were needed.
+
+Verification after the blocker fixes: `cargo build --workspace --all-targets`,
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+web-cockpit tests (53), web-server tests (25), contracts build/vector/model checks,
+and the isolated real-process Pi e2e pass. The full parallel `pi-adapter npm test`
+continues to exhibit the repository's known cancellation timing flake in its
+real-process e2e; the focused real-process test passes, and the permitted identical
+retry was recorded without changing or weakening test code.

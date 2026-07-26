@@ -6,15 +6,21 @@
     "AuditRecord.operator_session_hash",
     "AuditRecord.source_network",
     "AdapterCapabilitySummary.attachment_method_kind",
+    "AdapterDiagnosticPayload.code",
+    "AdapterDiagnosticPayload.adapter_generation",
+    "AdapterDiagnosticPayload.operation_kind",
+    "AdapterDiagnosticPayload.count",
+    "AdapterDiagnosticReport.payload",
     "CommandSummary"
   ],
-  "description": "Audit and diagnostics DTO construction is an allowlist boundary: prompts, tokens, cookies, arbitrary metadata, and attachment descriptor bytes are not representable in the response family.",
+  "description": "Audit and diagnostics DTO construction is an allowlist boundary: prompts, tokens, cookies, arbitrary metadata, and attachment descriptor bytes are not representable in the response family. Adapter diagnostic contract serialization must also omit sentinel prompt, token, descriptor, stack, and cause values.",
   "input": {
-    "sentinel_values": ["cookie", "csrf-token", "access-token", "password", "prompt", "attachment-descriptor"]
+    "sentinel_values": ["cookie", "csrf-token", "access-token", "password", "prompt", "attachment-descriptor"],
+    "adapter_diagnostic_sentinel_values": ["sentinel-prompt", "sentinel-token", "sentinel-descriptor", "sentinel-stack", "sentinel-cause"]
   },
   "expected_outcome": {
     "durable_bytes_contain": ["typed identifiers", "bounded reason codes", "normalized source network"],
-    "durable_bytes_exclude": ["sentinel_values"]
+    "durable_bytes_exclude": ["sentinel_values", "adapter_diagnostic_sentinel_values"]
   },
   "invariant_check": "Draft redaction-boundary evidence; Audit integrity remains stated-normative per docs/VERIFICATION.md."
 }

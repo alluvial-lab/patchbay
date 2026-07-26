@@ -83,7 +83,7 @@ export class AdapterProcess {
     this.#core = new PatchbayCoreClient(options, localDiagnostics);
     if (options.forwardDiagnostics) {
       const forwarder = new CoreDiagnosticsForwarder(
-        (report) => this.#core.reportDiagnostic(report),
+        (report, signal) => this.#core.reportDiagnostic(report, signal),
         {
           authorityDomainId: options.authorityDomainId,
           adapterId: options.adapterId,

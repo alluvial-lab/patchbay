@@ -12,8 +12,10 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorEndpointRefSchema,
   ActorIdSchema,
+  AdapterDiagnosticState,
   AdapterIdSchema,
   AdapterRegistrationSchema,
+  AdapterStatusQuerySchema,
   AdminService,
   AuthorityDomainIdSchema,
   BootstrapRequestSchema,
@@ -21,6 +23,7 @@ import {
   CommandTransitionSchema,
   ControlService,
   DeviceIdSchema,
+  DiagnosticsQuerySchema,
   EndpointIdSchema,
   FailureCode,
   GenerationSchema,
@@ -34,6 +37,7 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   PrincipalEnrollmentSchema,
+  QueryDiagnosticsRequestSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -41,12 +45,14 @@ import {
   SessionStateEventSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
+  SubmissionOutcome,
   SubmitRequestSchema,
   SubscribeRequestSchema,
   TargetScopeKind,
   TargetScopeSchema,
   TimeWindowSchema,
   VerifyOperatorPasswordRequestSchema,
+  type AdapterStatus,
   type PrincipalCredential,
   type StoredEventPayload,
 } from "@patchbay/contracts";
@@ -99,7 +105,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       `http://127.0.0.1:${adminPort}`,
       setupSecret,
     );
-    const control = makeControlClient(baseUrl, auth);
+    let control = makeControlClient(baseUrl, auth);
     const sessionFixture = createSessionFixture(1);
     const configured: PreprovisionedSession = {
       cwd: repoRoot,
@@ -123,8 +129,10 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       sessions: [],
       createSession: sessionFixture.create,
       diagnostics,
+      forwardDiagnostics: true,
     });
     await adapter.start();
+    await waitForAdapterDiagnostic(control, "pi_adapter_started", AdapterDiagnosticState.ATTACHED);
     // Future spawn uses this same complete runtime-entry path; delivery routing
     // has no separate immutable pre-provisioned configuration dependency.
     await adapter.registerSession(configured);
@@ -402,8 +410,10 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       sessions: [{ ...configured, generation: 3 }],
       createSession: reconnectFixture.create,
       diagnostics: reconnectDiagnostics,
+      forwardDiagnostics: true,
     });
     await reconnect.start();
+    await waitForAdapterDiagnostic(control, "pi_adapter_started", AdapterDiagnosticState.ATTACHED);
     reconnectController = new AbortController();
     reconnectRun = reconnect.run(reconnectController.signal);
     assert.equal(reconnectFixture.session?.getState().generation, 3);
@@ -423,10 +433,33 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
     const attachCountBeforeRestart = reconnectEvents.filter(isAdapterRegistration).length;
 
+    // Stop the adapter's delivery loop before restarting core so the query can
+    // observe the durable diagnostic record while current attachment evidence
+    // is intentionally absent.
+    reconnectController.abort();
+    await reconnectRun;
+    reconnectController = undefined;
     core.kill("SIGTERM");
     await waitForExit(core);
     core = startCore(port, adminPort, databasePath);
     await waitForCoreListener(port, core);
+    control = makeControlClient(baseUrl, await loginAfterRestart(baseUrl));
+
+    const afterRestart = await waitForAdapterDiagnostic(
+      control,
+      "pi_adapter_started",
+      AdapterDiagnosticState.UNKNOWN,
+    );
+    assert.equal(afterRestart.recentDiagnostics.some((record) => record.reasonCode === "pi_adapter_started"), true);
+
+    reconnectController = new AbortController();
+    reconnectRun = reconnect.run(reconnectController.signal);
+    const afterReattach = await waitForAdapterDiagnostic(
+      control,
+      "pi_adapter_started",
+      AdapterDiagnosticState.ATTACHED,
+    );
+    assert.equal(afterReattach.recentDiagnostics.some((record) => record.reasonCode === "pi_adapter_started"), true);
     await waitFor(
       () => countAdapterRegistrations(databasePath) === attachCountBeforeRestart + 1,
       "the retry path durably records exactly one fresh attachment",
@@ -649,6 +682,96 @@ function makeControlClient(baseUrl: string, auth: ControlAuth) {
     ControlService,
     createGrpcTransport({ baseUrl, interceptors: [authenticate] }),
   );
+}
+
+async function waitForAdapterDiagnostic(
+  control: ReturnType<typeof makeControlClient>,
+  code: string,
+  state: AdapterDiagnosticState,
+) {
+  let result: AdapterStatus | undefined;
+  let sequence = 0;
+  await waitFor(async () => {
+    const response = await control.queryDiagnostics(
+      create(QueryDiagnosticsRequestSchema, {
+        operation: adapterStatusOperation(`adapter-status-${code}-${state}-${sequence++}`),
+      }),
+    );
+    if (
+      response.submission?.outcome !== SubmissionOutcome.ACCEPTED ||
+      response.submission.operationState !== OperationState.COMPLETED ||
+      response.result.case !== "adapters"
+    ) return false;
+    const status = response.result.value.adapters.find(
+      (candidate) => candidate.adapterId?.value === adapterId,
+    );
+    if (!status || status.state !== state) return false;
+    if (!status.recentDiagnostics.some((record) => record.reasonCode === code)) return false;
+    result = status;
+    return true;
+  }, `adapter diagnostic ${code} with state ${AdapterDiagnosticState[state] ?? state}`);
+  return result!;
+}
+
+function adapterStatusOperation(commandId: string) {
+  const query = create(DiagnosticsQuerySchema, {
+    query: {
+      case: "adapters",
+      value: create(AdapterStatusQuerySchema, {
+        adapterIds: [create(AdapterIdSchema, { value: adapterId })],
+        limit: 1,
+        recentDiagnosticLimit: 20,
+      }),
+    },
+  });
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    sender: create(ActorEndpointRefSchema, {
+      actorId: create(ActorIdSchema, { value: operatorId }),
+    }),
+    kind: OperationKind.QUERY,
+    targetScope: create(TargetScopeSchema, { kind: TargetScopeKind.AUTHORITY_DOMAIN }),
+    validityWindow: create(TimeWindowSchema, {
+      startsAt: { seconds: 1n },
+      expiresAt: { seconds: 2_534_023_007_99n },
+    }),
+    submittedAt: { seconds: 1n },
+    idempotencyKey: `${commandId}-key`,
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.DiagnosticsQuery",
+      payload: toBinary(DiagnosticsQuerySchema, query),
+    }),
+  });
+}
+
+async function loginAfterRestart(baseUrl: string): Promise<ControlAuth> {
+  const coreAuthenticate: Interceptor = (next) => async (request) => {
+    request.header.set("x-patchbay-core-secret", coreSecret);
+    return next(request);
+  };
+  const control = createClient(
+    ControlService,
+    createGrpcTransport({ baseUrl, interceptors: [coreAuthenticate] }),
+  );
+  const login = await control.verifyOperatorPassword(
+    create(VerifyOperatorPasswordRequestSchema, {
+      operatorActorId: create(ActorIdSchema, { value: operatorId }),
+      password: operatorPassword,
+      principal: create(PrincipalEnrollmentSchema, {
+        endpointId: create(EndpointIdSchema, { value: "pi-adapter-e2e-restart" }),
+        deviceId: create(DeviceIdSchema, { value: "pi-adapter-e2e-device" }),
+        endpointGeneration: create(GenerationSchema, { value: 2n }),
+      }),
+    }),
+  );
+  assert.ok(login.principal, "restart login enrolls a transport principal");
+  assert.ok(login.operatorSessionId?.value, "restart login issues an operator session");
+  return {
+    principal: login.principal,
+    operatorSessionId: login.operatorSessionId.value,
+  };
 }
 
 async function readAfter(

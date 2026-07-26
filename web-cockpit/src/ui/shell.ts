@@ -19,7 +19,7 @@ import type { MarkdownRenderer } from "./markdown.js";
 
 export interface CockpitShellOptions {
   markdown: MarkdownRenderer;
-  onSelectionChange?(session: SessionView | undefined, reason: "initial" | "selection" | "reconcile" | "connectivity"): void;
+  onSelectionChange?(session: SessionView | undefined, reason: "initial" | "selection" | "connectivity"): void;
   actions?: SessionDetailActions;
   elicitation?: ElicitationRenderOptions;
   submission?: () => SubmissionFeedback | undefined;
@@ -54,7 +54,6 @@ export function createCockpitShell(
   let filter = "";
   let detail!: SessionDetailComponent;
   let observedSelectedKey: string | undefined;
-  let observedReconciled = false;
   let observedConnectivity: SessionConnectivityState | undefined;
   const isMobile = options.isMobile ?? (() => document.defaultView?.matchMedia?.("(max-width: 760px)").matches ?? false);
 
@@ -113,17 +112,17 @@ export function createCockpitShell(
     }
     const selected = selectedSession();
     const selectedIdentity = selected ? sessionKey(selected.identity) : undefined;
+    // Reconciliation completion is delivered by Reconciler directly to the
+    // diagnostics controller. Shell renders are intentionally not used as a
+    // lifecycle edge because intermediate unreconciled models may not render.
     const reason = observedSelectedKey === undefined
       ? "initial"
       : observedSelectedKey !== selectedIdentity
         ? "selection"
-        : !observedReconciled && model.reconciled
-          ? "reconcile"
-          : observedConnectivity !== selected?.connectivity
-            ? "connectivity"
-            : undefined;
+        : observedConnectivity !== selected?.connectivity
+          ? "connectivity"
+          : undefined;
     observedSelectedKey = selectedIdentity;
-    observedReconciled = model.reconciled;
     observedConnectivity = selected?.connectivity;
     if (reason) queueMicrotask(() => options.onSelectionChange?.(selected, reason));
   }

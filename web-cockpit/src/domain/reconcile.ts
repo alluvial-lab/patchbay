@@ -31,6 +31,8 @@ export interface ReconcilerOptions {
   initialCursor?: bigint;
   retryDelayMs?: number;
   delay?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  /** Fires after an actual stream-loss snapshot has been installed. */
+  onReconciliationComplete?: (reason: "stream-reconnect") => void;
 }
 
 /**
@@ -41,6 +43,7 @@ export class Reconciler {
   private cursor: bigint;
   private readonly retryDelayMs: number;
   private readonly delay: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  private readonly onReconciliationComplete?: (reason: "stream-reconnect") => void;
 
   constructor(
     private readonly client: ReconcileClient,
@@ -50,6 +53,7 @@ export class Reconciler {
     this.cursor = options.initialCursor ?? 0n;
     this.retryDelayMs = options.retryDelayMs ?? 500;
     this.delay = options.delay ?? abortableDelay;
+    this.onReconciliationComplete = options.onReconciliationComplete;
   }
 
   get currentCursor(): bigint {
@@ -73,21 +77,12 @@ export class Reconciler {
           const lsn = eventLsn(event, authorityDomainId.value);
           if (lsn <= this.cursor) continue;
 
-          if (lsn > this.cursor + 1n) {
-            this.projection.markUnreconciled("event-gap");
-            await this.reconcile(authorityDomainId);
-            if (lsn <= this.cursor) {
-              // Reconciliation replayed this visible event while adopting the
-              // current snapshot. Yield it once so presentation subscribers
-              // render the atomically replaced model.
-              yield event;
-              continue;
-            }
-            if (lsn !== this.cursor + 1n) {
-              throw new Error(`snapshot did not bridge event gap before LSN ${lsn}`);
-            }
-          }
-
+          // The server intentionally filters authority/audit records from
+          // this operator-facing stream. Their LSNs therefore create normal
+          // holes, including the lifecycle records emitted by this very
+          // diagnostics query. A transport/error path is the actual stream
+          // loss signal and is handled below; a successful filtered stream
+          // must not replace the snapshot and erase a just-returned status.
           await this.projection.foldEvent(event);
           this.cursor = lsn;
           yield event;
@@ -135,6 +130,7 @@ export class Reconciler {
     const replayEvents = await this.replayThrough(authorityDomainId, snapshotLsn);
     await this.projection.replaceFromSnapshot(snapshot, replayEvents);
     this.cursor = snapshotLsn;
+    this.onReconciliationComplete?.("stream-reconnect");
   }
 
   private async replayThrough(
