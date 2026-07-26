@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding
 kind: epic
-stage: review
+stage: done
 tags: [observability, dogfooding]
 parent: null
 depends_on: []
@@ -222,3 +222,30 @@ contracts vectors/models — all green. One intermittent pi-adapter e2e flake
 parked (idea-pi-adapter-e2e-intermittent-flake); pre-existing
 generated-contract drift parked (idea-generated-contract-drift-ci-gap);
 lockdown audit producers deferred to the lockdown capability.
+
+## Epic review resolution (2026-07-26)
+
+Aggregate review (independent reviewer: gpt-5.6-sol, standard weight) verdict:
+blockers-found; four blockers, all receiver-confirmed and fixed:
+
+1. CLI `adapter-status` never requested recent diagnostics → bounded
+   `recentDiagnosticLimit: 100` + wire regression test (`02a92fb`).
+2. Workstation-native CLI claim contradicted loopback-only core → claim
+   retracted across epic/feature/RUNBOOK; VM-local + SSH-tunnel guidance
+   documented; split transport remains the reserved milestone (`02a92fb`).
+3. Materialization-failure audit used arbitrary error text in
+   `correlation_id`, breaking its own validation and stranding queries at
+   `delivered` → fixed `diagnostics_materialization_failed` reason +
+   `ExecutionFailed` code, injected-failure/retry coverage (`a8a8387`).
+4. pi-adapter e2e solidly red on cancellation race → expected `Code.Canceled`
+   + epoch-fenced completion; focused e2e 5× green, full suite 3× green;
+   parked flake item updated with resolution (`a8a8387`).
+
+Final verification: cargo workspace (32 suites) + clippy clean; cli 27,
+web-server 25, web-cockpit 53, pi-adapter 24, walking-skeleton e2e, contracts
+vectors/models — all green on the integrated tree.
+
+Epic totals: 4 features, 5 child stories, 23 review blockers found and fixed
+across 5 independent review passes (4 feature + 1 epic aggregate). Parked:
+idea-generated-contract-drift-ci-gap. Deferred with obligation recorded:
+lockdown audit producers (awaiting a lockdown decision surface).
