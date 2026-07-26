@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-adapter-log-sink
 kind: feature
-stage: implementing
+stage: review
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 # Adapter durable diagnostics log sink
@@ -557,3 +557,30 @@ single-stride implementation/review bundle.
   boundary. The chosen code/name/failure/reason fields favor non-disclosure over
   verbose third-party messages; dogfooding can safely add specific allowlisted
   fields later without changing the record transport.
+
+## Implementation summary
+
+- Implemented `AdapterDiagnostics` and the bounded, serialized JSONL file sink in
+  `pi-adapter/src/adapter_diagnostics.ts`, including XDG/override path resolution,
+  startup rotation, mode `0600`, structural redaction, drop accounting, and
+  non-throwing lifecycle failure handling.
+- Injected diagnostics through `AdapterProcess` and `PatchbayCoreClient`, with
+  attach, registration, lifecycle, delivery, subscription, observation, model,
+  activity, generation, and shutdown instrumentation. Added environment-root sink
+  ownership and graceful flush/close behavior.
+- Removed `TranscriptEventLog`; `PiSession` now retains only current-generation
+  event-id deduplication while projecting persisted entries directly. Updated the
+  adapter foundation wording to “Pi persisted entries projected as transcript
+  events.”
+- Added sink contract tests, broken-sink lifecycle isolation coverage,
+  representative e2e log assertions, and retained real-session deduplication
+  coverage. No design deviations or implementation discoveries were required.
+- Verification: `cd pi-adapter && npm run build` passed; all non-e2e adapter tests
+  passed (`15/15`) via the equivalent compiled `node --test` invocation. The full
+  `cd pi-adapter && npm test` command remains externally blocked by concurrent
+  out-of-scope core/server edits: `cargo build -p patchbay-core-server` currently
+  fails because `ControlService::query_diagnostics` and new `StorageError` arms are
+  not yet implemented in `server/src/service.rs`. No production or test changes
+  were made outside the owned paths to work around that blocker.
+- Code/tests/docs landed in commit `0934b9d` (`implement: epic-observability-dogfooding-adapter-log-sink`).
+- Nothing was parked for later.
