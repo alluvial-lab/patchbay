@@ -666,3 +666,33 @@ implementation or verification clearer.
   edited because the worker's explicit write scope permits only `cli/` and
   this feature file. The implementation therefore leaves the prose roll-forward
   for the owning documentation scope rather than touching forbidden files.
+
+## Review findings (standard pass 1, 2026-07-26 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Post-acceptance query failure misclassified** — accepted + FAILED +
+   execution_failed (no result envelope) falls through to "incomplete
+   envelope" exit 1 instead of lifecycle-failure exit 3; rendering must also
+   require OperationState.COMPLETED. Fix: branch on submission outcome AND
+   operation state; unexpected nonterminal states fail closed with 1.
+2. **Per-command option grammar not enforced** — global option admission lets
+   `adapter-status --kind` / `session-health --limit` pass silently; empty
+   cursor values silently omitted; duplicate enum flags silently deduped.
+   Fix: per-command allowlists, direct cursor pass-through, duplicate-enum
+   rejection, help text documents target grammar + cursor/time inclusivity.
+3. **JSON projections omit pre-existing safe contract fields** —
+   `AuditRecord.adapter_diagnostic`, `AdapterCapabilitySummary
+   .diagnostic_reporting`, `AdapterStatus.recent_diagnostics` all existed in
+   the generated contracts before the implementation commit and are omitted
+   from JSON output. Fix: explicit JSON-safe projections via generated enums.
+4. **No diagnostics regression evidence** — the commit only deleted the stub
+   test; the designed wire/exit/empty/oneof/pagination/JSON-safety/parser/
+   redaction tests were never added. Fix: add them.
+5. **UX.md + RUNBOOK.md still describe the commands as stubs** — now-false
+   current-state assertions; rolling them forward was a design unit that the
+   worker's write scope (orchestrator error) excluded. Fix: roll both docs
+   forward to the implemented command/JSON/empty/pagination/exit contract.
+
+Parked notes: runtime-target percent-encoding reversibility; unused
+`makeEventCursor`/`enumDisplay` re-exports (fix worker may delete as cleanup).

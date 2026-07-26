@@ -980,3 +980,42 @@ created; unmapped local events remain JSONL-only by design.
   limitation, not a liveness policy.
 - No tests were deleted, weakened, skipped, or made conditional. No work was
   parked.
+
+## Review findings (standard pass 1, 2026-07-26 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Adapter-status projection ignores fresh detach/failure** —
+   `core/src/diagnostics/mod.rs`: `AdapterDetached`/`AdapterFailed` audits are
+   stored but never clear `live_adapters`; ATTACHED wins indefinitely; prefix
+   materialization resets liveness globally so historical pre-restart
+   lifecycle collapses to UNKNOWN. Fix: per-adapter current-process
+   attachment freshness; fresh detach/failure projects DETACHED/FAILED;
+   pre-restart history stays UNKNOWN; attach→detach/failure/restart tests.
+2. **Cockpit treats stale/failed diagnostic queries as authoritative** —
+   probed: rejected responses silently retain prior status; a lower as_of_lsn
+   response overwrote FAILED@20 with ATTACHED@10. Fix: require accepted +
+   completed + adapter-result else clear to unavailable/unknown; monotonic
+   asOfLsn merge retaining newer live diagnostics.
+3. **Reconciliation clears status without a reliable refresh signal** — shell
+   only renders final reconcile events, so the false→true transition is
+   invisible; filtered audit-LSN gaps trigger snapshot replacement that can
+   erase a query's own just-returned status. Fix: explicit
+   reconciliation-complete signal to the diagnostics controller; distinguish
+   filtered audit gaps from stream loss; integration test for
+   query-lifecycle → filtered-gap → reconcile.
+4. **Forwarder 1s timeout doesn't cancel network work** — probed: two
+   never-resolving reports → two simultaneously active RPCs (Promise.race
+   only abandons the local await). Fix: AbortController per report, signal
+   through reportDiagnostic to Connect, abort on timeout/close; test active
+   RPC count returns to zero and never exceeds one.
+5. **Missing cross-layer acceptance evidence** — no e2e real-process
+   pi_adapter_started → query → restart durability path; no redaction vector;
+   forwarder tests lack capacity/rate/timeout-cancellation/rejection/close;
+   projection tests lack recent-diagnostics and detach/failure coverage.
+   Fix: add the specified evidence.
+
+Temporal-integration finding (recorded): ingestion composes consistently with
+the final typed-audit-decision substrate (typed AuditRecordDraft →
+append_audited, no envelope inference); the four inconsistency points above
+are the blockers.
