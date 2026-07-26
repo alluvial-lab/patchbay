@@ -1,14 +1,14 @@
 ---
 id: epic-observability-dogfooding-cockpit-diagnostics
 kind: feature
-stage: review
+stage: done
 tags: [observability, dogfooding, ui]
 parent: epic-observability-dogfooding
 depends_on: [epic-observability-dogfooding-core-diagnostics]
 release_binding: null
 gate_origin: null
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 # Adapter diagnostics forwarding + cockpit surfacing
