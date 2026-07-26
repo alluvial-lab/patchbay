@@ -14,27 +14,9 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { PiSession } from "../src/pi_session.js";
-import { TranscriptEventLog } from "../src/transcript_event_log.js";
-import { deterministicTranscriptEventId } from "../src/transcript_projection.js";
 import type { TranscriptEvent } from "../src/transcript_event.js";
 
 const cwd = process.cwd();
-
-test("TranscriptEventLog deduplicates stable event ids and replays by session", () => {
-  const log = new TranscriptEventLog();
-  const event: TranscriptEvent = {
-    kind: "assistant_committed",
-    eventId: deterministicTranscriptEventId("session-a", "assistant_committed", "m1"),
-    sessionId: "session-a",
-    ts: 1,
-    messageId: "m1",
-    text: "hello",
-  };
-  assert.equal(log.append(event), true);
-  assert.equal(log.append({ ...event, text: "duplicate" }), false);
-  assert.deepEqual(log.forSession("session-a"), [event]);
-  assert.deepEqual(log.forSession("session-b"), []);
-});
 
 test("real AgentSession prompt emits transcript events and honors the approval gate", async () => {
   const provider = "patchbay-faux";
@@ -155,6 +137,12 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     assert.equal(pi.getState().idle, true);
     assert.ok(pi.getEntries().entries.length > 0);
     assert.ok(pi.getAvailableModels().some((candidate) => candidate.id === model.id));
+    const snapshot = pi.snapshotTranscript();
+    assert.deepEqual(
+      pi.snapshotTranscript(),
+      snapshot,
+      "replaying persisted Pi entries remains stable and duplicate-free",
+    );
 
     await pi.setModel(provider, model.id);
     await pi.setThinkingLevel("off");

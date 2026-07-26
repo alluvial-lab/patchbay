@@ -78,7 +78,7 @@ This mapping must satisfy the checked-model and stated-normative properties docu
 - `GenerationMonotonic` (**checked-model**) — the checked temporal property proves that the live session generation never decreases. Strict-supersession for `session_new` / fresh-session restart (lower reports rejected, equal reports no-op) is enforced by the action guard, not established by this checked temporal property.
 - `LateGenerationInert` (**stated-normative**) — events/replies binding to a tombstoned generation are `stale_event` audit records and do not mutate the live generation.
 
-> **`session_new` is a session replacement, not a `/clear`.** remote_pi's own code groups `session_new` with `fork`/`switch`/`reload` as "session replacement" and marks the pre-replacement SDK context permanently stale. A `/clear` on other harnesses preserves the session handle and wipes the transcript in place; Pi does the opposite — the transcript event log is rotated and the old context becomes permanently unusable. This is why the mapping bumps `session_generation` rather than treating it as a same-generation clear.
+> **`session_new` is a session replacement, not a `/clear`.** remote_pi's own code groups `session_new` with `fork`/`switch`/`reload` as "session replacement" and marks the pre-replacement SDK context permanently stale. A `/clear` on other harnesses preserves the session handle and wipes the transcript in place; Pi does the opposite — persisted entries are projected for the replacement generation and the old context becomes permanently unusable. This is why the mapping bumps `session_generation` rather than treating it as a same-generation clear.
 
 ## 4. Required Pi adapter capabilities for v0.1.0
 
@@ -98,7 +98,7 @@ This is the core of the checklist. It maps each committed v0.1.0 `OperationKind`
 | `agent-send` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0.1.0 | reserved seam |
 | `adapter-utility-exec` *(reserved)* | n/a | excluded; submission rejects with `validation_failed` in v0.1.0 | reserved seam |
 
-**Snapshot-tier declaration:** the Pi adapter declares `snapshot = partial`. The transcript event log replayed via `session_sync` → `session_history` provides recent/current state, not arbitrary historical reconstruction. The core reconciles reconnects against this tier per the degraded-behavior rules in `docs/PROTOCOL.md` (Adapter snapshot capability tiers); it never fabricates a snapshot from cached state.
+**Snapshot-tier declaration:** the Pi adapter declares `snapshot = partial`. Pi persisted entries projected as transcript events via `session_sync` → `session_history` provide recent/current state, not arbitrary historical reconstruction. The core reconciles reconnects against this tier per the degraded-behavior rules in `docs/PROTOCOL.md` (Adapter snapshot capability tiers); it never fabricates a snapshot from cached state.
 
 > `pair_request` is transport/pairing, **not** an `attach` wire action. It is classified in §7.
 
@@ -109,7 +109,7 @@ This section covers the specific parity surface the migration floor requires.
 - **Discover / attach.** The operator discovers available Pi daemon slots and attaches via `session_sync`-backed reconciliation. `attach` establishes or refreshes endpoint availability and triggers cursor/snapshot reconciliation.
 - **Send prompt.** `user_message` → `instruct` Operation carrying prompt payload. Slash-commands are payload, not separate protocol kinds.
 - **Stream / read replies.** Pi event hooks (`message_update`/`message_end`, `tool_call`, `tool_execution_*`, `model_select`/`thinking_level_select`, `session_before_compact`/`session_compact`, `agent_end`, `turn_*`) map to `Observation`s — source-authenticated output, lifecycle facts, and status emissions (including reconfiguration-status facts). Observation streams are delivery optimizations; the durable core record and snapshots remain authoritative.
-- **Reconnect recovery.** On reconnect the control surface submits its cursor and reconciles against the `partial` snapshot (transcript event log replay) and newer events. The snapshot tier is adapter-declared (`partial`); the core reconciles per the degraded-behavior rules and marks unreconciled axes `unknown` or `stale` rather than synthesizing live state.
+- **Reconnect recovery.** On reconnect the control surface submits its cursor and reconciles against the `partial` snapshot (Pi persisted entries projected as transcript events) and newer events. The snapshot tier is adapter-declared (`partial`); the core reconciles per the degraded-behavior rules and marks unreconciled axes `unknown` or `stale` rather than synthesizing live state.
 - **Working / idle / stale / offline status.** `turn_start`/`turn_end` → `SessionActivityState`; endpoint connectivity → `SessionConnectivityState` (`live` / `stale` / `offline` / `unknown` / `failed`). Status is protocol-derived, not invented by the UI.
 
 The snapshot tier is adapter-declared (`partial`) and recorded here as the Pi adapter's declaration. This checklist does not pin the tier in a foundation document; if the Pi adapter's live behavior changes (e.g. as bugs close), the declaration is revised here.

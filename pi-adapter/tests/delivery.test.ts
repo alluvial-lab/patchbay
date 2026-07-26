@@ -205,6 +205,38 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
   }
 });
 
+test("AdapterProcess isolates broken diagnostics from lifecycle operations", async () => {
+  const diagnostics = {
+    record() {
+      throw new Error("diagnostics record failed");
+    },
+    flush: async () => {
+      throw new Error("diagnostics flush failed");
+    },
+    close: async () => {
+      throw new Error("diagnostics close failed");
+    },
+  };
+  const originalAttach = PatchbayCoreClient.prototype.attach;
+  PatchbayCoreClient.prototype.attach = async () => ({}) as EventId;
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "adapter-test-secret",
+    adapterGeneration: 1,
+    sessions: [],
+    diagnostics,
+  });
+  try {
+    await adapter.start();
+    await adapter.dispose();
+    await adapter.dispose();
+  } finally {
+    PatchbayCoreClient.prototype.attach = originalAttach;
+  }
+});
+
 test("SessionRegistry owns complete runtime entries and observation wiring", async () => {
   const registry = new SessionRegistry();
   let transcriptListener: ((event: never) => void) | undefined;

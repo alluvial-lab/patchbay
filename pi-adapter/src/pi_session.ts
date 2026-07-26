@@ -11,7 +11,6 @@ import {
   type CreateAgentSessionOptions,
   type CreateAgentSessionRuntimeFactory,
 } from "@earendil-works/pi-coding-agent";
-import { TranscriptEventLog } from "./transcript_event_log.js";
 import {
   deterministicTranscriptEventId,
   projectAgentEvent,
@@ -73,7 +72,7 @@ interface PendingApproval {
 export class PiSession {
   readonly #runtime: AgentSessionRuntime;
   readonly #runtimeSessionId: string;
-  readonly #transcriptLog = new TranscriptEventLog();
+  readonly #seenTranscriptEventIds = new Set<string>();
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
   readonly #modelChangeListeners = new Set<SessionModelChangeListener>();
   readonly #deltaOrdinals = new Map<string, number>();
@@ -158,6 +157,8 @@ export class PiSession {
         throw new Error("Pi runtime replaced a session without a pending generation bump");
       }
       this.#generation = replacementGeneration;
+      this.#seenTranscriptEventIds.clear();
+      this.#deltaOrdinals.clear();
       this.#turn = initialTurnSnapshot();
       this.#turnSequence = 0;
       this.#promptSequence = 0;
@@ -196,17 +197,15 @@ export class PiSession {
     return () => this.#modelChangeListeners.delete(listener);
   }
 
-  transcriptEvents(): readonly TranscriptEvent[] {
-    return this.#transcriptLog.forSession(this.#transcriptSessionId(this.#generation));
-  }
-
-  /** Rebuild the partial transcript snapshot from Pi's current persisted entries. */
+  /** Project Pi's persisted entries into the adapter's partial snapshot. */
   snapshotTranscript(): readonly TranscriptEvent[] {
     const sessionId = this.#transcriptSessionId(this.#generation);
-    this.#transcriptLog.appendAll(
-      projectSessionEntries(this.#runtime.session.sessionManager.getEntries(), sessionId),
+    const projected = projectSessionEntries(
+      this.#runtime.session.sessionManager.getEntries(),
+      sessionId,
     );
-    return this.#transcriptLog.forSession(sessionId);
+    for (const event of projected) this.#seenTranscriptEventIds.add(event.eventId);
+    return projected;
   }
 
   prompt(text: string): Promise<void> {
@@ -400,7 +399,8 @@ export class PiSession {
   }
 
   #append(event: TranscriptEvent): void {
-    if (!this.#transcriptLog.append(event)) return;
+    if (this.#seenTranscriptEventIds.has(event.eventId)) return;
+    this.#seenTranscriptEventIds.add(event.eventId);
     for (const listener of this.#listeners) listener(event);
   }
 

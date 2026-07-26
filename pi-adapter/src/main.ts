@@ -8,6 +8,15 @@ import {
   type Operation,
 } from "@patchbay/contracts";
 import { PatchbayCoreClient, type SessionIdentity } from "./core_client.js";
+import {
+  diagnosticError,
+  NOOP_ADAPTER_DIAGNOSTICS,
+  openAdapterDiagnostics,
+  resolveAdapterLogPath,
+  type AdapterDiagnosticInput,
+  type AdapterDiagnostics,
+  type AdapterDiagnosticSessionRef,
+} from "./adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "./delivery.js";
 import { PiSession, type PiSessionOptions } from "./pi_session.js";
 import {
@@ -29,10 +38,16 @@ export interface AdapterProcessOptions {
   adapterGeneration: number;
   sessions: PreprovisionedSession[];
   createSession?: (options: PreprovisionedSession) => Promise<PiSession>;
+  diagnostics?: AdapterDiagnostics;
 }
 
 interface StartedDelivery {
   completion: Promise<void>;
+}
+
+interface ObservationDiagnosticContext {
+  session: AdapterDiagnosticSessionRef;
+  observationKind: "transcript" | "session-report";
 }
 
 /** Composition root: gRPC client + complete runtime-session registry. */
@@ -54,21 +69,28 @@ export class AdapterProcess {
   #observationError: unknown;
   #cursor = 0n;
   #started = false;
+  #disposed = false;
   #runController: AbortController | undefined;
+  readonly #diagnostics: AdapterDiagnostics;
+  #observationErrorContext: ObservationDiagnosticContext | undefined;
 
   constructor(options: AdapterProcessOptions) {
     this.#options = options;
-    this.#core = new PatchbayCoreClient(options);
+    this.#diagnostics = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
+    this.#core = new PatchbayCoreClient(options, this.#diagnostics);
   }
 
   async start(): Promise<void> {
+    if (this.#disposed) throw new Error("adapter process has been disposed");
     if (this.#started) return;
+    this.#record({ event: "adapter.starting", level: "info" });
     await this.#core.attach(this.#options.adapterGeneration);
     this.#started = true;
     try {
       for (const configured of this.#options.sessions) {
         await this.registerSession(configured);
       }
+      this.#record({ event: "adapter.started", level: "info" });
     } catch (error) {
       this.#started = false;
       await this.#registry.dispose();
@@ -80,7 +102,23 @@ export class AdapterProcess {
   async registerSession(configured: PreprovisionedSession): Promise<void> {
     if (!this.#started) throw new Error("adapter process has not started");
     const createSession = this.#options.createSession ?? PiSession.create;
-    const session = await createSession(configured);
+    this.#record({ event: "session.register.started", level: "info" });
+    let session: PiSession;
+    try {
+      session = await createSession(configured);
+    } catch (error) {
+      this.#record({
+        event: "session.register.failed",
+        level: "error",
+        error: diagnosticError(error),
+      });
+      throw error;
+    }
+    const sessionRef = (): AdapterDiagnosticSessionRef => ({
+      runtimeSessionId: session.runtimeSessionId,
+      deploymentScope: configured.deploymentScope,
+      generation: session.generation,
+    });
     let entry: RuntimeSessionEntry;
     try {
       entry = this.#registry.register(
@@ -94,40 +132,83 @@ export class AdapterProcess {
             .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
             .then(() => undefined);
           this.#observationTails.set(observedEntry.runtimeSessionId, next);
-          this.#trackObservation(next);
+          this.#trackObservation(next, {
+            session: this.#sessionRef(observedEntry),
+            observationKind: "transcript",
+          });
         },
         (observedEntry, model) => {
           const activity = observedEntry.session.getState().idle
             ? SessionActivityState.IDLE
             : SessionActivityState.WORKING;
-          this.#trackObservation(this.#queueSessionReport(observedEntry, activity, undefined, model));
+          this.#record({
+            event: "session.model.changed",
+            level: "info",
+            session: this.#sessionRef(observedEntry),
+          });
+          this.#trackObservation(this.#queueSessionReport(observedEntry, activity, undefined, model), {
+            session: this.#sessionRef(observedEntry),
+            observationKind: "session-report",
+          });
         },
       );
     } catch (error) {
-      await session.dispose();
+      this.#record({
+        event: "session.register.failed",
+        level: "error",
+        session: sessionRef(),
+        error: diagnosticError(error),
+      });
+      try {
+        await session.dispose();
+      } catch {
+        // Preserve the registration failure that caused cleanup.
+      }
       throw error;
     }
 
-    // Reconcile Pi's persisted getEntries()/TranscriptEventLog snapshot before
-    // claiming a current activity state. Stable transcript event ids make this
-    // replay a partial snapshot rather than command re-execution.
-    for (const event of session.snapshotTranscript()) {
-      await this.#core.ingestTranscript(this.#identity(entry), event);
+    // Reconcile Pi's persisted getEntries() snapshot before claiming a current
+    // activity state. Pi persisted entries are projected as transcript events.
+    try {
+      for (const event of session.snapshotTranscript()) {
+        await this.#core.ingestTranscript(this.#identity(entry), event);
+      }
+      await this.#queueSessionReport(
+        entry,
+        this.#options.adapterGeneration > 1
+          ? SessionActivityState.UNKNOWN
+          : SessionActivityState.IDLE,
+        SessionConnectivityState.LIVE,
+      );
+      this.#record({
+        event: "session.register.succeeded",
+        level: "info",
+        session: this.#sessionRef(entry),
+      });
+    } catch (error) {
+      this.#record({
+        event: "session.register.failed",
+        level: "error",
+        session: this.#sessionRef(entry),
+        error: diagnosticError(error),
+      });
+      throw error;
     }
-    await this.#queueSessionReport(
-      entry,
-      this.#options.adapterGeneration > 1
-        ? SessionActivityState.UNKNOWN
-        : SessionActivityState.IDLE,
-      SessionConnectivityState.LIVE,
-    );
   }
 
   async flushObservations(): Promise<void> {
     await Promise.all([...this.#pendingObservations]);
     if (this.#observationError !== undefined) {
       const error = this.#observationError;
+      const context = this.#observationErrorContext;
       this.#observationError = undefined;
+      this.#observationErrorContext = undefined;
+      this.#record({
+        event: "observation.flush_failed",
+        level: "error",
+        ...(context ? context : {}),
+        error: diagnosticError(error),
+      });
       throw error;
     }
   }
@@ -154,7 +235,15 @@ export class AdapterProcess {
           }
         } catch (error) {
           if (controller.signal.aborted) return;
-          if (!isRetryableTransportFailure(error)) throw error;
+          const retryable = isRetryableTransportFailure(error);
+          this.#record({
+            event: retryable
+              ? "delivery.subscription.retrying"
+              : "delivery.subscription.failed",
+            level: retryable ? "warn" : "error",
+            error: diagnosticError(error),
+          });
+          if (!retryable) throw error;
           await delay(100, controller.signal);
         }
       }
@@ -166,9 +255,52 @@ export class AdapterProcess {
   }
 
   async dispose(): Promise<void> {
+    if (this.#disposed) return;
+    this.#disposed = true;
     this.#runController?.abort();
-    await this.#registry.dispose();
-    this.#started = false;
+    this.#record({ event: "adapter.stopping", level: "info" });
+    const entries = [...this.#registry.entries()].map(([, entry]) => entry);
+    for (const entry of entries) {
+      this.#record({
+        event: "session.dispose.started",
+        level: "info",
+        session: this.#sessionRef(entry),
+      });
+    }
+    try {
+      await this.#registry.dispose();
+      for (const entry of entries) {
+        this.#record({
+          event: "session.dispose.succeeded",
+          level: "info",
+          session: this.#sessionRef(entry),
+        });
+      }
+      this.#started = false;
+      this.#record({ event: "adapter.stopped", level: "info" });
+    } catch (error) {
+      for (const entry of entries) {
+        this.#record({
+          event: "session.dispose.failed",
+          level: "error",
+          session: this.#sessionRef(entry),
+          error: diagnosticError(error),
+        });
+      }
+      this.#started = false;
+      throw error;
+    } finally {
+      try {
+        await this.#diagnostics.flush();
+      } catch {
+        // A broken diagnostics implementation cannot change disposal semantics.
+      }
+      try {
+        await this.#diagnostics.close();
+      } catch {
+        // A broken diagnostics implementation cannot change disposal semantics.
+      }
+    }
   }
 
   async #consumeDeliveries(signal?: AbortSignal): Promise<void> {
@@ -203,26 +335,58 @@ export class AdapterProcess {
   }
 
   async #beginDelivery(delivery: Delivery, operation: Operation): Promise<StartedDelivery> {
+    const commandId = operation.commandId?.value;
+    const operationKind = operation.kind;
+    const target = operation.targetScope;
+    const runtimeSessionId = target?.runtimeSessionId?.value;
+    const entry = runtimeSessionId ? this.#registry.resolve(runtimeSessionId) : undefined;
+    this.#record({
+      event: "delivery.received",
+      level: "info",
+      ...(commandId ? { commandId } : {}),
+      operationKind,
+      ...(entry ? { session: this.#sessionRef(entry) } : {}),
+    });
     // This is the durable delivery checkpoint. ReceiveDeliveries filters on the
     // resulting command state, so an adapter restart from cursor 0 cannot
     // re-offer or re-execute acknowledged history.
     await this.#core.acknowledgeDelivery(operation, delivery.deliveryEventId);
+    this.#record({
+      event: "delivery.acknowledged",
+      level: "info",
+      ...(commandId ? { commandId } : {}),
+      operationKind,
+      ...(entry ? { session: this.#sessionRef(entry) } : {}),
+    });
 
-    const target = operation.targetScope;
-    const runtimeSessionId = target?.runtimeSessionId?.value;
-    const entry = runtimeSessionId ? this.#registry.resolve(runtimeSessionId) : undefined;
     const targetError = this.#validateTarget(operation, entry);
     if (targetError) {
       return {
         completion: this.#core
           .ingestFailure(operation, FailureCode.DELIVERY_REJECTED, targetError)
-          .then(() => undefined),
+          .then(() => {
+            this.#record({
+              event: "delivery.rejected",
+              level: "warn",
+              ...(commandId ? { commandId } : {}),
+              operationKind,
+              failureCode: FailureCode.DELIVERY_REJECTED,
+              ...(entry ? { session: this.#sessionRef(entry) } : {}),
+              reason: targetError,
+            });
+          }),
       };
     }
 
     if (!entry) throw new Error("validated delivery lost its runtime entry");
     await this.#core.reportRunning(operation);
-    const commandId = operation.commandId?.value;
+    this.#record({
+      event: "delivery.running",
+      level: "info",
+      ...(commandId ? { commandId } : {}),
+      operationKind,
+      session: this.#sessionRef(entry),
+    });
     if (commandId) this.#activeCommands.set(entry.runtimeSessionId, commandId);
     if (operation.kind === OperationKind.INSTRUCT) {
       await this.#queueSessionReport(entry, SessionActivityState.WORKING);
@@ -232,12 +396,31 @@ export class AdapterProcess {
 
   async #executeDelivery(operation: Operation, entry: RuntimeSessionEntry): Promise<void> {
     const commandId = operation.commandId?.value;
+    const operationKind = operation.kind;
+    const fromGeneration = entry.session.generation;
     try {
       const outcome = await this.#translator.deliver(operation, entry.session);
+      if (outcome.sessionGenerationChanged) {
+        this.#record({
+          event: "session.generation.changed",
+          level: "info",
+          session: this.#sessionRef(entry),
+          fromGeneration,
+          toGeneration: entry.session.generation,
+        });
+      }
       if (outcome.sessionGenerationChanged || operation.kind === OperationKind.INSTRUCT) {
         await this.#queueSessionReport(entry, SessionActivityState.IDLE);
       }
       await this.#core.reportResult(operation, outcome.value);
+      this.#record({
+        event: "delivery.completed",
+        level: "info",
+        ...(commandId ? { commandId } : {}),
+        operationKind,
+        session: this.#sessionRef(entry),
+        outcome: "COMPLETED",
+      });
     } catch (error) {
       const failureCode =
         error instanceof UnsupportedCommandError
@@ -245,6 +428,15 @@ export class AdapterProcess {
           : FailureCode.EXECUTION_FAILED;
       const diagnostic = error instanceof Error ? error.message : String(error);
       await this.#core.ingestFailure(operation, failureCode, diagnostic);
+      this.#record({
+        event: error instanceof UnsupportedCommandError ? "delivery.rejected" : "delivery.failed",
+        level: error instanceof UnsupportedCommandError ? "warn" : "error",
+        ...(commandId ? { commandId } : {}),
+        operationKind,
+        failureCode,
+        session: this.#sessionRef(entry),
+        error: diagnosticError(error),
+      });
       if (operation.kind === OperationKind.INSTRUCT) {
         await this.#queueSessionReport(entry, SessionActivityState.UNKNOWN);
       }
@@ -273,6 +465,22 @@ export class AdapterProcess {
     return undefined;
   }
 
+  #sessionRef(entry: RuntimeSessionEntry): AdapterDiagnosticSessionRef {
+    return {
+      runtimeSessionId: entry.runtimeSessionId,
+      deploymentScope: entry.deploymentScope,
+      generation: entry.session.generation,
+    };
+  }
+
+  #record(input: AdapterDiagnosticInput): void {
+    try {
+      this.#diagnostics.record(input);
+    } catch {
+      // Diagnostics must never change an adapter operation's result.
+    }
+  }
+
   #identity(entry: RuntimeSessionEntry, model?: string): SessionIdentity {
     return {
       runtimeSessionId: entry.runtimeSessionId,
@@ -294,15 +502,35 @@ export class AdapterProcess {
     const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
     const next = tail
       .then(() => this.#core.reportSession(this.#identity(entry, model), activity, connectivity))
-      .then(() => undefined);
+      .then(() => {
+        this.#record({
+          event: "session.activity.reported",
+          level: "info",
+          session: this.#sessionRef(entry),
+          sessionActivity: activity,
+          sessionConnectivity: connectivity,
+        });
+      });
     this.#observationTails.set(entry.runtimeSessionId, next);
     return next;
   }
 
-  #trackObservation(promise: Promise<void>): void {
+  #trackObservation(
+    promise: Promise<void>,
+    context: ObservationDiagnosticContext,
+  ): void {
     const tracked = promise
       .catch((error: unknown) => {
-        this.#observationError ??= error;
+        this.#record({
+          event: "observation.failed",
+          level: "error",
+          ...context,
+          error: diagnosticError(error),
+        });
+        if (this.#observationError === undefined) {
+          this.#observationError = error;
+          this.#observationErrorContext = context;
+        }
       })
       .finally(() => this.#pendingObservations.delete(tracked));
     this.#pendingObservations.add(tracked);
@@ -350,13 +578,22 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 
 async function runFromEnvironment(): Promise<void> {
   const sessions = JSON.parse(process.env["PATCHBAY_PI_SESSIONS"] ?? "[]") as PreprovisionedSession[];
+  const adapterId = process.env["PATCHBAY_ADAPTER_ID"] ?? "pi";
+  const attachmentEvidence = requiredEnv("PATCHBAY_ADAPTER_ATTACHMENT_SECRET");
+  const diagnostics = await openAdapterDiagnostics({
+    path: resolveAdapterLogPath(),
+    adapterId,
+    adapterGeneration: Number.parseInt(process.env["PATCHBAY_ADAPTER_GENERATION"] ?? "1", 10),
+    secrets: [attachmentEvidence],
+  });
   const processHost = new AdapterProcess({
     coreAddress: requiredEnv("PATCHBAY_CORE_ADDR"),
-    adapterId: process.env["PATCHBAY_ADAPTER_ID"] ?? "pi",
+    adapterId,
     authorityDomainId: process.env["PATCHBAY_AUTHORITY_DOMAIN_ID"] ?? "default",
-    attachmentEvidence: requiredEnv("PATCHBAY_ADAPTER_ATTACHMENT_SECRET"),
+    attachmentEvidence,
     adapterGeneration: Number.parseInt(process.env["PATCHBAY_ADAPTER_GENERATION"] ?? "1", 10),
     sessions,
+    diagnostics,
   });
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());

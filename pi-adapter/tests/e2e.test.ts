@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -57,6 +57,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { PatchbayCoreClient } from "../src/core_client.js";
+import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
 import { PiSession } from "../src/pi_session.js";
 
@@ -80,6 +81,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
   mkdirSync(join(repoRoot, "tmp"), { recursive: true });
   const directory = mkdtempSync(join(repoRoot, "tmp", "pi-adapter-e2e-"));
   const databasePath = join(directory, "core.sqlite3");
+  const diagnosticsPath = join(directory, "adapter.log");
   let core = startCore(port, adminPort, databasePath);
   let adapter: AdapterProcess | undefined;
   let adapterController: AbortController | undefined;
@@ -105,6 +107,12 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       project: "patchbay",
       generation: 1,
     };
+    const diagnostics = await openAdapterDiagnostics({
+      path: diagnosticsPath,
+      adapterId,
+      adapterGeneration: 1,
+      secrets: [adapterEvidence],
+    });
     adapter = new AdapterProcess({
       coreAddress: baseUrl,
       adapterId,
@@ -113,6 +121,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       adapterGeneration: 1,
       sessions: [],
       createSession: sessionFixture.create,
+      diagnostics,
     });
     await adapter.start();
     // Future spawn uses this same complete runtime-entry path; delivery routing
@@ -377,6 +386,12 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     adapterRun = undefined;
 
     const reconnectFixture = createSessionFixture(3, true);
+    const reconnectDiagnostics = await openAdapterDiagnostics({
+      path: diagnosticsPath,
+      adapterId,
+      adapterGeneration: 2,
+      secrets: [adapterEvidence],
+    });
     reconnect = new AdapterProcess({
       coreAddress: baseUrl,
       adapterId,
@@ -385,6 +400,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       adapterGeneration: 2,
       sessions: [{ ...configured, generation: 3 }],
       createSession: reconnectFixture.create,
+      diagnostics: reconnectDiagnostics,
     });
     await reconnect.start();
     reconnectController = new AbortController();
@@ -401,7 +417,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
             observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
             new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry"),
         ),
-      "reconnect explicitly replays Pi getEntries()/TranscriptEventLog snapshot",
+      "reconnect explicitly replays Pi persisted entries projected as transcript events",
     );
     assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
     const attachCountBeforeRestart = reconnectEvents.filter(isAdapterRegistration).length;
@@ -414,6 +430,25 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       () => countAdapterRegistrations(databasePath) === attachCountBeforeRestart + 1,
       "the retry path durably records exactly one fresh attachment",
     );
+
+    reconnectController.abort();
+    await reconnect.dispose();
+    await reconnectRun;
+    reconnect = undefined;
+    reconnectRun = undefined;
+    const diagnosticLines = readFileSync(diagnosticsPath, "utf8")
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commandRecords = diagnosticLines.filter(
+      (line) => line["command_id"] === "command-instruct",
+    );
+    assert.ok(commandRecords.some((line) => line["event"] === "delivery.received"));
+    assert.ok(commandRecords.some((line) => line["event"] === "delivery.completed"));
+    assert.ok(diagnosticLines.some((line) => line["event"] === "session.generation.changed"));
+    assert.ok(diagnosticLines.some((line) => line["event"] === "adapter.stopped"));
+    assert.equal(diagnosticLines.some((line) => JSON.stringify(line).includes(adapterEvidence)), false);
+    assert.equal(diagnosticLines.some((line) => JSON.stringify(line).includes("hello from Patchbay")), false);
   } finally {
     reconnectController?.abort();
     adapterController?.abort();

@@ -43,6 +43,11 @@ import {
   type EventId,
   type Operation,
 } from "@patchbay/contracts";
+import {
+  diagnosticError,
+  NOOP_ADAPTER_DIAGNOSTICS,
+  type AdapterDiagnostics,
+} from "./adapter_diagnostics.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 
 const encoder = new TextEncoder();
@@ -73,12 +78,14 @@ export class PatchbayCoreClient {
   #attachmentToken: string | undefined;
   #adapterGeneration: number | undefined;
   #reattachPromise: Promise<void> | undefined;
+  readonly #diagnostics: AdapterDiagnostics;
 
-  constructor(options: CoreClientOptions) {
+  constructor(options: CoreClientOptions, diagnostics: AdapterDiagnostics = NOOP_ADAPTER_DIAGNOSTICS) {
     if (!options.adapterId || !options.authorityDomainId || !options.attachmentEvidence) {
       throw new Error("adapter id, authority domain, and attachment evidence are required");
     }
     this.#options = options;
+    this.#diagnostics = diagnostics;
     const authenticate: Interceptor = (next) => async (request) => {
       request.header.set("x-patchbay-adapter-id", options.adapterId);
       request.header.set("x-patchbay-adapter-evidence", options.attachmentEvidence);
@@ -97,10 +104,15 @@ export class PatchbayCoreClient {
   }
 
   async attach(adapterGeneration: number): Promise<EventId> {
+    this.#record({
+      event: "adapter.attach.started",
+      level: "info",
+    });
     this.#adapterGeneration = adapterGeneration;
     this.#attachmentToken = undefined;
-    const result = await this.#client.attach(
-      create(AttachRequestSchema, {
+    try {
+      const result = await this.#client.attach(
+        create(AttachRequestSchema, {
         registration: create(AdapterRegistrationSchema, {
           adapterId: this.#adapterId(),
           endpointId: create(EndpointIdSchema, {
@@ -110,16 +122,36 @@ export class PatchbayCoreClient {
           adapterGeneration: create(GenerationSchema, { value: BigInt(adapterGeneration) }),
           capability: piCapabilityManifest(),
         }),
-        attachmentEvidence: encoder.encode(this.#options.attachmentEvidence),
-      }),
-    );
-    if (!result.accepted || !result.attachEventId) {
-      throw new Error(`core rejected adapter attachment: ${result.failureCode || "unknown"}`);
+          attachmentEvidence: encoder.encode(this.#options.attachmentEvidence),
+        }),
+      );
+      if (!result.accepted || !result.attachEventId) {
+        throw new Error(`core rejected adapter attachment: ${result.failureCode || "unknown"}`);
+      }
+      if (!this.#attachmentToken) {
+        throw new Error("core attachment response is missing the adapter attachment token");
+      }
+      this.#record({
+        event: "adapter.attach.succeeded",
+        level: "info",
+      });
+      return result.attachEventId;
+    } catch (error) {
+      this.#record({
+        event: "adapter.attach.failed",
+        level: "error",
+        error: diagnosticError(error),
+      });
+      throw error;
     }
-    if (!this.#attachmentToken) {
-      throw new Error("core attachment response is missing the adapter attachment token");
+  }
+
+  #record(input: Parameters<AdapterDiagnostics["record"]>[0]): void {
+    try {
+      this.#diagnostics.record(input);
+    } catch {
+      // Diagnostics must never change an adapter operation's result.
     }
-    return result.attachEventId;
   }
 
   async reportSession(
