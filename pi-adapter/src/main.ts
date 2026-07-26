@@ -18,6 +18,7 @@ import {
   type AdapterDiagnosticSessionRef,
 } from "./adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "./delivery.js";
+import { composeAdapterDiagnostics, CoreDiagnosticsForwarder } from "./core_diagnostics_forwarder.js";
 import { PiSession, type PiSessionOptions } from "./pi_session.js";
 import {
   SessionRegistry,
@@ -39,6 +40,7 @@ export interface AdapterProcessOptions {
   sessions: PreprovisionedSession[];
   createSession?: (options: PreprovisionedSession) => Promise<PiSession>;
   diagnostics?: AdapterDiagnostics;
+  forwardDiagnostics?: boolean;
 }
 
 interface StartedDelivery {
@@ -71,13 +73,26 @@ export class AdapterProcess {
   #started = false;
   #disposed = false;
   #runController: AbortController | undefined;
-  readonly #diagnostics: AdapterDiagnostics;
+  #diagnostics: AdapterDiagnostics;
   #observationErrorContext: ObservationDiagnosticContext | undefined;
 
   constructor(options: AdapterProcessOptions) {
     this.#options = options;
-    this.#diagnostics = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
-    this.#core = new PatchbayCoreClient(options, this.#diagnostics);
+    const localDiagnostics = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
+    this.#diagnostics = localDiagnostics;
+    this.#core = new PatchbayCoreClient(options, localDiagnostics);
+    if (options.forwardDiagnostics) {
+      const forwarder = new CoreDiagnosticsForwarder(
+        (report) => this.#core.reportDiagnostic(report),
+        {
+          authorityDomainId: options.authorityDomainId,
+          adapterId: options.adapterId,
+          adapterGeneration: options.adapterGeneration,
+        },
+      );
+      this.#diagnostics = composeAdapterDiagnostics([localDiagnostics, forwarder]);
+      this.#core.setDiagnostics(this.#diagnostics);
+    }
   }
 
   async start(): Promise<void> {
@@ -594,6 +609,7 @@ async function runFromEnvironment(): Promise<void> {
     adapterGeneration: Number.parseInt(process.env["PATCHBAY_ADAPTER_GENERATION"] ?? "1", 10),
     sessions,
     diagnostics,
+    forwardDiagnostics: true,
   });
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());

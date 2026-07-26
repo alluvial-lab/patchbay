@@ -11,6 +11,7 @@ import {
   ActorEndpointRefSchema,
   ActorIdSchema,
   AdapterCapabilitySchema,
+  AdapterDiagnosticReportingCapabilitySchema,
   AdapterControlService,
   AdapterIdSchema,
   AdapterRegistrationSchema,
@@ -39,6 +40,8 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
+  type AdapterDiagnosticReport,
+  type AdapterDiagnosticReportResult,
   type Delivery,
   type EventId,
   type Operation,
@@ -49,6 +52,7 @@ import {
   type AdapterDiagnostics,
 } from "./adapter_diagnostics.js";
 import type { TranscriptEvent } from "./transcript_event.js";
+import { PI_FORWARDED_DIAGNOSTIC_CODES } from "./core_diagnostics_forwarder.js";
 
 const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
@@ -78,7 +82,7 @@ export class PatchbayCoreClient {
   #attachmentToken: string | undefined;
   #adapterGeneration: number | undefined;
   #reattachPromise: Promise<void> | undefined;
-  readonly #diagnostics: AdapterDiagnostics;
+  #diagnostics: AdapterDiagnostics;
 
   constructor(options: CoreClientOptions, diagnostics: AdapterDiagnostics = NOOP_ADAPTER_DIAGNOSTICS) {
     if (!options.adapterId || !options.authorityDomainId || !options.attachmentEvidence) {
@@ -101,6 +105,10 @@ export class PatchbayCoreClient {
       AdapterControlService,
       createGrpcTransport({ baseUrl: options.coreAddress, interceptors: [authenticate] }),
     );
+  }
+
+  setDiagnostics(diagnostics: AdapterDiagnostics): void {
+    this.#diagnostics = diagnostics;
   }
 
   async attach(adapterGeneration: number): Promise<EventId> {
@@ -152,6 +160,12 @@ export class PatchbayCoreClient {
     } catch {
       // Diagnostics must never change an adapter operation's result.
     }
+  }
+
+  /** Diagnostics deliberately bypass #postAttach: they cannot refresh auth or
+   * compete with control traffic, and a failed report is best effort. */
+  reportDiagnostic(report: AdapterDiagnosticReport): Promise<AdapterDiagnosticReportResult> {
+    return this.#client.reportDiagnostics(report);
   }
 
   async reportSession(
@@ -419,5 +433,8 @@ function piCapabilityManifest() {
       FailureCode.EXECUTION_FAILED,
       FailureCode.EXECUTION_OUTCOME_UNKNOWN,
     ],
+    diagnosticReporting: create(AdapterDiagnosticReportingCapabilitySchema, {
+      diagnosticCodes: Object.values(PI_FORWARDED_DIAGNOSTIC_CODES),
+    }),
   });
 }

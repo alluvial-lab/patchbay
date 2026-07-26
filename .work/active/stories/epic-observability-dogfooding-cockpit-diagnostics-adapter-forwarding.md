@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-cockpit-diagnostics-adapter-forwarding
 kind: story
-stage: implementing
+stage: done
 tags: [observability, dogfooding, adapter]
 parent: epic-observability-dogfooding-cockpit-diagnostics
 depends_on: [epic-observability-dogfooding-cockpit-diagnostics-contract-ingestion]
@@ -50,3 +50,25 @@ Consumes the generated report contract and core endpoint from
 `pi-adapter/src/adapter_diagnostics.ts` from the sibling adapter-log-sink design
 when it has landed; sequence write ownership rather than cloning that port or
 its event registry.
+
+## Implementation notes
+
+- Added `CoreDiagnosticsForwarder` as a second `AdapterDiagnostics` sink and
+  composed it with the landed JSONL sink. Existing instrumentation remains the
+  sole event source; there is no parallel diagnostics interface or registry.
+- `PI_FORWARDED_DIAGNOSTIC_CODES` is the single Pi-owned mapping used both by
+  payload construction and `piCapabilityManifest().diagnosticReporting`, with
+  canonical failure mappings for warning/error reports. Local `reason` and
+  `error` fields are never copied into the report.
+- The forwarder is sequential, bounded to 256 pending keys and 10 reports per
+  second by default, coalesces identical safe keys to count 1000, times out
+  each report at one second, never retries, and keeps flush/close non-throwing.
+  `PatchbayCoreClient.reportDiagnostic` deliberately bypasses `#postAttach` so
+  auth loss cannot trigger token refresh or recursive control traffic.
+- Production `AdapterProcess` composition enables forwarding only at the
+  environment composition root; unit/integration test adapters retain the
+  injectable local sink by default. A throwing sink cannot veto a healthy sink.
+- Verification: `npm test` passes after retrying one transient real-process
+  e2e cancellation; the isolated forwarder tests prove safe mapping,
+  coalescing, and sink isolation. The first full run's e2e cancellation was
+  pre-existing/flaky and was not used to weaken tests.
