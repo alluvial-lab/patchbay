@@ -1,7 +1,7 @@
 ---
 id: epic-observability-dogfooding-adapter-log-sink
 kind: feature
-stage: review
+stage: done
 tags: [observability, dogfooding]
 parent: epic-observability-dogfooding
 depends_on: []
