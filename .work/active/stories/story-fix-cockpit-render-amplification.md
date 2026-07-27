@@ -1,7 +1,7 @@
 ---
 id: story-fix-cockpit-render-amplification
 kind: story
-stage: review
+stage: done
 tags: [bug]
 parent: null
 depends_on: []
@@ -71,3 +71,9 @@ synchronously; no render occurs when nothing arrived.
   `bug-cockpit-scroll-jumps-to-top-on-tool-finish` remains separate — render
   coalescing removes most scroll thrash but the anchor logic itself is
   unfixed.
+
+## Operator confirmation (2026-07-27)
+
+Hard-reload verification passed: a fresh prompt produced live tool rows AND
+the assistant's committed text rendered in the chatbox. Symptom resolved;
+story closed to done.
