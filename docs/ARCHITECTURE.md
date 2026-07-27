@@ -22,22 +22,28 @@ The runtime/session plane contains harness sessions, agent processes, shell jobs
 
 Spawn authority is fleet-level by default in v0.1.0: a spawn grant authorizes spawning across any adapter/supervisor the operator can reach, before a target session exists. Adapter-level spawn grants remain expressible through the existing target-scope flexibility when narrower authority is desired. Spawn is one `OperationKind`; spawn variants (worktree, same-dir, session, process, cloud environment) are described by payload `target_spec.shape` from a reserved open shape registry, not by per-variant OperationKinds. See `docs/PROTOCOL.md` for the spawn authority model and `docs/SECURITY.md` for the descendant-grant and revocation rules.
 
+### Operational resource plane
+
+The operational resource plane contains non-session targets whose state materially governs what an operator's agents can do or requires human action to keep agent work operating: provider-capacity pools, contribution/credential health, model availability, and similar adapter-owned resources. Resources use stable resource identity, snapshots/revisions, Observations, queries, grants, and attention without inheriting runtime-session generation or connectivity/activity semantics.
+
+Resource domain health remains adapter-owned payload state. For example, an exhausted model contribution is not an offline runtime session. The coordination core owns durable Operations, authority, correlation, and reconciliation around a resource but does not interpret allocation policy, quota mathematics, or adapter-specific health variants.
+
 ### Adapter plane
 
-Adapters translate between Patchbay concepts and external systems. Pi is the first adapter. Adapters declare capabilities and own external-system details.
+Adapters translate between Patchbay concepts and external systems. Pi is the first session adapter. token-commune is the second reference adapter and the first materially non-session resource adapter. Adapters declare capabilities and own external-system details.
 
 Adapters are not allowed to introduce core-only assumptions such as shared cwd semantics, harness-specific message formats, or project-specific workflow state into the Patchbay core.
 
 #### Adapter registration and lifecycle
 
-An adapter is a **principal** with an explicit registration lifecycle, symmetric with the web-server-as-principal model. At attach time an adapter submits attachment evidence verified by an adapter-specific trust root (the Pi adapter uses configured local material; future adapters may use mTLS or OAuth) and a capability manifest. The core records the adapter id, capability manifest, attach LSN, and adapter generation (adapter-reported, monotonic per adapter, used to reject stale events from a prior adapter attachment). Sessions discovered or reported by the adapter inherit the adapter's authenticated channel.
+An adapter is a **principal** with an explicit registration lifecycle, symmetric with the web-server-as-principal model. At attach time an adapter submits attachment evidence verified by an adapter-specific trust root (the Pi adapter uses configured local material; future adapters may use mTLS or OAuth) and a capability manifest. The core records the adapter id, capability manifest, attach LSN, and adapter generation (adapter-reported, monotonic per adapter, used to reject stale events from a prior adapter attachment). Sessions and resources discovered or reported by the adapter inherit the adapter's authenticated channel.
 
 The adapter lifecycle is audited:
 
 - **Attach** — registration with identity proof and capability manifest.
-- **Detach** — clean detachment; the core marks affected sessions `stale` or `offline`.
-- **Failure** — loss detected via timeout; the core degrades affected sessions honestly rather than fabricating liveness.
-- **Capability redeclaration** — allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected sessions per the rules in `docs/PROTOCOL.md`.
+- **Detach** — clean detachment; the core marks affected sessions and resources `stale` or `offline` under their respective state contracts.
+- **Failure** — loss detected via timeout; the core degrades affected sessions and resources honestly rather than fabricating liveness or health.
+- **Capability redeclaration** — allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected targets per the rules in `docs/PROTOCOL.md` and the resource contract promoted by the agent-operations arc.
 
 The trust-root mechanism is adapter-specific; the core validates attachment evidence but does not mandate a single mechanism. An adapter that cannot provide attachment evidence cannot register (fail-closed).
 
@@ -47,9 +53,9 @@ This plane defines Operation acceptance, delivery, reply/response correlation, i
 
 ### State and snapshot plane
 
-This plane defines authoritative state for actors, sessions, and resources. Session connectivity/activity axes are owned by `docs/PROTOCOL.md`; control surfaces compose those axes and must display stale, offline, and unknown states distinctly from live states.
+This plane defines authoritative state for actors, sessions, and resources. Session connectivity/activity axes are owned by `docs/PROTOCOL.md`; control surfaces compose those axes and must display stale, offline, and unknown states distinctly from live states. Resource domain state is carried by an adapter-owned schema and never coerced into those session axes; its snapshot still carries Patchbay revision, authority-domain, source, and staleness context.
 
-Snapshots repair missed streams and reconnect gaps when the adapter or core can provide an authoritative snapshot. Adapters with partial or no snapshot capability degrade as defined in `docs/PROTOCOL.md`.
+Snapshots repair missed streams and reconnect gaps when the adapter or core can provide an authoritative snapshot. Adapters with partial or no snapshot capability degrade as defined in `docs/PROTOCOL.md`. A resource adapter may claim only the tier supported by the complete external view it can actually reconstruct.
 
 ### Authority and identity plane
 
@@ -87,7 +93,7 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
                 │
 ┌───────────────▼──────────────────────────────────────────┐
 │ Patchbay coordination core                               │
-│  actor registry                                          │
+│  actor/session/resource registry                         │
 │  durable events/inboxes                                  │
 │  operation routing                                       │
 │  authority/grants                                        │
@@ -96,8 +102,8 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
 └───────┬───────────────┬───────────────────────┬──────────┘
         │               │                       │
 ┌───────▼──────┐ ┌──────▼──────┐        ┌───────▼──────────┐
-│ Pi adapter   │ │ shell/job    │        │ future adapters  │
-│ first target │ │ adapter      │        │ harness/tool/etc │
+│ Pi adapter   │ │ token-commune│        │ future adapters  │
+│ sessions     │ │ resources    │        │ harness/tool/etc │
 └──────────────┘ └─────────────┘        └──────────────────┘
 ```
 
@@ -106,10 +112,10 @@ This plane contains TLA+/Quint models, Alloy models, protocol contracts, conform
 The first executable slice and the public product share the same durable-core architecture but carry different support commitments:
 
 - **`v0.1.0`** gets the initial operator operational with one authoritative core, one operator, Pi, a responsive web cockpit, a diagnostic CLI, and durable local persistence behind ports.
-- **`v0.x`** hardens packaging, migrations, public boundaries, executable conformance, and adapter portability while contracts may still evolve through explicit breaking changes.
-- **`v1.0.0`** supports independent operators self-hosting Patchbay through one tested reference deployment path. Each v1 deployment has one human operator. Pi plus a credible second or materially distinct reference adapter proves that the adapter boundary is not merely Pi-shaped.
+- **`v0.x`** hardens packaging, migrations, public boundaries, executable conformance, the operational-resource plane, and adapter portability while contracts may still evolve through explicit breaking changes.
+- **`v1.0.0`** supports independent operators self-hosting Patchbay through one tested reference deployment path. Each v1 deployment has one human operator. Pi plus token-commune prove the adapter boundary across runtime-session and operational-resource shapes.
 
-The v1 reference support boundary includes installation, TLS/reverse-proxy guidance, identity and adapter enrollment/revocation, versioned configuration and storage migrations, upgrade/rollback expectations, backup/restore, diagnostics, and crash recovery. The architecture remains deployment-neutral even though only one golden deployment path is required to be supported. HA, federation, multi-human shared deployments, multiple storage backends, zero-downtime upgrades, and orchestration-specific packaging remain post-v1 seams.
+The v1 reference support boundary includes installation, TLS/reverse-proxy guidance, identity and adapter enrollment/revocation, versioned configuration and storage migrations, upgrade/rollback expectations, backup/restore, diagnostics, and crash recovery. The architecture remains deployment-neutral even though only one golden deployment path is required to be supported. token-commune remains separately deployable: a personal Patchbay adapter reaches it through its external API using that operator's scoped gateway credential, and its LLM traffic never enters Patchbay. HA, federation, multi-human shared deployments, multiple storage backends, zero-downtime upgrades, and orchestration-specific packaging remain post-v1 seams.
 
 ## v0.1.0 component slice
 
@@ -205,8 +211,16 @@ Future architecture planes remain valid direction, but v0.1.0 implementation sho
 - Generated contracts or central schemas define wire shapes and derive Operation/session/failure variants from the canonical protocol registry.
 - Formal models define product semantics for delivery, authority, identity, snapshots, and leases using the canonical protocol variables.
 
-## Pi-first migration path
+## Reference adapter paths
+
+### Pi-first session migration
 
 The Pi adapter provides the first real runtime integration. It exposes Pi sessions to Patchbay without making Pi session semantics global. Pi-specific features appear as adapter capabilities, not as core protocol requirements.
 
 The migration target is functional parity with the operator's current Remote Pi workflow and a UX quality bar closer to a mature remote agent app. The v0.1.0 Pi adapter parity checklist, capability mapping, and migration-decision criteria live in `docs/ADAPTER-PI.md`.
+
+### token-commune operational-resource path
+
+token-commune provides the first materially non-session reference integration. An outboard adapter consumes the gateway's external metadata/control API and reports provider pools, contribution health, model availability, member draw, fingerprint state, and lifecycle events as resource snapshots, query results, Observations, and attention. A read-only observer lands before administrative mutations; later grant-gated Operations may drive gateway actions only through explicit upstream contracts with honest semantic completion and idempotency behavior.
+
+Each near-term Patchbay deployment remains personal: a member deployment uses that member's token-commune credential, while an admin deployment uses an admin credential. token-commune remains authoritative for gateway roles and pool policy; Patchbay grants constrain local operator actions. token-commune's CLI and embedded UI remain independent fallbacks, and model prompts/responses never cross the Patchbay adapter boundary.

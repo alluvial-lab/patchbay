@@ -2,7 +2,7 @@
 
 ## Definition
 
-Patchbay is a deployment-neutral human control plane for operating agent sessions across machines. It provides durable operator intent, recoverable session state, authority checks, and adapter-neutral routing between human control surfaces and runtime/session adapters.
+Patchbay is a deployment-neutral human control plane for operating agent sessions and the operational resources that govern their availability, capability, and safe control across machines. It provides durable operator intent, recoverable target state, authority checks, and adapter-neutral routing between human control surfaces and session/resource adapters.
 
 ## Starting scope
 
@@ -22,13 +22,28 @@ Patchbay does not start with a native mobile app, swarm orchestration, project-m
 Patchbay uses SemVer to distinguish the initial operator's walking skeleton from the intended public product:
 
 - **`v0.1.0` — initial-operator walking skeleton.** One operator controls Pi-backed sessions through the responsive web cockpit and diagnostic CLI. This milestone proves the durable control loop and gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone, does not require completed publication legal review, and is not the product ceiling.
-- **`v0.x` — public-preview hardening.** Deployment, migrations, public compatibility surfaces, adapter boundaries, executable conformance, and second-adapter evidence mature. Breaking changes remain permitted when explicit migrations and release notes accompany them.
-- **`v1.0.0` — reliable self-hosted public product.** Additional operators can independently deploy and operate Patchbay through a supported reference path. One human operator controls each deployment. Multi-human shared deployments remain a post-v1 seam.
+- **`v0.x` — public-preview hardening and agent-operations expansion.** Deployment, migrations, public compatibility surfaces, adapter boundaries, the operational-resource plane, executable conformance, and token-commune reference-adapter evidence mature. Breaking changes remain permitted when explicit migrations and release notes accompany them.
+- **`v1.0.0` — reliable self-hosted public product.** Additional operators can independently deploy and operate Patchbay through a supported reference path. One human operator controls each deployment. Pi sessions and token-commune resources provide the two reference adapter shapes. Multi-human shared deployments remain a post-v1 seam.
 - **Post-v1 reserved capabilities.** Multi-human authority workflows, federation, HA/multi-core coordination, replication, zero-downtime upgrades, and broader surface and adapter ecosystems are promoted only by demonstrated product pressure.
 
 ### v1 adapter proof
 
-`v1.0.0` targets Pi plus one credible second adapter, preferably for an open-source system with materially different semantics. Patchbay does not accept an obligation to build uncompensated first-party-provider integrations, but its public adapter contract must allow adopters and providers to implement them. If no suitable second adapter exists, a materially distinct conformance reference adapter may satisfy the abstraction proof rather than blocking release indefinitely.
+`v1.0.0` targets Pi plus token-commune as its materially distinct second reference adapter. Pi exercises session, transcript, runtime-generation, and interactive-control semantics; token-commune exercises provider-pool resources, authoritative metadata reads, capacity/credential health, adapter-shaped projections, and administrative attention/control without carrying LLM traffic through Patchbay. The pair must prove through executable conformance that the public adapter boundary supports both session and resource targets without either adapter's concepts entering the core ontology.
+
+Patchbay does not accept an obligation to build uncompensated first-party-provider integrations, but its public adapter contract must allow adopters and providers to implement them. token-commune remains an independently deployable product with its own API, authorization, CLI, and fallback UI; Patchbay consumes its external contract rather than its internal modules.
+
+### Post-v0.1 agent-operations direction
+
+The post-v0.1 product direction remains personal and operator-led while expanding beyond session-only control:
+
+- **Sessions remain primary.** Runtime sessions retain their canonical identity, connectivity/activity axes, transcript/Observation flows, and lifecycle semantics.
+- **Operational resources become first-class targets.** A resource is admitted when its state materially affects what the operator can ask an agent to do or requires human action to keep agent work operating. Resource identity and domain health are distinct from runtime-session identity and connectivity/activity; adapters must not fabricate session state for resources.
+- **Adapter-shaped projections sit above the conformance floor.** Shared presentation primitives continue to enforce authority, delivery, failure, reconnect, and stale-state honesty. A reference adapter may add a richer domain projection—such as token-commune capacity, draw, contribution-health, and fingerprint views—without defining new core protocol states.
+- **Personal deployments compose communal services.** Each near-term Patchbay deployment has one human operator and uses that operator's upstream credential. token-commune retains member/admin authorization at the gateway; Patchbay grants add local defense in depth rather than replacing upstream roles.
+- **The data plane stays outboard.** Patchbay may observe and control token-commune metadata and administrative resources, but model prompts, responses, routing, allocation, and provider credentials remain on token-commune's data/onboarding paths.
+- **Coordination remains deferred.** Multi-human Patchbay authority, delegation, quorum, federation, agent-to-agent messaging, and shared-work routing are reserved for demonstrated pressure after the personal resource-and-session cockpit is in daily use.
+
+This direction is not a general monitoring mandate. Arbitrary service telemetry that does not govern agent capability/availability or require operator action remains outside Patchbay's product boundary.
 
 ### v1 supported deployment floor
 
@@ -171,11 +186,11 @@ Patchbay uses TLA+ or Quint for dynamic state-machine behavior and Alloy for rel
 
 ## Adapter posture
 
-Adapters are replaceable edges. The first adapter targets Pi workflows so the operator can migrate from current remote-control habits. Future adapters may target other harnesses, shell jobs, CI jobs, project tools, notification systems, or human approval surfaces.
+Adapters are replaceable edges. The first adapter targets Pi workflows so the operator can migrate from current remote-control habits. token-commune is the second reference adapter and first operational-resource adapter. Future adapters may target other harnesses, shell jobs, CI jobs, project tools, notification systems, resource systems, or human approval surfaces.
 
 Adapters report:
 
-- actor/session identity;
+- actor and target identity, using runtime-session identity for sessions and resource identity for operational resources;
 - supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values);
 - capabilities;
 - protocol-derived connectivity and activity status;
@@ -189,11 +204,12 @@ Adapters do not define Patchbay's core ontology.
 
 ## Core concepts
 
-- **Operator** — a human who controls sessions through Patchbay.
+- **Operator** — a human who controls sessions and operational resources through Patchbay.
 - **Actor** — a human, agent, daemon, service, or adapter endpoint represented in the system.
 - **Control surface** — web, CLI, mobile, desktop, notification, or other human-facing UI.
 - **Runtime session** — an external session, process, harness, job, or agent context controlled through an adapter.
-- **Adapter** — integration boundary between Patchbay and an external runtime, harness, tool, or surface.
+- **Operational resource** — an adapter-reported non-session target whose state materially governs agent availability, capability, or safe control, such as a provider-capacity pool; its domain health is not session connectivity/activity.
+- **Adapter** — integration boundary between Patchbay and an external runtime, harness, resource system, tool, or surface.
 - **Operation** — an authorized control-plane request by an actor to a target. v0.1.0 Operations are operator-originated; non-operator senders are a reserved seam.
 - **Observation** — a source-authenticated fact/event/output/status emission that does not grant authority. Live streams are delivery optimizations.
 - **Elicitation** — a durable pending response solicitation opened by an adapter/agent/harness; v0.1.0 binds to the operator actor and delivers by subscription fan-out.

@@ -114,6 +114,10 @@ An authorized control-plane request by an actor to an actor, core, adapter, flee
 
 A registry-owned kind of Operation: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management` (committed v0.1.0), plus reserved `agent-send` and `adapter-utility-exec`. Unknown or reserved-but-not-validatable kinds are `validation_failed` at submission. See `docs/PROTOCOL.md`.
 
+## Operational resource
+
+An adapter-reported non-session target whose state materially governs agent availability, capability, or safe control, or requires human action to keep agent work operating. Provider-capacity pools, contribution/credential health, and model availability are examples. Resource identity and domain health are distinct from runtime-session identity and connectivity/activity; an exhausted resource is not an offline session. Patchbay owns durable Operations, authority, correlation, reconciliation, and attention around the target while the adapter owns its domain schema and policy.
+
 ## Operator session
 
 An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an endpoint. It is the continuity mechanism for a control surface, not a substitute for command grants.

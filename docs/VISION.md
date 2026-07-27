@@ -1,14 +1,14 @@
 # Patchbay Vision
 
-Patchbay is a deployment-neutral human control plane for operating agent sessions across machines.
+Patchbay is a deployment-neutral human control plane for operating agent sessions and the operational resources that govern their availability, capability, and safe control across machines.
 
-Patchbay gives an operator a reliable cockpit for discovering sessions, spawning or attaching to runtime sessions, submitting authorized Operations, receiving source-authenticated Observations, answering Elicitations, and recovering state after disconnection. The coordination core is a network-reachable fixed point: operator surfaces and agent/harness machines are reconnecting clients of it, and neither side is load-bearing for the other. Patchbay starts with a Pi adapter because Pi is the first workflow target, but Pi is an adapter, not the architecture.
+Patchbay gives an operator a reliable cockpit for discovering sessions and operational resources, spawning or attaching to runtime sessions, submitting authorized Operations, receiving source-authenticated Observations, answering Elicitations, and recovering state after disconnection. Sessions remain the product center; resources enter the control plane only when their state materially changes what the operator can ask an agent to do or requires human action to keep agent work operating. The coordination core is a network-reachable fixed point: operator surfaces, agent/harness machines, and resource adapters are reconnecting clients of it, and neither side is load-bearing for the other. Patchbay starts with Pi as its first workflow adapter and uses token-commune as its second, materially non-session reference adapter; neither system defines the core architecture.
 
 ## Audience and release horizon
 
 Patchbay is intended to become a publishable, reliable self-hosted product that independent operators can deploy for themselves. The first executable milestone, `v0.1.0`, gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone, does not require completed publication legal review, and is not the product ceiling.
 
-The `v0.x` line hardens deployment, migrations, public contracts, adapter boundaries, and implementation-backed assurance while retaining pre-1.0 freedom to make explicit breaking changes. `v1.0.0` is the public-product threshold: one human operator per deployment, one supported reference deployment path, Pi plus a credible second or materially distinct reference adapter, and stable designated public contracts. Multi-human shared deployments, federation, HA, and broader provider/adopter integrations remain explicit post-v1 seams rather than hidden assumptions or `v0.1.0` obligations.
+The `v0.x` line hardens deployment, migrations, public contracts, adapter boundaries, the operational-resource plane, and implementation-backed assurance while retaining pre-1.0 freedom to make explicit breaking changes. `v1.0.0` is the public-product threshold: one human operator per deployment, one supported reference deployment path, Pi plus the materially distinct token-commune resource adapter, and stable designated public contracts. Multi-human shared deployments, federation, HA, and broader provider/adopter integrations remain explicit post-v1 seams rather than hidden assumptions or `v0.1.0` obligations.
 
 ## Why Patchbay exists
 
@@ -18,16 +18,17 @@ The core must remain reachable independently of any one operator device or harne
 
 The control surface must answer these questions reliably:
 
-- Which sessions exist?
+- Which sessions and agent-operational resources exist?
 - Which machine, project, adapter, and runtime does each session belong to?
-- What is the session's authoritative connectivity and activity status?
+- Which resources currently constrain or enable those sessions?
+- What is each session's authoritative connectivity/activity state and each resource's authoritative domain state?
 - Was my command accepted?
-- Did it reach the intended session?
+- Did it reach the intended session or resource?
 - Can I retry safely?
 - What state is authoritative after reconnect?
 - Who is allowed to control this session or resource?
 
-Patchbay exists so accepted operator intent cannot disappear silently or mutate the wrong session.
+Patchbay exists so accepted operator intent cannot disappear silently or mutate the wrong session or resource.
 
 ## Product center
 
@@ -47,10 +48,10 @@ shared operator domain + protocol client
       ▼
 Patchbay coordination core
       │
-      ├── Pi adapter
+      ├── Pi session adapter
+      ├── token-commune resource adapter
       ├── shell/job adapters
-      ├── future harness adapters
-      └── future project/tool adapters
+      └── future harness/project/tool adapters
 ```
 
 ## What Patchbay is
@@ -58,7 +59,7 @@ Patchbay coordination core
 Patchbay is:
 
 - a publishable, reliable self-hosted product for independent operators;
-- a human-operated control plane for headless and distributed agent sessions;
+- a personal human-operated control plane for headless and distributed agent sessions plus the operational resources that govern their capability and availability;
 - a durable Operation, Observation, Elicitation, snapshot, and authority layer;
 - an adapter-neutral protocol and daemon model;
 - a web-first cockpit with mobile-quality ergonomics;
@@ -79,7 +80,7 @@ Adapters may integrate with Pi, Claude, Codex, shell jobs, project trackers, or 
 
 ## Success criteria
 
-Patchbay is successful when an operator can move among phone, laptop, desktop, and CLI while controlling remote/headless agent sessions with clear delivery state, durable history, and recoverable snapshots. At the public-product threshold, an additional operator can independently install, secure, upgrade, back up, restore, diagnose, and operate their own Patchbay deployment through the supported reference path.
+Patchbay is successful when an operator can move among phone, laptop, desktop, and CLI while controlling remote/headless agent sessions and the resources that materially govern them, with clear delivery state, durable history, actionable attention, and recoverable snapshots. Resource-specific views may be richer than the generic conformance floor, but they must preserve authority, delivery, and stale-state honesty. At the public-product threshold, an additional operator can independently install, secure, upgrade, back up, restore, diagnose, and operate their own Patchbay deployment through the supported reference path.
 
 A useful Patchbay session has these properties:
 

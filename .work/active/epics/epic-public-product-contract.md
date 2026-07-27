@@ -6,7 +6,7 @@ tags: [foundation, protocol, verification]
 depends_on: [epic-foundation-hardening, epic-v0-1-0-implementation]
 parent: null
 created: 2026-07-10
-updated: 2026-07-11
+updated: 2026-07-26
 gate_origin: null
 release_binding: null
 ---
@@ -15,7 +15,7 @@ release_binding: null
 
 ## Status
 
-Sidelined pending `epic-v0-1-0-implementation` as of 2026-07-11. The v0.1.0 walking skeleton is fully designed but entirely unbuilt; the v1.0.0 public product cannot ship without it. This epic's `depends_on` now includes `epic-v0-1-0-implementation` to reflect that honestly. The v1.0.0 design work that already landed (`epic-public-product-contract-verification-claim-correction`, done) is preserved; the remaining unbuilt v1.0.0 features stay at `stage: drafting` and are blocked on v0.1.0 implementation. v1.0.0 design work may still proceed in parallel where it does not depend on running code, but the release is gated on v0.1.0 existing.
+Active after the v0.1.0 walking skeleton shipped. The remaining public-product features now consume running core, server, cockpit, CLI, Pi-adapter, persistence, and observability behavior rather than design-only scaffolding. The post-v0.1.0 agent-operations arc supplies the selected token-commune resource adapter to the portability proof; public compatibility, self-hosted operations, executable assurance, and publication governance continue on their declared dependency paths.
 
 ## Brief
 
@@ -30,7 +30,7 @@ The scope changes the project's stated audience and release horizon, defines pub
 ## Strategic decisions
 
 - **Who shares one v1 deployment?** `v1.0.0` supports one human operator per deployment. Many operators may independently self-host Patchbay. Multi-human shared deployments remain an explicit post-v1 seam.
-- **What adapters prove v1?** `v1.0.0` targets Pi plus one credible second adapter, preferably an open-source system with materially different semantics. Patchbay does not accept an obligation to build uncompensated first-party-provider integrations, but the public adapter contract must permit adopters and providers to build them. If no suitable second adapter exists, a materially distinct conformance reference adapter may prevent an indefinite release block.
+- **What adapters prove v1?** `v1.0.0` targets Pi plus token-commune. Pi proves the runtime-session path; token-commune proves the materially distinct operational-resource path without putting LLM traffic through Patchbay. Patchbay does not accept an obligation to build uncompensated first-party-provider integrations, but the public adapter contract must permit adopters and providers to build them.
 - **What does deployable by others mean?** `v1.0.0` is a reliable self-hosted product: one supported reference deployment path, documented installation and TLS/reverse-proxy guidance, operator and adapter enrollment/revocation, versioned configuration and storage migrations, upgrade and rollback expectations, backup/restore, diagnostics/health checks, and tested crash recovery. HA, federation, zero-downtime upgrades, multiple storage backends, and orchestration-specific packaging remain preserved post-v1 seams.
 - **What becomes stable at 1.0?** The public compatibility contract covers the adapter protocol/capability contract, explicitly documented operator API, supported persisted-data migration path, documented configuration, script-facing CLI behavior, and canonical protocol semantics. Internal module APIs, raw database schema, UI structure, human-readable CLI formatting, undesignated internal web/core calls, and checker/file layout remain private. `0.x` may break with explicit migrations and release notes; `1.x` follows SemVer.
 - **What assurance blocks 1.0?** Patchbay uses a property-graded hybrid. Every public safety claim requires executable implementation evidence. Formal coverage additionally blocks release for command terminal races, session-generation isolation, crash/replay/snapshot convergence, and multi-surface Elicitation races. Multi-human delegation, lease, federation, HA, and split-brain properties gate those future capabilities rather than `v1.0.0`.
@@ -116,7 +116,7 @@ The epic is split by capability rather than implementation layer. The already-au
 
 - `epic-public-product-contract-public-compatibility` — designate and enforce the stable v1 public/private compatibility boundary and SemVer ceremonies — depends on: `[]`
 - `epic-public-product-contract-self-hosted-operations` — deliver one tested install, secure operation, migration, upgrade/rollback, backup/restore, diagnostics, and recovery path — depends on: `[epic-public-product-contract-public-compatibility]`
-- `epic-public-product-contract-adapter-portability-proof` — prove the public adapter boundary with Pi plus a materially distinct open-source or conformance reference adapter — depends on: `[epic-public-product-contract-public-compatibility]`
+- `epic-public-product-contract-adapter-portability-proof` — prove the public adapter boundary across Pi runtime sessions and token-commune operational resources — depends on: `[epic-public-product-contract-public-compatibility, epic-token-commune-control-attention]`
 - `epic-public-product-contract-verification-claim-correction` — re-inventory and correct, demote, relocate, or remove verification artifacts whose claims exceed their evidence — depends on: `[]`
 - `epic-public-product-contract-executable-release-assurance` — run real checkers and implementation-backed evidence for public claims and the four formally gated kernels — depends on: `[epic-public-product-contract-public-compatibility, epic-public-product-contract-self-hosted-operations, epic-public-product-contract-adapter-portability-proof, epic-public-product-contract-verification-claim-correction]`
 - `epic-public-product-contract-publication-governance` — clear the public identity and legally formalize licensing, trademark, generated-output, dependency, and contribution policy — depends on: `[]`
@@ -127,12 +127,12 @@ The epic is split by capability rather than implementation layer. The already-au
 - **External legal gates.** Final identity clearance and licensing/contribution conclusions require qualified counsel. Publication governance can prepare inventories and options but must remain incomplete rather than fabricate legal certainty.
 - **Broad operational surface.** Compatibility and self-hosted operations were split because combining API/config/migration stability with installation/backup/recovery would exceed a comfortable feature. Each feature-design pass must still split further into implementation units without creating layer-only work.
 - **Stale cleanup inventory.** Foundation hardening already fixed some adversarial findings. Verification correction must inspect current HEAD and classify each artifact afresh instead of replaying the epic's initial candidate list.
-- **Adapter candidate drift.** Existing research favors OpenCode as a candidate, but selection requires refreshed license/version/API evidence and reconciliation of spawn/attach semantics. The reference-adapter fallback prevents candidate churn from blocking the product indefinitely.
+- **Cross-repository reference dependency.** token-commune is the selected second adapter, but its external read/mutation contracts, scoped credentials, event identity/cursors, and idempotency semantics are owned in a separate repository. Patchbay must consume an explicit external contract and must not turn sibling-repo implementation coupling into portability evidence.
 - **Critical path.** Executable assurance intentionally waits for the public contract, operational recovery behavior, adapter proof, and corrected verification claims. The long path is evidence of the actual product dependency, not a reason to weaken the gate.
 
 ## Extension pressure classification
 
 - **Committed `v0.1.0`:** one operator, one authoritative core, Pi-first control loop, durable local persistence behind ports, web cockpit, diagnostic CLI, generated contracts, and the safety kernel required to get the initial operator operational.
-- **Committed `v1.0.0` horizon:** reliable self-hosted deployment for independent operators; Pi plus a credible second/reference adapter proof; stable designated public contracts; property-graded hybrid release assurance; a cleared distinctive public identity; and a legally reviewed AGPL-application/Apache-interoperability licensing policy.
+- **Committed `v1.0.0` horizon:** reliable self-hosted deployment for independent operators; Pi plus token-commune adapter proof across session and resource shapes; stable designated public contracts; property-graded hybrid release assurance; a cleared distinctive public identity; and a legally reviewed AGPL-application/Apache-interoperability licensing policy.
 - **Reserved seams:** multi-human shared deployments, provider/adopter-authored proprietary integrations, federation, HA, replication, zero-downtime upgrades, delegation, lease-backed coordination, additional surfaces, and broader adapters.
 - **Explicitly rejected as a Patchbay obligation:** uncompensated first-party-provider integration work as a prerequisite for `v1.0.0`. The adapter path remains open to providers and adopters.
