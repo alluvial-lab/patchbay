@@ -434,7 +434,7 @@ v0.1.0 revision/cursor rules:
 - Every snapshot carries the `LSN` it was materialized at and the per-view revisions it reflects.
 - A control surface reconciles by submitting its cursor; the core returns events with `LSN > cursor` and/or a snapshot materialized at a later `LSN`.
 - A snapshot with an `LSN` strictly less than the core's current state for that view is **older** and is rejected as an authority source; the core returns the current view instead.
-- A snapshot from a different authority domain or a different core generation is rejected outright.
+- A snapshot from a different authority domain is rejected outright. The core-generation field is wire-present for cross-incarnation rejection, but is currently unset: core-generation persistence and validation are a reserved seam.
 - Late events carry the `LSN` at which they were committed; an event whose `LSN` is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
 - The core may serve a compressed snapshot at any `LSN`; cursors remain valid across compaction because revisions are monotonic.
 
@@ -484,7 +484,7 @@ The coordination core owns durable command state, the event log, snapshots, and 
 - **Port-isolated**: the core reads/writes through a storage port; adapters and control surfaces never touch persistence directly.
 - **Crash recovery**: on restart, the core replays the durable log to reconstruct in-memory state up to the last committed `LSN`. Accepted-but-not-yet-terminal commands are restored as `accepted` (or a later committed state) and continue through their lifecycle. No accepted command disappears silently after a crash.
 - **Idempotent reprocessing**: replaying the log produces identical state. Re-delivery to adapters after recovery is governed by adapter capability and command policy, not by log replay.
-- **Snapshot checkpointing**: snapshots are periodic materializations used to bound replay cost on recovery; they are derived artifacts, never an alternate source of truth. A recovery may load the latest snapshot then replay events with `LSN > snapshot_LSN`.
+- **Snapshot materialization**: the store is snapshot-capable and `LoadSnapshot` materializes an on-demand snapshot at the current `LSN`; periodic checkpoint writing to bound replay cost is not implemented — recovery replays the durable log. Snapshots remain derived artifacts, never an alternate source of truth.
 
 v0.1.0 does not require WAL replication, remote replication, point-in-time cloning, or storage-engine hot swap. Those are reserved seams.
 
@@ -620,7 +620,7 @@ Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does
 | transports / deployment topology | HA, clustering, split-brain recovery, multiple authoritative cores | R | SPEC non-goals; ARCHITECTURE |
 | storage / persistence backends | local durable event/snapshot store behind ports | C | `feature-persistence-snapshot-model` |
 | storage / persistence backends | WAL shipping, remote replicas, point-in-time clone, storage-engine hot swap | R | ARCHITECTURE; PROTOCOL |
-| protocol contract versions | Protobuf + Buf; `buf lint` + `buf breaking` in CI | C | `feature-protocol-idl-and-conformance` |
+| protocol contract versions | Protobuf + Buf; generated-drift, conformance-vector, model-promotion, and presentation checks in CI | C | `feature-protocol-idl-and-conformance` |
 | protocol contract versions | reserved enum values wire-present, rejected at submission (`agent-send`, `adapter-utility-exec`, `freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`) | C (shape) / R (value) | `feature-protocol-idl-and-conformance`; PROTOCOL registries |
 | protocol contract versions | `(authority_domain_id, LSN)` tuple key shape (federation seam) | C | PROTOCOL event/cursor identity |
 | protocol contract versions | JSON Schema / TypeBox / Zod for JSON-native local validation; TypeSpec for multi-output authoring | R | `feature-verification-contract-authority` |

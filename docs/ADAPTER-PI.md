@@ -160,7 +160,7 @@ The operator can switch from Remote Pi to Patchbay when **all** of the following
 
 ## 9. Extension pressure classification
 
-This is the local committed-v0.1.0 / reserved-seam / rejected classification for the Pi adapter, consistent with the non-foreclosure discipline in `feature-extension-seams-non-foreclosure` and its ordering note (local per-feature classification suffices until the central extension-seams sweep runs). The central sweep will consolidate this into the project-wide registry when it executes.
+This is the local committed-v0.1.0 / reserved-seam / rejected classification for the Pi adapter, consistent with the non-foreclosure discipline in `feature-extension-seams-non-foreclosure` and its ordering note (local per-feature classification suffices until the central extension-seams sweep runs). The project-wide registry now exists as the extension seams registry in [`docs/PROTOCOL.md`](PROTOCOL.md); this section remains the Pi-local view.
 
 - **Committed v0.1.0:**
   - the `OperationKind` mappings in §4;

@@ -160,13 +160,13 @@ v0.1.0 architecture decisions:
 
 v0.1.0 runs three logical processes:
 
-- **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate HTTP in v0.1.0.
+- **Rust coordination core** — the single authoritative process. Owns the durable event log, Operation acceptance, authority checks, snapshots, and the storage port. Does not terminate browser-facing HTTP/HTTPS in v0.1.0 (its gRPC listeners speak h2c to control surfaces and adapters).
 - **TypeScript web server** — a control-surface process that terminates HTTP/HTTPS for the browser cockpit, owns operator sessions, cookies, and CSRF protection, and speaks the generated Protobuf/Connect contract to the Rust core.
 - **TypeScript Pi adapter** — a runtime-adapter process that hosts Pi `AgentSession` runtimes, translates delivered Operations into Pi actions, and reports source-authenticated session state, results, and transcript Observations to the Rust core.
 
 The web server is a **control surface, not a core**. It is an authenticated endpoint/principal with respect to the core, subject to the same grant and audit rules as other control surfaces. The Rust core remains the single authoritative coordination process; the web server never writes the durable log or makes authority decisions.
 
-The browser runs the shared TypeScript operator domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The future Expo app and CLI reuse the same operator domain and the same protocol semantics. The presentation model is refined in `docs/UX.md` as the **shared presentation-component layer**. v0.1.0 implements that layer as a registry-derived static check plus skin-able CSS and showcase artifacts that bind canonical protocol states to presentable primitives. Executable runtime consumer assertions remain a reserved seam (see `docs/UX.md`).
+The browser runs its own TypeScript client domain (protocol client, delivery/reconnect/session state machines, presentation model) as a client of the web server. The CLI implements a separate client domain over the same generated contracts and protocol semantics; a future Expo app would do likewise. The presentation model is refined in `docs/UX.md` as the **shared presentation-component layer**. v0.1.0 implements that layer as a registry-derived static check plus skin-able CSS and showcase artifacts that bind canonical protocol states to presentable primitives. Executable runtime consumer assertions remain a reserved seam (see `docs/UX.md`).
 
 Reserved seams:
 

@@ -26,7 +26,7 @@ A human-facing interface such as web, CLI, future mobile app, desktop app, notif
 
 ## Core generation
 
-A marker of the coordination core's current incarnation, used to reject snapshots or events from a prior incarnation outright during reconciliation. See Generation for the unified entry covering all three scopes.
+A marker of the coordination core's current incarnation, intended to reject snapshots or events from a prior incarnation outright during reconciliation. The field is wire-present but currently unset — core-generation persistence and validation are a reserved seam. See Generation for the unified entry covering all three scopes.
 
 ## Cursor
 
@@ -36,7 +36,7 @@ A log sequence number a control surface or adapter holds to express that it has 
 
 A new lifetime of an entity that retains its identity. Patchbay uses generation at three scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
 
-- **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Used to reject snapshots or events from a prior core incarnation outright during reconciliation.
+- **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Wire-present but currently unset; cross-incarnation rejection is a reserved seam until persistence and validation exist.
 - **Session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
 - **Adapter generation** — an incarnation of the adapter process, **adapter-reported on re-attach**. Used to reject stale events from a prior adapter attachment.
 

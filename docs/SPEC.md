@@ -174,7 +174,7 @@ Patchbay uses Protobuf schemas managed by Buf as the v0.1.0 boundary-contract so
 
 - `.proto` files are the source for wire contracts and boundary DTOs (including the wire encoding of enum vocabularies), not the full internal domain model and not the canonical registry of protocol variant names.
 - Rust types are generated via prost/prost-build; TypeScript types via Protobuf-ES. Generated outputs are artifacts, never hand-edited.
-- `buf.gen.yaml` is checked in; `buf lint` and `buf breaking` run locally and in CI.
+- `buf.gen.yaml` is checked in; CI enforces generated-code drift, protocol conformance vectors, model-promotion traceability, and presentation conformance.
 - JSON Schema / TypeBox / Zod are reserved for JSON-native local validation surfaces, not as the cross-language protocol source.
 - TypeSpec is a reserved future direction if Patchbay later needs OpenAPI, JSON Schema, and Protobuf emitted as peer outputs from one authoring language.
 

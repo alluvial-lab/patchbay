@@ -20,7 +20,7 @@ surfaces (browser cockpit + CLI).
 |---|---|---|---|
 | `PATCHBAY_CORE_SECRET` | core, web-server, CLI | yes | Shared secret authenticating control surfaces as principals to the core (`x-patchbay-core-secret`). |
 | `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` | core, pi-adapter | yes | Adapter trust root for `AdapterControlService.Attach`. |
-| `PATCHBAY_ADAPTER_LOG` | pi-adapter | no (default `~/.local/state/patchbay/adapter.log`) | Durable adapter diagnostics log path. |
+| `PATCHBAY_ADAPTER_LOG` | pi-adapter | no (default `$XDG_STATE_HOME/patchbay/adapter.log` when set and absolute, else `~/.local/state/patchbay/adapter.log`) | Durable adapter diagnostics log path. |
 | `PATCHBAY_AUTHORITY_DOMAIN_ID` | all | no (default `default`) | The authority domain. All processes must agree; the core rejects mismatches. |
 | `PATCHBAY_BIND_ADDR` | core | no | Network listener for `ControlService` + `AdapterControlService`. |
 | `PATCHBAY_ADMIN_BIND_ADDR` | core | no | Loopback-only listener for `AdminService` (bootstrap). Never network-reachable; the core refuses non-loopback admin binds. |
@@ -40,7 +40,7 @@ surfaces (browser cockpit + CLI).
 ## Startup order
 
 1. **Core** — `patchbay-core-server`. At first run it prints a **one-time
-   setup secret** to stderr (expires after one use or the TTL). Grab it.
+   setup secret** to stdout (expires after one use or the TTL). Grab it.
 2. **Bootstrap (first run only)** — from the CLI on the same host:
    `patchbay-cli setup` (talks to the loopback `AdminService` only, prompts
    non-echoingly for the setup secret and password unless

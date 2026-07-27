@@ -47,7 +47,7 @@ The layer's obligations:
 - be skin-able via design tokens, so an operator can customize the visual language without forking protocol semantics;
 - be composable by any conformant surface (web, CLI, future Expo).
 
-The layer is implemented as the registry-derived static check and skin-able CSS/showcase artifacts in `.mockups/design-system/`. The check is run with `node contracts/scripts/check-presentation.mjs` (or `npm run check:presentation` from `contracts/ts/`) and regenerates the traceability block below. The `ux-ui-design` `components` skill remains the mockup-time analog of this layer. Consumer guarantees and obligations are documented in the `Runtime conformance contract` section of `.work/active/features/feature-v0-presentation-component-layer.md`; the cockpit must satisfy that contract before it submits Operations.
+The layer is implemented as the registry-derived static check and skin-able CSS/showcase artifacts in `.mockups/design-system/`. The check is run with `node contracts/scripts/check-presentation.mjs` (or `npm run check:presentation` from `contracts/ts/`) and regenerates the traceability block below. The `ux-ui-design` `components` skill remains the mockup-time analog of this layer. Consumer guarantees and obligations ARE the registry-derived check: a surface must keep its state bindings passing `check:presentation` before it submits Operations (the v0.1.0 runtime contract that check encodes is summarized in `.work/releases/v0.1.0/release-v0.1.0.md`).
 
 ### Adapter-shaped resource projections
 
@@ -135,7 +135,7 @@ The responsive web cockpit prioritizes: a readable session list on phone; clear 
 
 ### CLI
 
-The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics. It never touches persistence directly; diagnostic reads are authority-domain `query` Operations handled by core (`docs/ARCHITECTURE.md` Storage port; `docs/PROTOCOL.md` Persistence and recovery).
+The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics. It never touches persistence directly. Diagnostic reads are served by the core: `audit-query`, `inspect-command`, and `adapter-status` run as authority-domain `query` Operations via `QueryDiagnostics` (`docs/PROTOCOL.md` Persistence and recovery), while `session-health` reads the authoritative snapshot (`LoadSnapshot`).
 
 The diagnostic commands are:
 
@@ -154,7 +154,7 @@ rejected before the network call. `--since` is inclusive; `--until`,
 `--before-event`, and `--audit-before-event` are exclusive. Adapter cursors
 are opaque and exclusive.
 
-With `--json`, each diagnostic command emits one safe document shaped as
+With `--json`, each of the three `QueryDiagnostics` commands emits one safe document shaped as
 `{ submission, resultEventId, asOfLsn, result }`; 64-bit values are decimal
 strings, timestamps are RFC 3339 or `null`, enums use canonical lower-case
 snake case, and sensitive payloads/descriptors are omitted. A completed typed
@@ -162,6 +162,9 @@ empty page (or `found: false` from `inspect-command`) is a successful result
 and exits `0`. Exit codes are `0` completed success, `1` local validation,
 transport, protocol, or unexpected-lifecycle error, `2` pre-acceptance
 rejection, `3` accepted execution failure, and `4` unknown submission outcome.
+`session-health --json` is the exception: it emits a bare JSON array of
+session rows (no envelope) from the snapshot read, with exit codes
+`0` success / `1` error.
 The delivery trace from `inspect-command` remains a projection, not an
 authoritative command state; canonical `CommandState` stays as defined in
 `docs/PROTOCOL.md`.

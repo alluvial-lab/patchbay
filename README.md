@@ -10,7 +10,7 @@ Patchbay starts with a **responsive web cockpit** and a **Pi-first adapter targe
 
 Patchbay now contains the implemented **`v0.1.0` walking skeleton**: a Rust coordination core with durable local state, a TypeScript web server and responsive web cockpit, a Pi adapter, a diagnostic/scriptable CLI, generated Protobuf contracts, the browser/core trust boundary, and the registry-derived presentation conformance floor. Together these components exercise the single-operator durable control loop; deployment and operation are documented in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
-This is an executable internal milestone rather than a finished public distribution. Packaging, migrations, public compatibility guarantees, broader adapter proof, and independent-operator deployment hardening remain work for the `v0.x` line.
+This is an executable internal milestone rather than a finished public distribution. Versioned SQLite migrations (schema v2 via `PRAGMA user_version`) exist; packaging, supported public upgrade/rollback policy, public compatibility guarantees, broader adapter proof, and independent-operator deployment hardening remain work for the `v0.x` line.
 
 `v0.1.0` gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone and does not require completed publication legal review. It is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
 
@@ -39,7 +39,8 @@ human control surfaces
   future Expo app
       │
       ▼
-shared TypeScript operator domain + protocol client
+generated Protobuf contracts + protocol semantics
+(each surface implements its own client domain)
       │
       ▼
 Patchbay coordination core
@@ -57,10 +58,10 @@ The first useful milestone is a responsive web cockpit backed by durable command
 Patchbay separates examples from architecture through explicit planes:
 
 - **Human control surface plane** — web, CLI, future mobile, notifications, approvals.
-- **Operator intent plane** — prompts, commands, cancels, approvals, resumes, handoffs.
+- **Operation plane** — operator-originated Operations: prompts, commands, cancels, approvals, resumes.
 - **Runtime/session plane** — agents, shells, jobs, harness sessions, containers, worktrees.
 - **Adapter plane** — Pi first; other harnesses/tools later.
-- **Message and command plane** — delivery, replies, idempotency, retries, failure states.
+- **Operation / Observation / Elicitation plane** — delivery, replies, idempotent retry, failure vocabulary, and operator elicitations.
 - **State and snapshot plane** — authoritative snapshots, stale/offline/unknown recovery.
 - **Authority and identity plane** — grants, revocation, identity, anti-spoofing.
 - **Coordination plane** — leases, ownership claims, locks, handoffs.
@@ -75,7 +76,7 @@ v0.1.0 proves the smallest useful control loop:
 - responsive web cockpit as the primary surface;
 - CLI for setup, administration, debugging, and scripted access;
 - one authoritative coordination core;
-- local durable event and snapshot persistence behind ports;
+- local durable event-log persistence behind ports (snapshot-capable store with on-demand snapshot materialization);
 - Pi adapter as the first runtime integration;
 - initial commands for message/prompt delivery, cancel/interrupt where supported, status/snapshot refresh, and correlated replies/events.
 
