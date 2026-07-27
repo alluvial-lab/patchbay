@@ -1,7 +1,7 @@
 ---
 id: story-fix-tool-call-args-preview
 kind: story
-stage: review
+stage: done
 tags: [bug]
 parent: null
 depends_on: []
@@ -87,3 +87,10 @@ batch and never applied, and I failed to verify. Sibling `<pre>` JS +
 unboxed CSS produced the operator-reported "tool call in a box, text outside
 the box." This correction applies the JS side (`body.append(detail)`) for
 real; verified present in the built bundle this time.
+
+## Operator confirmation (2026-07-27)
+
+One-card rendering confirmed visually by the operator. The 240-char `…`
+truncation is cockpit-side display capping (full args remain in the durable
+log); expandable-preview / cap-tuning ideas noted for the cockpit settings
+batch. Story closed to done.
