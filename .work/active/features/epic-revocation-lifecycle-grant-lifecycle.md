@@ -507,3 +507,38 @@ Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
    revoked_by attribution in success/effect audits.
 5. **SECURITY.md status stale** — fixed by receiver at review (roll #4 to
    implemented).
+
+## Review resolution
+
+1. **Shared decision gate** — added `server/src/decision_gate.rs`, wired one
+   `CoreDecisionGate` through `server/src/main.rs` into both control and adapter
+   services, and used it for Submit/RevokeGrant, adapter observation transitions,
+   and disconnect reconciliation. The barrier-controlled race test
+   `barrier_race_cannot_commit_adapter_transition_between_revocation_plan_and_append`
+   verifies the revocation append precedes the adapter candidate and replay keeps
+   the lower-LSN terminal outcome.
+2. **Security evidence and vector** — added RPC-level revocation, missing/
+   foreign/endpoint-denial audit, expiry, Subscribe resume-after-revocation,
+   policy×state, attribution, and gate race tests. Corrected
+   `contracts/vectors/subscription-grant-checked.json` to use
+   `patchbay.TargetScopeKind.TARGET_SCOPE_KIND_AUTHORITY_DOMAIN`.
+3. **Malformed CLI responses** — `grant-revoke` now rejects contradictory status
+   flags, missing changed-event identity, event-bearing idempotent results, and
+   unspecified/unknown policies before rendering; malformed-response tests cover
+   those shapes and the normal caller returns exit 1.
+4. **Audit coverage** — denied self-revocation attempts append generic
+   `AuthorizationFailed` records without `grant_id`; revocation and effect audits
+   copy the verified `revoked_by` actor, endpoint, and device attribution, and
+   revocation always uses the audited atomic append path.
+
+Scoped verification passed: `cargo build --workspace --all-targets`,
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+contracts TypeScript/vector/model checks, CLI, web-server, web-cockpit, and
+walking-skeleton e2e. The generated contracts drift check also identifies the
+expected `docs/VERIFICATION.md` traceability update for the corrected vector;
+that forbidden docs change was not retained. The required `pi-adapter` e2e
+scenario still fails on its pre-existing forbidden-scope fixture, which inserts
+a raw `Operation` under the `StoredEventKind::Operation` discriminator instead
+of the required `AcceptedOperation` wrapper; it must be repaired in the
+forbidden `pi-adapter/` substrate rather than by weakening replay provenance
+validation.

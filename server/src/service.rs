@@ -27,6 +27,7 @@ use tonic::{service::Interceptor, Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
+    decision_gate::CoreDecisionGate,
     identity::issue_principal,
     issuer::MetadataIssuerContext,
     login_security::{
@@ -94,6 +95,7 @@ pub struct ControlServiceImpl<S> {
     login_audit: Arc<dyn LoginAuditSink>,
     audit: Arc<dyn AuditSink>,
     clock: Arc<dyn Clock>,
+    decision_gate: CoreDecisionGate,
 }
 
 impl<S> ControlServiceImpl<S>
@@ -101,12 +103,14 @@ where
     S: Storage + Clone + Send + Sync + 'static,
 {
     pub async fn new(storage: S, authority_domain_id: AuthorityDomainId) -> Result<Self, String> {
-        Self::new_with_security(
+        Self::new_with_clock_security_and_gate(
             storage,
             authority_domain_id,
             DEFAULT_OPERATOR_SESSION_TTL,
             LoginLimiter::default(),
             Arc::new(StderrLoginAuditSink),
+            Arc::new(SystemClock),
+            CoreDecisionGate::default(),
         )
         .await
     }
@@ -118,13 +122,34 @@ where
         login_limiter: LoginLimiter,
         login_audit: Arc<dyn LoginAuditSink>,
     ) -> Result<Self, String> {
-        Self::new_with_clock_security(
+        Self::new_with_clock_security_and_gate(
             storage,
             authority_domain_id,
             operator_session_ttl,
             login_limiter,
             login_audit,
             Arc::new(SystemClock),
+            CoreDecisionGate::default(),
+        )
+        .await
+    }
+
+    pub async fn new_with_security_and_decision_gate(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        operator_session_ttl: Duration,
+        login_limiter: LoginLimiter,
+        login_audit: Arc<dyn LoginAuditSink>,
+        decision_gate: CoreDecisionGate,
+    ) -> Result<Self, String> {
+        Self::new_with_clock_security_and_gate(
+            storage,
+            authority_domain_id,
+            operator_session_ttl,
+            login_limiter,
+            login_audit,
+            Arc::new(SystemClock),
+            decision_gate,
         )
         .await
     }
@@ -134,32 +159,35 @@ where
         authority_domain_id: AuthorityDomainId,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, String> {
-        Self::new_with_clock_security(
+        Self::new_with_clock_security_and_gate(
             storage,
             authority_domain_id,
             DEFAULT_OPERATOR_SESSION_TTL,
             LoginLimiter::default(),
             Arc::new(StderrLoginAuditSink),
             clock,
+            CoreDecisionGate::default(),
         )
         .await
     }
 
-    async fn new_with_clock_security(
+    async fn new_with_clock_security_and_gate(
         storage: S,
         authority_domain_id: AuthorityDomainId,
         operator_session_ttl: Duration,
         login_limiter: LoginLimiter,
         login_audit: Arc<dyn LoginAuditSink>,
         clock: Arc<dyn Clock>,
+        decision_gate: CoreDecisionGate,
     ) -> Result<Self, String> {
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".to_owned());
         }
-        let state = ProjectionState::rebuild_with_session_ttl(
+        let state = ProjectionState::rebuild_with_session_ttl_and_gate(
             &storage,
             &authority_domain_id,
             operator_session_ttl,
+            decision_gate.clone(),
         )
         .await?;
         let durable = Arc::new(DurableAuditSink::new(
@@ -178,6 +206,7 @@ where
             login_audit,
             audit,
             clock,
+            decision_gate,
         })
     }
 
@@ -218,7 +247,7 @@ where
         // projection after a prior append whose handler did not complete; the
         // post-append catch-up makes a newly durable command visible before the
         // next submit acquires the gate.
-        let _submit_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
             .await
@@ -270,10 +299,16 @@ where
         }
         validate_revocation_reason(&request.reason)?;
 
-        let _decision_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
-        let grant = self.state.grant(&grant_id).await.ok_or_else(|| Status::permission_denied("grant revocation is not authorized"))?;
-        let actor = issuer.verified_actor().ok_or_else(|| Status::permission_denied("grant revocation is not authorized"))?;
+        let Some(grant) = self.state.grant(&grant_id).await else {
+            self.audit_revocation_denied(&issuer).await?;
+            return Err(Status::permission_denied("grant revocation is not authorized"));
+        };
+        let Some(actor) = issuer.verified_actor() else {
+            self.audit_revocation_denied(&issuer).await?;
+            return Err(Status::permission_denied("grant revocation is not authorized"));
+        };
         let issuer_ref = IssuerRef {
             actor,
             endpoint: issuer.verified_endpoint(),
@@ -293,6 +328,7 @@ where
                 return Err(Status::permission_denied("grant revocation is not authorized"));
             }
             Err(GrantAdministrationDenied::MissingOrForeign | GrantAdministrationDenied::EndpointMismatch) => {
+                self.audit_revocation_denied(&issuer).await?;
                 return Err(Status::permission_denied("grant revocation is not authorized"));
             }
         }
@@ -352,7 +388,7 @@ where
         }
         let issuer = MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state).await?;
         let scope = subscription_scope();
-        let _decision_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state.catch_up(&self.storage, &authority_domain_id).await.map_err(map_storage_error_to_status)?;
         let evaluated_at = self.clock.now();
         let decision = self.state.grant_check().check_at(
@@ -414,7 +450,7 @@ where
         // event. If no durable checkpoint exists, serve the current rebuilt
         // session projection directly; this deliberately does not write into
         // the still-undiscriminated durable snapshot namespace.
-        let _submit_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
             .await
@@ -560,7 +596,7 @@ where
                 return Err(error);
             }
         };
-        let _submit_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         if let Err(error) = self
             .state
             .ingest_principal(&self.storage, &self.authority_domain_id, record)
@@ -669,7 +705,7 @@ where
             .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
         let (record, credential) =
             issue_principal(actor_id, enrollment, self.authority_domain_id.clone())?;
-        let _submit_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .ingest_principal(&self.storage, &self.authority_domain_id, record)
             .await
@@ -780,7 +816,7 @@ where
             }
         };
 
-        let _submit_guard = self.state.submit_guard().await;
+        let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
             .await
@@ -1004,6 +1040,22 @@ where
 }
 
 impl<S> ControlServiceImpl<S> {
+    async fn audit_revocation_denied(&self, issuer: &dyn IssuerContext) -> Result<(), Status> {
+        let mut draft = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::AuthorizationFailed,
+        );
+        // Deliberately omit grant_id: missing, foreign, and endpoint-mismatched
+        // requests must be indistinguishable to both the caller and audit
+        // consumers that do not already know the grant.
+        draft.actor_id = issuer.verified_actor().cloned();
+        draft.endpoint_id = issuer.verified_endpoint().cloned();
+        draft.device_id = issuer.verified_device().cloned();
+        draft.failure_code = Some(FailureCode::AuthorizationDenied);
+        draft.reason_code = "grant_revocation_authorization_denied".to_owned();
+        self.record_audit(draft).await
+    }
+
     async fn audit_submission_unknown(
         &self,
         issuer: &dyn IssuerContext,
@@ -1525,4 +1577,86 @@ fn retryable_unavailable(message: String) -> Status {
         message,
         ErrorDetails::with_retry_info(Some(Duration::from_secs(1))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::revocation_effects;
+    use patchbay_contracts::patchbay::{
+        ActorId, AuthorityDomainId, CommandId, GrantId, GrantRevocationPolicy, Operation,
+        OperationKind, OperationState, TargetScope,
+    };
+    use patchbay_core::{
+        acceptance::CommandRecord,
+        authority::{GrantProvenanceKind, GrantRecord},
+    };
+
+    fn grant(policy: GrantRevocationPolicy) -> GrantRecord {
+        GrantRecord {
+            grant_id: GrantId { value: "grant".to_owned() },
+            authority_domain_id: AuthorityDomainId { value: "domain".to_owned() },
+            subject_actor_id: ActorId { value: "actor".to_owned() },
+            subject_endpoint_id: None,
+            subject_endpoint_class: String::new(),
+            target_scope: TargetScope::default(),
+            allowed_operation_kinds: vec![OperationKind::Instruct],
+            created_at: None,
+            expires_at: None,
+            revocation_generation: None,
+            revoked_at: None,
+            revocation_policy: policy,
+            revoked_by: None,
+            revocation_reason: String::new(),
+            revocation_audit_id: None,
+            is_descendant: false,
+            provenance: GrantProvenanceKind::Operator {
+                created_by: None,
+                created_by_operation_id: None,
+                audit_id: None,
+                reason: "test".to_owned(),
+            },
+        }
+    }
+
+    fn record(state: OperationState) -> CommandRecord {
+        let mut record = CommandRecord::new(
+            Operation {
+                command_id: Some(CommandId { value: "command".to_owned() }),
+                ..Operation::default()
+            },
+            1,
+        )
+        .expect("test command has an id");
+        record.state = state;
+        record
+    }
+
+    #[test]
+    fn revocation_policy_state_matrix_has_only_designed_effects() {
+        let states = [
+            OperationState::Accepted,
+            OperationState::Delivered,
+            OperationState::Running,
+            OperationState::Completed,
+        ];
+        for policy in [
+            GrantRevocationPolicy::Continue,
+            GrantRevocationPolicy::Cancel,
+            GrantRevocationPolicy::RequireReauthorization,
+        ] {
+            for state in states {
+                let effects = revocation_effects(&grant(policy), &[record(state)]);
+                let expected = match (policy, state) {
+                    (GrantRevocationPolicy::Cancel, OperationState::Accepted | OperationState::Delivered | OperationState::Running) => Some((OperationState::Cancelled, patchbay_contracts::patchbay::FailureCode::Cancelled)),
+                    (GrantRevocationPolicy::RequireReauthorization, OperationState::Accepted) => Some((OperationState::Rejected, patchbay_contracts::patchbay::FailureCode::AuthorizationDenied)),
+                    _ => None,
+                };
+                assert_eq!(effects.len(), usize::from(expected.is_some()), "policy={policy:?}, state={state:?}");
+                if let Some((to_state, failure_code)) = expected {
+                    assert_eq!(OperationState::try_from(effects[0].to_state), Ok(to_state));
+                    assert_eq!(patchbay_contracts::patchbay::FailureCode::try_from(effects[0].failure_code), Ok(failure_code));
+                }
+            }
+        }
+    }
 }

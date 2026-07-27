@@ -1,5 +1,5 @@
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, DescendantGrant, DescendantGrantProvenance, Generation,
+    ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, Generation,
     Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn, OperationKind, Revocation,
     RuntimeSessionId, StoredEventKind, TargetScope, TargetScopeKind,
 };
@@ -8,7 +8,7 @@ use patchbay_core::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, AuthorityError,
         AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
-    storage::{RecordedEvent, RusqliteStorage, Storage},
+    storage::{AuditPageSpec, RecordedEvent, RusqliteStorage, Storage},
 };
 
 fn domain() -> AuthorityDomainId {
@@ -202,7 +202,49 @@ async fn revoking_parent_does_not_cascade_to_descendant() {
         .get_grant(&grant_id("descendant"))
         .expect("non-cascade retains the descendant record")
         .is_live());
-    assert_eq!(events(&storage).await.len(), 3);
+    assert_eq!(events(&storage).await.len(), 4);
+}
+
+#[tokio::test]
+async fn revocation_audits_preserve_verified_actor_and_endpoint_attribution() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    ingest_grant(&storage, &mut registry, &domain(), grant("attributed"))
+        .await
+        .unwrap();
+    let mut revocation = revocation("attributed");
+    revocation.revoked_by = Some(ActorEndpointRef {
+        actor_id: Some(actor()),
+        endpoint_id: Some(EndpointId { value: "cli-endpoint".to_owned() }),
+        device_id: Some(DeviceId { value: "cli-device".to_owned() }),
+        ..ActorEndpointRef::default()
+    });
+
+    ingest_revocation(&storage, &mut registry, &domain(), revocation)
+        .await
+        .expect("attributed revocation must append");
+
+    let page = storage
+        .query_audit(&domain(), AuditPageSpec {
+            kinds: vec![AuditEventKind::GrantRevoked],
+            actor_id: None,
+            endpoint_id: None,
+            command_id: None,
+            grant_id: Some(grant_id("attributed")),
+            target: None,
+            failure_codes: vec![],
+            reason_codes: vec![],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].actor_id, Some(actor()));
+    assert_eq!(page.records[0].endpoint_id, Some(EndpointId { value: "cli-endpoint".to_owned() }));
+    assert_eq!(page.records[0].device_id, Some(DeviceId { value: "cli-device".to_owned() }));
 }
 
 #[tokio::test]

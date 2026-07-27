@@ -33,6 +33,7 @@ use tonic::{Request, Response, Status};
 mod tests;
 
 use crate::{
+    decision_gate::CoreDecisionGate,
     identity::random_token,
     rpc::adapter_control_service_server::AdapterControlService,
     service::{map_acceptance_error_to_status, map_storage_error_to_status},
@@ -122,6 +123,7 @@ pub struct AdapterControlServiceImpl<S> {
     sessions: Arc<Mutex<SessionRegistry>>,
     attachment_tokens: Arc<Mutex<HashMap<AdapterId, Vec<u8>>>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
+    decision_gate: CoreDecisionGate,
 }
 
 impl<S> AdapterControlServiceImpl<S>
@@ -132,6 +134,21 @@ where
         storage: S,
         authority_domain_id: AuthorityDomainId,
         evidence: AdapterEvidenceVerifier,
+    ) -> Result<Self, String> {
+        Self::new_with_decision_gate(
+            storage,
+            authority_domain_id,
+            evidence,
+            CoreDecisionGate::default(),
+        )
+        .await
+    }
+
+    pub async fn new_with_decision_gate(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        evidence: AdapterEvidenceVerifier,
+        decision_gate: CoreDecisionGate,
     ) -> Result<Self, String> {
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".into());
@@ -159,6 +176,7 @@ where
             sessions: Arc::new(Mutex::new(sessions)),
             attachment_tokens: Arc::new(Mutex::new(HashMap::new())),
             delivery_stream_epochs: Arc::new(Mutex::new(HashMap::new())),
+            decision_gate,
         })
     }
 
@@ -615,6 +633,10 @@ where
         self.require_domain(&domain)?;
         self.require_attached(&authenticated_adapter).await?;
 
+        // Every adapter transition shares the composition-root gate with
+        // Submit/RevokeGrant. This keeps revocation's catch-up/effect plan
+        // adjacent to the append that establishes its LSN boundary.
+        let _decision_guard = self.decision_gate.acquire().await;
         let event_id = match request.observation {
             Some(observation_request::Observation::SessionReport(report)) => {
                 require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
@@ -762,10 +784,16 @@ where
         let sessions = Arc::clone(&self.sessions);
         let delivery_stream_epochs = Arc::clone(&self.delivery_stream_epochs);
         let audit = Arc::clone(&self.audit);
+        let decision_gate = self.decision_gate.clone();
         let stale_domain = domain.clone();
         let stale_adapter = authenticated_adapter.clone();
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
+                // The shared decision gate prevents revocation from planning
+                // against a projection that disconnect reconciliation can
+                // transition before its durable append. Holding it before the
+                // epoch guard also gives every command writer one order.
+                let _decision_guard = decision_gate.acquire().await;
                 // Holding the epoch guard through reconciliation establishes a
                 // total order with a replacement stream. An obsolete stream's
                 // delayed drop cannot mutate the replacement attachment.

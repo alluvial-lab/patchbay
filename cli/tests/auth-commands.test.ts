@@ -154,6 +154,24 @@ test("grant-revoke reports changed and idempotent outcomes without clearing cred
   assert.equal(JSON.parse(repeat.out[0]!).alreadyRevoked, true);
 });
 
+test("grant-revoke rejects malformed protocol responses instead of rendering success", async () => {
+  const malformed = [
+    create(RevokeGrantResultSchema, { appliedPolicy: GrantRevocationPolicy.CANCEL }),
+    create(RevokeGrantResultSchema, { changed: true, alreadyRevoked: true, appliedPolicy: GrantRevocationPolicy.CANCEL }),
+    create(RevokeGrantResultSchema, { changed: true, appliedPolicy: GrantRevocationPolicy.CANCEL }),
+    create(RevokeGrantResultSchema, { changed: true, revocationEventId: create(EventIdSchema, { authorityDomainId: create(AuthorityDomainIdSchema, { value: DOMAIN }), lsn: { value: 42n } }) }),
+    create(RevokeGrantResultSchema, { changed: true, appliedPolicy: 99 as never, revocationEventId: create(EventIdSchema, { authorityDomainId: create(AuthorityDomainIdSchema, { value: DOMAIN }), lsn: { value: 42n } }) }),
+  ];
+  for (const result of malformed) {
+    const output = captureOutput();
+    await assert.rejects(
+      grantRevokeCommand({ revokeGrant: async () => result } as never, DOMAIN, { grantId: "grant-1", json: true }, output),
+      /invalid grant revocation response/,
+    );
+    assert.equal(output.out.length, 0);
+  }
+});
+
 test("logout revokes before deleting local credentials", async () => {
   const store = await temporaryStore();
   await store.write({

@@ -23,7 +23,10 @@ use patchbay_core::{
 };
 use tokio::sync::{Mutex, MutexGuard};
 
-use crate::operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL};
+use crate::{
+    decision_gate::CoreDecisionGate,
+    operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL},
+};
 
 /// Server-owned concurrency boundary around core projections.
 ///
@@ -31,9 +34,9 @@ use crate::operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_
 /// resolver -> command-state lookup, matching the parameter order at the
 /// acceptance boundary. Projection locks are short-lived and never nested in
 /// this implementation: each port releases its lock before the next port is
-/// called. `submit_guard` serializes submission plus projection catch-up so a
-/// successful append is visible to an immediately following deduplicated
-/// submission. This can be replaced by a server-local actor without changing
+/// called. `submit_guard` serializes submission plus projection catch-up, and is
+/// backed by the composition-root `CoreDecisionGate` shared with adapter
+/// transitions. This can be replaced by a server-local actor without changing
 /// the core library or the wire contract.
 #[derive(Clone)]
 pub struct ProjectionState {
@@ -45,7 +48,7 @@ pub struct ProjectionState {
     operators: Arc<Mutex<OperatorRegistry>>,
     operator_sessions: OperatorSessionRegistry,
     last_applied_lsn: Arc<Mutex<u64>>,
-    submit_gate: Arc<Mutex<()>>,
+    decision_gate: CoreDecisionGate,
 }
 
 impl ProjectionState {
@@ -61,6 +64,21 @@ impl ProjectionState {
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
         operator_session_ttl: Duration,
+    ) -> Result<Self, String> {
+        Self::rebuild_with_session_ttl_and_gate(
+            storage,
+            authority_domain_id,
+            operator_session_ttl,
+            CoreDecisionGate::default(),
+        )
+        .await
+    }
+
+    pub async fn rebuild_with_session_ttl_and_gate<S: Storage>(
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        operator_session_ttl: Duration,
+        decision_gate: CoreDecisionGate,
     ) -> Result<Self, String> {
         let events = storage
             .read_after(authority_domain_id, Lsn { value: 0 })
@@ -102,7 +120,7 @@ impl ProjectionState {
             operators: Arc::new(Mutex::new(operators)),
             operator_sessions: OperatorSessionRegistry::new(operator_session_ttl)?,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
-            submit_gate: Arc::new(Mutex::new(())),
+            decision_gate,
         })
     }
 
@@ -186,7 +204,7 @@ impl ProjectionState {
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
-        self.submit_gate.lock().await
+        self.decision_gate.acquire().await
     }
 
     /// Materialize the authoritative live-session projection at its applied LSN.
@@ -666,7 +684,7 @@ mod tests {
             .unwrap();
 
         // A future Elicitation-opening producer (the pi adapter) must share
-        // submit_gate so an append-after-read race cannot bypass catch_up.
+        // the CoreDecisionGate so an append-after-read race cannot bypass catch_up.
         state
             .catch_up(&storage, &authority_domain_id)
             .await

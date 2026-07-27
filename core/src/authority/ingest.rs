@@ -133,7 +133,11 @@ where
     let payload = events::revocation(authority_domain_id.clone(), revocation.clone());
     let occurred_at = revocation.revoked_at.unwrap_or_else(|| crate::time::SystemClock.now());
     let mut audits = Vec::with_capacity(1 + revocation.command_effects.len());
+    let revoked_by = revocation.revoked_by.as_ref();
     let mut audit = AuditRecordDraft::new(occurred_at, patchbay_contracts::patchbay::AuditEventKind::GrantRevoked);
+    audit.actor_id = revoked_by.and_then(|attribution| attribution.actor_id.clone());
+    audit.endpoint_id = revoked_by.and_then(|attribution| attribution.endpoint_id.clone());
+    audit.device_id = revoked_by.and_then(|attribution| attribution.device_id.clone());
     audit.grant_id = Some(grant_id.clone());
     audit.reason_code = "grant_revoked".to_owned();
     audits.push(audit);
@@ -146,18 +150,20 @@ where
                 _ => patchbay_contracts::patchbay::AuditEventKind::CommandSubmissionRejected,
             },
         );
+        effect_audit.actor_id = revoked_by.and_then(|attribution| attribution.actor_id.clone());
+        effect_audit.endpoint_id = revoked_by.and_then(|attribution| attribution.endpoint_id.clone());
+        effect_audit.device_id = revoked_by.and_then(|attribution| attribution.device_id.clone());
         effect_audit.grant_id = Some(grant_id.clone());
         effect_audit.command_id = effect.command_id.clone();
         effect_audit.failure_code = FailureCode::try_from(effect.failure_code).ok().filter(|code| *code != FailureCode::Unspecified);
         effect_audit.reason_code = "grant_revocation_policy".to_owned();
         audits.push(effect_audit);
     }
-    if revocation.command_effects.is_empty() {
-        let audit = audits.into_iter().next().expect("grant revocation has grant audit");
-        append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
-    } else {
-        append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
-    }
+    // Revocation is a security decision even when its policy produces no
+    // command effects. Always use the audited-many transaction so a raw
+    // storage implementation cannot silently persist the source without its
+    // required GrantRevoked audit.
+    append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
 }
 
 async fn append_and_warm<S, L>(

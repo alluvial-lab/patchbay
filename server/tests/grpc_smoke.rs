@@ -11,6 +11,7 @@ use patchbay_contracts::patchbay::{
     CommandTransition, ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
+    RevokeGrantRequest,
     PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
     SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
@@ -20,6 +21,7 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::{
     authority::{events as authority_events, hash_principal_credential},
     session::events as session_events,
+    time::{Clock, TestClock},
     storage::{
         AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
         RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
@@ -564,6 +566,294 @@ async fn grant_subject_uses_verified_actor_not_operator_session() {
 }
 
 #[tokio::test]
+async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
+    let mut server = start_server().await;
+
+    let missing = server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "missing-grant".to_owned() }),
+                reason: "test_missing".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect_err("missing grants must be denied");
+    assert_eq!(missing.code(), Code::PermissionDenied);
+
+    server
+        .storage
+        .append(
+            &domain(),
+            authority_events::grant(
+                domain(),
+                Grant {
+                    grant_id: Some(GrantId { value: "foreign-grant".to_owned() }),
+                    authority_domain_id: Some(domain()),
+                    subject_actor_id: Some(ActorId { value: "another-actor".to_owned() }),
+                    target_scope: Some(target_scope()),
+                    allowed_operation_kinds: vec![OperationKind::Cancel as i32],
+                    provenance: Some(GrantProvenance { reason: "foreign fixture".to_owned(), ..GrantProvenance::default() }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                },
+            ),
+        )
+        .await
+        .expect("foreign grant fixture must append");
+    let foreign = server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "foreign-grant".to_owned() }),
+                reason: "test_foreign".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect_err("foreign grants must be denied");
+    assert_eq!(foreign.code(), Code::PermissionDenied);
+
+    server
+        .storage
+        .append(
+            &domain(),
+            authority_events::grant(
+                domain(),
+                Grant {
+                    grant_id: Some(GrantId { value: "endpoint-grant".to_owned() }),
+                    authority_domain_id: Some(domain()),
+                    subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                    subject_endpoint_id: Some(EndpointId { value: "different-endpoint".to_owned() }),
+                    target_scope: Some(target_scope()),
+                    allowed_operation_kinds: vec![OperationKind::Cancel as i32],
+                    provenance: Some(GrantProvenance { reason: "endpoint fixture".to_owned(), ..GrantProvenance::default() }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                },
+            ),
+        )
+        .await
+        .expect("endpoint grant fixture must append");
+    let endpoint = server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "endpoint-grant".to_owned() }),
+                reason: "test_endpoint".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect_err("endpoint-mismatched grants must be denied");
+    assert_eq!(endpoint.code(), Code::PermissionDenied);
+
+    let denied_audits = server
+        .storage
+        .query_audit(&domain(), AuditPageSpec {
+            kinds: vec![AuditEventKind::AuthorizationFailed],
+            actor_id: None,
+            endpoint_id: None,
+            command_id: None,
+            grant_id: None,
+            target: None,
+            failure_codes: vec![],
+            reason_codes: vec!["grant_revocation_authorization_denied".to_owned()],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 50,
+        })
+        .await
+        .expect("denied revocation must be queryable");
+    assert_eq!(denied_audits.records.len(), 3);
+    assert!(denied_audits.records.iter().all(|record| record.grant_id.is_none()));
+
+    let revoked = server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "operator-grant".to_owned() }),
+                reason: "test_revocation".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("the verified subject may revoke its grant")
+        .into_inner();
+    assert!(revoked.changed);
+    assert!(!revoked.already_revoked);
+    assert_eq!(revoked.applied_policy, GrantRevocationPolicy::Continue as i32);
+    assert!(revoked.revocation_event_id.is_some());
+    let success_audits = server
+        .storage
+        .query_audit(&domain(), AuditPageSpec {
+            kinds: vec![AuditEventKind::GrantRevoked],
+            actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            endpoint_id: Some(EndpointId { value: "patchbay-web-server".to_owned() }),
+            command_id: None,
+            grant_id: Some(GrantId { value: "operator-grant".to_owned() }),
+            target: None,
+            failure_codes: vec![],
+            reason_codes: vec!["grant_revoked".to_owned()],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 10,
+        })
+        .await
+        .expect("successful revocation audit must be queryable");
+    assert_eq!(success_audits.records.len(), 1);
+
+    let rejected = server
+        .client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(operation("after-revocation", "after-revocation-key")),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("authorization denial is a typed submission result")
+        .into_inner();
+    assert_eq!(rejected.outcome, SubmissionOutcome::Rejected as i32);
+    assert_eq!(rejected.failure_code, FailureCode::AuthorizationDenied as i32);
+}
+
+#[tokio::test]
+async fn grant_expiry_is_enforced_at_rpc_boundary_and_audited() {
+    let storage = RusqliteStorage::open_in_memory().expect("test storage must open");
+    seed_authority_and_session(&storage).await;
+    storage
+        .append(
+            &domain(),
+            authority_events::grant(
+                domain(),
+                Grant {
+                    grant_id: Some(GrantId { value: "expired-grant".to_owned() }),
+                    authority_domain_id: Some(domain()),
+                    subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                    target_scope: Some(target_scope()),
+                    allowed_operation_kinds: vec![OperationKind::Cancel as i32],
+                    expires_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+                    provenance: Some(GrantProvenance { reason: "expired grant fixture".to_owned(), ..GrantProvenance::default() }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                },
+            ),
+        )
+        .await
+        .expect("expired grant fixture must append");
+    let clock: Arc<dyn Clock> = Arc::new(TestClock::new(Timestamp { seconds: 100, nanos: 0 }));
+    let (mut client, task, operator_session) = serve_with_clock(storage.clone(), clock).await;
+    let before = operation_event_count(&storage).await;
+
+    let mut expired_operation = operation("expired-grant-command", "expired-grant-key");
+    expired_operation.kind = OperationKind::Cancel as i32;
+    let result = client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(expired_operation),
+            },
+            SECRET,
+            &operator_session,
+        ))
+        .await
+        .expect("expired grant is a typed rejection")
+        .into_inner();
+    assert_eq!(result.outcome, SubmissionOutcome::Rejected as i32);
+    assert_eq!(result.failure_code, FailureCode::Expired as i32);
+    assert_eq!(result.reason_code, "grant_expired");
+    assert_eq!(result.decision_grant_id.as_ref().map(|id| id.value.as_str()), Some("expired-grant"));
+    assert_eq!(operation_event_count(&storage).await, before);
+
+    let audits = storage
+        .query_audit(&domain(), AuditPageSpec {
+            kinds: vec![AuditEventKind::GrantExpired],
+            actor_id: None,
+            endpoint_id: None,
+            command_id: None,
+            grant_id: Some(GrantId { value: "expired-grant".to_owned() }),
+            target: None,
+            failure_codes: vec![],
+            reason_codes: vec!["grant_expired".to_owned()],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 50,
+        })
+        .await
+        .expect("expired grant audit must be queryable");
+    assert_eq!(audits.records.len(), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn subscribe_denies_initial_and_resume_establishment_after_query_grant_revocation() {
+    let mut server = start_server().await;
+    let accepted = server
+        .client
+        .submit(authenticated_request(
+            SubmitRequest { operation: Some(operation("subscription-cursor", "subscription-cursor-key")) },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("fixture command must be accepted")
+        .into_inner();
+
+    let mut initial = server
+        .client
+        .subscribe(authenticated_request(
+            SubscribeRequest { authority_domain_id: Some(domain()), cursor: Some(Lsn { value: 0 }) },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("live Query grant establishes the initial stream")
+        .into_inner();
+    while initial.message().await.expect("initial stream must decode").is_some() {}
+
+    server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "operator-query-grant".to_owned() }),
+                reason: "test_query_revocation".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("the verified subject may revoke its Query grant");
+
+    let resumed = server
+        .client
+        .subscribe(authenticated_request(
+            SubscribeRequest {
+                authority_domain_id: Some(domain()),
+                cursor: accepted.accepted_lsn,
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect_err("resume must re-check the now-revoked Query grant");
+    assert_eq!(resumed.code(), Code::PermissionDenied);
+}
+
+#[tokio::test]
 async fn rpc_rejects_expired_and_not_yet_valid_operations_without_append() {
     let mut server = start_server().await;
     let operation_count_before = operation_event_count(&server.storage).await;
@@ -784,7 +1074,17 @@ async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>,
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
-    let service = ControlServiceImpl::new(storage, domain())
+    serve_with_clock(storage, Arc::new(patchbay_core::time::SystemClock)).await
+}
+
+async fn serve_with_clock<S>(
+    storage: S,
+    clock: Arc<dyn Clock>,
+) -> (ControlServiceClient<Channel>, JoinHandle<()>, String)
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let service = ControlServiceImpl::new_with_clock(storage, domain(), clock)
         .await
         .expect("service projections must rebuild");
     let interceptor = CoreSecretInterceptor::new(SECRET).expect("test secret is valid");

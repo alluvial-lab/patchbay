@@ -47,6 +47,7 @@ export async function grantRevokeCommand(
     throw error;
   }
 
+  validateRevokeGrantResult(result);
   const view = revokeGrantView(result, options.grantId);
   if (options.json) {
     output.stdout(JSON.stringify(view));
@@ -60,6 +61,23 @@ export async function grantRevokeCommand(
     ].join(" "));
   }
   return 0;
+}
+
+export function validateRevokeGrantResult(result: RevokeGrantResult): void {
+  if (result.changed === result.alreadyRevoked) {
+    throw new Error("invalid grant revocation response: contradictory status flags");
+  }
+  if (![GrantRevocationPolicy.CONTINUE, GrantRevocationPolicy.CANCEL, GrantRevocationPolicy.REQUIRE_REAUTHORIZATION].includes(result.appliedPolicy)) {
+    throw new Error("invalid grant revocation response: unknown or unspecified policy");
+  }
+  if (result.changed) {
+    const event = result.revocationEventId;
+    if (!event?.authorityDomainId?.value || event.lsn === undefined) {
+      throw new Error("invalid grant revocation response: changed result is missing revocation event");
+    }
+  } else if (result.revocationEventId) {
+    throw new Error("invalid grant revocation response: already-revoked result has an event");
+  }
 }
 
 export function revokeGrantView(result: RevokeGrantResult, requestedGrantId: string) {

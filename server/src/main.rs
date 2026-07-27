@@ -5,6 +5,7 @@ use patchbay_core::storage::{AuditedStorage, RusqliteStorage};
 use patchbay_core_server::{
     adapter_service::{AdapterControlServiceImpl, AdapterEvidenceVerifier},
     admin_service::{AdminServiceImpl, SetupSecret},
+    decision_gate::CoreDecisionGate,
     login_security::{LoginLimiter, StderrLoginAuditSink},
     operator_session::DEFAULT_OPERATOR_SESSION_TTL,
     rpc::{
@@ -52,20 +53,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let storage = AuditedStorage::new(RusqliteStorage::open(&database_path)?);
-    let control_service = ControlServiceImpl::new_with_security(
+    let decision_gate = CoreDecisionGate::default();
+    let control_service = ControlServiceImpl::new_with_security_and_decision_gate(
         storage.clone(),
         authority_domain_id.clone(),
         DEFAULT_OPERATOR_SESSION_TTL,
         LoginLimiter::default(),
         Arc::new(StderrLoginAuditSink),
+        decision_gate.clone(),
     )
     .await?;
     let bootstrapped = control_service.is_bootstrapped().await;
     let (setup_secret, setup_secret_value) = SetupSecret::generate(setup_ttl);
     let admin_service = AdminServiceImpl::new(control_service.clone(), setup_secret);
     let control_service = ControlServiceServer::with_interceptor(control_service, interceptor);
-    let adapter_service =
-        AdapterControlServiceImpl::new(storage, authority_domain_id, adapter_evidence).await?;
+    let adapter_service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage,
+        authority_domain_id,
+        adapter_evidence,
+        decision_gate,
+    )
+    .await?;
     let adapter_service = AdapterControlServiceServer::new(adapter_service);
 
     println!("patchbay-core-server: h2c on {address}");
