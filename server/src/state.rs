@@ -475,7 +475,7 @@ impl ProjectionState {
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
         revocation: OperatorSessionRevocation,
-    ) -> Result<RevocationIngestResult, OperatorError> {
+    ) -> Result<(RevocationIngestResult, u32), OperatorError> {
         let actor = revocation
             .operator_actor_id
             .clone()
@@ -490,10 +490,11 @@ impl ProjectionState {
             revocation,
         )
         .await?;
-        self.operator_sessions
+        let revoked_session_count = self
+            .operator_sessions
             .revoke_all_for_actor(&actor, &generation)
             .await;
-        Ok(result)
+        Ok((result, revoked_session_count))
     }
 
     pub async fn ingest_control_surface_revocation<S: Storage>(
@@ -501,7 +502,7 @@ impl ProjectionState {
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
         revocation: ControlSurfaceRevocation,
-    ) -> Result<(RevocationIngestResult, ControlSurfaceRevocationTarget), OperatorError> {
+    ) -> Result<(RevocationIngestResult, ControlSurfaceRevocationTarget, u32), OperatorError> {
         let result = ingest_control_surface_revocation(
             storage,
             &mut *self.operators.lock().await,
@@ -509,8 +510,8 @@ impl ProjectionState {
             revocation,
         )
         .await?;
-        self.revoke_sessions_for_target(&result.1).await;
-        Ok(result)
+        let revoked_session_count = self.revoke_sessions_for_target(&result.1).await;
+        Ok((result.0, result.1, revoked_session_count))
     }
 
     pub async fn commands_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {

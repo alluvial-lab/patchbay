@@ -8,7 +8,7 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, CommandId,
-    CommandTransition, ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
+    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
     RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
@@ -29,6 +29,8 @@ use patchbay_core::{
     },
 };
 use patchbay_core_server::{
+    decision_gate::CoreDecisionGate,
+    login_security::{LoginLimiter, StderrLoginAuditSink},
     issuer::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
@@ -237,6 +239,7 @@ async fn revoke_all_survives_restart_and_forces_a_higher_generation_login() {
         .await
         .expect("revoke-all must commit through the gRPC boundary")
         .into_inner();
+    assert!(revoked.revoked_session_count > 0);
     assert_eq!(revoked.invalidated_through_generation.unwrap().value, old_auth.session_generation);
 
     server.task.abort();
@@ -278,7 +281,7 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
     let fourth = login_surface(&mut server.client, "fourth-endpoint", "fourth-device").await;
 
     let before_principal = operation_event_count(&server.storage).await;
-    server
+    let principal_revocation = server
         .client
         .revoke_control_surface_principal(authenticated_request(
             RevokeControlSurfacePrincipalRequest {
@@ -289,13 +292,30 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             &second,
         ))
         .await
-        .expect("a distinct endpoint can revoke the target principal");
+        .expect("a distinct endpoint can revoke the target principal")
+        .into_inner();
+    assert!(principal_revocation.revoked_session_count > 0);
     assert_eq!(operation_event_count(&server.storage).await, before_principal);
+    let principal_repeat = server
+        .client
+        .revoke_control_surface_principal(authenticated_request(
+            RevokeControlSurfacePrincipalRequest {
+                principal_id: first.principal_id.clone(),
+                reason_code: "principal_lockdown_repeat".to_owned(),
+            },
+            SECRET,
+            &second,
+        ))
+        .await
+        .expect("repeating principal revocation is idempotent")
+        .into_inner();
+    assert!(!principal_repeat.newly_revoked);
+    assert_eq!(principal_repeat.revoked_session_count, 0);
     assert_scope_denied(&mut server.client, &first).await;
     assert_submit_accepted(&mut server.client, &second, "principal-unaffected").await;
 
     let before_endpoint = operation_event_count(&server.storage).await;
-    server
+    let endpoint_revocation = server
         .client
         .revoke_control_surface_endpoint(authenticated_request(
             RevokeControlSurfaceEndpointRequest {
@@ -310,13 +330,34 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             &third,
         ))
         .await
-        .expect("a distinct endpoint can revoke the target endpoint");
+        .expect("a distinct endpoint can revoke the target endpoint")
+        .into_inner();
+    assert!(endpoint_revocation.revoked_session_count > 0);
     assert_eq!(operation_event_count(&server.storage).await, before_endpoint);
+    let endpoint_repeat = server
+        .client
+        .revoke_control_surface_endpoint(authenticated_request(
+            RevokeControlSurfaceEndpointRequest {
+                reason_code: "endpoint_lockdown_repeat".to_owned(),
+                target: Some(
+                    patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::EndpointId(
+                        EndpointId { value: "second-endpoint".to_owned() },
+                    ),
+                ),
+            },
+            SECRET,
+            &third,
+        ))
+        .await
+        .expect("repeating endpoint revocation is idempotent")
+        .into_inner();
+    assert!(!endpoint_repeat.newly_revoked);
+    assert_eq!(endpoint_repeat.revoked_session_count, 0);
     assert_scope_denied(&mut server.client, &second).await;
     assert_submit_accepted(&mut server.client, &third, "endpoint-unaffected").await;
 
     let before_device = operation_event_count(&server.storage).await;
-    server
+    let device_revocation = server
         .client
         .revoke_control_surface_endpoint(authenticated_request(
             RevokeControlSurfaceEndpointRequest {
@@ -331,10 +372,215 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             &fourth,
         ))
         .await
-        .expect("a distinct endpoint can revoke the target device");
+        .expect("a distinct endpoint can revoke the target device")
+        .into_inner();
+    assert!(device_revocation.revoked_session_count > 0);
     assert_eq!(operation_event_count(&server.storage).await, before_device);
     assert_scope_denied(&mut server.client, &third).await;
     assert_submit_accepted(&mut server.client, &fourth, "device-unaffected").await;
+
+    let missing_target = server
+        .client
+        .revoke_control_surface_principal(authenticated_request(
+            RevokeControlSurfacePrincipalRequest {
+                principal_id: "missing-principal".to_owned(),
+                reason_code: "missing_target".to_owned(),
+            },
+            SECRET,
+            &fourth,
+        ))
+        .await
+        .expect_err("a valid issuer cannot revoke a missing target");
+    assert_eq!(missing_target.code(), Code::NotFound);
+    let denied_audits = server
+        .storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::AuthorizationFailed],
+                actor_id: None,
+                endpoint_id: Some(EndpointId { value: "fourth-endpoint".to_owned() }),
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["control_surface_principal_not_found".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("denied target decisions must be queryable");
+    assert_eq!(denied_audits.records.len(), 1);
+
+    let principal_audits = server
+        .storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::ControlSurfacePrincipalRevoked],
+                actor_id: None,
+                endpoint_id: Some(EndpointId { value: "second-endpoint".to_owned() }),
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec![],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("repeated revocation audits must be queryable");
+    assert_eq!(principal_audits.records.len(), 2);
+    assert!(principal_audits.records.iter().all(|record| {
+        record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("second-endpoint")
+            && record.target_scope.as_ref().map(|scope| scope.resource_id.as_str())
+                == Some(first.principal_id.as_str())
+    }));
+
+    let endpoint_audits = server
+        .storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::ControlSurfaceEndpointRevoked],
+                actor_id: None,
+                endpoint_id: Some(EndpointId { value: "third-endpoint".to_owned() }),
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec![],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("endpoint revocation attribution must be queryable");
+    assert_eq!(endpoint_audits.records.len(), 2);
+    assert!(endpoint_audits.records.iter().all(|record| {
+        record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("third-endpoint")
+            && record.target_scope.as_ref().map(|scope| scope.resource_id.as_str())
+                == Some("second-endpoint")
+    }));
+
+    let mut auth_failure = authenticated_request(
+        RevokeControlSurfaceEndpointRequest {
+            reason_code: "auth_failure".to_owned(),
+            target: Some(
+                patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::EndpointId(
+                    EndpointId { value: "fourth-endpoint".to_owned() },
+                ),
+            ),
+        },
+        SECRET,
+        &fourth,
+    );
+    auth_failure.metadata_mut().insert(
+        PRINCIPAL_SECRET_HEADER,
+        "wrong-principal-secret".parse().expect("metadata is valid"),
+    );
+    let authentication_failure = server
+        .client
+        .revoke_control_surface_endpoint(auth_failure)
+        .await
+        .expect_err("invalid principal credentials must fail closed");
+    assert_eq!(authentication_failure.code(), Code::Unauthenticated);
+    let authentication_audits = server
+        .storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::LoginFailed],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["transport_principal_authentication_failed".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("authentication failures must be queryable");
+    assert!(!authentication_audits.records.is_empty());
+}
+
+#[tokio::test]
+async fn stale_issuer_is_rejected_when_revocation_commits_before_acceptance() {
+    let directory = tempfile::tempdir().expect("test directory must be created");
+    let storage = RusqliteStorage::open(
+        directory
+            .path()
+            .join("patchbay.sqlite3")
+            .to_str()
+            .expect("UTF-8 test path"),
+    )
+    .expect("test storage must open");
+    seed_authority_and_session(&storage).await;
+    let decision_gate = CoreDecisionGate::default();
+    let (mut client, task, auth) = serve_with_gate(storage.clone(), decision_gate.clone()).await;
+
+    let gate_guard = decision_gate.acquire().await;
+    let revoked_principal_id = auth.principal_id.clone();
+    let submit = tokio::spawn(async move {
+        client
+            .submit(authenticated_request(
+                SubmitRequest {
+                    operation: Some(operation("stale-issuer", "stale-issuer-key")),
+                },
+                SECRET,
+                &auth,
+            ))
+            .await
+    });
+    tokio::task::yield_now().await;
+
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::ControlSurfaceRevocation as i32,
+                payload: ControlSurfaceRevocation {
+                    authority_domain_id: Some(domain()),
+                    verified_revoker: Some(ActorEndpointRef {
+                        actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                        endpoint_id: Some(EndpointId { value: "revoker-endpoint".to_owned() }),
+                        device_id: Some(DeviceId { value: "revoker-device".to_owned() }),
+                        endpoint_generation: Some(Generation { value: 1 }),
+                    }),
+                    occurred_at: Some(Timestamp { seconds: 3, nanos: 0 }),
+                    reason_code: "race_test".to_owned(),
+                    target: Some(
+                        patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(
+                            revoked_principal_id,
+                        ),
+                    ),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .expect("revocation must commit while the request waits for acceptance");
+    drop(gate_guard);
+
+    let error = submit
+        .await
+        .expect("submit task must complete")
+        .expect_err("the cached pre-revocation issuer must not submit");
+    assert_eq!(error.code(), Code::Unauthenticated);
+    task.abort();
 }
 
 #[tokio::test]
@@ -1275,6 +1521,76 @@ where
     S: Storage + Clone + Send + Sync + 'static,
 {
     serve_with_clock(storage, Arc::new(patchbay_core::time::SystemClock)).await
+}
+
+async fn serve_with_gate<S>(
+    storage: S,
+    decision_gate: CoreDecisionGate,
+) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let service = ControlServiceImpl::new_with_security_and_decision_gate(
+        storage,
+        domain(),
+        Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+        decision_gate,
+    )
+    .await
+    .expect("service projections must rebuild");
+    let interceptor = CoreSecretInterceptor::new(SECRET).expect("test secret is valid");
+    let service = ControlServiceServer::with_interceptor(service, interceptor);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral listener must bind");
+    let address = listener.local_addr().expect("listener has address");
+    let incoming = TcpListenerStream::new(listener);
+    let task = tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming(incoming)
+            .await
+            .expect("test server must run");
+    });
+    let mut client = ControlServiceClient::connect(format!("http://{address}"))
+        .await
+        .expect("test client must connect");
+    let login = client
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            password: "correct-password".to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId { value: "grpc-smoke-login".to_owned() }),
+                device_id: Some(DeviceId { value: "grpc-smoke-host".to_owned() }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .expect("test login must issue a core-owned session")
+        .into_inner();
+    let session_generation = login
+        .operator_session_generation
+        .expect("test login returns a session generation")
+        .value;
+    let operator_session = login
+        .operator_session_id
+        .expect("test login returns a session")
+        .value;
+    let principal = login
+        .principal
+        .expect("test login returns a principal credential");
+    (
+        client,
+        task,
+        TestAuth {
+            session_id: operator_session,
+            session_generation,
+            principal_id: principal.principal_id,
+            principal_secret: principal.secret,
+        },
+    )
 }
 
 async fn serve_with_clock<S>(

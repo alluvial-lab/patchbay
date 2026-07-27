@@ -198,9 +198,10 @@ pub fn audit_draft_for_source(
             let revocation = patchbay_contracts::patchbay::ControlSurfaceRevocation::decode(payload.payload.as_slice()).map_err(|error| {
                 StorageError::CorruptRecord(format!("cannot decode control-surface revocation for audit: {error}"))
             })?;
-            draft.actor_id = revocation.verified_revoker.as_ref().and_then(|value| value.actor_id.clone());
-            draft.endpoint_id = revocation.verified_revoker.as_ref().and_then(|value| value.endpoint_id.clone());
-            draft.device_id = revocation.verified_revoker.as_ref().and_then(|value| value.device_id.clone());
+            let revoker = revocation.verified_revoker.as_ref();
+            draft.actor_id = revoker.and_then(|value| value.actor_id.clone());
+            draft.endpoint_id = revoker.and_then(|value| value.endpoint_id.clone());
+            draft.device_id = revoker.and_then(|value| value.device_id.clone());
             draft.kind = match revocation.target.as_ref() {
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(id)) => {
                     draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
@@ -211,11 +212,19 @@ pub fn audit_draft_for_source(
                     AuditEventKind::ControlSurfacePrincipalRevoked
                 }
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(id)) => {
-                    draft.endpoint_id = Some(id.clone());
+                    draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
+                        kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
+                        resource_id: id.value.clone(),
+                        ..Default::default()
+                    });
                     AuditEventKind::ControlSurfaceEndpointRevoked
                 }
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(id)) => {
-                    draft.device_id = Some(id.clone());
+                    draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
+                        kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
+                        resource_id: id.value.clone(),
+                        ..Default::default()
+                    });
                     AuditEventKind::ControlSurfaceDeviceRevoked
                 }
                 None => return Err(StorageError::CorruptRecord("control-surface revocation has no target".to_owned())),

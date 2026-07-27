@@ -480,6 +480,9 @@ pub async fn ingest_operator_session_revocation<S: Storage>(
         .expect("validated generation");
     if let Some(existing) = projection.session_revocation_for_actor(actor) {
         if existing.invalidated_through_generation.value >= generation.value {
+            let mut audit = session_revocation_audit(&revocation);
+            audit.source_event_id = Some(existing.event_id.clone());
+            storage.append_audit(authority_domain_id, audit).await?;
             return Ok(RevocationIngestResult {
                 event_id: existing.event_id.clone(),
                 newly_revoked: false,
@@ -524,6 +527,9 @@ pub async fn ingest_control_surface_revocation<S: Storage>(
         ControlSurfaceRevocationTarget::Device(id) => projection.revocation_for_device(id),
     };
     if let Some(existing) = existing {
+        let mut audit = control_surface_revocation_audit(&revocation, &target);
+        audit.source_event_id = Some(existing.event_id.clone());
+        storage.append_audit(authority_domain_id, audit).await?;
         return Ok((
             RevocationIngestResult {
                 event_id: existing.event_id.clone(),
@@ -618,27 +624,26 @@ fn control_surface_revocation_audit(
         .verified_revoker
         .as_ref()
         .and_then(|value| value.actor_id.clone());
-    audit.endpoint_id = match target {
-        ControlSurfaceRevocationTarget::Endpoint(value) => Some(value.clone()),
-        _ => revocation
-            .verified_revoker
-            .as_ref()
-            .and_then(|value| value.endpoint_id.clone()),
-    };
-    audit.device_id = match target {
-        ControlSurfaceRevocationTarget::Device(value) => Some(value.clone()),
-        _ => revocation
-            .verified_revoker
-            .as_ref()
-            .and_then(|value| value.device_id.clone()),
-    };
-    if let ControlSurfaceRevocationTarget::Principal(principal_id) = target {
-        audit.target_scope = Some(TargetScope {
+    let revoker = revocation.verified_revoker.as_ref();
+    audit.endpoint_id = revoker.and_then(|value| value.endpoint_id.clone());
+    audit.device_id = revoker.and_then(|value| value.device_id.clone());
+    audit.target_scope = Some(match target {
+        ControlSurfaceRevocationTarget::Principal(principal_id) => TargetScope {
             kind: TargetScopeKind::Resource as i32,
             resource_id: principal_id.clone(),
             ..TargetScope::default()
-        });
-    }
+        },
+        ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource_id: endpoint_id.value.clone(),
+            ..TargetScope::default()
+        },
+        ControlSurfaceRevocationTarget::Device(device_id) => TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource_id: device_id.value.clone(),
+            ..TargetScope::default()
+        },
+    });
     audit.reason_code = revocation.reason_code.clone();
     audit
 }

@@ -232,19 +232,16 @@ where
         let operation = request
             .get_ref()
             .operation
-            .as_ref()
+            .clone()
             .ok_or_else(|| Status::invalid_argument("submit request is missing operation"))?;
         let authority_domain_id = operation
             .authority_domain_id
             .clone()
             .ok_or_else(|| Status::invalid_argument("operation is missing authority_domain_id"))?;
         self.require_configured_domain(&authority_domain_id)?;
-        let issuer =
-            MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
-                .await?;
-        let operation = request.into_inner().operation.ok_or_else(|| {
-            Status::invalid_argument("submit request lost its validated operation")
-        })?;
+        let _ = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
 
         // Reconcile and submit under one gate. Pre-submit catch-up repairs the
         // projection after a prior append whose handler did not complete; the
@@ -255,6 +252,9 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
         let result = match acceptance::submit_with_clock(
             &self.storage,
             self.state.grant_check(),
@@ -294,16 +294,25 @@ where
     ) -> Result<Response<RevokeGrantResult>, Status> {
         let requested_domain = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&requested_domain)?;
-        let issuer = MetadataIssuerContext::from_request(&request, requested_domain.clone(), &self.state).await?;
-        let request = request.into_inner();
-        let grant_id = request.grant_id.ok_or_else(|| Status::invalid_argument("grant_id is required"))?;
+        let _ = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        let grant_id = request
+            .get_ref()
+            .grant_id
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("grant_id is required"))?;
         if grant_id.value.is_empty() || grant_id.value.len() > 256 {
             return Err(Status::invalid_argument("grant_id must be non-empty and bounded"));
         }
-        validate_revocation_reason(&request.reason)?;
+        validate_revocation_reason(&request.get_ref().reason)?;
 
         let _decision_guard = self.decision_gate.acquire().await;
         self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        let request = request.into_inner();
         let Some(grant) = self.state.grant(&grant_id).await else {
             self.audit_revocation_denied(&issuer).await?;
             return Err(Status::permission_denied("grant revocation is not authorized"));
@@ -336,6 +345,14 @@ where
             }
         }
         if grant.is_revoked() {
+            let mut audit = AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantRevoked);
+            audit.actor_id = issuer.verified_actor().cloned();
+            audit.endpoint_id = issuer.verified_endpoint().cloned();
+            audit.device_id = issuer.verified_device().cloned();
+            audit.grant_id = Some(grant_id.clone());
+            audit.target_scope = Some(grant.target_scope.clone());
+            audit.reason_code = "grant_revocation_idempotent".to_owned();
+            self.record_audit(audit).await?;
             return Ok(Response::new(RevokeGrantResult {
                 changed: false,
                 already_revoked: true,
@@ -389,10 +406,15 @@ where
         if cursor.value > current_lsn {
             return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
         }
-        let issuer = MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state).await?;
+        let _ = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
         let scope = subscription_scope();
         let _decision_guard = self.decision_gate.acquire().await;
         self.state.catch_up(&self.storage, &authority_domain_id).await.map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
         let evaluated_at = self.clock.now();
         let decision = self.state.grant_check().check_at(
             &authority_domain_id,
@@ -444,9 +466,9 @@ where
     ) -> Result<Response<LoadSnapshotResponse>, Status> {
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
-        MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
+        self.issuer_from_request(&request, authority_domain_id.clone())
             .await?;
-        let request = request.into_inner();
+        let at_or_before = request.get_ref().at_or_before;
 
         // Snapshot reads share the submission gate and catch-up ordering so a
         // caller never observes a projection behind an already committed
@@ -458,9 +480,11 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
+        self.issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
         if let Some(snapshot) = self
             .storage
-            .load_latest_snapshot(&authority_domain_id, request.at_or_before)
+            .load_latest_snapshot(&authority_domain_id, at_or_before)
             .await
             .map_err(map_storage_error_to_status)?
         {
@@ -674,12 +698,17 @@ where
         &self,
         request: Request<RevokeOperatorSessionRequest>,
     ) -> Result<Response<RevokeOperatorSessionResult>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
         let actor_id = issuer
             .verified_actor()
             .cloned()
@@ -698,6 +727,9 @@ where
             AuditEventKind::OperatorSessionRevoked,
         );
         session_audit.actor_id = Some(actor_id);
+        session_audit.endpoint_id = issuer.verified_endpoint().cloned();
+        session_audit.device_id = issuer.verified_device().cloned();
+        session_audit.operator_session_hash = hash_principal_credential(&issuer.operator_session_id().value);
         session_audit.reason_code = "operator_session_revoked".to_owned();
         self.record_audit(session_audit).await?;
         Ok(Response::new(RevokeOperatorSessionResult { revoked }))
@@ -707,19 +739,23 @@ where
         &self,
         request: Request<RevokeAllOperatorSessionsRequest>,
     ) -> Result<Response<RevokeAllOperatorSessionsResult>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        validate_control_surface_reason(&request.get_ref().reason_code)?;
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
         let request = request.into_inner();
-        validate_control_surface_reason(&request.reason_code)?;
         let actor_id = issuer
             .verified_actor()
             .cloned()
             .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
-        let _decision_guard = self.decision_gate.acquire().await;
         let generation = self.state.current_operator_session_generation(&actor_id).await;
         let revocation = OperatorSessionRevocation {
             authority_domain_id: Some(self.authority_domain_id.clone()),
@@ -729,7 +765,7 @@ where
             occurred_at: Some(crate::identity::now_timestamp()?),
             reason_code: request.reason_code,
         };
-        let result = self
+        let (result, revoked_session_count) = self
             .state
             .ingest_operator_session_revocation(
                 &self.storage,
@@ -738,7 +774,6 @@ where
             )
             .await
             .map_err(map_operator_error_to_status)?;
-        let revoked_session_count = self.state.revoke_all_operator_sessions(&actor_id, &generation).await;
         Ok(Response::new(RevokeAllOperatorSessionsResult {
             revoked_session_count,
             invalidated_through_generation: Some(generation),
@@ -750,30 +785,45 @@ where
         &self,
         request: Request<RevokeControlSurfacePrincipalRequest>,
     ) -> Result<Response<RevokeControlSurfaceResult>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
-        let request = request.into_inner();
-        validate_control_surface_reason(&request.reason_code)?;
-        if request.principal_id.is_empty() {
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let principal_id = request.get_ref().principal_id.clone();
+        validate_control_surface_reason(&request.get_ref().reason_code)?;
+        if principal_id.is_empty() {
             return Err(Status::invalid_argument("principal_id must not be empty"));
         }
         let _decision_guard = self.decision_gate.acquire().await;
-        let record = self
-            .state
-            .principal_record(&request.principal_id)
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
             .await
-            .ok_or_else(|| Status::not_found("control-surface principal was not found"))?;
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(
+            principal_id.clone(),
+        );
+        let Some(record) = self.state.principal_record(&principal_id).await else {
+            self.audit_control_surface_denied(
+                &issuer,
+                Some(&target),
+                "control_surface_principal_not_found",
+            )
+            .await?;
+            return Err(Status::not_found("control-surface principal was not found"));
+        };
         if record.operator_actor_id.as_ref() != issuer.verified_actor() {
+            self.audit_control_surface_denied(
+                &issuer,
+                Some(&target),
+                "control_surface_principal_authorization_denied",
+            )
+            .await?;
             return Err(Status::not_found("control-surface principal was not found"));
         }
-        let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(
-            request.principal_id.clone(),
-        );
         let principal_count = self.state.count_matching_revocation_target(&target).await;
+        let request = request.into_inner();
         let revocation = ControlSurfaceRevocation {
             authority_domain_id: Some(self.authority_domain_id.clone()),
             verified_revoker: Some(issuer_to_endpoint_ref(&issuer)),
@@ -781,11 +831,11 @@ where
             reason_code: request.reason_code,
             target: Some(
                 patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(
-                    request.principal_id,
+                    principal_id,
                 ),
             ),
         };
-        let (result, target) = self
+        let (result, _target, revoked_session_count) = self
             .state
             .ingest_control_surface_revocation(
                 &self.storage,
@@ -794,7 +844,6 @@ where
             )
             .await
             .map_err(map_operator_error_to_status)?;
-        let revoked_session_count = self.state.revoke_sessions_for_target(&target).await;
         Ok(Response::new(RevokeControlSurfaceResult {
             newly_revoked: result.newly_revoked,
             revoked_principal_count: if result.newly_revoked { principal_count } else { 0 },
@@ -807,29 +856,54 @@ where
         &self,
         request: Request<RevokeControlSurfaceEndpointRequest>,
     ) -> Result<Response<RevokeControlSurfaceResult>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
-        let request = request.into_inner();
-        validate_control_surface_reason(&request.reason_code)?;
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        validate_control_surface_reason(&request.get_ref().reason_code)?;
         let _decision_guard = self.decision_gate.acquire().await;
-        let target = match request.target {
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let target = match request.get_ref().target.clone() {
             Some(patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::EndpointId(endpoint_id)) => {
+                let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(endpoint_id.clone());
                 if endpoint_id.value.is_empty() || !self.state.has_endpoint(&endpoint_id).await {
+                    self.audit_control_surface_denied(
+                        &issuer,
+                        Some(&target),
+                        "control_surface_endpoint_not_found",
+                    )
+                    .await?;
                     return Err(Status::not_found("control-surface endpoint was not found"));
                 }
-                patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(endpoint_id)
+                target
             }
             Some(patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::DeviceId(device_id)) => {
+                let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Device(device_id.clone());
                 if device_id.value.is_empty() || !self.state.has_device(&device_id).await {
+                    self.audit_control_surface_denied(
+                        &issuer,
+                        Some(&target),
+                        "control_surface_device_not_found",
+                    )
+                    .await?;
                     return Err(Status::not_found("control-surface device was not found"));
                 }
-                patchbay_core::authority::ControlSurfaceRevocationTarget::Device(device_id)
+                target
             }
-            None => return Err(Status::invalid_argument("exactly one endpoint_id or device_id is required")),
+            None => {
+                self.audit_control_surface_denied(
+                    &issuer,
+                    None,
+                    "control_surface_revocation_target_missing",
+                )
+                .await?;
+                return Err(Status::invalid_argument("exactly one endpoint_id or device_id is required"));
+            }
         };
         let revoked_principal_count = self.state.count_matching_revocation_target(&target).await;
         let target_wire = match &target {
@@ -845,10 +919,10 @@ where
             authority_domain_id: Some(self.authority_domain_id.clone()),
             verified_revoker: Some(issuer_to_endpoint_ref(&issuer)),
             occurred_at: Some(crate::identity::now_timestamp()?),
-            reason_code: request.reason_code,
+            reason_code: request.get_ref().reason_code.clone(),
             target: Some(target_wire),
         };
-        let (result, target) = self
+        let (result, _target, revoked_session_count) = self
             .state
             .ingest_control_surface_revocation(
                 &self.storage,
@@ -857,7 +931,6 @@ where
             )
             .await
             .map_err(map_operator_error_to_status)?;
-        let revoked_session_count = self.state.revoke_sessions_for_target(&target).await;
         Ok(Response::new(RevokeControlSurfaceResult {
             newly_revoked: result.newly_revoked,
             revoked_principal_count: if result.newly_revoked { revoked_principal_count } else { 0 },
@@ -870,23 +943,28 @@ where
         &self,
         request: Request<EnrollControlSurfacePrincipalRequest>,
     ) -> Result<Response<EnrollControlSurfacePrincipalResult>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let enrollment = request
+            .get_ref()
+            .principal
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
         let actor_id = issuer
             .verified_actor()
             .cloned()
             .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
-        let enrollment = request
-            .into_inner()
-            .principal
-            .ok_or_else(|| Status::invalid_argument("principal enrollment is required"))?;
         let (record, credential) =
             issue_principal(actor_id, enrollment, self.authority_domain_id.clone())?;
-        let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .ingest_principal(&self.storage, &self.authority_domain_id, record)
             .await
@@ -904,15 +982,20 @@ where
         &self,
         request: Request<RecordControlSurfaceAuditRequest>,
     ) -> Result<Response<RecordControlSurfaceAuditResponse>, Status> {
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            self.authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
-        let request = request.into_inner();
-        let kind = patchbay_contracts::patchbay::AuditEventKind::try_from(request.kind)
+        let _ = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let kind = patchbay_contracts::patchbay::AuditEventKind::try_from(request.get_ref().kind)
             .map_err(|_| Status::invalid_argument("unknown control-surface audit kind"))?;
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, self.authority_domain_id.clone())
+            .await?;
+        let request = request.into_inner();
         if !matches!(
             kind,
             AuditEventKind::CsrfCheckFailed
@@ -963,23 +1046,16 @@ where
         let operation = request
             .get_ref()
             .operation
-            .as_ref()
+            .clone()
             .ok_or_else(|| Status::invalid_argument("query diagnostics request is missing operation"))?;
         let authority_domain_id = operation
             .authority_domain_id
             .clone()
             .ok_or_else(|| Status::invalid_argument("query operation is missing authority domain"))?;
         self.require_configured_domain(&authority_domain_id)?;
-        let issuer = MetadataIssuerContext::from_request(
-            &request,
-            authority_domain_id.clone(),
-            &self.state,
-        )
-        .await?;
-        let operation = request
-            .into_inner()
-            .operation
-            .ok_or_else(|| Status::invalid_argument("query diagnostics request lost operation"))?;
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
 
         // Decode and validate the typed query before any persistence read. A
         // malformed query is a normal pre-acceptance rejection, not a gRPC
@@ -1002,6 +1078,9 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
 
         let submission = match acceptance::submit_with_clock(
             &self.storage,
@@ -1220,7 +1299,52 @@ where
     }
 }
 
-impl<S> ControlServiceImpl<S> {
+impl<S> ControlServiceImpl<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    async fn issuer_from_request<T>(
+        &self,
+        request: &Request<T>,
+        authority_domain_id: AuthorityDomainId,
+    ) -> Result<MetadataIssuerContext, Status> {
+        match MetadataIssuerContext::from_request(request, authority_domain_id, &self.state).await {
+            Ok(issuer) => Ok(issuer),
+            Err(error) => {
+                self.audit_authentication_failure().await?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn audit_authentication_failure(&self) -> Result<(), Status> {
+        let mut draft = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::LoginFailed,
+        );
+        draft.reason_code = "transport_principal_authentication_failed".to_owned();
+        self.record_audit(draft).await
+    }
+
+    async fn audit_control_surface_denied(
+        &self,
+        issuer: &dyn IssuerContext,
+        target: Option<&patchbay_core::authority::ControlSurfaceRevocationTarget>,
+        reason_code: &str,
+    ) -> Result<(), Status> {
+        let mut draft = AuditRecordDraft::new(
+            crate::identity::now_timestamp()?,
+            AuditEventKind::AuthorizationFailed,
+        );
+        draft.actor_id = issuer.verified_actor().cloned();
+        draft.endpoint_id = issuer.verified_endpoint().cloned();
+        draft.device_id = issuer.verified_device().cloned();
+        draft.target_scope = target.map(revocation_target_scope);
+        draft.failure_code = Some(FailureCode::AuthorizationDenied);
+        draft.reason_code = reason_code.to_owned();
+        self.record_audit(draft).await
+    }
+
     async fn audit_revocation_denied(&self, issuer: &dyn IssuerContext) -> Result<(), Status> {
         let mut draft = AuditRecordDraft::new(
             crate::identity::now_timestamp()?,
@@ -1671,6 +1795,21 @@ fn validate_control_surface_reason(reason_code: &str) -> Result<(), Status> {
         ));
     }
     Ok(())
+}
+
+fn revocation_target_scope(
+    target: &patchbay_core::authority::ControlSurfaceRevocationTarget,
+) -> patchbay_contracts::patchbay::TargetScope {
+    let resource_id = match target {
+        patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(id) => id.clone(),
+        patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(id) => id.value.clone(),
+        patchbay_core::authority::ControlSurfaceRevocationTarget::Device(id) => id.value.clone(),
+    };
+    patchbay_contracts::patchbay::TargetScope {
+        kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
+        resource_id,
+        ..patchbay_contracts::patchbay::TargetScope::default()
+    }
 }
 
 fn caller_network_address<T>(request: &Request<T>) -> String {
