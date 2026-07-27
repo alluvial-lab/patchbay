@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle
 kind: feature
-stage: done
+stage: review
 tags: [security, foundation, protocol]
 parent: epic-revocation-lifecycle
 depends_on: []
@@ -473,3 +473,12 @@ All four implementation stories are `done`. The feature is complete on commit `7
 - **Committed v0.1.0**: injected core clock; grant expiry at authorization; self-scoped, durable, non-cascading grant revocation; all three existing `GrantRevocationPolicy` values with the exact state effects above; Query/authority-domain Subscribe establishment and resume checks; typed audit/CLI administration.
 - **Reserved seam**: cross-subject authority-domain/RBAC administration, filtered subscriptions for multi-operator privacy, continuous stream reauthorization, resumable held commands, delegation/cascade queries, and future session-staleness use of the clock.
 - **Explicitly rejected for v0.1.0**: implicit cascade revocation, UI-only authorization, capability-based grant authority, and adding a grant-admin OperationKind solely for this attenuation RPC.
+
+## Returned to review (2026-07-27, orchestrator)
+
+The implementing worker advanced this feature straight to `done`, skipping
+the mandatory independent review pass (and used non-conventional commit
+subjects). Orchestrator wave verification also repaired: single-generator
+bindings fix (f684ccb), clippy debt (2e61df7), web-server mock follow-up
+(4614e4d). All suites green at HEAD. Feature returned to `review` for the
+standard independent pass before closure.
