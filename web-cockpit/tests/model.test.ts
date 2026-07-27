@@ -456,3 +456,42 @@ function stored<D extends DescMessage>(
     }),
   });
 }
+
+test("tool rows carry an args/result detail preview", () => {
+  let model = fold(emptyPresentationModel(), registration(1n, 1n));
+
+  model = fold(model, observationEvent(2n, {
+    kind: "tool_requested", eventId: "e1", sessionId: "session-1", ts: 2,
+    toolCallId: "t1", tool: "bash", args: { command: "pwd && ls" },
+  }));
+  model = fold(model, observationEvent(3n, {
+    kind: "tool_requested", eventId: "e2", sessionId: "session-1", ts: 3,
+    toolCallId: "t2", tool: "read", args: { path: "docs/VISION.md" },
+  }));
+  model = fold(model, observationEvent(4n, {
+    kind: "tool_requested", eventId: "e3", sessionId: "session-1", ts: 4,
+    toolCallId: "t3", tool: "mystery", args: { zeta: 1, alpha: "two" },
+  }));
+  model = fold(model, observationEvent(5n, {
+    kind: "tool_finished", eventId: "e4", sessionId: "session-1", ts: 5,
+    toolCallId: "t1", tool: "bash", result: "total 42",
+  }));
+  model = fold(model, observationEvent(6n, {
+    kind: "tool_requested", eventId: "e5", sessionId: "session-1", ts: 6,
+    toolCallId: "t4", tool: "bash", args: { command: "x".repeat(500) },
+  }));
+
+  const rows = model.observations.filter((o) => o.role === "tool");
+  const byId = new Map(rows.map((o) => [o.id, o]));
+
+  assert.equal(byId.get("t1")!.detail, "pwd && ls");
+  assert.equal(byId.get("t2")!.detail, "docs/VISION.md");
+  // Unknown arg shapes fall back to JSON of the args object.
+  assert.equal(byId.get("t3")!.detail, JSON.stringify({ zeta: 1, alpha: "two" }));
+  // Finished rows preview the result.
+  assert.equal(byId.get("t1:finished")!.detail, "total 42");
+  // Oversized previews truncate at 240 chars with an ellipsis.
+  const truncated = byId.get("t4")!.detail!;
+  assert.equal(truncated.length, 240);
+  assert.equal(truncated.endsWith("…"), true);
+});

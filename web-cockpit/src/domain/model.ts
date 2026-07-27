@@ -99,6 +99,8 @@ export interface ObservationView {
   markdown: string;
   lsn: bigint;
   messageId?: string;
+  /** Plain-text preview of tool args/result; rendered as text, never markdown. */
+  detail?: string;
 }
 
 export interface AdapterDiagnosticView {
@@ -789,11 +791,44 @@ function foldTranscriptObservation(
     return;
   }
   if (event.kind === "tool_requested" || event.kind === "tool_finished") {
-    const id = typeof event.toolCallId === "string" ? event.toolCallId : `tool-${lsn}`;
+    const baseId = typeof event.toolCallId === "string" ? event.toolCallId : `tool-${lsn}`;
+    const id = event.kind === "tool_finished" ? `${baseId}:finished` : baseId;
     const tool = typeof event.tool === "string" ? event.tool : "tool";
     const body = event.kind === "tool_requested" ? `Running **${tool}**` : event.error ? `**${tool}** failed: ${event.error}` : `**${tool}** finished`;
-    model.observations.push({ id, session, role: "tool", kind: event.kind, markdown: body, lsn });
+    const detail =
+      event.kind === "tool_requested"
+        ? toolPreview(event.args)
+        : toolPreview(event.error ?? event.result);
+    model.observations.push({ id, session, role: "tool", kind: event.kind, markdown: body, lsn, ...(detail ? { detail } : {}) });
   }
+}
+
+/** Ordered arg keys that name what a call is doing (bash command, read path…). */
+const TOOL_PREVIEW_KEYS = ["command", "path", "filePath", "file", "query", "pattern", "url", "prompt"];
+const TOOL_PREVIEW_LIMIT = 240;
+
+/**
+ * Compact plain-text preview of a tool call's args (or result/error). Rendered
+ * as text, never markdown — tool args are untrusted content.
+ */
+function toolPreview(value: unknown): string | undefined {
+  let text: string | undefined;
+  if (typeof value === "string" && value) {
+    text = value;
+  } else if (isRecord(value)) {
+    for (const key of TOOL_PREVIEW_KEYS) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate) {
+        text = candidate;
+        break;
+      }
+    }
+    text ??= Object.keys(value).length > 0 ? JSON.stringify(value) : undefined;
+  } else if (value !== undefined && value !== null) {
+    text = JSON.stringify(value);
+  }
+  if (!text) return undefined;
+  return text.length > TOOL_PREVIEW_LIMIT ? `${text.slice(0, TOOL_PREVIEW_LIMIT - 1)}…` : text;
 }
 
 function cloneModel(model: PresentationModel): PresentationModel {
