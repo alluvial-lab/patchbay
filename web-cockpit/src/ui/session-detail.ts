@@ -5,10 +5,12 @@ import {
   OperationKind,
   OperationState,
   PayloadContentType,
+  SessionActivityState,
   type SubmissionResult,
 } from "@patchbay/contracts";
 
 import {
+  rendersLive,
   sessionKey,
   stableTarget,
   type CommandView,
@@ -190,6 +192,9 @@ function renderTimeline(
 
   if (entries.length === 0) {
     timeline.append(emptyState(document, "No messages yet", "Send an instruction to start this session timeline."));
+    if (rendersLive(session) && session.activity === SessionActivityState.WORKING) {
+      timeline.append(renderTimelineActivity(document, session));
+    }
     return;
   }
 
@@ -212,6 +217,26 @@ function renderTimeline(
       timeline.append(card);
     }
   }
+
+  // In-chat activity affordance: the session list and header show state, but
+  // the operator's eyes are at the end of the timeline during a turn (found
+  // in live dogfooding: "nothing in the chatbox indicates the agent is
+  // working"). Only for a live, working session.
+  if (rendersLive(session) && session.activity === SessionActivityState.WORKING) {
+    timeline.append(renderTimelineActivity(document, session));
+  }
+}
+
+function renderTimelineActivity(document: Document, session: SessionView): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "timeline-activity";
+  row.setAttribute("role", "status");
+  const indicator = document.createElement("span");
+  indicator.className = "activity-indicator activity-indicator--working";
+  indicator.append(textElement(document, "span", "activity-indicator__icon", ""));
+  indicator.append(document.createTextNode(session.activityDetail ?? "working"));
+  row.append(indicator);
+  return row;
 }
 
 type TimelineEntry =

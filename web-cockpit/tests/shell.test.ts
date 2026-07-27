@@ -473,3 +473,33 @@ function target(identity: SessionIdentity) {
     sessionGeneration: create(GenerationSchema, { value: identity.generation }),
   });
 }
+
+test("timeline shows an in-chat activity indicator while the session is working", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const view = session("session-1"); // WORKING with detail "thinking"
+  const detail = renderSessionDetail(dom.window.document, withSessions(view), view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+  });
+  const indicator = detail.element.querySelector(".timeline-activity");
+  assert.ok(indicator, "expected a timeline activity indicator");
+  assert.equal(indicator!.getAttribute("role"), "status");
+  assert.match(indicator!.textContent ?? "", /thinking/);
+});
+
+test("timeline activity indicator is absent when the session is idle", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const view = { ...session("session-1"), activity: SessionActivityState.IDLE, activityDetail: undefined };
+  const detail = renderSessionDetail(dom.window.document, withSessions(view), view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+  });
+  assert.equal(detail.element.querySelector(".timeline-activity"), null);
+});
+
+test("timeline activity indicator is absent when the session is tombstoned", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const view = { ...session("session-1"), tombstoned: true };
+  const detail = renderSessionDetail(dom.window.document, withSessions(view), view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+  });
+  assert.equal(detail.element.querySelector(".timeline-activity"), null);
+});

@@ -173,6 +173,42 @@ body > [data-patchbay-cockpit] {
   border-radius: 0;
 }
 
+.cockpit .timeline-activity {
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-4);
+}
+
+.cockpit .activity-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--font-size-xs)/1.4 var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.cockpit .activity-indicator__icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex: none;
+}
+
+.cockpit .activity-indicator--working .activity-indicator__icon {
+  animation: activity-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit .activity-indicator--working .activity-indicator__icon {
+    animation: none;
+  }
+}
+
 .cockpit .delivery-line {
   max-width: 100%;
   flex-wrap: wrap;
