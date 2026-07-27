@@ -1,7 +1,7 @@
 ---
 id: story-fix-chat-activity-indicator
 kind: story
-stage: review
+stage: done
 tags: [bug]
 parent: null
 depends_on: []
@@ -55,3 +55,7 @@ first test run.
 - **Side discovery**: `.activity-indicator` classes used by the session list
   had NO CSS until now — the list showed activity as bare text. The new
   styles now cover both contexts.
+
+## Operator confirmation (2026-07-27)
+
+Confirmed: the in-timeline activity indicator works. Story closed to done.
