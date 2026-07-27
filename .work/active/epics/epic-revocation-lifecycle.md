@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle
 kind: epic
-stage: drafting
+stage: implementing
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -97,3 +97,38 @@ satisfying the deferred lockdown-producer obligation recorded in
 Combines `backlog-revocation-lifecycle-surface` (2026-07-23 maximum-review
 finding + 2026-07-27 docs-audit evidence) and
 `backlog-grant-expiration-enforcement` (2026-07-13 authority design review).
+
+## Decomposition
+
+Three features, matching the sketch. Session/principal revocation and grant
+lifecycle start in parallel (disjoint write sets: web-server/session plane vs
+core authority plane); lockdown sequences after grant-lifecycle because both
+touch the submission-authorization path and grant-lifecycle establishes the
+current enforcement pattern there. Grounding note: `GrantRecord.is_expired()`
+already evaluates `expires_at` (via direct `SystemTime`, no clock port) — the
+grant-lifecycle feature owns the injected-clock cleanup plus a stale
+"intentionally not evaluated" comment at `core/src/authority/state.rs:45`.
+
+### Child features
+
+- `epic-revocation-lifecycle-session-principal-revocation` — revoke-all-sessions, endpoint/principal revocation, session-record fields — depends on: `[]`
+- `epic-revocation-lifecycle-grant-lifecycle` — grant-revocation RPC, clock-port expiry enforcement, Subscribe grant check — depends on: `[]`
+- `epic-revocation-lifecycle-lockdown` — durable lockdown + bootstrap exit + audit producers + cockpit UX (mockups required at feature design) — depends on: `[epic-revocation-lifecycle-grant-lifecycle]`
+
+### Simplification arcs
+
+- `grant-lifecycle` — clock port unifies expiry enforcement; deletes the stale comment and the "stored but lying" `expires_at` dead weight.
+- `lockdown` — rejection gate rides the existing submission-authorization path; exit reuses the loopback admin/bootstrap channel.
+- `session-principal-revocation` — one revocation path pattern generalizes; session-record fields land once.
+
+### Decomposition risks
+
+- **Lockdown UX is safety-critical and unmocked** — the epic's one net-new
+  surface; mockups are explicitly required at that feature's design pass
+  (deferred from epic tier to keep momentum; do not implement without them).
+- **Self-lockout footgun** — revoke-all / lockdown exercised by the sole
+  operator against their own live session. Feature design must address
+  re-entry (bootstrap channel) and the CLI recovery path before
+  implementation.
+- **Write-set collisions** between lockdown and grant-lifecycle if
+  parallelized anyway — the depends_on edge exists to prevent that.
