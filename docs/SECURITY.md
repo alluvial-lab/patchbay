@@ -91,7 +91,7 @@ The web cockpit uses server-side sessions. The browser receives only an opaque s
 v0.1.0 browser-session requirements:
 
 - session identifiers are high-entropy, meaningless client-side values;
-- session records include operator id, endpoint id, created time, last-used time, expiration, revoked time, and session generation;
+- session records include operator id, endpoint id, device id, created time, last-used time, expiration, revoked time, and **operator-session generation**;
 - session cookies use `HttpOnly`, `Secure` outside localhost, `SameSite=Strict` by default, `Path=/`, and no `Domain` attribute;
 - non-localhost deployments require direct HTTPS before browser sessions are accepted; the only supported proxy mode is an explicitly enabled loopback proxy that overwrites `X-Forwarded-Proto` and attests `https` (see `docs/RUNBOOK.md`);
 - localhost development may use the browser's localhost secure-cookie exception, but that exception must not be generalized to LAN/IP/container deployments;
@@ -197,17 +197,19 @@ Revocation prevents future authority. Already accepted Operations follow the pol
 - **cancel** — submit or record cancellation for accepted non-terminal Operations when supported;
 - **require reauthorization** — hold or reject delivery until a fresh grant/session is established.
 
-v0.1.0 must support these operator-facing revocation actions (contract status: #1 and #4 implemented; #2, #3, and #5 are contract-committed and landing with `epic-revocation-lifecycle`):
+v0.1.0 must support these operator-facing revocation actions (the current-session, all-session, principal/endpoint/device, and grant controls are implemented; security lockdown remains owned by the lockdown feature):
 
 1. **Revoke current browser session** — delete or mark the session revoked and clear its cookie.
-2. **Revoke all browser sessions** — invalidate all operator-session generations, optionally by rotating the server-side session-signing/encryption secret.
-3. **Revoke endpoint/device** — mark a browser or CLI endpoint revoked and reject future Operations from it.
+2. **Revoke all operator sessions** — invalidate every current operator-session generation for the verified actor, including CLI sessions. v0.1.0 uses opaque server-side records and a durable generation fence; it does not add a signing-secret rotation layer.
+3. **Revoke principal/endpoint/device** — mark the matching browser or CLI credential scope revoked and reject future Operations and same-id enrollment from it.
 4. **Revoke adapter/session grant** — stop Operation acceptance for a target scope while preserving audit history.
 5. **Security lockdown** — reject new Operations, mark affected runtime sessions stale, require fresh login, and record the reason.
 
 **Lockdown exit.** Lockdown is a durable posture (an audited, persisted event). Restarting the core does not clear it: crash recovery replays the log and lockdown remains in effect. Exit requires re-establishing the bootstrap trust level **via the bootstrap channel** (local CLI/console/SSH/trusted device — whatever the operator configured at setup), not routine web re-authentication. This self-scales with the operator's configured security posture. The protection depends on the enrollment channel being distinct from routine web login: if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection, because an attacker holding the routine credential could clear it. That channel distinction is load-bearing, not incidental.
 
-Revocation never deletes command history. Late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy.
+Revocation never deletes command history. Late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy. This session/principal/endpoint/device plane uses `continue`: accepted work may finish, while future acceptance and subscription establishment require a fresh valid authority.
+
+CLI recovery is explicit and truthful: confirmed `patchbay-cli revoke-all-sessions` clears the local credential file, then `patchbay-cli login` from a trusted host obtains fresh credentials and a higher operator-session generation. Self-revoked principal/endpoint/device credentials require a distinct unrevoked identity or new endpoint/device configuration. The one-time `setup` secret is not a recovery mechanism and must not be advertised as one.
 
 ## Audit events
 
@@ -221,6 +223,7 @@ Minimum audit records:
 - login success/failure;
 - logout;
 - operator-session created, renewed, expired, revoked;
+- control-surface principal, endpoint, and device revocation;
 - failed CSRF, Origin, or Fetch Metadata check;
 - failed authorization;
 - grant created, changed, expired, revoked;

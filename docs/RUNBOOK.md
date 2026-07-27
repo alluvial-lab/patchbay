@@ -77,17 +77,16 @@ surfaces (browser cockpit + CLI).
   identity shown before submission).
 - `patchbay-cli cancel|interrupt <command-id>`.
 - `patchbay-cli logout`.
+- `patchbay-cli revoke-all-sessions [--reason-code CODE]` — revoke every core operator session for the actor, clear local credentials, and require trusted-host login.
+- `patchbay-cli revoke-principal <principal-id> [--reason-code CODE]` — revoke one control-surface principal.
+- `patchbay-cli revoke-endpoint <endpoint-id> [--reason-code CODE]` / `patchbay-cli revoke-device <device-id> [--reason-code CODE]` — revoke a credential scope. Self-targeted credentials are cleared only after a confirmed core response.
 - `patchbay-cli audit-query [flags]` — query the redacted audit projection.
 - `patchbay-cli inspect-command <command-id> [flags]` — inspect lifecycle and
   related redacted audit history.
 - `patchbay-cli adapter-status [adapter-id ...] [flags]` — inspect adapter
   state, capabilities, and recent diagnostics.
 
-The diagnostics CLI is VM-local in v0.1.0 because the core listener is
-loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, or
-`adapter-status` on the VM; workstation operators may use an SSH tunnel or run
-the CLI on the VM. Supported remote CLI transport is reserved for the future
-split-transport milestone.
+The diagnostics and emergency-control CLI is VM-local in v0.1.0 because the core listener is loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, `adapter-status`, or revocation commands on the VM; workstation operators may use an SSH tunnel or run the CLI on the VM. After confirmed all-session revocation, run `patchbay-cli login` from that trusted host. If the principal, endpoint, or device itself was revoked, use a distinct unrevoked identity or new endpoint/device configuration. The one-time `setup` secret is consumed bootstrap material, not recovery. Supported remote CLI transport is reserved for the future split-transport milestone.
 
 Diagnostic flags are `audit-query --kind --actor-id --endpoint-id --command-id
 --target --failure-code --reason-code --since --until --before-event --limit

@@ -15,7 +15,7 @@ import type { CredentialStore } from "../credentials.js";
 import { eventIdView } from "../output.js";
 
 const DEFAULT_REASON_CODE = "operator_requested";
-const REASON_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const REASON_CODE = /^[a-z0-9_]{1,64}$/;
 
 export async function revokeAllSessionsCommand(
   client: Pick<ControlClient, "revokeAllOperatorSessions">,

@@ -14,3 +14,7 @@ records carry only actor, expiry, and a revoked boolean
 (`server/src/operator_session.rs:15-18`). Decision for v0.1+: implement the
 promised fields (endpoint binding also matters for multi-endpoint futures) or
 descope the prose.
+
+## Disposition
+
+Absorbed by `epic-revocation-lifecycle-session-principal-revocation`: browser session records now retain endpoint/device identity, endpoint generation, timestamps, and `revokedAt`; core operator sessions retain replayed generation fences and verified compound bindings. No follow-up item is required.

@@ -30,12 +30,15 @@ Current checked-model properties:
 - Session-generation monotonicity from `session_generation.qnt`: `GenerationMonotonic`.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
 
+The session/principal revocation model and its four vectors are present as draft artifacts. They remain **stated-normative** until the independent attempted-evidence formulas, mutation gates, and vector promotion review are completed; passing the current checker is not presented as checked-normative evidence.
+
 **checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
 
 **stated-normative** — documented v0.1.0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
 - OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; fleet-spawn authorization (`FleetAuthorityForSpawn`); non-cascading spawn-grant revocation (`SpawnRevocationDoesNotCascade`); Elicitation responder authority (`ElicitationResponderAuthority`); and descendant-grant creation (`SpawnCreatesDescendantGrant`). These remain stated-normative until models represent the submitting evidence and claimed failure boundaries with mutation-survivable independent oracles.
+- Session/principal revocation: `RevokeAllInvalidatesPriorSessionGeneration`, `PrincipalRevocationPreventsFuture`, `EndpointRevocationPreventsFuture`, and `DeviceRevocationPreventsFuture` remain stated-normative draft properties. The real-process/replay tests, vectors, and guard-removal mutations are implementation evidence and do not silently promote these model properties.
 - Subscription audit, cursor-replay authorization, and grant authorization: `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized`, and `SubscriptionGrantChecked` remain stated-normative until the model separates attempted audit/replay/actor/scope evidence from state written by the subscription actions.
 - Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
 - Session identity and stale-generation refinements: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, and `LateGenerationInert` remain stated-normative until models represent per-session identity, target selection, and stale-event audit state.
@@ -312,7 +315,8 @@ Formal models produce implementation obligations. The implementation uses:
 - property tests for TypeScript operator-domain behavior;
 - adapter conformance tests for declared capabilities;
 - replay tests for event logs and snapshots;
-- reconnect tests for stale control surfaces.
+- reconnect tests for stale control surfaces;
+- session/principal/endpoint/device revocation vectors and real-process/replay tests covering old generations, same-id fences, unaffected identities, accepted-work continuation, and filtered subscription establishment.
 
 ### Conformance-vector reservations (stated-normative until promoted)
 

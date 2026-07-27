@@ -11,7 +11,8 @@ use patchbay_contracts::patchbay::{
     CommandTransition, ControlSurfacePrincipalRecord, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
-    RevokeGrantRequest,
+    RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
+    RevokeControlSurfacePrincipalRequest, RevokeGrantRequest,
     PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
     SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
@@ -201,6 +202,7 @@ impl Storage for FailPostAppendReadOnceStorage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestAuth {
     session_id: String,
+    session_generation: u64,
     principal_id: String,
     principal_secret: String,
 }
@@ -217,6 +219,122 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+#[tokio::test]
+async fn revoke_all_survives_restart_and_forces_a_higher_generation_login() {
+    let mut server = start_server().await;
+    let old_auth = server.operator_session.clone();
+    let revoked = server
+        .client
+        .revoke_all_operator_sessions(authenticated_request(
+            RevokeAllOperatorSessionsRequest {
+                reason_code: "operator_requested".to_owned(),
+            },
+            SECRET,
+            &old_auth,
+        ))
+        .await
+        .expect("revoke-all must commit through the gRPC boundary")
+        .into_inner();
+    assert_eq!(revoked.invalidated_through_generation.unwrap().value, old_auth.session_generation);
+
+    server.task.abort();
+    let (mut client, task, fresh_auth) = serve(server.storage.clone()).await;
+    let old_session = client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(operation("old-after-restart", "old-after-restart")),
+            },
+            SECRET,
+            &old_auth,
+        ))
+        .await
+        .expect_err("opaque pre-restart session ids must not survive restart");
+    assert_eq!(old_session.code(), Code::Unauthenticated);
+    assert!(fresh_auth.session_generation > old_auth.session_generation);
+
+    let accepted = client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(operation("fresh-after-restart", "fresh-after-restart")),
+            },
+            SECRET,
+            &fresh_auth,
+        ))
+        .await
+        .expect("fresh higher-generation login remains usable")
+        .into_inner();
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted as i32);
+    task.abort();
+}
+
+#[tokio::test]
+async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance() {
+    let mut server = start_server().await;
+    let first = server.operator_session.clone();
+    let second = login_surface(&mut server.client, "second-endpoint", "second-device").await;
+    let third = login_surface(&mut server.client, "third-endpoint", "third-device").await;
+    let fourth = login_surface(&mut server.client, "fourth-endpoint", "fourth-device").await;
+
+    let before_principal = operation_event_count(&server.storage).await;
+    server
+        .client
+        .revoke_control_surface_principal(authenticated_request(
+            RevokeControlSurfacePrincipalRequest {
+                principal_id: first.principal_id.clone(),
+                reason_code: "principal_lockdown".to_owned(),
+            },
+            SECRET,
+            &second,
+        ))
+        .await
+        .expect("a distinct endpoint can revoke the target principal");
+    assert_eq!(operation_event_count(&server.storage).await, before_principal);
+    assert_scope_denied(&mut server.client, &first).await;
+    assert_submit_accepted(&mut server.client, &second, "principal-unaffected").await;
+
+    let before_endpoint = operation_event_count(&server.storage).await;
+    server
+        .client
+        .revoke_control_surface_endpoint(authenticated_request(
+            RevokeControlSurfaceEndpointRequest {
+                reason_code: "endpoint_lockdown".to_owned(),
+                target: Some(
+                    patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::EndpointId(
+                        EndpointId { value: "second-endpoint".to_owned() },
+                    ),
+                ),
+            },
+            SECRET,
+            &third,
+        ))
+        .await
+        .expect("a distinct endpoint can revoke the target endpoint");
+    assert_eq!(operation_event_count(&server.storage).await, before_endpoint);
+    assert_scope_denied(&mut server.client, &second).await;
+    assert_submit_accepted(&mut server.client, &third, "endpoint-unaffected").await;
+
+    let before_device = operation_event_count(&server.storage).await;
+    server
+        .client
+        .revoke_control_surface_endpoint(authenticated_request(
+            RevokeControlSurfaceEndpointRequest {
+                reason_code: "device_lockdown".to_owned(),
+                target: Some(
+                    patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::DeviceId(
+                        DeviceId { value: "third-device".to_owned() },
+                    ),
+                ),
+            },
+            SECRET,
+            &fourth,
+        ))
+        .await
+        .expect("a distinct endpoint can revoke the target device");
+    assert_eq!(operation_event_count(&server.storage).await, before_device);
+    assert_scope_denied(&mut server.client, &third).await;
+    assert_submit_accepted(&mut server.client, &fourth, "device-unaffected").await;
 }
 
 #[tokio::test]
@@ -1050,6 +1168,81 @@ fn startup_secret_and_storage_error_mapping_fail_safe() {
     );
 }
 
+async fn login_surface(
+    client: &mut ControlServiceClient<Channel>,
+    endpoint_id: &str,
+    device_id: &str,
+) -> TestAuth {
+    let login = client
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            password: "correct-password".to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId { value: endpoint_id.to_owned() }),
+                device_id: Some(DeviceId { value: device_id.to_owned() }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .expect("test surface login must succeed")
+        .into_inner();
+    let principal = login.principal.expect("test login returns a principal");
+    TestAuth {
+        session_id: login.operator_session_id.expect("test login returns a session").value,
+        session_generation: login
+            .operator_session_generation
+            .expect("test login returns a session generation")
+            .value,
+        principal_id: principal.principal_id,
+        principal_secret: principal.secret,
+    }
+}
+
+async fn assert_submit_accepted(
+    client: &mut ControlServiceClient<Channel>,
+    auth: &TestAuth,
+    key: &str,
+) {
+    let result = client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(operation(key, key)),
+            },
+            SECRET,
+            auth,
+        ))
+        .await
+        .expect("unrelated scope must remain usable")
+        .into_inner();
+    assert_eq!(result.outcome, SubmissionOutcome::Accepted as i32);
+}
+
+async fn assert_scope_denied(client: &mut ControlServiceClient<Channel>, auth: &TestAuth) {
+    let submit = client
+        .submit(authenticated_request(
+            SubmitRequest {
+                operation: Some(operation("revoked-scope", "revoked-scope")),
+            },
+            SECRET,
+            auth,
+        ))
+        .await
+        .expect_err("revoked scope must reject before operation acceptance");
+    assert_eq!(submit.code(), Code::Unauthenticated);
+    let subscribe = client
+        .subscribe(authenticated_request(
+            SubscribeRequest {
+                authority_domain_id: Some(domain()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            SECRET,
+            auth,
+        ))
+        .await
+        .expect_err("revoked scope must reject subscription establishment");
+    assert_eq!(subscribe.code(), Code::Unauthenticated);
+}
+
 async fn operation_event_count(storage: &RusqliteStorage) -> usize {
     storage
         .read_after(&domain(), Lsn { value: 0 })
@@ -1130,6 +1323,10 @@ where
         .await
         .expect("test login must issue a core-owned session")
         .into_inner();
+    let session_generation = login
+        .operator_session_generation
+        .expect("test login returns a session generation")
+        .value;
     let operator_session = login
         .operator_session_id
         .expect("test login returns a session")
@@ -1142,6 +1339,7 @@ where
         task,
         TestAuth {
             session_id: operator_session,
+            session_generation,
             principal_id: principal.principal_id,
             principal_secret: principal.secret,
         },

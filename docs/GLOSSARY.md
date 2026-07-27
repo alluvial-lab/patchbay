@@ -37,7 +37,8 @@ A log sequence number a control surface or adapter holds to express that it has 
 A new lifetime of an entity that retains its identity. Patchbay uses generation at three scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
 
 - **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Wire-present but currently unset; cross-incarnation rejection is a reserved seam until persistence and validation exist.
-- **Session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
+- **Runtime-session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
+- **Operator-session generation** — a core-assigned, monotonic incarnation of one authenticated browser or CLI operator session. All-session revocation persists an invalidated-through floor; restart replay preserves the floor while opaque session ids remain process-local.
 - **Adapter generation** — an incarnation of the adapter process, **adapter-reported on re-attach**. Used to reject stale events from a prior adapter attachment.
 
 The three scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / session / adapter) is the collision-protection discipline.
@@ -120,7 +121,7 @@ An adapter-reported non-session target whose state materially governs agent avai
 
 ## Operator session
 
-An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an endpoint. It is the continuity mechanism for a control surface, not a substitute for command grants.
+An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an actor, endpoint, device, endpoint generation, and core-assigned operator-session generation. Opaque session ids are process-local bearer references and are not restored after restart. It is the continuity mechanism for a control surface, not a substitute for command grants.
 
 ## Patchbay core
 
@@ -148,7 +149,7 @@ A grant-checked transport-layer establishment that delivers an event/snapshot st
 
 ## Revocation
 
-A policy action that prevents future authority for an operator session, endpoint, grant, adapter, or target scope. Revocation does not erase command history; already accepted commands follow the relevant revocation policy.
+A policy action that prevents future authority for an operator session, principal, endpoint, device, grant, adapter, or target scope. Session/principal/endpoint/device revocation uses `continue` for already accepted work. Revocation does not erase command history; already accepted commands follow the relevant revocation policy. CLI self-lockout recovery uses a distinct unrevoked identity or fresh endpoint/device configuration; the one-time setup secret is not a reset mechanism.
 
 ## Revision
 

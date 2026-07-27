@@ -25,6 +25,8 @@ A **session** is an adapter-reported runtime/control target. A session identity 
 - runtime session id (adapter-reported, stable per session generation);
 - session generation (adapter-reported, monotonic per session).
 
+These are **runtime-session generations**. They are distinct from an **operator-session generation**, which the core assigns monotonically per operator actor when a browser or CLI authentication session is issued. A durable all-session revocation records an invalidated-through operator-session generation; restart replay preserves that floor, opaque pre-restart session ids are not restored, and the next successful login receives a higher generation. Operator-session generations fence control-surface authentication; runtime-session generations fence adapter-reported replacement and late runtime events. Neither generation is a substitute for the other.
+
 Project, cwd, and name are **metadata**, not identity: they describe the session for operator orientation and display, but they update independently of the identity tuple. A cwd change does not create a new session target, and human-readable labels cannot override verified target identity.
 
 Session generation is adapter-reported because only the adapter can observe external runtime replacement. When the adapter reports a strictly-greater session generation for an existing session id, the core **tombstones** the prior generation: it marks the prior generation superseded at the next LSN, retains it for audit and late-event correlation, and treats the new generation as the live target. Late replies or events binding to a tombstoned generation are `stale_event` audit records; they do not mutate the live generation. This is consistent with the ratified first-durable-terminal-commit rule: late events do not rewrite committed state.
@@ -521,7 +523,7 @@ Authorization is deny-by-default. Control surfaces may hide unavailable actions,
 
 Revocation prevents future authority. Already accepted commands follow the policy attached to their grant and OperationKind: continue, cancel where supported, or require reauthorization. Revocation does not delete command history; late events after revocation are audit/reconciliation events unless they are valid transitions for commands already accepted under the relevant policy.
 
-v0.1.0 revocation actions include current-session revocation, all-session revocation, endpoint/device revocation, adapter/session grant revocation, and security lockdown. A lockdown rejects new commands, marks affected runtime sessions stale, requires fresh login, and records the reason.
+v0.1.0 revocation actions include current-session revocation, all-session revocation, principal/endpoint/device revocation, adapter/session grant revocation, and security lockdown. Session/principal/endpoint/device revocation uses `continue` for already accepted work: it prevents future acceptance and subscription establishment without deleting command or audit history. A lockdown rejects new commands, marks affected runtime sessions stale, requires fresh login, and records the reason.
 
 ## Leases
 

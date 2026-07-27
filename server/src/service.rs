@@ -841,7 +841,6 @@ where
             }
             patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(_) => unreachable!(),
         };
-        let _decision_guard = self.decision_gate.acquire().await;
         let revocation = ControlSurfaceRevocation {
             authority_domain_id: Some(self.authority_domain_id.clone()),
             verified_revoker: Some(issuer_to_endpoint_ref(&issuer)),
