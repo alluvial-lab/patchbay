@@ -512,3 +512,31 @@ the mandatory independent review pass (explicitly instructed otherwise).
 Orchestrator wave verification is green across all suites (cargo 30 + clippy,
 cli 33, web-server 29, web-cockpit 67, pi-adapter 24, e2e, drift). Feature
 returned to `review` for the standard independent pass before closure.
+
+## Review findings (standard pass 1, 2026-07-27 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Stale-issuer race** — compound issuer verification happens BEFORE
+   acquiring CoreDecisionGate; a request can verify, wait out a revocation
+   commit, then submit with the cached issuer. Fix: under the gate, catch up
+   projections then RE-VERIFY the issuer before every principal-gated
+   decision; deterministic race test (revocation between arrival and
+   acceptance).
+2. **Audit incomplete + misattribution** — valid-but-denied target decisions
+   and authentication failures bypass durable audit; idempotent repeats
+   return old events unaudited; endpoint-revocation audits overwrite
+   `endpoint_id` with the TARGET endpoint (misattributing the action to the
+   revoked endpoint instead of the verified revoker). Fix: audit every
+   allowed/repeated/denied attempt; verified actor/endpoint/device in
+   attribution fields, revoked target in target_scope; audit-query tests for
+   denial/repeat/third-endpoint cases.
+3. **`revoked_session_count` always 0** — state ingestion already revokes
+   matching sessions, handlers invoke revocation again, responses report 0.
+   Fix: return the first count (or remove one mutation site); gRPC
+   assertions for nonzero + idempotent counts.
+
+Parked notes: Quint model assigns (not monotonic) and doesn't model replay —
+parkable, no promotion claimed; CLI device-revocation output could name the
+required --device-id more concretely; web-memory/core revoke-all desync is
+honest once blocker 1 lands.
