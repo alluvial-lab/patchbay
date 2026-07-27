@@ -72,7 +72,10 @@ export async function startCockpit(options: StartCockpitOptions = {}): Promise<C
   try {
     csrfToken = await fetchCsrfToken(fetcher);
   } catch (error) {
-    if (!(error instanceof CsrfTokenRequestError) || error.status !== 401) throw error;
+    // 401 = no/unknown session; 403 = known-but-inactive session (expired or
+    // revoked). Both mean the operator must log in — a session expiring is
+    // normal, never a startup failure.
+    if (!(error instanceof CsrfTokenRequestError) || (error.status !== 401 && error.status !== 403)) throw error;
     await waitForOperatorLogin(document, mount, { fetch: fetcher });
     csrfToken = await fetchCsrfToken(fetcher);
   }

@@ -155,3 +155,46 @@ function session(): SessionView {
     reconciled: true,
   };
 }
+
+test("expired session (403 on CSRF token) falls back to login, not startup failure", async () => {
+  const dom = new JSDOM(`<!doctype html>
+    <meta name="patchbay-authority-domain" content="default">
+    <main data-patchbay-cockpit></main>`, { url: "https://localhost/" });
+  let csrfRequests = 0;
+  let loginRequests = 0;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/csrf-token") {
+      csrfRequests += 1;
+      return csrfRequests === 1
+        ? new Response(JSON.stringify({ error: "session_expired" }), { status: 403 })
+        : new Response(JSON.stringify({ csrfToken: "csrf-after-login" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+    }
+    assert.equal(String(input), "/login");
+    loginRequests += 1;
+    return new Response(JSON.stringify({ csrfToken: "login-token" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof globalThis.fetch;
+
+  const starting = startCockpit({
+    document: dom.window.document,
+    fetch: fetcher,
+    startSubscription: false,
+    isMobile: () => false,
+  });
+  const form = await waitForElement<HTMLFormElement>(dom, ".login-form");
+  const password = dom.window.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+  password.value = "correct-password";
+  form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+
+  const app = await starting;
+  assert.equal(csrfRequests, 2);
+  assert.equal(loginRequests, 1);
+  assert.equal(dom.window.document.querySelectorAll(".failure-banner").length, 0);
+  assert.equal(dom.window.document.querySelectorAll(".cockpit").length, 1);
+  app.stop();
+});
