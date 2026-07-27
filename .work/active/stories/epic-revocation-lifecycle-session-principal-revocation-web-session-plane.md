@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation-web-session-plane
 kind: story
-stage: implementing
+stage: done
 tags: [security]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: [epic-revocation-lifecycle-session-principal-revocation-core-state]
@@ -46,3 +46,13 @@ surface.
 Consumes the stable core RPCs. Do not add cockpit controls or mockups here; the
 parent epic assigns that composition and warning/confirmation UX to the
 lockdown sibling.
+
+## Implementation notes
+- Execution capability: inline implementation; the web session projection and gRPC-Web bridge share one boundary.
+- Review weight: standard (project default).
+- Files changed: `web-server/src/sessions.ts`, `src/main.ts`, `src/routes/login.ts`, `src/routes/rpc.ts`, and session/integration tests.
+- Tests added/removed: session identity/fence, retained revocation timestamps, revoke-all fail-closed behavior, and confirmed self principal/endpoint invalidation tests added.
+- Simplification: local invalidation is expressed through `SessionStore` matching helpers; the bridge routes only project local records after core confirmation except revoke-all, which always fences locally.
+- Discrepancies from design: compatibility overloads retain legacy local test callers while production login uses the full verified `SessionIdentity` shape.
+- Adjacent issues parked: none.
+- Verification: `cd web-server && npm test` passed (29 tests).

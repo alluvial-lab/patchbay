@@ -3,6 +3,7 @@ import { Code, ConnectError, createClient, type CallOptions } from "@connectrpc/
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import {
   ControlService,
+  EndpointIdSchema,
   LoadSnapshotResponseSchema,
   PrincipalCredentialSchema,
   QueryDiagnosticsResponseSchema,
@@ -15,6 +16,11 @@ import {
   EnrollControlSurfacePrincipalResultSchema,
   RevokeGrantResultSchema,
   RevokeOperatorSessionResultSchema,
+  RevokeAllOperatorSessionsRequestSchema,
+  RevokeAllOperatorSessionsResultSchema,
+  RevokeControlSurfaceEndpointRequestSchema,
+  RevokeControlSurfacePrincipalRequestSchema,
+  RevokeControlSurfaceResultSchema,
 } from "@patchbay/contracts";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -37,6 +43,9 @@ interface CoreCall {
     | "verifyOperatorPassword"
     | "revokeOperatorSession"
     | "revokeGrant"
+    | "revokeAllOperatorSessions"
+    | "revokeControlSurfacePrincipal"
+    | "revokeControlSurfaceEndpoint"
     | "recordControlSurfaceAudit";
   request: unknown;
   headers: Headers;
@@ -124,6 +133,113 @@ test("an unauthenticated core RPC invalidates the corresponding browser session"
     headers: { cookie },
   });
   assert.equal(nextCsrf.statusCode, 401);
+  await fixture.app.close();
+});
+
+test("revoke-all fails closed locally when core is unavailable", async () => {
+  const unavailable = new ConnectError("core unavailable", Code.Unavailable);
+  const fixture = makeFixture({ revokeAllError: unavailable });
+  const caller = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "web-endpoint",
+    deviceId: "web-device",
+    sessionGeneration: 1n,
+    coreSessionId: "caller-core-session",
+  });
+  const sibling = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "other-endpoint",
+    deviceId: "other-device",
+    sessionGeneration: 2n,
+    coreSessionId: "sibling-core-session",
+  });
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/RevokeAllOperatorSessions",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie: `${SESSION_COOKIE_NAME}=${caller.sessionId}`,
+      [CSRF_HEADER_NAME]: caller.csrfSecret,
+    },
+    payload: protobufFrame(
+      toBinary(
+        RevokeAllOperatorSessionsRequestSchema,
+        create(RevokeAllOperatorSessionsRequestSchema, { reasonCode: "operator_lockdown" }),
+      ),
+    ),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body, /grpc-status: 14/);
+  assert.equal(fixture.sessions.lookup(caller.sessionId)?.status, "revoked");
+  assert.equal(fixture.sessions.lookup(sibling.sessionId)?.status, "revoked");
+  assert.equal(fixture.sessions.lookup(caller.sessionId)?.revokedAt !== null, true);
+  assert.equal(fixture.calls.filter((call) => call.method === "revokeAllOperatorSessions").length, 1);
+  await fixture.app.close();
+});
+
+test("self principal and endpoint revocation invalidate matching local records after core success", async () => {
+  const fixture = makeFixture();
+  const session = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "patchbay-web-server",
+    deviceId: "web-device",
+    sessionGeneration: 1n,
+    coreSessionId: "core-issued-session",
+  });
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/RevokeControlSurfacePrincipal",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+      [CSRF_HEADER_NAME]: session.csrfSecret,
+    },
+    payload: protobufFrame(
+      toBinary(
+        RevokeControlSurfacePrincipalRequestSchema,
+        create(RevokeControlSurfacePrincipalRequestSchema, {
+          principalId: "web-principal",
+          reasonCode: "principal_lockdown",
+        }),
+      ),
+    ),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body, /grpc-status: 0/);
+  assert.equal(fixture.sessions.lookup(session.sessionId)?.status, "revoked");
+
+  const endpointSession = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "patchbay-web-server",
+    deviceId: "web-device",
+    sessionGeneration: 2n,
+    coreSessionId: "core-issued-session-2",
+  });
+  const endpointResponse = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/RevokeControlSurfaceEndpoint",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie: `${SESSION_COOKIE_NAME}=${endpointSession.sessionId}`,
+      [CSRF_HEADER_NAME]: endpointSession.csrfSecret,
+    },
+    payload: protobufFrame(
+      toBinary(
+        RevokeControlSurfaceEndpointRequestSchema,
+        create(RevokeControlSurfaceEndpointRequestSchema, {
+          target: {
+            case: "endpointId",
+            value: create(EndpointIdSchema, { value: "patchbay-web-server" }),
+          },
+          reasonCode: "endpoint_lockdown",
+        }),
+      ),
+    ),
+  });
+  assert.equal(endpointResponse.statusCode, 200);
+  assert.match(endpointResponse.body, /grpc-status: 0/);
+  assert.equal(fixture.sessions.lookup(endpointSession.sessionId)?.status, "revoked");
   await fixture.app.close();
 });
 
@@ -346,7 +462,7 @@ test("CSRF token issuance and LoadSnapshot are authenticated reads without CSRF"
   }
 });
 
-function makeFixture(options: { submitError?: unknown; revokeError?: unknown } = {}): {
+function makeFixture(options: { submitError?: unknown; revokeError?: unknown; revokeAllError?: unknown } = {}): {
   app: ReturnType<typeof buildApp>;
   sessions: SessionStore;
   calls: CoreCall[];
@@ -383,6 +499,7 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
       }
       return create(VerifyOperatorPasswordResultSchema, {
         operatorSessionId: { value: "core-issued-session" },
+        operatorSessionGeneration: { value: 1n },
         principal: {
           principalId: "web-principal",
           secret: "web-principal-secret",
@@ -409,6 +526,19 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
         headers: callHeaders(callOptions),
       });
       return create(RevokeGrantResultSchema, {});
+    },
+    async revokeAllOperatorSessions(request, callOptions) {
+      calls.push({ method: "revokeAllOperatorSessions", request, headers: callHeaders(callOptions) });
+      if (options.revokeAllError !== undefined) throw options.revokeAllError;
+      return create(RevokeAllOperatorSessionsResultSchema, { revokedSessionCount: 1 });
+    },
+    async revokeControlSurfacePrincipal(request, callOptions) {
+      calls.push({ method: "revokeControlSurfacePrincipal", request, headers: callHeaders(callOptions) });
+      return create(RevokeControlSurfaceResultSchema, { newlyRevoked: true });
+    },
+    async revokeControlSurfaceEndpoint(request, callOptions) {
+      calls.push({ method: "revokeControlSurfaceEndpoint", request, headers: callHeaders(callOptions) });
+      return create(RevokeControlSurfaceResultSchema, { newlyRevoked: true });
     },
     async recordControlSurfaceAudit(request, callOptions) {
       calls.push({
@@ -451,6 +581,12 @@ function callHeaders(options: CallOptions | undefined): Headers {
 
 function timestampMs(timestamp: { seconds: bigint; nanos: number }): number {
   return Number(timestamp.seconds) * 1_000 + Math.floor(timestamp.nanos / 1_000_000);
+}
+
+function protobufFrame(payload: Uint8Array): Buffer {
+  const header = Buffer.alloc(5);
+  header.writeUInt32BE(payload.length, 1);
+  return Buffer.concat([header, payload]);
 }
 
 function submitFrame(browserActorId: string): Buffer {

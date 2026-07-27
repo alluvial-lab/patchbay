@@ -9,6 +9,11 @@ import {
   QueryDiagnosticsRequestSchema,
   QueryDiagnosticsResponseSchema,
   RecordControlSurfaceAuditRequestSchema,
+  RevokeAllOperatorSessionsRequestSchema,
+  RevokeAllOperatorSessionsResultSchema,
+  RevokeControlSurfaceEndpointRequestSchema,
+  RevokeControlSurfacePrincipalRequestSchema,
+  RevokeControlSurfaceResultSchema,
   SubmissionResultSchema,
   SubmitRequestSchema,
   SubscribeEventSchema,
@@ -16,7 +21,7 @@ import {
   TimeWindowSchema,
 } from "@patchbay/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Operation } from "@patchbay/contracts";
+import type { Operation, PrincipalCredential } from "@patchbay/contracts";
 
 import { type GuardOptions, requireOperatorSession } from "../middleware/csrf-auth.js";
 
@@ -100,6 +105,8 @@ export function registerRpcRoutes(
     },
   );
 
+  registerRevocationRoutes(app, coreSecret, guardOptions);
+
   app.post(
     "/patchbay.ControlService/Subscribe",
     { preHandler: requireOperatorSession(app.sessions, { ...guardOptions, requireCsrf: false }) },
@@ -131,6 +138,99 @@ export function registerRpcRoutes(
       }
     },
   );
+}
+
+function registerRevocationRoutes(
+  app: FastifyInstance,
+  coreSecret: string,
+  guardOptions: GuardOptions,
+): void {
+  app.post(
+    "/patchbay.ControlService/RevokeAllOperatorSessions",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          RevokeAllOperatorSessionsRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        try {
+          const output = await app.coreClient.revokeAllOperatorSessions(input, {
+            headers: coreHeaders(app, request, coreSecret),
+          });
+          return sendUnary(reply, toBinary(RevokeAllOperatorSessionsResultSchema, output));
+        } finally {
+          if (request.verifiedOperator) {
+            app.sessions.revokeAllForOperator(request.verifiedOperator);
+          }
+        }
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/patchbay.ControlService/RevokeControlSurfacePrincipal",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          RevokeControlSurfacePrincipalRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        const output = await app.coreClient.revokeControlSurfacePrincipal(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        const principal = app.corePrincipals.get();
+        if (principal?.principalId === input.principalId) {
+          revokeCurrentPrincipalSessions(app, principal);
+        }
+        return sendUnary(reply, toBinary(RevokeControlSurfaceResultSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/patchbay.ControlService/RevokeControlSurfaceEndpoint",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          RevokeControlSurfaceEndpointRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        const output = await app.coreClient.revokeControlSurfaceEndpoint(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        const principal = app.corePrincipals.get();
+        if (
+          principal
+          && ((input.target.case === "endpointId" && input.target.value.value === principal.endpointId?.value)
+            || (input.target.case === "deviceId" && input.target.value.value === principal.deviceId?.value))
+        ) {
+          if (input.target.case === "endpointId") {
+            app.sessions.revokeForEndpoint(input.target.value.value);
+          } else {
+            app.sessions.revokeForDevice(input.target.value.value);
+          }
+        }
+        return sendUnary(reply, toBinary(RevokeControlSurfaceResultSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+}
+
+function revokeCurrentPrincipalSessions(
+  app: FastifyInstance,
+  principal: PrincipalCredential,
+): void {
+  if (principal.endpointId?.value) app.sessions.revokeForEndpoint(principal.endpointId.value);
+  if (principal.deviceId?.value) app.sessions.revokeForDevice(principal.deviceId.value);
 }
 
 function stampVerifiedOperation(

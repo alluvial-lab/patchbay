@@ -30,11 +30,45 @@ test("dead sessions remain recognized with revoked or expired status", () => {
 
   assert.equal(sessions.lookup("unknown"), null);
   assert.equal(sessions.revoke(revoked.sessionId), true);
+  assert.equal(sessions.lookup(revoked.sessionId)?.revokedAt, 100);
   now = 151;
 
   assert.equal(sessions.lookup(revoked.sessionId)?.status, "revoked");
+  assert.equal(sessions.lookup(revoked.sessionId)?.revokedAt, 100);
   assert.equal(sessions.lookup(expired.sessionId)?.status, "expired");
+  assert.equal(sessions.lookup(expired.sessionId)?.revokedAt, null);
   assert.equal(sessions.size, 2, "dead records must stay in the recognized-session map");
+});
+
+test("session identity records preserve verified endpoint, device, and generation", () => {
+  const session = new SessionStore().create({
+    operatorActorId: "operator-a",
+    endpointId: "endpoint-a",
+    deviceId: "device-a",
+    sessionGeneration: 7n,
+    coreSessionId: "core-session-a",
+  });
+  assert.equal(session.operatorActorId, "operator-a");
+  assert.equal(session.endpointId, "endpoint-a");
+  assert.equal(session.deviceId, "device-a");
+  assert.equal(session.sessionGeneration, 7n);
+  assert.equal(session.coreSessionId, "core-session-a");
+});
+
+test("local endpoint and device revocation retains every matching record", () => {
+  let now = 10;
+  const sessions = new SessionStore({ now: () => now });
+  const endpoint = sessions.create({ operatorActorId: "operator-a", endpointId: "endpoint-a", deviceId: "device-a", sessionGeneration: 1n });
+  const device = sessions.create({ operatorActorId: "operator-b", endpointId: "endpoint-b", deviceId: "device-a", sessionGeneration: 1n });
+  const other = sessions.create({ operatorActorId: "operator-c", endpointId: "endpoint-c", deviceId: "device-c", sessionGeneration: 1n });
+
+  now = 20;
+  assert.equal(sessions.revokeForEndpoint("endpoint-a"), 1);
+  assert.equal(sessions.revokeForDevice("device-a"), 1);
+  assert.equal(sessions.lookup(endpoint.sessionId)?.revokedAt, 20);
+  assert.equal(sessions.lookup(device.sessionId)?.revokedAt, 20);
+  assert.equal(sessions.lookup(other.sessionId)?.status, "active");
+  assert.equal(sessions.size, 3);
 });
 
 test("session ids and CSRF secrets are independent 256-bit CSPRNG tokens", () => {

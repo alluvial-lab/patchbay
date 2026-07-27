@@ -264,13 +264,26 @@ function coreOperatorAuthenticator(
           endpointGeneration: { value: config.principalGeneration ?? 1n },
         },
       });
-      if (!result.principal || !result.operatorSessionId?.value) {
+      if (
+        !result.principal
+        || !result.operatorSessionId?.value
+        || !result.principal.endpointId?.value
+        || !result.principal.deviceId?.value
+        || result.operatorSessionGeneration === undefined
+        || result.operatorSessionGeneration.value <= 0n
+      ) {
         throw new Error("core password verification returned incomplete principal/session evidence");
       }
       principals.set(result.principal);
       const actorId = result.principal.operatorActorId?.value;
       return actorId
-        ? { actorId, coreSessionId: result.operatorSessionId.value }
+        ? {
+            actorId,
+            endpointId: result.principal.endpointId.value,
+            deviceId: result.principal.deviceId.value,
+            sessionGeneration: result.operatorSessionGeneration.value,
+            coreSessionId: result.operatorSessionId.value,
+          }
         : null;
     } catch (error) {
       const rpcError = ConnectError.from(error, Code.Internal);

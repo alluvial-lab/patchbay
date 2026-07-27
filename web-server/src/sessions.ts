@@ -8,15 +8,27 @@ const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 export type SessionStatus = "active" | "revoked" | "expired";
 
+export interface SessionIdentity {
+  operatorActorId: string;
+  endpointId: string;
+  deviceId: string;
+  sessionGeneration: bigint;
+  coreSessionId?: string;
+}
+
 export interface OperatorSession {
   sessionId: string;
   operatorActorId: string;
+  endpointId: string;
+  deviceId: string;
+  sessionGeneration: bigint;
   coreSessionId?: string;
   status: SessionStatus;
   csrfSecret: string;
   createdAt: number;
   lastUsedAt: number;
   expiresAt: number;
+  revokedAt: number | null;
 }
 
 export interface OperatorRecord {
@@ -45,9 +57,27 @@ export class SessionStore {
     }
   }
 
-  create(operatorActorId: string, coreSessionId?: string): OperatorSession {
-    if (operatorActorId.length === 0) {
+  create(identity: SessionIdentity): OperatorSession;
+  /** Compatibility overload for local-only tests and non-core authentication. */
+  create(operatorActorId: string, coreSessionId?: string): OperatorSession;
+  create(identityOrActor: SessionIdentity | string, coreSessionId?: string): OperatorSession {
+    const identity: SessionIdentity = typeof identityOrActor === "string"
+      ? {
+          operatorActorId: identityOrActor,
+          endpointId: "local-endpoint",
+          deviceId: "local-device",
+          sessionGeneration: 1n,
+          ...(coreSessionId ? { coreSessionId } : {}),
+        }
+      : identityOrActor;
+    if (identity.operatorActorId.length === 0) {
       throw new Error("operator actor id must not be empty");
+    }
+    if (identity.endpointId.length === 0 || identity.deviceId.length === 0) {
+      throw new Error("operator session endpoint and device ids must not be empty");
+    }
+    if (identity.sessionGeneration <= 0n) {
+      throw new Error("operator session generation must be positive");
     }
     const now = this.#now();
     let sessionId = this.#randomToken();
@@ -56,13 +86,17 @@ export class SessionStore {
     }
     const session: OperatorSession = {
       sessionId,
-      operatorActorId,
-      ...(coreSessionId ? { coreSessionId } : {}),
+      operatorActorId: identity.operatorActorId,
+      endpointId: identity.endpointId,
+      deviceId: identity.deviceId,
+      sessionGeneration: identity.sessionGeneration,
+      ...(identity.coreSessionId ? { coreSessionId: identity.coreSessionId } : {}),
       status: "active",
       csrfSecret: this.#randomToken(),
       createdAt: now,
       lastUsedAt: now,
       expiresAt: now + this.#sessionTtlMs,
+      revokedAt: null,
     };
     this.#sessions.set(sessionId, session);
     return session;
@@ -84,7 +118,7 @@ export class SessionStore {
   revoke(sessionId: string): boolean {
     const session = this.#sessions.get(sessionId);
     if (!session) return false;
-    if (session.status === "active") session.status = "revoked";
+    if (session.status === "active") this.markRevoked(session);
     return true;
   }
 
@@ -97,15 +131,39 @@ export class SessionStore {
     let revoked = 0;
     for (const session of this.#sessions.values()) {
       if (session.operatorActorId === operatorActorId && session.status === "active") {
-        session.status = "revoked";
+        this.markRevoked(session);
         revoked += 1;
       }
     }
     return revoked;
   }
 
+  revokeForEndpoint(endpointId: string): number {
+    return this.revokeMatching((session) => session.endpointId === endpointId);
+  }
+
+  revokeForDevice(deviceId: string): number {
+    return this.revokeMatching((session) => session.deviceId === deviceId);
+  }
+
   get size(): number {
     return this.#sessions.size;
+  }
+
+  private revokeMatching(predicate: (session: OperatorSession) => boolean): number {
+    let revoked = 0;
+    for (const session of this.#sessions.values()) {
+      if (session.status === "active" && predicate(session)) {
+        this.markRevoked(session);
+        revoked += 1;
+      }
+    }
+    return revoked;
+  }
+
+  private markRevoked(session: OperatorSession): void {
+    session.status = "revoked";
+    if (session.revokedAt === null) session.revokedAt = this.#now();
   }
 }
 

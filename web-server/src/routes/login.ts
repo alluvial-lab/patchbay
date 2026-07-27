@@ -22,6 +22,9 @@ const SESSION_COOKIE_OPTIONS = {
 export type PasswordVerifier = (password: string, passwordHash: string) => Promise<boolean>;
 export interface OperatorAuthentication {
   actorId: string;
+  endpointId: string;
+  deviceId: string;
+  sessionGeneration: bigint;
   coreSessionId?: string;
 }
 export type OperatorAuthenticator = (password: string) => Promise<OperatorAuthentication | null>;
@@ -85,7 +88,12 @@ export function registerSessionRoutes(
         authentication = await operatorAuthenticator(password);
       } else {
         authentication = (await passwordVerifier(password, operator.passwordHash))
-          ? { actorId: operator.actorId }
+          ? {
+              actorId: operator.actorId,
+              endpointId: "local-endpoint",
+              deviceId: "local-device",
+              sessionGeneration: 1n,
+            }
           : null;
       }
     } catch (error) {
@@ -101,7 +109,13 @@ export function registerSessionRoutes(
     }
 
     limiter.recordSuccess(networkAddress);
-    const session = sessions.create(authentication.actorId, authentication.coreSessionId);
+    const session = sessions.create({
+      operatorActorId: authentication.actorId,
+      endpointId: authentication.endpointId,
+      deviceId: authentication.deviceId,
+      sessionGeneration: authentication.sessionGeneration,
+      ...(authentication.coreSessionId ? { coreSessionId: authentication.coreSessionId } : {}),
+    });
     auditLogin(request, authentication.actorId, networkAddress, "success", "authenticated");
     reply.setCookie(SESSION_COOKIE_NAME, session.sessionId, SESSION_COOKIE_OPTIONS);
     return { csrfToken: session.csrfSecret };
