@@ -1,7 +1,7 @@
 ---
 id: story-fix-cockpit-scroll-anchor
 kind: story
-stage: review
+stage: done
 tags: [bug]
 parent: null
 depends_on: []
@@ -75,3 +75,8 @@ content shrank.
   timeline — this anchor covers the internal-timeline scroll (desktop). A
   mobile page-scroll anchor would use window.scrollY; add if dogfooding on
   mobile shows the same symptom.
+
+## Operator confirmation (2026-07-27)
+
+Confirmed on live dogfooding: transcript scroll position holds while new
+activity streams in. Story closed to done.
