@@ -49,6 +49,14 @@ message Operation {
   google.protobuf.Timestamp submitted_at = 11;
 }
 
+// A durable acceptance envelope. The ingress request remains a plain
+// Operation; the core adds the verified authorizing grant only after the
+// authority decision succeeds.
+message AcceptedOperation {
+  Operation operation = 1;
+  GrantId authorizing_grant_id = 2;
+}
+
 enum OperationKind {
   OPERATION_KIND_UNSPECIFIED = 0;
   OPERATION_KIND_SPAWN = 1;
@@ -124,4 +132,9 @@ message SubmissionResult {
   string diagnostic_message = 5;
   Lsn accepted_lsn = 6;
   bool deduplicated = 7;
+  // The grant selected for an acceptance decision, or the matching grant
+  // explaining a typed denial.
+  GrantId decision_grant_id = 8;
+  // Bounded lower-snake-case decision vocabulary, distinct from FailureCode.
+  string reason_code = 9;
 }

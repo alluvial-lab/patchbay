@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, ActorId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId,
+    typed_correlation, AcceptedOperation, ActorId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId,
     CommandId, CommandTransition, Elicitation, ElicitationId, ElicitationState, Lsn, Operation,
     OperationKind, OperationState, PayloadContentType, ResponseContract, StoredEventKind,
     TypedCorrelation,
@@ -194,9 +194,14 @@ impl ElicitationSlotLayer {
     /// later correlated transitions can be confirmed as response Operations.
     fn observe_operation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
-        let operation = Operation::decode(event.payload.payload.as_slice()).map_err(|error| {
+        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
             AcceptanceError::CorruptRecord(format!(
-                "cannot decode operation at LSN {event_lsn}: {error}"
+                "cannot decode accepted operation at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        let operation = accepted.operation.ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {event_lsn} has no operation"
             ))
         })?;
         let command_id = operation.command_id.clone().ok_or_else(|| {

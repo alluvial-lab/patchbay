@@ -3,6 +3,7 @@ syntax = "proto3";
 package patchbay;
 
 import "patchbay/admin.proto";
+import "patchbay/authority.proto";
 import "patchbay/common.proto";
 import "patchbay/diagnostics.proto";
 import "patchbay/operations.proto";
@@ -19,6 +20,9 @@ service ControlService {
   rpc VerifyOperatorPassword(VerifyOperatorPasswordRequest) returns (VerifyOperatorPasswordResult);
   // Revocation is authorized by, and applies to, the verified current session.
   rpc RevokeOperatorSession(RevokeOperatorSessionRequest) returns (RevokeOperatorSessionResult);
+  // Self-scoped grant attenuation. The request never carries issuer identity;
+  // the compound issuer is verified from transport metadata.
+  rpc RevokeGrant(RevokeGrantRequest) returns (RevokeGrantResult);
   // An already verified compound issuer may enroll another endpoint.
   rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
   rpc QueryDiagnostics(QueryDiagnosticsRequest) returns (QueryDiagnosticsResponse);
@@ -67,6 +71,20 @@ message RevokeOperatorSessionRequest {}
 
 message RevokeOperatorSessionResult {
   bool revoked = 1;
+}
+
+message RevokeGrantRequest {
+  AuthorityDomainId authority_domain_id = 1;
+  GrantId grant_id = 2;
+  string reason = 3;
+}
+
+message RevokeGrantResult {
+  bool changed = 1;
+  bool already_revoked = 2;
+  EventId revocation_event_id = 3;
+  GrantRevocationPolicy applied_policy = 4;
+  repeated GrantRevocationEffect command_effects = 5;
 }
 
 message EnrollControlSurfacePrincipalRequest {

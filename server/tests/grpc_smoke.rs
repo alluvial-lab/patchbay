@@ -504,6 +504,7 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
                 command_id: Some(CommandId {
                     value: "diagnostics-materialization-failure".to_owned(),
                 }),
+                grant_id: None,
                 target: None,
                 failure_codes: vec![FailureCode::ExecutionFailed],
                 reason_codes: vec!["diagnostics_materialization_failed".to_owned()],

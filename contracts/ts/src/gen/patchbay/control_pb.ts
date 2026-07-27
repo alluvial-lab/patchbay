@@ -6,7 +6,9 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { PrincipalCredential, PrincipalEnrollment } from "./admin_pb.js";
 import { file_patchbay_admin } from "./admin_pb.js";
-import type { ActorId, AuthorityDomainId, EventId, Lsn, OperatorSessionId, StoredEventPayload } from "./common_pb.js";
+import type { GrantRevocationEffect, GrantRevocationPolicy } from "./authority_pb.js";
+import { file_patchbay_authority } from "./authority_pb.js";
+import type { ActorId, AuthorityDomainId, EventId, GrantId, Lsn, OperatorSessionId, StoredEventPayload } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { AuditEventKind, QueryDiagnosticsRequestSchema, QueryDiagnosticsResponseSchema } from "./diagnostics_pb.js";
 import { file_patchbay_diagnostics } from "./diagnostics_pb.js";
@@ -18,7 +20,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/control.proto.
  */
 export const file_patchbay_control: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDCKRAQodVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlcXVlc3QSLAoRb3BlcmF0b3JfYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhAKCHBhc3N3b3JkGAIgASgJEjAKCXByaW5jaXBhbBgDIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiigEKHFZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSOAoTb3BlcmF0b3Jfc2Vzc2lvbl9pZBgBIAEoCzIbLnBhdGNoYmF5Lk9wZXJhdG9yU2Vzc2lvbklkEjAKCXByaW5jaXBhbBgCIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbENyZWRlbnRpYWwiHgocUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVxdWVzdCIuChtSZXZva2VPcGVyYXRvclNlc3Npb25SZXN1bHQSDwoHcmV2b2tlZBgBIAEoCCJYCiRFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlcXVlc3QSMAoJcHJpbmNpcGFsGAEgASgLMh0ucGF0Y2hiYXkuUHJpbmNpcGFsRW5yb2xsbWVudCJXCiNFbnJvbGxDb250cm9sU3VyZmFjZVByaW5jaXBhbFJlc3VsdBIwCglwcmluY2lwYWwYASABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsIl8KIFJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXRSZXF1ZXN0EiYKBGtpbmQYASABKA4yGC5wYXRjaGJheS5BdWRpdEV2ZW50S2luZBITCgtyZWFzb25fY29kZRgCIAEoCSJOCiFSZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVzcG9uc2USKQoOYXVkaXRfZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkMocGCg5Db250cm9sU2VydmljZRI9CgZTdWJtaXQSFy5wYXRjaGJheS5TdWJtaXRSZXF1ZXN0GhoucGF0Y2hiYXkuU3VibWlzc2lvblJlc3VsdBJDCglTdWJzY3JpYmUSGi5wYXRjaGJheS5TdWJzY3JpYmVSZXF1ZXN0GhgucGF0Y2hiYXkuU3Vic2NyaWJlRXZlbnQwARJNCgxMb2FkU25hcHNob3QSHS5wYXRjaGJheS5Mb2FkU25hcHNob3RSZXF1ZXN0Gh4ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVzcG9uc2USaQoWVmVyaWZ5T3BlcmF0b3JQYXNzd29yZBInLnBhdGNoYmF5LlZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXF1ZXN0GiYucGF0Y2hiYXkuVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlc3VsdBJmChVSZXZva2VPcGVyYXRvclNlc3Npb24SJi5wYXRjaGJheS5SZXZva2VPcGVyYXRvclNlc3Npb25SZXF1ZXN0GiUucGF0Y2hiYXkuUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVzdWx0En4KHUVucm9sbENvbnRyb2xTdXJmYWNlUHJpbmNpcGFsEi4ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0Gi0ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSWQoQUXVlcnlEaWFnbm9zdGljcxIhLnBhdGNoYmF5LlF1ZXJ5RGlhZ25vc3RpY3NSZXF1ZXN0GiIucGF0Y2hiYXkuUXVlcnlEaWFnbm9zdGljc1Jlc3BvbnNlEnQKGVJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXQSKi5wYXRjaGJheS5SZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVxdWVzdBorLnBhdGNoYmF5LlJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXRSZXNwb25zZWIGcHJvdG8z", [file_patchbay_admin, file_patchbay_common, file_patchbay_diagnostics, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9jb250cm9sLnByb3RvEghwYXRjaGJheSI3Cg1TdWJtaXRSZXF1ZXN0EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbiJrChBTdWJzY3JpYmVSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIdCgZjdXJzb3IYAiABKAsyDS5wYXRjaGJheS5Mc24iZAoOU3Vic2NyaWJlRXZlbnQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkEi0KB3BheWxvYWQYAiABKAsyHC5wYXRjaGJheS5TdG9yZWRFdmVudFBheWxvYWQiigEKE0xvYWRTbmFwc2hvdFJlcXVlc3QSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEigKDGF0X29yX2JlZm9yZRgCIAEoCzINLnBhdGNoYmF5LkxzbkgAiAEBQg8KDV9hdF9vcl9iZWZvcmUiZgoUTG9hZFNuYXBzaG90UmVzcG9uc2USDwoHcHJlc2VudBgBIAEoCBIjCghldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSGAoQc25hcHNob3RfcGF5bG9hZBgDIAEoDCKRAQodVmVyaWZ5T3BlcmF0b3JQYXNzd29yZFJlcXVlc3QSLAoRb3BlcmF0b3JfYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEhAKCHBhc3N3b3JkGAIgASgJEjAKCXByaW5jaXBhbBgDIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiigEKHFZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSOAoTb3BlcmF0b3Jfc2Vzc2lvbl9pZBgBIAEoCzIbLnBhdGNoYmF5Lk9wZXJhdG9yU2Vzc2lvbklkEjAKCXByaW5jaXBhbBgCIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbENyZWRlbnRpYWwiHgocUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVxdWVzdCIuChtSZXZva2VPcGVyYXRvclNlc3Npb25SZXN1bHQSDwoHcmV2b2tlZBgBIAEoCCKDAQoSUmV2b2tlR3JhbnRSZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIjCghncmFudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkdyYW50SWQSDgoGcmVhc29uGAMgASgJIuABChFSZXZva2VHcmFudFJlc3VsdBIPCgdjaGFuZ2VkGAEgASgIEhcKD2FscmVhZHlfcmV2b2tlZBgCIAEoCBIuChNyZXZvY2F0aW9uX2V2ZW50X2lkGAMgASgLMhEucGF0Y2hiYXkuRXZlbnRJZBI3Cg5hcHBsaWVkX3BvbGljeRgEIAEoDjIfLnBhdGNoYmF5LkdyYW50UmV2b2NhdGlvblBvbGljeRI4Cg9jb21tYW5kX2VmZmVjdHMYBSADKAsyHy5wYXRjaGJheS5HcmFudFJldm9jYXRpb25FZmZlY3QiWAokRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0EjAKCXByaW5jaXBhbBgBIAEoCzIdLnBhdGNoYmF5LlByaW5jaXBhbEVucm9sbG1lbnQiVwojRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSMAoJcHJpbmNpcGFsGAEgASgLMh0ucGF0Y2hiYXkuUHJpbmNpcGFsQ3JlZGVudGlhbCJfCiBSZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVxdWVzdBImCgRraW5kGAEgASgOMhgucGF0Y2hiYXkuQXVkaXRFdmVudEtpbmQSEwoLcmVhc29uX2NvZGUYAiABKAkiTgohUmVjb3JkQ29udHJvbFN1cmZhY2VBdWRpdFJlc3BvbnNlEikKDmF1ZGl0X2V2ZW50X2lkGAEgASgLMhEucGF0Y2hiYXkuRXZlbnRJZDLRBgoOQ29udHJvbFNlcnZpY2USPQoGU3VibWl0EhcucGF0Y2hiYXkuU3VibWl0UmVxdWVzdBoaLnBhdGNoYmF5LlN1Ym1pc3Npb25SZXN1bHQSQwoJU3Vic2NyaWJlEhoucGF0Y2hiYXkuU3Vic2NyaWJlUmVxdWVzdBoYLnBhdGNoYmF5LlN1YnNjcmliZUV2ZW50MAESTQoMTG9hZFNuYXBzaG90Eh0ucGF0Y2hiYXkuTG9hZFNuYXBzaG90UmVxdWVzdBoeLnBhdGNoYmF5LkxvYWRTbmFwc2hvdFJlc3BvbnNlEmkKFlZlcmlmeU9wZXJhdG9yUGFzc3dvcmQSJy5wYXRjaGJheS5WZXJpZnlPcGVyYXRvclBhc3N3b3JkUmVxdWVzdBomLnBhdGNoYmF5LlZlcmlmeU9wZXJhdG9yUGFzc3dvcmRSZXN1bHQSZgoVUmV2b2tlT3BlcmF0b3JTZXNzaW9uEiYucGF0Y2hiYXkuUmV2b2tlT3BlcmF0b3JTZXNzaW9uUmVxdWVzdBolLnBhdGNoYmF5LlJldm9rZU9wZXJhdG9yU2Vzc2lvblJlc3VsdBJICgtSZXZva2VHcmFudBIcLnBhdGNoYmF5LlJldm9rZUdyYW50UmVxdWVzdBobLnBhdGNoYmF5LlJldm9rZUdyYW50UmVzdWx0En4KHUVucm9sbENvbnRyb2xTdXJmYWNlUHJpbmNpcGFsEi4ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXF1ZXN0Gi0ucGF0Y2hiYXkuRW5yb2xsQ29udHJvbFN1cmZhY2VQcmluY2lwYWxSZXN1bHQSWQoQUXVlcnlEaWFnbm9zdGljcxIhLnBhdGNoYmF5LlF1ZXJ5RGlhZ25vc3RpY3NSZXF1ZXN0GiIucGF0Y2hiYXkuUXVlcnlEaWFnbm9zdGljc1Jlc3BvbnNlEnQKGVJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXQSKi5wYXRjaGJheS5SZWNvcmRDb250cm9sU3VyZmFjZUF1ZGl0UmVxdWVzdBorLnBhdGNoYmF5LlJlY29yZENvbnRyb2xTdXJmYWNlQXVkaXRSZXNwb25zZWIGcHJvdG8z", [file_patchbay_admin, file_patchbay_authority, file_patchbay_common, file_patchbay_diagnostics, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.SubmitRequest
@@ -210,6 +212,70 @@ export const RevokeOperatorSessionResultSchema: GenMessage<RevokeOperatorSession
   messageDesc(file_patchbay_control, 8);
 
 /**
+ * @generated from message patchbay.RevokeGrantRequest
+ */
+export type RevokeGrantRequest = Message<"patchbay.RevokeGrantRequest"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from field: patchbay.GrantId grant_id = 2;
+   */
+  grantId?: GrantId | undefined;
+
+  /**
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message patchbay.RevokeGrantRequest.
+ * Use `create(RevokeGrantRequestSchema)` to create a new message.
+ */
+export const RevokeGrantRequestSchema: GenMessage<RevokeGrantRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 9);
+
+/**
+ * @generated from message patchbay.RevokeGrantResult
+ */
+export type RevokeGrantResult = Message<"patchbay.RevokeGrantResult"> & {
+  /**
+   * @generated from field: bool changed = 1;
+   */
+  changed: boolean;
+
+  /**
+   * @generated from field: bool already_revoked = 2;
+   */
+  alreadyRevoked: boolean;
+
+  /**
+   * @generated from field: patchbay.EventId revocation_event_id = 3;
+   */
+  revocationEventId?: EventId | undefined;
+
+  /**
+   * @generated from field: patchbay.GrantRevocationPolicy applied_policy = 4;
+   */
+  appliedPolicy: GrantRevocationPolicy;
+
+  /**
+   * @generated from field: repeated patchbay.GrantRevocationEffect command_effects = 5;
+   */
+  commandEffects: GrantRevocationEffect[];
+};
+
+/**
+ * Describes the message patchbay.RevokeGrantResult.
+ * Use `create(RevokeGrantResultSchema)` to create a new message.
+ */
+export const RevokeGrantResultSchema: GenMessage<RevokeGrantResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_control, 10);
+
+/**
  * @generated from message patchbay.EnrollControlSurfacePrincipalRequest
  */
 export type EnrollControlSurfacePrincipalRequest = Message<"patchbay.EnrollControlSurfacePrincipalRequest"> & {
@@ -224,7 +290,7 @@ export type EnrollControlSurfacePrincipalRequest = Message<"patchbay.EnrollContr
  * Use `create(EnrollControlSurfacePrincipalRequestSchema)` to create a new message.
  */
 export const EnrollControlSurfacePrincipalRequestSchema: GenMessage<EnrollControlSurfacePrincipalRequest> = /*@__PURE__*/
-  messageDesc(file_patchbay_control, 9);
+  messageDesc(file_patchbay_control, 11);
 
 /**
  * @generated from message patchbay.EnrollControlSurfacePrincipalResult
@@ -241,7 +307,7 @@ export type EnrollControlSurfacePrincipalResult = Message<"patchbay.EnrollContro
  * Use `create(EnrollControlSurfacePrincipalResultSchema)` to create a new message.
  */
 export const EnrollControlSurfacePrincipalResultSchema: GenMessage<EnrollControlSurfacePrincipalResult> = /*@__PURE__*/
-  messageDesc(file_patchbay_control, 10);
+  messageDesc(file_patchbay_control, 12);
 
 /**
  * @generated from message patchbay.RecordControlSurfaceAuditRequest
@@ -263,7 +329,7 @@ export type RecordControlSurfaceAuditRequest = Message<"patchbay.RecordControlSu
  * Use `create(RecordControlSurfaceAuditRequestSchema)` to create a new message.
  */
 export const RecordControlSurfaceAuditRequestSchema: GenMessage<RecordControlSurfaceAuditRequest> = /*@__PURE__*/
-  messageDesc(file_patchbay_control, 11);
+  messageDesc(file_patchbay_control, 13);
 
 /**
  * @generated from message patchbay.RecordControlSurfaceAuditResponse
@@ -280,7 +346,7 @@ export type RecordControlSurfaceAuditResponse = Message<"patchbay.RecordControlS
  * Use `create(RecordControlSurfaceAuditResponseSchema)` to create a new message.
  */
 export const RecordControlSurfaceAuditResponseSchema: GenMessage<RecordControlSurfaceAuditResponse> = /*@__PURE__*/
-  messageDesc(file_patchbay_control, 12);
+  messageDesc(file_patchbay_control, 14);
 
 /**
  * The internal control-plane service the TS web server speaks to the Rust
@@ -334,6 +400,17 @@ export const ControlService: GenService<{
     methodKind: "unary";
     input: typeof RevokeOperatorSessionRequestSchema;
     output: typeof RevokeOperatorSessionResultSchema;
+  },
+  /**
+   * Self-scoped grant attenuation. The request never carries issuer identity;
+   * the compound issuer is verified from transport metadata.
+   *
+   * @generated from rpc patchbay.ControlService.RevokeGrant
+   */
+  revokeGrant: {
+    methodKind: "unary";
+    input: typeof RevokeGrantRequestSchema;
+    output: typeof RevokeGrantResultSchema;
   },
   /**
    * An already verified compound issuer may enroll another endpoint.

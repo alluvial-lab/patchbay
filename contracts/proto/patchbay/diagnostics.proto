@@ -49,6 +49,8 @@ enum AuditEventKind {
   AUDIT_EVENT_KIND_LOCKDOWN_ENTERED = 36;
   AUDIT_EVENT_KIND_LOCKDOWN_EXITED = 37;
   AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED = 38;
+  AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED = 39;
+  AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED = 40;
 }
 
 enum AdapterDiagnosticSeverity {
@@ -91,6 +93,7 @@ message AuditRecord {
   EventId source_event_id = 13;
   string source_network = 14;
   AdapterDiagnosticDetail adapter_diagnostic = 15;
+  GrantId grant_id = 16;
 }
 
 message DiagnosticsQuery {
@@ -125,6 +128,7 @@ message AuditQuery {
   google.protobuf.Timestamp occurred_before_exclusive = 9;
   EventId before_event_id = 10;
   optional uint32 limit = 11;
+  GrantId grant_id = 12;
 }
 
 message AuditPage {

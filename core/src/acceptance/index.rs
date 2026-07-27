@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, CommandId, CommandTransition, Operation, StoredEventKind,
+    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, StoredEventKind,
 };
 use prost::Message;
 
@@ -143,9 +143,24 @@ impl CommandIndex {
 
     fn apply_operation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (event_domain, event_lsn) = event_identity(event)?;
-        let operation = Operation::decode(event.payload.payload.as_slice()).map_err(|error| {
+        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
             AcceptanceError::CorruptRecord(format!(
-                "cannot decode operation at LSN {event_lsn}: {error}"
+                "cannot decode accepted operation at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        let grant_id = accepted.authorizing_grant_id.ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {event_lsn} is missing authorizing_grant_id"
+            ))
+        })?;
+        if grant_id.value.is_empty() {
+            return Err(AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {event_lsn} has an empty authorizing_grant_id"
+            )));
+        }
+        let operation = accepted.operation.ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {event_lsn} is missing operation"
             ))
         })?;
 
@@ -161,7 +176,7 @@ impl CommandIndex {
             )));
         }
 
-        let record = CommandRecord::new(operation, event_lsn)?;
+        let record = CommandRecord::new_accepted(operation, grant_id, event_lsn)?;
         self.insert_recovered_record(record)
     }
 

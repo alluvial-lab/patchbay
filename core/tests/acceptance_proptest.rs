@@ -15,8 +15,8 @@
 use std::future::ready;
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, CommandTransition,
-    DeviceId, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, Operation,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, CommandTransition,
+    DeviceId, EndpointId, EventId, FailureCode, Generation, GrantId, IdempotencyKey, Lsn, Operation,
     OperationKind, OperationState, PayloadContentType, PayloadEnvelope, RuntimeSessionId,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, TargetScope, TargetScopeKind,
     TimeWindow,
@@ -185,7 +185,13 @@ async fn append_operation<S: Storage>(storage: &S, operation: &Operation) -> u64
     storage
         .append(
             &authority_domain(),
-            event_payload(StoredEventKind::Operation, operation),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(operation.clone()),
+                    authorizing_grant_id: Some(GrantId { value: "test-grant".to_owned() }),
+                }.encode_to_vec(),
+            },
         )
         .await
         .expect("the in-memory test log accepts an operation")
@@ -265,7 +271,7 @@ impl GrantCheck for AlwaysAuthorized {
         _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
-        ready(Ok(Authorized { grant_id: None }))
+        ready(Ok(Authorized { grant_id: Some(GrantId { value: "test-grant".to_owned() }) }))
     }
 }
 
@@ -395,8 +401,9 @@ async fn run_boundary_dedup_check<S: Storage>(
     if StoredEventKind::try_from(events[0].payload.kind).ok() != Some(StoredEventKind::Operation) {
         return Err("acceptance event has the wrong stored-event kind".to_owned());
     }
-    let recorded = Operation::decode(events[0].payload.payload.as_slice())
+    let accepted = AcceptedOperation::decode(events[0].payload.payload.as_slice())
         .map_err(|error| format!("cannot decode acceptance event: {error}"))?;
+    let recorded = accepted.operation.ok_or_else(|| "accepted operation has no operation".to_owned())?;
     let mut expected = submitted;
     // Sender is the one durable field intentionally normalized rather than
     // retained from caller input.

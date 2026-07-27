@@ -89,6 +89,7 @@ pub struct AuditRecordDraft {
     pub endpoint_id: Option<EndpointId>,
     pub operator_session_hash: Vec<u8>,
     pub command_id: Option<CommandId>,
+    pub grant_id: Option<patchbay_contracts::patchbay::GrantId>,
     pub target_scope: Option<TargetScope>,
     pub failure_code: Option<FailureCode>,
     pub reason_code: String,
@@ -109,6 +110,7 @@ impl AuditRecordDraft {
             endpoint_id: None,
             operator_session_hash: Vec::new(),
             command_id: None,
+            grant_id: None,
             target_scope: None,
             failure_code: None,
             reason_code: String::new(),
@@ -233,6 +235,7 @@ pub struct AuditPageSpec {
     pub actor_id: Option<ActorId>,
     pub endpoint_id: Option<EndpointId>,
     pub command_id: Option<CommandId>,
+    pub grant_id: Option<patchbay_contracts::patchbay::GrantId>,
     pub target: Option<TargetKey>,
     pub failure_codes: Vec<FailureCode>,
     pub reason_codes: Vec<String>,
@@ -401,6 +404,17 @@ pub trait Storage: Send + Sync {
         payload: StoredEventPayload,
     ) -> impl std::future::Future<Output = Result<DedupOutcome, StorageError>> + Send;
 
+    fn append_dedup_with_payload(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+        _logical_payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<DedupOutcome, StorageError>> + Send {
+        async move { self.append_dedup(authority_domain_id, key, target, payload).await }
+    }
+
     /// Read events with `LSN > cursor`, in LSN order.
     ///
     /// Used for crash recovery (`cursor = 0`) and cursor reconciliation
@@ -488,6 +502,18 @@ pub trait Storage: Send + Sync {
         _audit: AuditRecordDraft,
     ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    fn append_dedup_audited_with_payload(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+        _logical_payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<AuditedDedupOutcome, StorageError>> + Send {
+        async move { self.append_dedup_audited(authority_domain_id, key, target, source, audit).await }
     }
 
     /// Append a domain decision. Production decorators override this to pair

@@ -1,5 +1,5 @@
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, ActorEndpointRef, ActorId, AdapterId,
+    session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
     AuthorityDomainId, CommandId, CommandTransition, EventId, Generation, Lsn, Operation,
     OperationKind, OperationState, RuntimeSessionId, SessionRegistered, SessionStateEvent,
     StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
@@ -33,19 +33,22 @@ fn spawn_event(lsn: u64, actor_id: &str) -> RecordedEvent {
         lsn,
         &domain("authority-main"),
         StoredEventKind::Operation,
-        &Operation {
-            command_id: Some(command("spawn-1")),
-            authority_domain_id: Some(domain("authority-main")),
-            sender: Some(ActorEndpointRef {
-                actor_id: Some(actor(actor_id)),
-                ..ActorEndpointRef::default()
+        &AcceptedOperation {
+            operation: Some(Operation {
+                command_id: Some(command("spawn-1")),
+                authority_domain_id: Some(domain("authority-main")),
+                sender: Some(ActorEndpointRef {
+                    actor_id: Some(actor(actor_id)),
+                    ..ActorEndpointRef::default()
+                }),
+                kind: OperationKind::Spawn as i32,
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::FleetSupervisor as i32,
+                    ..TargetScope::default()
+                }),
+                ..Operation::default()
             }),
-            kind: OperationKind::Spawn as i32,
-            target_scope: Some(TargetScope {
-                kind: TargetScopeKind::FleetSupervisor as i32,
-                ..TargetScope::default()
-            }),
-            ..Operation::default()
+            authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "spawn-grant".to_owned() }),
         },
     )
 }
@@ -150,7 +153,7 @@ fn completed_spawn_issues_exactly_once_in_all_six_arrival_orders() {
             issuance.descendant_grant_id.value,
             "desc:authority-main:spawn-1"
         );
-        assert_eq!(issuance.spawning_grant_id, None);
+        assert_eq!(issuance.spawning_grant_id, Some(patchbay_contracts::patchbay::GrantId { value: "spawn-grant".to_owned() }));
         assert_eq!(issuance.audit_id, None);
         assert_eq!(
             issuance.spawned_session_scope,
@@ -259,11 +262,14 @@ fn decoded_and_tail_domains_are_enforced() {
         3,
         &domain("authority-main"),
         StoredEventKind::Operation,
-        &Operation {
-            command_id: Some(command("spawn-2")),
-            authority_domain_id: Some(domain("authority-other")),
-            kind: OperationKind::Spawn as i32,
-            ..Operation::default()
+        &AcceptedOperation {
+            operation: Some(Operation {
+                command_id: Some(command("spawn-2")),
+                authority_domain_id: Some(domain("authority-other")),
+                kind: OperationKind::Spawn as i32,
+                ..Operation::default()
+            }),
+            authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "spawn-grant".to_owned() }),
         },
     );
     assert!(matches!(

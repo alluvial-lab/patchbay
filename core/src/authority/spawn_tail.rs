@@ -7,8 +7,9 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
+    AcceptedOperation,
     session_state_event, typed_correlation, ActorId, AuthorityDomainId, CommandId,
-    CommandTransition, EventId, GrantId, Operation, OperationKind, OperationState,
+    CommandTransition, EventId, GrantId, OperationKind, OperationState,
     SessionStateEvent, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use prost::Message;
@@ -22,7 +23,7 @@ type SpawnKey = (AuthorityDomainId, CommandId);
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SpawnOpInfo {
     spawner_actor: Option<ActorId>,
-    // The durable Operation wire shape does not carry the authorizing grant.
+    // AcceptedOperation retains the authorizing grant for spawn provenance.
     spawning_grant_id: Option<GrantId>,
 }
 
@@ -36,8 +37,6 @@ struct RegistrationInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DescendantGrantIssuance {
     pub spawn_operation_id: CommandId,
-    /// `None` in v0.1.0 because durable Operations do not retain the grant that
-    /// authorized acceptance.
     pub spawning_grant_id: Option<GrantId>,
     pub spawned_session_scope: TargetScope,
     pub subject_actor_id: ActorId,
@@ -115,9 +114,14 @@ impl SpawnDescendantTail {
         event_domain: &AuthorityDomainId,
         event_lsn: u64,
     ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        let operation = Operation::decode(event.payload.payload.as_slice()).map_err(|error| {
+        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
             AuthorityError::CorruptRecord(format!(
-                "cannot decode operation at LSN {event_lsn}: {error}"
+                "cannot decode accepted operation at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        let operation = accepted.operation.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "accepted operation at LSN {event_lsn} has no operation"
             ))
         })?;
         validate_message_domain(
@@ -141,9 +145,7 @@ impl SpawnDescendantTail {
         let key = (event_domain.clone(), command_id);
         let incoming = SpawnOpInfo {
             spawner_actor: operation.sender.and_then(|sender| sender.actor_id),
-            // The Operation proto has no grant_id; provenance enrichment is a
-            // follow-on once durable acceptance metadata exists.
-            spawning_grant_id: None,
+            spawning_grant_id: accepted.authorizing_grant_id,
         };
         insert_consistent(
             &mut self.spawn_ops,

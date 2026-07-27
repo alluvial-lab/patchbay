@@ -60,6 +60,13 @@ message DescendantGrantProvenance {
   GrantId spawning_grant_id = 2;
 }
 
+message GrantRevocationEffect {
+  CommandId command_id = 1;
+  OperationState from_state = 2;
+  OperationState to_state = 3;
+  FailureCode failure_code = 4;
+}
+
 message Revocation {
   AuthorityDomainId authority_domain_id = 1;
   GrantId grant_id = 2;
@@ -69,4 +76,5 @@ message Revocation {
   GrantRevocationPolicy accepted_operation_policy = 6;
   string reason = 7;
   EventId audit_id = 8;
+  repeated GrantRevocationEffect command_effects = 9;
 }

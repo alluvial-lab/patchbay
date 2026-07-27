@@ -22,7 +22,37 @@ pub struct CommandRecord {
 }
 
 impl CommandRecord {
-    /// Build the initial projection for a durably accepted operation.
+    /// Build the initial projection for a durably accepted operation with its
+    /// verified authorizing-grant provenance.
+    pub fn new_accepted(
+        operation: Operation,
+        grant_id: GrantId,
+        accept_lsn: u64,
+    ) -> Result<Self, AcceptanceError> {
+        if grant_id.value.is_empty() {
+            return Err(AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {accept_lsn} has an empty grant_id"
+            )));
+        }
+        let command_id = operation.command_id.clone().ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted operation at LSN {accept_lsn} is missing command_id"
+            ))
+        })?;
+        Ok(Self {
+            command_id,
+            operation,
+            state: OperationState::Accepted,
+            grant_id: Some(grant_id),
+            terminal_lsn: None,
+            failure_code: None,
+        })
+    }
+
+    /// Build the initial projection for a legacy in-memory test operation.
+    /// Durable replay uses [`Self::new_accepted`] and rejects absent grant
+    /// provenance.
+
     ///
     /// `accept_lsn` identifies the source event in corruption diagnostics. The
     /// record retains only the terminal LSN because the accepted operation's

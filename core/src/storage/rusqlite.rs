@@ -43,7 +43,7 @@ use super::port::{
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
-pub const LATEST_SCHEMA_VERSION: u32 = 2;
+pub const LATEST_SCHEMA_VERSION: u32 = 3;
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
@@ -94,6 +94,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_records(authority_domain_id,
 CREATE INDEX IF NOT EXISTS idx_audit_command ON audit_records(authority_domain_id, command_id);
 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_records(authority_domain_id, target_key);
 CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_records(authority_domain_id, kind);
+"#;
+
+const MIGRATION_3: &str = r#"
+ALTER TABLE audit_records ADD COLUMN grant_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_audit_grant ON audit_records(authority_domain_id, grant_id);
 "#;
 
 fn table_exists(db: &Connection, name: &str) -> Result<bool, StorageError> {
@@ -155,7 +160,7 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
                 "authority_domain_id", "audit_lsn", "occurred_at_seconds",
                 "occurred_at_nanos", "kind", "actor_id", "endpoint_id",
                 "command_id", "target_key", "failure_code", "reason_code",
-                "source_lsn",
+                "source_lsn", "grant_id",
             ],
         )?;
     }
@@ -177,6 +182,13 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         tx.execute_batch("PRAGMA user_version = 2").map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
+    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(map_write_err)?;
+    if version < 3 {
+        let tx = db.transaction().map_err(map_write_err)?;
+        tx.execute_batch(MIGRATION_3).map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 3").map_err(map_write_err)?;
+        tx.commit().map_err(map_write_err)?;
+    }
     Ok(())
 }
 
@@ -192,6 +204,7 @@ enum WriterCommand {
         key: String,
         target: String,
         payload: StoredEventPayload,
+        logical_payload: Vec<u8>,
         reply: oneshot::Sender<Result<DedupOutcome, StorageError>>,
     },
     WriteSnapshot {
@@ -217,6 +230,7 @@ enum WriterCommand {
         target: String,
         source: StoredEventPayload,
         audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
         reply: oneshot::Sender<Result<AuditedDedupOutcome, StorageError>>,
     },
     AppendBatchAudited {
@@ -314,10 +328,12 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                 key,
                 target,
                 payload,
+                logical_payload,
                 reply,
             } => {
-                let result =
-                    do_append_dedup(&mut db, &authority_domain_id, &key, &target, &payload);
+                let result = do_append_dedup(
+                    &mut db, &authority_domain_id, &key, &target, &payload, &logical_payload,
+                );
                 let _ = reply.send(result);
             }
             WriterCommand::WriteSnapshot {
@@ -353,6 +369,7 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                 target,
                 source,
                 audit,
+                logical_payload,
                 reply,
             } => {
                 let result = do_append_dedup_audited(
@@ -362,6 +379,7 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                     &target,
                     source,
                     audit,
+                    logical_payload,
                 );
                 let _ = reply.send(result);
             }
@@ -412,17 +430,6 @@ fn encode_payload(payload: &StoredEventPayload) -> Result<Vec<u8>, StorageError>
 fn decode_payload(bytes: &[u8]) -> Result<StoredEventPayload, StorageError> {
     prost::Message::decode(bytes)
         .map_err(|e| StorageError::CorruptRecord(format!("decode failed: {e}")))
-}
-
-/// The encoded payload bytes for idempotency conflict detection.
-///
-/// The protocol requires exact payload equivalence for dedup
-/// (`docs/PROTOCOL.md` § "Idempotency and retry": "A retry must carry the
-/// same payload as the original"). We store the full encoded bytes and
-/// compare directly — no hash, so no collision risk. This is byte-exact
-/// equivalence, which is what the protocol demands.
-fn payload_canonical(payload: &StoredEventPayload) -> Result<Vec<u8>, StorageError> {
-    encode_payload(payload)
 }
 
 fn do_append(
@@ -496,6 +503,7 @@ fn audit_record_from_draft(
         endpoint_id: draft.endpoint_id,
         operator_session_hash: draft.operator_session_hash,
         command_id: draft.command_id,
+        grant_id: draft.grant_id,
         target_scope: draft.target_scope,
         failure_code: draft.failure_code.map(|code| code as i32).unwrap_or(FailureCode::Unspecified as i32),
         reason_code: draft.reason_code,
@@ -531,9 +539,9 @@ fn insert_audit_index(
     tx.execute(
         "INSERT INTO audit_records (
             authority_domain_id, audit_lsn, occurred_at_seconds, occurred_at_nanos,
-            kind, actor_id, endpoint_id, command_id, target_key, failure_code,
+            kind, actor_id, endpoint_id, command_id, grant_id, target_key, failure_code,
             reason_code, source_lsn
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![
             authority_domain_id,
             audit_lsn,
@@ -543,6 +551,7 @@ fn insert_audit_index(
             actor_id,
             endpoint_id,
             command_id,
+            record.grant_id.as_ref().map(|id| id.value.as_str()),
             target_key,
             record.failure_code,
             record.reason_code,
@@ -648,11 +657,12 @@ fn do_append_dedup_audited(
     target: &str,
     source: StoredEventPayload,
     mut audit: AuditRecordDraft,
+    logical_payload: Vec<u8>,
 ) -> Result<AuditedDedupOutcome, StorageError> {
     validate_kind(&source)?;
     audit.source_event_id = None;
     audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
-    let canonical = payload_canonical(&source)?;
+    let canonical = logical_payload;
     let tx = db.transaction().map_err(map_write_err)?;
     let existing: Option<(i64, Vec<u8>)> = match tx.query_row(
         "SELECT lsn, payload_bytes FROM idempotency_keys WHERE authority_domain_id = ?1 AND key = ?2 AND target = ?3",
@@ -697,10 +707,11 @@ fn do_append_dedup(
     key: &str,
     target: &str,
     payload: &StoredEventPayload,
+    logical_payload: &[u8],
 ) -> Result<DedupOutcome, StorageError> {
     let kind = validate_kind(payload)?;
     let encoded = encode_payload(payload)?;
-    let canonical = payload_canonical(payload)?;
+    let canonical = logical_payload.to_vec();
     let tx = db.transaction().map_err(map_write_err)?;
 
     // Check if the key already exists for this target. query_row returns
@@ -872,6 +883,10 @@ fn query_audit_sync(
         clauses.push("a.command_id = ?".to_owned());
         values.push(Value::Text(command_id.value));
     }
+    if let Some(grant_id) = spec.grant_id {
+        clauses.push("a.grant_id = ?".to_owned());
+        values.push(Value::Text(grant_id.value));
+    }
     if let Some(target) = spec.target {
         clauses.push("a.target_key = ?".to_owned());
         values.push(Value::Text(target.as_str().to_owned()));
@@ -898,7 +913,7 @@ fn query_audit_sync(
     }
     let sql = format!(
         "SELECT a.audit_lsn, a.occurred_at_seconds, a.occurred_at_nanos, a.kind,
-                a.actor_id, a.endpoint_id, a.command_id, a.target_key,
+                a.actor_id, a.endpoint_id, a.command_id, a.grant_id, a.target_key,
                 a.failure_code, a.reason_code, a.source_lsn, e.kind, e.payload
          FROM audit_records a JOIN events e
            ON e.authority_domain_id = a.authority_domain_id AND e.lsn = a.audit_lsn
@@ -918,17 +933,18 @@ fn query_audit_sync(
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<i32>>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, Option<i64>>(10)?,
-                row.get::<_, i32>(11)?,
-                row.get::<_, Vec<u8>>(12)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<i32>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, i32>(12)?,
+                row.get::<_, Vec<u8>>(13)?,
             ))
         })
         .map_err(map_read_err)?;
     let mut records = Vec::new();
     for row in rows {
-        let (lsn, seconds, nanos, kind, actor_id, endpoint_id, command_id, target_key, failure_code, reason_code, source_lsn, event_kind, payload_bytes) = row.map_err(map_read_err)?;
+        let (lsn, seconds, nanos, kind, actor_id, endpoint_id, command_id, grant_id, target_key, failure_code, reason_code, source_lsn, event_kind, payload_bytes) = row.map_err(map_read_err)?;
         if event_kind != StoredEventKind::AuditRecord as i32 {
             return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} points to event kind {event_kind}")));
         }
@@ -937,7 +953,7 @@ fn query_audit_sync(
             return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} has a non-audit envelope")));
         }
         let record = AuditRecord::decode(envelope.payload.as_slice()).map_err(|error| StorageError::CorruptRecord(format!("cannot decode audit record at LSN {lsn}: {error}")))?;
-        validate_audit_index_row(authority_domain_id, lsn, seconds, nanos, kind, actor_id.as_deref(), endpoint_id.as_deref(), command_id.as_deref(), target_key.as_deref(), failure_code, &reason_code, source_lsn, &record)?;
+        validate_audit_index_row(authority_domain_id, lsn, seconds, nanos, kind, actor_id.as_deref(), endpoint_id.as_deref(), command_id.as_deref(), grant_id.as_deref(), target_key.as_deref(), failure_code, &reason_code, source_lsn, &record)?;
         records.push(record);
     }
     let has_more = records.len() > usize::from(spec.limit);
@@ -960,6 +976,7 @@ fn validate_audit_index_row(
     actor_id: Option<&str>,
     endpoint_id: Option<&str>,
     command_id: Option<&str>,
+    grant_id: Option<&str>,
     target_key: Option<&str>,
     failure_code: Option<i32>,
     reason_code: &str,
@@ -973,6 +990,7 @@ fn validate_audit_index_row(
         || record.actor_id.as_ref().map(|id| id.value.as_str()) != actor_id
         || record.endpoint_id.as_ref().map(|id| id.value.as_str()) != endpoint_id
         || record.command_id.as_ref().map(|id| id.value.as_str()) != command_id
+        || record.grant_id.as_ref().map(|id| id.value.as_str()) != grant_id
         || target_key_for_scope(record.target_scope.as_ref()).as_deref() != target_key
         || record.failure_code != failure_code.unwrap_or(FailureCode::Unspecified as i32)
         || record.reason_code != reason_code
@@ -1010,6 +1028,17 @@ impl Storage for RusqliteStorage {
         target: &TargetKey,
         payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
+        self.append_dedup_with_payload(authority_domain_id, key, target, payload.clone(), payload.encode_to_vec()).await
+    }
+
+    async fn append_dedup_with_payload(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+        logical_payload: Vec<u8>,
+    ) -> Result<DedupOutcome, StorageError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
             .send(WriterCommand::AppendDedup {
@@ -1017,6 +1046,7 @@ impl Storage for RusqliteStorage {
                 key: key.value.clone(),
                 target: target.as_str().to_string(),
                 payload,
+                logical_payload,
                 reply: reply_tx,
             })
             .await
@@ -1185,6 +1215,26 @@ impl Storage for RusqliteStorage {
         source: StoredEventPayload,
         audit: AuditRecordDraft,
     ) -> Result<AuditedDedupOutcome, StorageError> {
+        self.append_dedup_audited_with_payload(
+            authority_domain_id,
+            key,
+            target,
+            source.clone(),
+            audit,
+            source.encode_to_vec(),
+        )
+        .await
+    }
+
+    async fn append_dedup_audited_with_payload(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
+    ) -> Result<AuditedDedupOutcome, StorageError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
             .send(WriterCommand::AppendDedupAudited {
@@ -1193,6 +1243,7 @@ impl Storage for RusqliteStorage {
                 target: target.as_str().to_owned(),
                 source,
                 audit,
+                logical_payload,
                 reply: reply_tx,
             })
             .await
@@ -1397,6 +1448,7 @@ impl RusqliteStorage {
         target: &TargetKey,
         source: StoredEventPayload,
         audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
     ) -> Result<AuditedDedupOutcome, StorageError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
@@ -1406,6 +1458,7 @@ impl RusqliteStorage {
                 target: target.as_str().to_owned(),
                 source,
                 audit,
+                logical_payload,
                 reply: reply_tx,
             })
             .await

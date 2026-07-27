@@ -4,7 +4,7 @@ use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
     GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::time::{Clock, SystemClock};
 
 /// The in-memory grant record derived from the durable authority log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub struct GrantRecord {
     pub target_scope: TargetScope,
     pub allowed_operation_kinds: Vec<OperationKind>,
     pub created_at: Option<prost_types::Timestamp>,
-    /// Stored for future clock-backed enforcement; v0.1.0 does not enforce expiry.
+    /// Optional half-open expiry boundary. A grant is live only before this instant.
     pub expires_at: Option<prost_types::Timestamp>,
     pub revocation_generation: Option<Generation>,
     pub revoked_at: Option<prost_types::Timestamp>,
@@ -34,6 +34,16 @@ pub struct GrantRecord {
     pub provenance: GrantProvenanceKind,
 }
 
+/// The mutually exclusive liveness classification of a grant at one sampled
+/// instant. Revocation is deliberately checked first so an expired revoked
+/// grant has stable public semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantLiveness {
+    Live,
+    Expired,
+    Revoked,
+}
+
 impl GrantRecord {
     /// Return whether a revocation generation has been recorded for this grant.
     #[must_use]
@@ -41,26 +51,46 @@ impl GrantRecord {
         self.revocation_generation.is_some()
     }
 
-    /// Return whether this grant remains eligible to authorize new operations.
-    ///
-    /// Expiry is intentionally not evaluated in v0.1.0 because the authority
-    /// domain does not yet have a clock port.
+    #[must_use]
+    pub fn liveness_at(&self, now: &prost_types::Timestamp) -> GrantLiveness {
+        if self.is_revoked() {
+            return GrantLiveness::Revoked;
+        }
+        if self.is_expired_at(now) {
+            GrantLiveness::Expired
+        } else {
+            GrantLiveness::Live
+        }
+    }
+
+    #[must_use]
+    pub fn is_live_at(&self, now: &prost_types::Timestamp) -> bool {
+        self.liveness_at(now) == GrantLiveness::Live
+    }
+
+    #[must_use]
+    pub fn is_expired_at(&self, now: &prost_types::Timestamp) -> bool {
+        self.expires_at
+            .as_ref()
+            .is_some_and(|expires_at| timestamp_key(expires_at) <= timestamp_key(now))
+    }
+
+    /// Compatibility convenience for callers that are not evaluating a
+    /// compound decision. Authorization paths use `*_at` with one sampled
+    /// instant instead.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        !self.is_revoked() && !self.is_expired()
+        self.is_live_at(&SystemClock.now())
     }
 
     #[must_use]
     pub fn is_expired(&self) -> bool {
-        let Some(expires_at) = self.expires_at.as_ref() else {
-            return false;
-        };
-        let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-            return false;
-        };
-        (expires_at.seconds, expires_at.nanos)
-            <= (now.as_secs() as i64, now.subsec_nanos() as i32)
+        self.is_expired_at(&SystemClock.now())
     }
+}
+
+fn timestamp_key(timestamp: &prost_types::Timestamp) -> (i64, i32) {
+    (timestamp.seconds, timestamp.nanos)
 }
 
 /// Provenance retained for both operator-issued and spawned-session grants.
@@ -106,13 +136,24 @@ pub const DESCENDANT_GRANT_ALLOWED_KINDS: &[OperationKind] = &[
 /// domain and actor identity, optional endpoint narrowing, kind membership,
 /// and target-scope containment.
 #[must_use]
+pub fn grant_authorizes_at(
+    grant: &GrantRecord,
+    issuer: &IssuerRef<'_>,
+    operation_kind: OperationKind,
+    target_scope: &TargetScope,
+    now: &prost_types::Timestamp,
+) -> bool {
+    grant.is_live_at(now) && grant_matches_request(grant, issuer, operation_kind, target_scope)
+}
+
+#[must_use]
 pub fn grant_authorizes(
     grant: &GrantRecord,
     issuer: &IssuerRef<'_>,
     operation_kind: OperationKind,
     target_scope: &TargetScope,
 ) -> bool {
-    grant.is_live() && grant_matches_request(grant, issuer, operation_kind, target_scope)
+    grant_authorizes_at(grant, issuer, operation_kind, target_scope, &SystemClock.now())
 }
 
 #[must_use]

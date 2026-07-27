@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle-clock-expiry
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-grant-lifecycle
 depends_on: []
@@ -27,3 +27,14 @@ Create the shared core `Clock` port with production `SystemClock` and determinis
 ## Ordering
 
 Foundation checkpoint for the revocation and Subscribe paths; both consume the same sampled-time grant decision.
+
+## Implementation notes
+
+- Added the core-owned `Clock`, `SystemClock`, and deterministic `TestClock` in `core/src/time.rs`; acceptance samples one timestamp and passes it through validity-window and grant checks.
+- Added `GrantLiveness::{Live, Expired, Revoked}` and timestamp-based grant predicates. Revocation takes precedence and matching denial candidates are selected deterministically by grant id.
+- Accepted operations now persist as generated `AcceptedOperation` envelopes with verified grant provenance. Retry equivalence uses caller-supplied logical operation bytes, excluding core acceptance metadata.
+- Typed `SubmissionResult` grant/reason fields drive `GrantExpired` audit classification directly; the server no longer performs a second wall-clock authority scan.
+
+## Verification
+
+`cargo test --workspace` passed. Existing durable-operation fixtures were migrated to the generated acceptance envelope; no production compatibility reader was added.

@@ -15,7 +15,7 @@ use prost::Message;
 use crate::storage::RecordedEvent;
 
 use super::{
-    grant_matches_request, AuthorityError, GrantProvenanceKind, GrantRecord, IssuerRef,
+    AuthorityError, GrantLiveness, GrantProvenanceKind, GrantRecord,
     DESCENDANT_GRANT_ALLOWED_KINDS,
 };
 
@@ -74,22 +74,22 @@ impl AuthorityRegistry {
         self.grants.values()
     }
 
-    /// Iterate over grants that have not been revoked.
-    pub fn live_grants(&self) -> impl Iterator<Item = &GrantRecord> {
-        self.grants.values().filter(|grant| grant.is_live())
+    /// Iterate over grants live at the supplied core instant.
+    pub fn live_grants_at<'a>(&'a self, now: &'a prost_types::Timestamp) -> impl Iterator<Item = &'a GrantRecord> + 'a {
+        self.grants.values().filter(move |grant| grant.is_live_at(now))
     }
 
-    /// Return whether an expired, otherwise matching grant explains a denial.
-    #[must_use]
-    pub fn has_expired_grant(
-        &self,
-        issuer: &IssuerRef<'_>,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
-    ) -> bool {
-        self.grants.values().any(|grant| {
-            grant.is_expired() && grant_matches_request(grant, issuer, operation_kind, target_scope)
-        })
+    /// Iterate over grants live at the production instant. New authorization
+    /// code should use `live_grants_at` so one decision samples time once.
+    pub fn live_grants(&self) -> impl Iterator<Item = &GrantRecord> {
+        self.grants.values().filter(|grant| !grant.is_revoked())
+    }
+
+    pub fn grants_with_liveness_at<'a>(
+        &'a self,
+        now: &'a prost_types::Timestamp,
+    ) -> impl Iterator<Item = (&'a GrantRecord, GrantLiveness)> + 'a {
+        self.grants.values().map(move |grant| (grant, grant.liveness_at(now)))
     }
 
     fn observe_grant(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {

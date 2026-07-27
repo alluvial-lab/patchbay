@@ -5,14 +5,16 @@ use patchbay_contracts::patchbay::{
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
     LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
+    RevokeGrantRequest, RevokeGrantResult,
     RecordControlSurfaceAuditResponse, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
     StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
     SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
-    TypedCorrelation, typed_correlation, OperationKind, OperationState, FailureCode,
+    TypedCorrelation, typed_correlation, OperationState, FailureCode,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError, CommandStateLookup},
+    time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{hash_principal_credential, IssuerContext, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
@@ -90,6 +92,7 @@ pub struct ControlServiceImpl<S> {
     login_limiter: LoginLimiter,
     login_audit: Arc<dyn LoginAuditSink>,
     audit: Arc<dyn AuditSink>,
+    clock: Arc<dyn Clock>,
 }
 
 impl<S> ControlServiceImpl<S>
@@ -113,6 +116,41 @@ where
         operator_session_ttl: Duration,
         login_limiter: LoginLimiter,
         login_audit: Arc<dyn LoginAuditSink>,
+    ) -> Result<Self, String> {
+        Self::new_with_clock_security(
+            storage,
+            authority_domain_id,
+            operator_session_ttl,
+            login_limiter,
+            login_audit,
+            Arc::new(SystemClock),
+        )
+        .await
+    }
+
+    pub async fn new_with_clock(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
+        Self::new_with_clock_security(
+            storage,
+            authority_domain_id,
+            DEFAULT_OPERATOR_SESSION_TTL,
+            LoginLimiter::default(),
+            Arc::new(StderrLoginAuditSink),
+            clock,
+        )
+        .await
+    }
+
+    async fn new_with_clock_security(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        operator_session_ttl: Duration,
+        login_limiter: LoginLimiter,
+        login_audit: Arc<dyn LoginAuditSink>,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self, String> {
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".to_owned());
@@ -138,6 +176,7 @@ where
             login_limiter,
             login_audit,
             audit,
+            clock,
         })
     }
 
@@ -183,7 +222,7 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
-        let result = match acceptance::submit(
+        let result = match acceptance::submit_with_clock(
             &self.storage,
             self.state.grant_check(),
             self.state.target_resolver(),
@@ -191,6 +230,7 @@ where
             self.state.elicitation_contract_lookup(),
             &issuer,
             operation.clone(),
+            self.clock.as_ref(),
         )
         .await {
             Ok(result) => result,
@@ -214,6 +254,13 @@ where
     }
 
     type SubscribeStream = SubscribeStream;
+
+    async fn revoke_grant(
+        &self,
+        _request: Request<RevokeGrantRequest>,
+    ) -> Result<Response<RevokeGrantResult>, Status> {
+        Err(Status::unimplemented("grant revocation is not wired yet"))
+    }
 
     async fn subscribe(
         &self,
@@ -624,7 +671,7 @@ where
             .await
             .map_err(map_storage_error_to_status)?;
 
-        let submission = match acceptance::submit(
+        let submission = match acceptance::submit_with_clock(
             &self.storage,
             self.state.grant_check(),
             &AuthorityDomainTargetResolver,
@@ -632,6 +679,7 @@ where
             self.state.elicitation_contract_lookup(),
             &issuer,
             operation.clone(),
+            self.clock.as_ref(),
         )
         .await {
             Ok(result) => result,
@@ -869,40 +917,28 @@ impl<S> ControlServiceImpl<S> {
         operation: &patchbay_contracts::patchbay::Operation,
         result: &SubmissionResult,
     ) -> Result<(), Status> {
-        let expired_grant = if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::AuthorizationDenied) {
-            match (OperationKind::try_from(operation.kind).ok(), operation.target_scope.as_ref()) {
-                (Some(operation_kind), Some(target)) => {
-                    self.state.has_expired_grant(issuer, operation_kind, target).await
-                }
-                _ => false,
-            }
-        } else {
-            false
+        let failure = FailureCode::try_from(result.failure_code).ok();
+        let kind = match result.reason_code.as_str() {
+            "grant_expired" => AuditEventKind::GrantExpired,
+            "grant_revoked" => AuditEventKind::AuthorizationFailed,
+            _ if failure == Some(FailureCode::AuthorizationDenied) => AuditEventKind::AuthorizationFailed,
+            _ if failure == Some(FailureCode::TargetNotFound)
+                && operation.target_scope.as_ref().and_then(|target| target.session_generation.as_ref()).is_some() => AuditEventKind::TargetGenerationMismatch,
+            _ => AuditEventKind::CommandSubmissionRejected,
         };
-        let kind = if expired_grant {
-            AuditEventKind::GrantExpired
-        } else if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::AuthorizationDenied) {
-            AuditEventKind::AuthorizationFailed
-        } else if FailureCode::try_from(result.failure_code).ok() == Some(FailureCode::TargetNotFound)
-            && operation.target_scope.as_ref().and_then(|target| target.session_generation.as_ref()).is_some()
-        {
-            AuditEventKind::TargetGenerationMismatch
-        } else {
-            AuditEventKind::CommandSubmissionRejected
-        };
-        let mut draft = AuditRecordDraft::new(
-            crate::identity::now_timestamp()?,
-            kind,
-        );
+        let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
         draft.actor_id = issuer.verified_actor().cloned();
         draft.endpoint_id = issuer.verified_endpoint().cloned();
         draft.device_id = issuer.verified_device().cloned();
         draft.command_id = operation.command_id.clone();
+        draft.grant_id = result.decision_grant_id.clone();
         draft.target_scope = operation.target_scope.clone();
-        draft.failure_code = FailureCode::try_from(result.failure_code)
-            .ok()
-            .filter(|code| *code != FailureCode::Unspecified);
-        draft.reason_code = "submission_rejected".to_owned();
+        draft.failure_code = failure.filter(|code| *code != FailureCode::Unspecified);
+        draft.reason_code = if result.reason_code.is_empty() {
+            "submission_rejected".to_owned()
+        } else {
+            result.reason_code.clone()
+        };
         self.audit
             .record(draft)
             .await
@@ -1073,7 +1109,7 @@ async fn materialize_diagnostics_result<S: Storage>(
                 let before_lsn = query.audit_before_event_id.as_ref().and_then(|id| id.lsn.as_ref()).map(|lsn| lsn.value);
                 let page = storage.query_audit_through(authority_domain_id, AuditPageSpec {
                     kinds: Vec::new(), actor_id: None, endpoint_id: None,
-                    command_id: Some(command_id), target: None, failure_codes: Vec::new(),
+                    command_id: Some(command_id), grant_id: None, target: None, failure_codes: Vec::new(),
                     reason_codes: Vec::new(), occurred_from: None, occurred_before: None,
                     before_lsn,
                     limit: query.audit_limit.map_or(diagnostics::COMMAND_DEFAULT_LIMIT, |value| value as u16),
@@ -1114,6 +1150,8 @@ fn rejected_query_submission(
         diagnostic_message,
         accepted_lsn: None,
         deduplicated: false,
+        decision_grant_id: None,
+        reason_code: "validation_failed".to_owned(),
     }
 }
 

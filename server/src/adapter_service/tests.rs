@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, typed_correlation, AdapterCapability, AdapterDiagnosticPayload,
+    observation_request, typed_correlation, AcceptedOperation, AdapterCapability, AdapterDiagnosticPayload,
     AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
@@ -23,6 +23,14 @@ use tonic::Request;
 use super::*;
 
 const EVIDENCE: &str = "adapter-test-secret";
+
+fn accepted_operation_bytes(operation: &Operation) -> Vec<u8> {
+    AcceptedOperation {
+        operation: Some(operation.clone()),
+        authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "test-grant".to_owned() }),
+    }
+    .encode_to_vec()
+}
 
 #[derive(Clone)]
 struct BlockingReadStorage {
@@ -229,7 +237,7 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
             &domain,
             StoredEventPayload {
                 kind: StoredEventKind::Operation as i32,
-                payload: operation.encode_to_vec(),
+                payload: accepted_operation_bytes(&operation),
             },
         )
         .await
@@ -466,7 +474,7 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
             &domain,
             StoredEventPayload {
                 kind: StoredEventKind::Operation as i32,
-                payload: operation.encode_to_vec(),
+                payload: accepted_operation_bytes(&operation),
             },
         )
         .await
@@ -602,7 +610,7 @@ async fn idle_delivery_subscription_receives_an_operation_accepted_later() {
             &domain,
             StoredEventPayload {
                 kind: StoredEventKind::Operation as i32,
-                payload: operation.encode_to_vec(),
+                payload: accepted_operation_bytes(&operation),
             },
         )
         .await
@@ -660,7 +668,7 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
                 &domain,
                 StoredEventPayload {
                     kind: StoredEventKind::Operation as i32,
-                    payload: operation.encode_to_vec(),
+                    payload: accepted_operation_bytes(operation),
                 },
             )
             .await

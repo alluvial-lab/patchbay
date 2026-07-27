@@ -1,8 +1,9 @@
 //! Operation submission and durable acceptance.
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode, IdempotencyKey, Lsn,
-    Operation, OperationKind, OperationState, StoredEventKind, StoredEventPayload,
+    AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode,
+    GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
+    StoredEventPayload,
     SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind, TimeWindow,
 };
 use prost::Message;
@@ -45,21 +46,27 @@ struct ValidatedOperation<'a> {
 
 struct ValidationRejection {
     failure_code: FailureCode,
+    reason_code: String,
     diagnostic: String,
+    decision_grant_id: Option<GrantId>,
 }
 
 impl ValidationRejection {
     fn validation_failed(diagnostic: impl Into<String>) -> Self {
         Self {
             failure_code: FailureCode::ValidationFailed,
+            reason_code: "validation_failed".to_owned(),
             diagnostic: diagnostic.into(),
+            decision_grant_id: None,
         }
     }
 
     fn expired(diagnostic: impl Into<String>) -> Self {
         Self {
             failure_code: FailureCode::Expired,
+            reason_code: "operation_expired".to_owned(),
             diagnostic: diagnostic.into(),
+            decision_grant_id: None,
         }
     }
 }
@@ -124,14 +131,17 @@ where
     R: TargetResolver,
     L: CommandStateLookup,
     E: ElicitationContractLookup,
-    C: Clock,
+    C: Clock + ?Sized,
 {
-    let validated = match validate_operation(&operation, &clock.now()) {
+    let evaluated_at = clock.now();
+    let validated = match validate_operation(&operation, &evaluated_at) {
         Ok(validated) => validated,
         Err(rejection) => {
             return Ok(rejected_result(
                 operation.command_id.clone(),
                 rejection.failure_code,
+                rejection.reason_code,
+                rejection.decision_grant_id,
                 rejection.diagnostic,
             ));
         }
@@ -143,6 +153,8 @@ where
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
                 FailureCode::AuthorizationDenied,
+                "authorization_denied".to_owned(),
+                None,
                 "operation issuer identity is incomplete".to_owned(),
             ));
         }
@@ -169,29 +181,45 @@ where
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
                 FailureCode::ValidationFailed,
+                "validation_failed".to_owned(),
+                None,
                 diagnostic,
             ));
         }
     }
 
-    let _authorization = match grant_check
-        .check(
+    let authorization = match grant_check
+        .check_at(
             validated.authority_domain_id,
             issuer,
             validated.operation_kind,
             validated.target_scope,
+            &evaluated_at,
         )
         .await
     {
         Ok(authorized) => authorized,
-        Err(error) => {
+        Err(crate::acceptance::GrantDenied::NoGrant { actor, .. }) => {
+            let (failure, reason_code, decision_grant_id, diagnostic) =
+                if let Some(value) = actor.strip_prefix("grant_expired:") {
+                    (FailureCode::Expired, "grant_expired", Some(GrantId { value: value.to_owned() }), "grant is expired")
+                } else if let Some(value) = actor.strip_prefix("grant_revoked:") {
+                    (FailureCode::AuthorizationDenied, "grant_revoked", Some(GrantId { value: value.to_owned() }), "grant is revoked")
+                } else {
+                    (FailureCode::AuthorizationDenied, "authorization_denied", None, "no matching live grant")
+                };
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
-                FailureCode::AuthorizationDenied,
-                error.to_string(),
+                failure,
+                reason_code.to_owned(),
+                decision_grant_id,
+                diagnostic.to_owned(),
             ));
         }
     };
+    let grant_id = authorization.grant_id.ok_or_else(|| {
+        AcceptanceError::CorruptRecord("grant check authorized without grant provenance".to_owned())
+    })?;
 
     if target_resolver
         .resolve(validated.authority_domain_id, validated.target_scope)
@@ -201,6 +229,8 @@ where
         return Ok(rejected_result(
             Some(validated.command_id.clone()),
             FailureCode::TargetNotFound,
+            "target_not_found".to_owned(),
+            None,
             "operation target could not be resolved".to_owned(),
         ));
     }
@@ -210,17 +240,23 @@ where
     // the authenticated ingress boundary.
     let mut durable_operation = operation.clone();
     durable_operation.sender = Some(verified_sender);
+    let accepted_operation = AcceptedOperation {
+        operation: Some(durable_operation),
+        authorizing_grant_id: Some(grant_id.clone()),
+    };
     let payload = StoredEventPayload {
         kind: StoredEventKind::Operation as i32,
-        payload: durable_operation.encode_to_vec(),
+        payload: accepted_operation.encode_to_vec(),
     };
+    let logical_operation_bytes = operation.encode_to_vec();
 
     let append_result = storage
-        .append_dedup(
+        .append_dedup_with_payload(
             validated.authority_domain_id,
             &validated.idempotency_key,
             &validated.target_key,
             payload,
+            logical_operation_bytes,
         )
         .await;
 
@@ -230,6 +266,7 @@ where
             validated.authority_domain_id,
             event_id,
             OperationState::Accepted,
+            grant_id,
             false,
         ),
         Ok(DedupOutcome::Duplicate(event_id)) => {
@@ -255,12 +292,15 @@ where
                 validated.authority_domain_id,
                 event_id,
                 snapshot.state,
+                grant_id,
                 true,
             )
         }
         Err(StorageError::IdempotencyConflict) => Ok(rejected_result(
             Some(validated.command_id.clone()),
             FailureCode::ValidationFailed,
+            "validation_failed".to_owned(),
+            None,
             "idempotency key was already used with a different operation payload".to_owned(),
         )),
         Err(error) => Err(AcceptanceError::Storage(error)),
@@ -448,6 +488,8 @@ fn sender_from_verified_issuer(issuer: &dyn IssuerContext) -> Option<ActorEndpoi
 fn rejected_result(
     command_id: Option<CommandId>,
     failure_code: FailureCode,
+    reason_code: String,
+    decision_grant_id: Option<GrantId>,
     diagnostic_message: String,
 ) -> SubmissionResult {
     SubmissionResult {
@@ -458,6 +500,8 @@ fn rejected_result(
         diagnostic_message,
         accepted_lsn: None,
         deduplicated: false,
+        decision_grant_id,
+        reason_code,
     }
 }
 
@@ -466,6 +510,7 @@ fn accepted_result(
     expected_domain: &AuthorityDomainId,
     event_id: EventId,
     operation_state: OperationState,
+    grant_id: GrantId,
     deduplicated: bool,
 ) -> Result<SubmissionResult, AcceptanceError> {
     match event_id.authority_domain_id.as_ref() {
@@ -496,5 +541,7 @@ fn accepted_result(
         diagnostic_message: String::new(),
         accepted_lsn: Some(accepted_lsn),
         deduplicated,
+        decision_grant_id: Some(grant_id),
+        reason_code: "accepted".to_owned(),
     })
 }

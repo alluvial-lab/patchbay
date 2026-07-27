@@ -1,5 +1,5 @@
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, AdapterCapability, AdapterDiagnosticDetail, AdapterDiagnosticSeverity,
+    AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterDiagnosticDetail, AdapterDiagnosticSeverity,
     AdapterDiagnosticState, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, EventId,
     FailureCode, Generation, Observation, ObservationKind, Operation, OperationKind,
@@ -131,7 +131,10 @@ fn replay_and_incremental_command_folds_match() {
         ..CommandTransition::default()
     };
     let events = vec![
-        event(&domain, 1, StoredEventKind::Operation, operation.encode_to_vec()),
+        event(&domain, 1, StoredEventKind::Operation, AcceptedOperation {
+            operation: Some(operation),
+            authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "test-grant".to_owned() }),
+        }.encode_to_vec()),
         event(&domain, 2, StoredEventKind::CommandTransition, transition.encode_to_vec()),
     ];
     let mut replay = DiagnosticsProjection::new();

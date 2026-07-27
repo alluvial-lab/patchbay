@@ -1,5 +1,5 @@
 use patchbay_contracts::patchbay::{
-    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId,
+    typed_correlation, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId,
     ElicitationState, FailureCode, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
     StoredEventPayload, TypedCorrelation,
 };
@@ -118,7 +118,13 @@ async fn append_operation(storage: &RusqliteStorage, operation: &Operation) -> u
     storage
         .append(
             &authority_domain(),
-            event_payload(StoredEventKind::Operation, operation),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(operation.clone()),
+                    authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "test-grant".to_owned() }),
+                }.encode_to_vec(),
+            },
         )
         .await
         .unwrap()

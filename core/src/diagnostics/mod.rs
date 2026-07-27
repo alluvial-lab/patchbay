@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    diagnostics_query, AdapterCapabilitySummary, AdapterDiagnosticState, AdapterId,
+    diagnostics_query, AcceptedOperation, AdapterCapabilitySummary, AdapterDiagnosticState, AdapterId,
     AdapterRegistration, AdapterStatus, AdapterStatusPage, AdapterStatusQuery, AuditEventKind,
     AuditQuery, AuditRecord,
     AuthorityDomainId, CommandId, CommandInspection, CommandInspectionQuery,
@@ -135,8 +135,11 @@ impl DiagnosticsProjection {
             .map_err(|_| DiagnosticsError::CorruptEvent("unknown stored event kind".to_owned()))?;
         match kind {
             StoredEventKind::Operation => {
-                let operation = Operation::decode(event.payload.payload.as_slice())
+                let accepted = AcceptedOperation::decode(event.payload.payload.as_slice())
                     .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+                let operation = accepted.operation.ok_or_else(|| {
+                    DiagnosticsError::CorruptEvent("accepted operation has no operation".to_owned())
+                })?;
                 if operation.command_id.is_some() {
                     let command_id = operation.command_id.clone().expect("checked above");
                     let summary = CommandSummary {
@@ -525,6 +528,9 @@ fn validate_audit_query(
         return Err(DiagnosticsError::InvalidQuery("reason_codes must match [a-z0-9_]{1,64}".to_owned()));
     }
     validate_interval(query.occurred_from_inclusive.as_ref(), query.occurred_before_exclusive.as_ref())?;
+    if query.grant_id.as_ref().is_some_and(|id| id.value.is_empty()) {
+        return Err(DiagnosticsError::InvalidQuery("grant_id filter must not be empty".to_owned()));
+    }
     if let Some(cursor) = query.before_event_id.as_ref() {
         validate_cursor(cursor, domain, current_lsn)?;
     }
@@ -537,6 +543,7 @@ fn validate_audit_query(
         actor_id: query.actor_id,
         endpoint_id: query.endpoint_id,
         command_id: query.command_id,
+        grant_id: query.grant_id,
         target,
         failure_codes: query.failure_codes.into_iter().map(|code| FailureCode::try_from(code).expect("validated failure")).collect(),
         reason_codes: query.reason_codes,

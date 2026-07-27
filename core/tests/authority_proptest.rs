@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, ActorEndpointRef, ActorId, AdapterId,
+    session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, Revocation,
@@ -648,7 +648,15 @@ fn spawn_facts(
     };
 
     [
-        recorded(1, authority_domain_id, StoredEventKind::Operation, &spawn),
+        recorded(
+            1,
+            authority_domain_id,
+            StoredEventKind::Operation,
+            &AcceptedOperation {
+                operation: Some(spawn),
+                authorizing_grant_id: Some(GrantId { value: "spawn-grant".to_owned() }),
+            },
+        ),
         recorded(
             2,
             authority_domain_id,

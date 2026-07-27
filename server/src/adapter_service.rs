@@ -7,9 +7,9 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
+    observation_request, AcceptedOperation, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
     AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
-    ObservationRequest, ObservationResult, Operation, OperationState, ReceiveRequest,
+    ObservationRequest, ObservationResult, OperationState, ReceiveRequest,
     SessionActivityState, SessionConnectivityState, StoredEventKind,
 };
 use patchbay_core::{
@@ -291,13 +291,17 @@ fn deliveries_for_events(
             if event.payload.kind != StoredEventKind::Operation as i32 {
                 return None;
             }
-            let operation = match Operation::decode(event.payload.payload.as_slice()) {
-                Ok(operation) => operation,
+            let accepted = match AcceptedOperation::decode(event.payload.payload.as_slice()) {
+                Ok(accepted) => accepted,
                 Err(error) => {
                     return Some(Err(Status::internal(format!(
                         "cannot decode accepted operation: {error}"
                     ))))
                 }
+            };
+            let operation = match accepted.operation {
+                Some(operation) => operation,
+                None => return Some(Err(Status::internal("accepted operation has no operation"))),
             };
             let targets_adapter = operation
                 .target_scope

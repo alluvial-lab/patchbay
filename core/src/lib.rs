@@ -14,3 +14,4 @@ pub mod authority;
 pub mod diagnostics;
 pub mod session;
 pub mod storage;
+pub mod time;

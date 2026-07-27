@@ -1,10 +1,11 @@
 //! Acceptance grant checks backed by the durable authority projection.
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, OperationKind, TargetScope};
+use prost_types::Timestamp;
 
-use crate::acceptance::{Authorized, GrantCheck, GrantDenied};
+use crate::{acceptance::{Authorized, GrantCheck, GrantDenied}, time::{Clock, SystemClock}};
 
-use super::{grant_authorizes, grant_matches_request, AuthorityRegistry, IssuerContext, IssuerRef};
+use super::{grant_authorizes_at, grant_matches_request, GrantLiveness, AuthorityRegistry, IssuerContext, IssuerRef};
 
 /// Adapt the authority registry to acceptance's grant-check port.
 ///
@@ -19,16 +20,23 @@ impl GrantCheck for AuthorityRegistry {
         operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<Authorized, GrantDenied> {
+        self.check_at(authority_domain_id, issuer, operation_kind, target_scope, &SystemClock.now()).await
+    }
+
+    async fn check_at(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        issuer: &dyn IssuerContext,
+        operation_kind: OperationKind,
+        target_scope: &TargetScope,
+        evaluated_at: &Timestamp,
+    ) -> Result<Authorized, GrantDenied> {
         let Some(actor) = issuer.verified_actor() else {
             return Err(no_grant("unauthenticated", operation_kind, target_scope));
         };
 
         if issuer.authority_domain_id() != authority_domain_id {
-            return Err(no_grant(
-                &format!("{actor:?}"),
-                operation_kind,
-                target_scope,
-            ));
+            return Err(no_grant(&format!("{actor:?}"), operation_kind, target_scope));
         }
 
         let issuer_ref = IssuerRef {
@@ -36,18 +44,38 @@ impl GrantCheck for AuthorityRegistry {
             endpoint: issuer.verified_endpoint(),
             authority_domain_id,
         };
-        if let Some(grant) = self
+        let mut candidates: Vec<_> = self
             .grants()
-            .find(|grant| grant.is_expired() && grant_matches_request(grant, &issuer_ref, operation_kind, target_scope))
+            .filter(|grant| grant_matches_request(grant, &issuer_ref, operation_kind, target_scope))
+            .collect();
+        candidates.sort_unstable_by(|left, right| left.grant_id.value.cmp(&right.grant_id.value));
+
+        if let Some(grant) = candidates
+            .iter()
+            .copied()
+            .find(|grant| grant_authorizes_at(grant, &issuer_ref, operation_kind, target_scope, evaluated_at))
         {
-            return Err(no_grant(&format!("expired grant {:?}", grant.grant_id), operation_kind, target_scope));
+            return Ok(Authorized { grant_id: Some(grant.grant_id.clone()) });
         }
-        self.live_grants()
-            .find(|grant| grant_authorizes(grant, &issuer_ref, operation_kind, target_scope))
-            .map(|grant| Authorized {
-                grant_id: Some(grant.grant_id.clone()),
-            })
-            .ok_or_else(|| no_grant(&format!("{actor:?}"), operation_kind, target_scope))
+        if let Some(grant) = candidates.iter().copied().find(|grant| {
+            grant.liveness_at(evaluated_at) == GrantLiveness::Expired
+        }) {
+            return Err(no_grant(
+                &format!("grant_expired:{}", grant.grant_id.value),
+                operation_kind,
+                target_scope,
+            ));
+        }
+        if let Some(grant) = candidates.iter().copied().find(|grant| {
+            grant.liveness_at(evaluated_at) == GrantLiveness::Revoked
+        }) {
+            return Err(no_grant(
+                &format!("grant_revoked:{}", grant.grant_id.value),
+                operation_kind,
+                target_scope,
+            ));
+        }
+        Err(no_grant(&format!("{actor:?}"), operation_kind, target_scope))
     }
 }
 

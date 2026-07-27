@@ -23,6 +23,7 @@ fn page(limit: u16) -> AuditPageSpec {
         actor_id: None,
         endpoint_id: None,
         command_id: None,
+        grant_id: None,
         target: None,
         failure_codes: Vec::new(),
         reason_codes: Vec::new(),

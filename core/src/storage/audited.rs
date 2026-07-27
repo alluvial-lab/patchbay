@@ -8,8 +8,8 @@
 //! second, non-atomic audit write path.
 
 use patchbay_contracts::patchbay::{
-    AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode, Grant, Observation,
-    ObservationKind, Operation, OperationKind, OperatorRecord, Revocation,
+    AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode, Grant,
+    Observation, ObservationKind, OperationKind, OperatorRecord, Revocation,
     StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
@@ -18,7 +18,7 @@ use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
-use crate::acceptance::ports::{Clock, SystemClock};
+use crate::time::{Clock, SystemClock};
 
 /// A cloneable production storage view with mandatory source/audit coupling.
 #[derive(Clone)]
@@ -53,9 +53,13 @@ pub fn audit_draft_for_source(
 
     match kind {
         StoredEventKind::Operation => {
-            let operation = Operation::decode(payload.payload.as_slice()).map_err(|error| {
-                StorageError::CorruptRecord(format!("cannot decode operation for audit: {error}"))
+            let accepted = AcceptedOperation::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!("cannot decode accepted operation for audit: {error}"))
             })?;
+            let operation = accepted.operation.ok_or_else(|| {
+                StorageError::CorruptRecord("accepted operation is missing operation".to_owned())
+            })?;
+            draft.grant_id = accepted.authorizing_grant_id;
             draft.actor_id = operation.sender.as_ref().and_then(|sender| sender.actor_id.clone());
             draft.endpoint_id = operation.sender.as_ref().and_then(|sender| sender.endpoint_id.clone());
             draft.device_id = operation.sender.as_ref().and_then(|sender| sender.device_id.clone());
@@ -253,10 +257,21 @@ where
         target: &TargetKey,
         payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
+        self.append_dedup_with_payload(authority_domain_id, key, target, payload.clone(), payload.encode_to_vec()).await
+    }
+
+    async fn append_dedup_with_payload(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &patchbay_contracts::patchbay::IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+        logical_payload: Vec<u8>,
+    ) -> Result<DedupOutcome, StorageError> {
         let audit = audit_draft_for_source(&payload)?;
         match self
             .inner
-            .append_dedup_audited(authority_domain_id, key, target, payload, audit)
+            .append_dedup_audited_with_payload(authority_domain_id, key, target, payload, audit, logical_payload)
             .await?
         {
             AuditedDedupOutcome::Appended(result) => Ok(DedupOutcome::Appended(result.source_event_id)),
@@ -327,15 +342,16 @@ where
             .map(|result| result.source_event_id)
     }
 
-    async fn append_dedup_audited(
+    async fn append_dedup_audited_with_payload(
         &self,
         authority_domain_id: &AuthorityDomainId,
         key: &patchbay_contracts::patchbay::IdempotencyKey,
         target: &TargetKey,
         source: StoredEventPayload,
         audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
     ) -> Result<AuditedDedupOutcome, StorageError> {
-        self.inner.append_dedup_audited(authority_domain_id, key, target, source, audit).await
+        self.inner.append_dedup_audited_with_payload(authority_domain_id, key, target, source, audit, logical_payload).await
     }
 
     async fn append_batch_audited(

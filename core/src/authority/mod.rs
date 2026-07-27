@@ -26,8 +26,8 @@ pub use registry::AuthorityRegistry;
 pub use replay::rebuild_from_log;
 pub use spawn_tail::{DescendantGrantIssuance, SpawnDescendantTail};
 pub use state::{
-    grant_authorizes, grant_matches_request, target_scope_matches, GrantProvenanceKind,
-    GrantRecord, IssuerRef,
+    grant_authorizes, grant_authorizes_at, grant_matches_request, target_scope_matches,
+    GrantLiveness, GrantProvenanceKind, GrantRecord, IssuerRef,
     DESCENDANT_GRANT_ALLOWED_KINDS,
 };
 

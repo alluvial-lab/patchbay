@@ -365,27 +365,6 @@ impl ProjectionState {
             .cloned()
     }
 
-    pub async fn has_expired_grant(
-        &self,
-        issuer: &dyn IssuerContext,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
-    ) -> bool {
-        let Some(actor) = issuer.verified_actor() else { return false; };
-        let Some(endpoint) = issuer.verified_endpoint() else { return false; };
-        let domain = issuer.authority_domain_id();
-        let issuer_ref = patchbay_core::authority::IssuerRef {
-            actor,
-            endpoint: Some(endpoint),
-            authority_domain_id: domain,
-        };
-        self.grant_check
-            .inner
-            .lock()
-            .await
-            .has_expired_grant(&issuer_ref, operation_kind, target_scope)
-    }
-
     pub async fn ingest_grant<S: Storage>(
         &self,
         storage: &S,
@@ -491,14 +470,19 @@ impl GrantCheck for LockedGrantCheck {
         target_scope: &TargetScope,
     ) -> Result<Authorized, GrantDenied> {
         let registry = self.inner.lock().await;
-        GrantCheck::check(
-            &*registry,
-            authority_domain_id,
-            issuer,
-            operation_kind,
-            target_scope,
-        )
-        .await
+        GrantCheck::check(&*registry, authority_domain_id, issuer, operation_kind, target_scope).await
+    }
+
+    async fn check_at(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        issuer: &dyn IssuerContext,
+        operation_kind: OperationKind,
+        target_scope: &TargetScope,
+        evaluated_at: &prost_types::Timestamp,
+    ) -> Result<Authorized, GrantDenied> {
+        let registry = self.inner.lock().await;
+        GrantCheck::check_at(&*registry, authority_domain_id, issuer, operation_kind, target_scope, evaluated_at).await
     }
 }
 
