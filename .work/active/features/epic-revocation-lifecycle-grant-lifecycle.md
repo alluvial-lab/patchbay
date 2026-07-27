@@ -464,6 +464,10 @@ The feature remains one cohesive implementation/review bundle; stories are durab
 
 All four stories are complete. `cargo test --workspace` passed; `cli` build and 28 tests passed; Buf generation completed via `npx --yes @bufbuild/buf generate`; vector, model-promotion, presentation, and presentation meta-checks passed. Generated drift is expected to report the uncommitted generated Rust contract during this checkpoint and must be rerun after the story commit.
 
+## Completion
+
+All four implementation stories are `done`. The feature is complete on commit `70396b8`; its final CLI/conformance checkpoint includes the generated-contract consumers, audit discovery surface, draft vectors, and rolling-foundation updates. No formal property promotion was made.
+
 ## Extension pressure classification
 
 - **Committed v0.1.0**: injected core clock; grant expiry at authorization; self-scoped, durable, non-cascading grant revocation; all three existing `GrantRevocationPolicy` values with the exact state effects above; Query/authority-domain Subscribe establishment and resume checks; typed audit/CLI administration.
