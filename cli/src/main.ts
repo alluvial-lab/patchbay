@@ -14,6 +14,12 @@ import { cancelCommand } from "./commands/cancel.js";
 import { inspectCommandCommand } from "./commands/inspect-command.js";
 import { instructCommand } from "./commands/instruct.js";
 import { grantRevokeCommand } from "./commands/grant-revoke.js";
+import {
+  defaultReasonCode,
+  revokeAllSessionsCommand,
+  revokeEndpointCommand,
+  revokePrincipalCommand,
+} from "./commands/revocation.js";
 import { interruptCommand } from "./commands/interrupt.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
@@ -48,6 +54,10 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   "grant-revoke": { flags: ["json"], values: ["reason"] },
+  "revoke-all-sessions": { flags: ["json"], values: ["reason-code"] },
+  "revoke-principal": { flags: ["json"], values: ["reason-code"] },
+  "revoke-endpoint": { flags: ["json"], values: ["reason-code"] },
+  "revoke-device": { flags: ["json"], values: ["reason-code"] },
   "audit-query": { flags: ["json"], values: [
     "kind", "actor-id", "endpoint-id", "command-id", "grant-id", "target", "failure-code",
     "reason-code", "since", "until", "before-event", "limit",
@@ -222,6 +232,54 @@ export async function run(
           output,
         );
 
+      case "revoke-all-sessions":
+        requirePositionals(command, parsed.positionals, 0, 0);
+        return await revokeAllSessionsCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          { reasonCode: parsed.options.get("reason-code") ?? defaultReasonCode(), json },
+          output,
+        );
+
+      case "revoke-principal":
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await revokePrincipalCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          {
+            principalId: parsed.positionals[0]!,
+            reasonCode: parsed.options.get("reason-code") ?? defaultReasonCode(),
+            json,
+          },
+          output,
+        );
+
+      case "revoke-endpoint":
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await revokeEndpointCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          {
+            endpointId: parsed.positionals[0]!,
+            reasonCode: parsed.options.get("reason-code") ?? defaultReasonCode(),
+            json,
+          },
+          output,
+        );
+
+      case "revoke-device":
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await revokeEndpointCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          {
+            deviceId: parsed.positionals[0]!,
+            reasonCode: parsed.options.get("reason-code") ?? defaultReasonCode(),
+            json,
+          },
+          output,
+        );
+
       case "grant-revoke":
         requirePositionals(command, parsed.positionals, 1, 1);
         return await grantRevokeCommand(
@@ -315,6 +373,7 @@ export function parseArguments(args: readonly string[]): ParsedArguments {
     const inlineValue = equals === -1 ? undefined : option.slice(equals + 1);
     if (BOOLEAN_OPTIONS.has(rawName)) {
       if (inlineValue !== undefined) throw new Error(`--${rawName} does not accept a value`);
+      if (parsed.flags.has(rawName)) throw new Error(`duplicate option: --${rawName}`);
       parsed.flags.add(rawName);
       continue;
     }
@@ -364,6 +423,12 @@ export function usage(): string {
     "  interrupt <command-id> [--idempotency-key K] [--command-id ID] [--json]",
     "  grant-revoke <grant-id> [--reason TEXT] [--json]",
     "      Revoke a self-scoped grant; repeats report already_revoked without changing state.",
+    "  revoke-all-sessions [--reason-code CODE] [--json]",
+    "      Revoke every core operator session for the authenticated actor; local credentials are cleared.",
+    "  revoke-principal <principal-id> [--reason-code CODE] [--json]",
+    "  revoke-endpoint <endpoint-id> [--reason-code CODE] [--json]",
+    "  revoke-device <device-id> [--reason-code CODE] [--json]",
+    "      Revoke a control-surface identity; self-targeted credentials are cleared only after confirmation.",
     "  audit-query [--kind K[,K...]] [--actor-id ID] [--endpoint-id ID] [--command-id ID]",
     "      [--grant-id ID] [--target TARGET] [--failure-code C[,C...]] [--reason-code C[,C...]]",
     "      [--since RFC3339] [--until RFC3339] [--before-event LSN] [--limit 1..500] [--json]",

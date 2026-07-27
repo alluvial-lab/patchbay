@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation-cli-controls
 kind: story
-stage: implementing
+stage: done
 tags: [security]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: [epic-revocation-lifecycle-session-principal-revocation-core-state]
@@ -44,3 +44,13 @@ self-lockout/reconciliation rules.
 Consumes the stable core RPCs and may implement in parallel with the web
 checkpoint. The consumed one-time `setup` secret is not a recovery mechanism;
 do not advertise it as one.
+
+## Implementation notes
+- Execution capability: inline implementation; shared CLI parsing, credential storage, and generated Connect client paths were sufficient.
+- Review weight: standard (project default).
+- Files changed: `cli/src/commands/revocation.ts`, `cli/src/main.ts`, and `cli/tests/auth-commands.test.ts`.
+- Tests added/removed: revoke-all safe generation/event output and credential clearing, selective self-target cleanup, and honest transport failure tests added.
+- Simplification: endpoint and device commands share one target validator/request path while retaining distinct command grammar.
+- Discrepancies from design: no interactive confirmation was added because the authoritative command signatures define direct scriptable controls; the owning lockdown feature remains responsible for cockpit confirmation UX.
+- Adjacent issues parked: none.
+- Verification: `cd cli && npm test` passed (33 tests).
