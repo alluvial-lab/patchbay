@@ -1,7 +1,7 @@
 ---
 id: story-fix-tool-call-args-preview
 kind: story
-stage: implementing
+stage: review
 tags: [bug]
 parent: null
 depends_on: []
