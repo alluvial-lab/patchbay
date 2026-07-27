@@ -6,7 +6,7 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ActorId, AuthorityDomainId, DeviceId, EndpointId, Generation, GrantId, OperatorSessionId } from "./common_pb.js";
+import type { ActorEndpointRef, ActorId, AuthorityDomainId, DeviceId, EndpointId, Generation, GrantId, OperatorSessionId } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/admin.proto.
  */
 export const file_patchbay_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChRwYXRjaGJheS9hZG1pbi5wcm90bxIIcGF0Y2hiYXkitgEKDk9wZXJhdG9yUmVjb3JkEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIVCg1wYXNzd29yZF9oYXNoGAIgASgJEi4KCmNyZWF0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjgKE2F1dGhvcml0eV9kb21haW5faWQYBCABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZCKaAQoTUHJpbmNpcGFsRW5yb2xsbWVudBIpCgtlbmRwb2ludF9pZBgBIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAIgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSMQoTZW5kcG9pbnRfZ2VuZXJhdGlvbhgDIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24i6wIKHUNvbnRyb2xTdXJmYWNlUHJpbmNpcGFsUmVjb3JkEhQKDHByaW5jaXBhbF9pZBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAyABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgEIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEhcKD2NyZWRlbnRpYWxfaGFzaBgGIAEoDBIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAggASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQi7gEKE1ByaW5jaXBhbENyZWRlbnRpYWwSFAoMcHJpbmNpcGFsX2lkGAEgASgJEg4KBnNlY3JldBgCIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgDIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYBCABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgFIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBiABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIp8BChBCb290c3RyYXBSZXF1ZXN0EhQKDHNldHVwX3NlY3JldBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSFQoNcGFzc3dvcmRfaGFzaBgDIAEoCRIwCglwcmluY2lwYWwYBCABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxFbnJvbGxtZW50IpkBCg9Cb290c3RyYXBSZXN1bHQSIwoIZ3JhbnRfaWQYASABKAsyES5wYXRjaGJheS5HcmFudElkEi8KCnNlc3Npb25faWQYAiABKAsyGy5wYXRjaGJheS5PcGVyYXRvclNlc3Npb25JZBIwCglwcmluY2lwYWwYAyABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsMloKDEFkbWluU2VydmljZRJKChFCb290c3RyYXBPcGVyYXRvchIaLnBhdGNoYmF5LkJvb3RzdHJhcFJlcXVlc3QaGS5wYXRjaGJheS5Cb290c3RyYXBSZXN1bHRiBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common]);
+  fileDesc("ChRwYXRjaGJheS9hZG1pbi5wcm90bxIIcGF0Y2hiYXkitgEKDk9wZXJhdG9yUmVjb3JkEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIVCg1wYXNzd29yZF9oYXNoGAIgASgJEi4KCmNyZWF0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjgKE2F1dGhvcml0eV9kb21haW5faWQYBCABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZCKaAQoTUHJpbmNpcGFsRW5yb2xsbWVudBIpCgtlbmRwb2ludF9pZBgBIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAIgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSMQoTZW5kcG9pbnRfZ2VuZXJhdGlvbhgDIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24i6wIKHUNvbnRyb2xTdXJmYWNlUHJpbmNpcGFsUmVjb3JkEhQKDHByaW5jaXBhbF9pZBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAyABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgEIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEhcKD2NyZWRlbnRpYWxfaGFzaBgGIAEoDBIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAggASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQi7gEKE1ByaW5jaXBhbENyZWRlbnRpYWwSFAoMcHJpbmNpcGFsX2lkGAEgASgJEg4KBnNlY3JldBgCIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgDIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYBCABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgFIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBiABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIp8BChBCb290c3RyYXBSZXF1ZXN0EhQKDHNldHVwX3NlY3JldBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSFQoNcGFzc3dvcmRfaGFzaBgDIAEoCRIwCglwcmluY2lwYWwYBCABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxFbnJvbGxtZW50ItQBCg9Cb290c3RyYXBSZXN1bHQSIwoIZ3JhbnRfaWQYASABKAsyES5wYXRjaGJheS5HcmFudElkEi8KCnNlc3Npb25faWQYAiABKAsyGy5wYXRjaGJheS5PcGVyYXRvclNlc3Npb25JZBIwCglwcmluY2lwYWwYAyABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsEjkKG29wZXJhdG9yX3Nlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24ivQIKGU9wZXJhdG9yU2Vzc2lvblJldm9jYXRpb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEiwKEW9wZXJhdG9yX2FjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBI8Ch5pbnZhbGlkYXRlZF90aHJvdWdoX2dlbmVyYXRpb24YAyABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjQKEHZlcmlmaWVkX3Jldm9rZXIYBCABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgGIAEoCSLIAgoYQ29udHJvbFN1cmZhY2VSZXZvY2F0aW9uEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIWCgxwcmluY2lwYWxfaWQYAiABKAlIABIrCgtlbmRwb2ludF9pZBgDIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWRIABInCglkZXZpY2VfaWQYBCABKAsyEi5wYXRjaGJheS5EZXZpY2VJZEgAEjQKEHZlcmlmaWVkX3Jldm9rZXIYBSABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgHIAEoCUIICgZ0YXJnZXQyWgoMQWRtaW5TZXJ2aWNlEkoKEUJvb3RzdHJhcE9wZXJhdG9yEhoucGF0Y2hiYXkuQm9vdHN0cmFwUmVxdWVzdBoZLnBhdGNoYmF5LkJvb3RzdHJhcFJlc3VsdGIGcHJvdG8z", [file_google_protobuf_timestamp, file_patchbay_common]);
 
 /**
  * The core-owned durable operator authentication record. Password hashes use
@@ -231,6 +231,11 @@ export type BootstrapResult = Message<"patchbay.BootstrapResult"> & {
    * @generated from field: patchbay.PrincipalCredential principal = 3;
    */
   principal?: PrincipalCredential | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation operator_session_generation = 4;
+   */
+  operatorSessionGeneration?: Generation | undefined;
 };
 
 /**
@@ -239,6 +244,109 @@ export type BootstrapResult = Message<"patchbay.BootstrapResult"> & {
  */
 export const BootstrapResultSchema: GenMessage<BootstrapResult> = /*@__PURE__*/
   messageDesc(file_patchbay_admin, 5);
+
+/**
+ * Durable source event that raises the operator-session generation fence for
+ * an operator. Session ids and other bearer material remain process-local.
+ *
+ * @generated from message patchbay.OperatorSessionRevocation
+ */
+export type OperatorSessionRevocation = Message<"patchbay.OperatorSessionRevocation"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from field: patchbay.ActorId operator_actor_id = 2;
+   */
+  operatorActorId?: ActorId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation invalidated_through_generation = 3;
+   */
+  invalidatedThroughGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.ActorEndpointRef verified_revoker = 4;
+   */
+  verifiedRevoker?: ActorEndpointRef | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp occurred_at = 5;
+   */
+  occurredAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string reason_code = 6;
+   */
+  reasonCode: string;
+};
+
+/**
+ * Describes the message patchbay.OperatorSessionRevocation.
+ * Use `create(OperatorSessionRevocationSchema)` to create a new message.
+ */
+export const OperatorSessionRevocationSchema: GenMessage<OperatorSessionRevocation> = /*@__PURE__*/
+  messageDesc(file_patchbay_admin, 6);
+
+/**
+ * Durable source event that permanently fences a principal, endpoint, or
+ * device identity until a future explicit restore operation is promoted.
+ *
+ * @generated from message patchbay.ControlSurfaceRevocation
+ */
+export type ControlSurfaceRevocation = Message<"patchbay.ControlSurfaceRevocation"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from oneof patchbay.ControlSurfaceRevocation.target
+   */
+  target: {
+    /**
+     * @generated from field: string principal_id = 2;
+     */
+    value: string;
+    case: "principalId";
+  } | {
+    /**
+     * @generated from field: patchbay.EndpointId endpoint_id = 3;
+     */
+    value: EndpointId;
+    case: "endpointId";
+  } | {
+    /**
+     * @generated from field: patchbay.DeviceId device_id = 4;
+     */
+    value: DeviceId;
+    case: "deviceId";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * @generated from field: patchbay.ActorEndpointRef verified_revoker = 5;
+   */
+  verifiedRevoker?: ActorEndpointRef | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp occurred_at = 6;
+   */
+  occurredAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string reason_code = 7;
+   */
+  reasonCode: string;
+};
+
+/**
+ * Describes the message patchbay.ControlSurfaceRevocation.
+ * Use `create(ControlSurfaceRevocationSchema)` to create a new message.
+ */
+export const ControlSurfaceRevocationSchema: GenMessage<ControlSurfaceRevocation> = /*@__PURE__*/
+  messageDesc(file_patchbay_admin, 7);
 
 /**
  * Local-console administration. This service is served only on the core's

@@ -282,6 +282,10 @@ pub enum StoredEventKind {
     /// Redacted security audit record (diagnostics.proto). The source event is
     /// retained separately; this is a typed explanation/index record.
     AuditRecord = 11,
+    /// Durable operator-session generation fence (admin.proto).
+    OperatorSessionRevocation = 12,
+    /// Durable principal/endpoint/device revocation fence (admin.proto).
+    ControlSurfaceRevocation = 13,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -302,6 +306,8 @@ impl StoredEventKind {
             Self::OperatorRecord => "STORED_EVENT_KIND_OPERATOR_RECORD",
             Self::ControlSurfacePrincipal => "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL",
             Self::AuditRecord => "STORED_EVENT_KIND_AUDIT_RECORD",
+            Self::OperatorSessionRevocation => "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION",
+            Self::ControlSurfaceRevocation => "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -319,6 +325,8 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_OPERATOR_RECORD" => Some(Self::OperatorRecord),
             "STORED_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL" => Some(Self::ControlSurfacePrincipal),
             "STORED_EVENT_KIND_AUDIT_RECORD" => Some(Self::AuditRecord),
+            "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION" => Some(Self::OperatorSessionRevocation),
+            "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION" => Some(Self::ControlSurfaceRevocation),
             _ => None,
         }
     }
@@ -1462,6 +1470,52 @@ pub struct BootstrapResult {
     pub session_id: ::core::option::Option<OperatorSessionId>,
     #[prost(message, optional, tag = "3")]
     pub principal: ::core::option::Option<PrincipalCredential>,
+    #[prost(message, optional, tag = "4")]
+    pub operator_session_generation: ::core::option::Option<Generation>,
+}
+/// Durable source event that raises the operator-session generation fence for
+/// an operator. Session ids and other bearer material remain process-local.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperatorSessionRevocation {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub operator_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "3")]
+    pub invalidated_through_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "4")]
+    pub verified_revoker: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "5")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag = "6")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+/// Durable source event that permanently fences a principal, endpoint, or
+/// device identity until a future explicit restore operation is promoted.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlSurfaceRevocation {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "5")]
+    pub verified_revoker: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "6")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag = "7")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(oneof = "control_surface_revocation::Target", tags = "2, 3, 4")]
+    pub target: ::core::option::Option<control_surface_revocation::Target>,
+}
+/// Nested message and enum types in `ControlSurfaceRevocation`.
+pub mod control_surface_revocation {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Target {
+        #[prost(string, tag = "2")]
+        PrincipalId(::prost::alloc::string::String),
+        #[prost(message, tag = "3")]
+        EndpointId(super::EndpointId),
+        #[prost(message, tag = "4")]
+        DeviceId(super::DeviceId),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Grant {
@@ -1958,6 +2012,9 @@ pub enum AuditEventKind {
     AdapterDiagnosticReported = 38,
     SubscriptionEstablished = 39,
     SubscriptionDenied = 40,
+    ControlSurfacePrincipalRevoked = 41,
+    ControlSurfaceEndpointRevoked = 42,
+    ControlSurfaceDeviceRevoked = 43,
 }
 impl AuditEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2007,6 +2064,9 @@ impl AuditEventKind {
             Self::AdapterDiagnosticReported => "AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED",
             Self::SubscriptionEstablished => "AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED",
             Self::SubscriptionDenied => "AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED",
+            Self::ControlSurfacePrincipalRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL_REVOKED",
+            Self::ControlSurfaceEndpointRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_ENDPOINT_REVOKED",
+            Self::ControlSurfaceDeviceRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_DEVICE_REVOKED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2053,6 +2113,9 @@ impl AuditEventKind {
             "AUDIT_EVENT_KIND_ADAPTER_DIAGNOSTIC_REPORTED" => Some(Self::AdapterDiagnosticReported),
             "AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED" => Some(Self::SubscriptionEstablished),
             "AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED" => Some(Self::SubscriptionDenied),
+            "AUDIT_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL_REVOKED" => Some(Self::ControlSurfacePrincipalRevoked),
+            "AUDIT_EVENT_KIND_CONTROL_SURFACE_ENDPOINT_REVOKED" => Some(Self::ControlSurfaceEndpointRevoked),
+            "AUDIT_EVENT_KIND_CONTROL_SURFACE_DEVICE_REVOKED" => Some(Self::ControlSurfaceDeviceRevoked),
             _ => None,
         }
     }
@@ -2174,6 +2237,8 @@ pub struct VerifyOperatorPasswordResult {
     pub operator_session_id: ::core::option::Option<OperatorSessionId>,
     #[prost(message, optional, tag = "2")]
     pub principal: ::core::option::Option<PrincipalCredential>,
+    #[prost(message, optional, tag = "3")]
+    pub operator_session_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeOperatorSessionRequest {
@@ -2182,6 +2247,55 @@ pub struct RevokeOperatorSessionRequest {
 pub struct RevokeOperatorSessionResult {
     #[prost(bool, tag = "1")]
     pub revoked: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeAllOperatorSessionsRequest {
+    #[prost(string, tag = "1")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeAllOperatorSessionsResult {
+    #[prost(uint32, tag = "1")]
+    pub revoked_session_count: u32,
+    #[prost(message, optional, tag = "2")]
+    pub invalidated_through_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "3")]
+    pub revocation_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeControlSurfacePrincipalRequest {
+    #[prost(string, tag = "1")]
+    pub principal_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeControlSurfaceEndpointRequest {
+    #[prost(string, tag = "3")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(oneof = "revoke_control_surface_endpoint_request::Target", tags = "1, 2")]
+    pub target: ::core::option::Option<revoke_control_surface_endpoint_request::Target>,
+}
+/// Nested message and enum types in `RevokeControlSurfaceEndpointRequest`.
+pub mod revoke_control_surface_endpoint_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Target {
+        #[prost(message, tag = "1")]
+        EndpointId(super::EndpointId),
+        #[prost(message, tag = "2")]
+        DeviceId(super::DeviceId),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeControlSurfaceResult {
+    #[prost(bool, tag = "1")]
+    pub newly_revoked: bool,
+    #[prost(uint32, tag = "2")]
+    pub revoked_principal_count: u32,
+    #[prost(uint32, tag = "3")]
+    pub revoked_session_count: u32,
+    #[prost(message, optional, tag = "4")]
+    pub revocation_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeGrantRequest {

@@ -1,0 +1,10 @@
+{
+  "vector_id": "session-revocation-generation",
+  "property_id": "RevokeAllInvalidatesPriorSessionGeneration",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.RevokeAllOperatorSessionsRequest.reason_code", "patchbay.RevokeAllOperatorSessionsResult.invalidated_through_generation", "patchbay.VerifyOperatorPasswordResult.operator_session_generation"],
+  "description": "A revoke-all generation fence rejects an old operator session generation while a fresh login receives a higher generation.",
+  "input": {"operator_actor_id": {"value": "operator-a"}, "old_generation": {"value": "2"}, "reason_code": "suspected_replay"},
+  "expected_outcome": {"old_generation_accepted": false, "fresh_generation_greater_than": "2", "durable_source_event": "patchbay.OperatorSessionRevocation"},
+  "invariant_check": "RevokeAllInvalidatesPriorSessionGeneration: acceptance requires a generation strictly above the replayed revoke-all floor."
+}

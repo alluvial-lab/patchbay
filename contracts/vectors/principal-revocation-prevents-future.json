@@ -1,0 +1,10 @@
+{
+  "vector_id": "principal-revocation-prevents-future",
+  "property_id": "PrincipalRevocationPreventsFuture",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.RevokeControlSurfacePrincipalRequest.principal_id", "patchbay.RevokeControlSurfaceResult.newly_revoked"],
+  "description": "A durable exact-principal fence rejects future authority for that principal without affecting another principal.",
+  "input": {"principal_id": "principal-a", "reason_code": "credential_compromised", "future_operation_principal_id": "principal-a"},
+  "expected_outcome": {"newly_revoked": true, "future_operation_accepted": false, "unrelated_principal_accepted": true},
+  "invariant_check": "PrincipalRevocationPreventsFuture: exact principal revocation is checked before durable Operation acceptance."
+}

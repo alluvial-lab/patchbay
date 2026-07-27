@@ -1,0 +1,10 @@
+{
+  "vector_id": "device-revocation-prevents-future",
+  "property_id": "DeviceRevocationPreventsFuture",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.RevokeControlSurfaceEndpointRequest.device_id", "patchbay.RevokeControlSurfaceResult.revoked_principal_count"],
+  "description": "A device fence rejects future authority for every principal bound to the device.",
+  "input": {"device_id": {"value": "device-a"}, "reason_code": "device_lost", "future_operation_device_id": {"value": "device-a"}},
+  "expected_outcome": {"future_operation_accepted": false, "unrelated_device_accepted": true},
+  "invariant_check": "DeviceRevocationPreventsFuture: device identity is checked against the replayed fence before acceptance."
+}

@@ -20,6 +20,9 @@ service ControlService {
   rpc VerifyOperatorPassword(VerifyOperatorPasswordRequest) returns (VerifyOperatorPasswordResult);
   // Revocation is authorized by, and applies to, the verified current session.
   rpc RevokeOperatorSession(RevokeOperatorSessionRequest) returns (RevokeOperatorSessionResult);
+  rpc RevokeAllOperatorSessions(RevokeAllOperatorSessionsRequest) returns (RevokeAllOperatorSessionsResult);
+  rpc RevokeControlSurfacePrincipal(RevokeControlSurfacePrincipalRequest) returns (RevokeControlSurfaceResult);
+  rpc RevokeControlSurfaceEndpoint(RevokeControlSurfaceEndpointRequest) returns (RevokeControlSurfaceResult);
   // Self-scoped grant attenuation. The request never carries issuer identity;
   // the compound issuer is verified from transport metadata.
   rpc RevokeGrant(RevokeGrantRequest) returns (RevokeGrantResult);
@@ -65,12 +68,43 @@ message VerifyOperatorPasswordRequest {
 message VerifyOperatorPasswordResult {
   patchbay.OperatorSessionId operator_session_id = 1;
   patchbay.PrincipalCredential principal = 2;
+  patchbay.Generation operator_session_generation = 3;
 }
 
 message RevokeOperatorSessionRequest {}
 
 message RevokeOperatorSessionResult {
   bool revoked = 1;
+}
+
+message RevokeAllOperatorSessionsRequest {
+  string reason_code = 1;
+}
+
+message RevokeAllOperatorSessionsResult {
+  uint32 revoked_session_count = 1;
+  patchbay.Generation invalidated_through_generation = 2;
+  patchbay.EventId revocation_event_id = 3;
+}
+
+message RevokeControlSurfacePrincipalRequest {
+  string principal_id = 1;
+  string reason_code = 2;
+}
+
+message RevokeControlSurfaceEndpointRequest {
+  oneof target {
+    patchbay.EndpointId endpoint_id = 1;
+    patchbay.DeviceId device_id = 2;
+  }
+  string reason_code = 3;
+}
+
+message RevokeControlSurfaceResult {
+  bool newly_revoked = 1;
+  uint32 revoked_principal_count = 2;
+  uint32 revoked_session_count = 3;
+  patchbay.EventId revocation_event_id = 4;
 }
 
 message RevokeGrantRequest {

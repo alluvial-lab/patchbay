@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation-contract-model
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol, verification, foundation]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: []
@@ -45,3 +45,13 @@ ids, and the prohibition on hand-edited generated artifacts.
 No sibling dependency. This contract and model must settle before the core-state
 checkpoint consumes it. As a `[verification]` story, its review uses the
 project's deep lane and attacks genuine-checking/mutation evidence.
+
+## Implementation notes
+- Execution capability: inline implementation; the contract/model boundary and generated artifacts were cohesive and bounded.
+- Review weight: standard (project default).
+- Files changed: `contracts/proto/patchbay/{control,admin,common,diagnostics}.proto`, generated Rust/TypeScript bindings, `specs/seed/session_principal_revocation.qnt`, four draft vectors, `contracts/scripts/check-vectors.mjs`, and generated `docs/VERIFICATION.md` traceability.
+- Tests added/removed: four draft vectors; model checks for all four revocation properties.
+- Simplification: one `ControlSurfaceRevocation` durable family carries principal, endpoint, and device fences; no new failure-code variant was introduced.
+- Discrepancies from design: model properties remain `draft`/stated-normative until a future promotion ceremony; this avoids claiming checked-normative status before promoted-vector coverage.
+- Adjacent issues parked: none.
+- Verification: `npm run build`, `npm run check:vectors`, `npm run check:models`, and `quint compile` passed. Four `quint verify` runs passed at `--max-steps 8`; `quint run --step operationAttempt --witnesses acceptanceReachable` demonstrated reachable acceptance. Four guard-removal mutations each produced a counterexample.

@@ -159,6 +159,10 @@ enum StoredEventKind {
   // Redacted security audit record (diagnostics.proto). The source event is
   // retained separately; this is a typed explanation/index record.
   STORED_EVENT_KIND_AUDIT_RECORD = 11;
+  // Durable operator-session generation fence (admin.proto).
+  STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION = 12;
+  // Durable principal/endpoint/device revocation fence (admin.proto).
+  STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION = 13;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

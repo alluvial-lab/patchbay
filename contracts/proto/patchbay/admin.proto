@@ -63,4 +63,30 @@ message BootstrapResult {
   GrantId grant_id = 1;
   OperatorSessionId session_id = 2;
   PrincipalCredential principal = 3;
+  Generation operator_session_generation = 4;
+}
+
+// Durable source event that raises the operator-session generation fence for
+// an operator. Session ids and other bearer material remain process-local.
+message OperatorSessionRevocation {
+  AuthorityDomainId authority_domain_id = 1;
+  ActorId operator_actor_id = 2;
+  Generation invalidated_through_generation = 3;
+  ActorEndpointRef verified_revoker = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  string reason_code = 6;
+}
+
+// Durable source event that permanently fences a principal, endpoint, or
+// device identity until a future explicit restore operation is promoted.
+message ControlSurfaceRevocation {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof target {
+    string principal_id = 2;
+    EndpointId endpoint_id = 3;
+    DeviceId device_id = 4;
+  }
+  ActorEndpointRef verified_revoker = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  string reason_code = 7;
 }
