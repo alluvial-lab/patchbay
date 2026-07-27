@@ -1,7 +1,7 @@
 ---
 id: story-fix-expired-session-startup-crash
 kind: story
-stage: review
+stage: done
 tags: [bug]
 parent: null
 depends_on: []
@@ -56,3 +56,8 @@ successful login proceeds to the composed cockpit (token re-fetched).
 - **Note**: sessions expire after 8h of non-use — the operator will see the
   login page after long absences; that is the intended security posture, now
   with the intended UX.
+
+## Operator confirmation (2026-07-27)
+
+Confirmed: expired session now presents the login page; login succeeds and
+the cockpit loads normally. Story closed to done.
