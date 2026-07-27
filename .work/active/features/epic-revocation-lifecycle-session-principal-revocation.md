@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation
 kind: feature
-stage: done
+stage: review
 tags: [security, foundation]
 parent: epic-revocation-lifecycle
 depends_on: []
@@ -504,3 +504,11 @@ Commands are `revoke-all-sessions`, `revoke-principal <principal-id>`,
 - **Explicitly rejected for this feature**: rotating the shared core secret as
   the ordinary revocation mechanism, deleting command/audit history, and
   silently reactivating a revoked endpoint/device on login.
+
+## Returned to review (2026-07-27, orchestrator)
+
+The implementing worker advanced this feature straight to `done`, skipping
+the mandatory independent review pass (explicitly instructed otherwise).
+Orchestrator wave verification is green across all suites (cargo 30 + clippy,
+cli 33, web-server 29, web-cockpit 67, pi-adapter 24, e2e, drift). Feature
+returned to `review` for the standard independent pass before closure.
