@@ -482,3 +482,28 @@ subjects). Orchestrator wave verification also repaired: single-generator
 bindings fix (f684ccb), clippy debt (2e61df7), web-server mock follow-up
 (4614e4d). All suites green at HEAD. Feature returned to `review` for the
 standard independent pass before closure.
+
+## Review findings (standard pass 1, 2026-07-27 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Revocation not serialized with adapter command transitions** — the
+   designed shared decision gate was not built: revocation uses the control
+   gate while adapter transitions/disconnect reconciliation run under
+   unrelated locks; a transition can commit between revocation catch-up and
+   effect append, producing stale from_state. Fix: shared CoreDecisionGate
+   across both services + barrier-controlled race test.
+2. **Required security test evidence missing** — no RPC-level RevokeGrant
+   test, no grant-expiry integration test, no policy×state test, no
+   Subscribe denial/resume-revocation test, no revocation/adapter race test;
+   vector `subscription-grant-checked.json` references a nonexistent enum
+   path. Fix: add the specified tests; correct the vector.
+3. **`grant-revoke` accepts malformed responses as success** — renders any
+   decoded result and exits 0; contradictory shapes must fail with exit 1.
+4. **Audit coverage incomplete** — cross-subject/missing-grant attempts
+   return without durable audit; success audits omit verified revoking
+   actor/endpoint attribution (SECURITY.md:234). Fix: generic
+   AuthorizationFailed record for denials (no grant-existence leak) +
+   revoked_by attribution in success/effect audits.
+5. **SECURITY.md status stale** — fixed by receiver at review (roll #4 to
+   implemented).

@@ -197,7 +197,7 @@ Revocation prevents future authority. Already accepted Operations follow the pol
 - **cancel** — submit or record cancellation for accepted non-terminal Operations when supported;
 - **require reauthorization** — hold or reject delivery until a fresh grant/session is established.
 
-v0.1.0 must support these operator-facing revocation actions (contract status: only #1 is implemented; #2–#5 are contract-committed and landing with `epic-revocation-lifecycle`):
+v0.1.0 must support these operator-facing revocation actions (contract status: #1 and #4 implemented; #2, #3, and #5 are contract-committed and landing with `epic-revocation-lifecycle`):
 
 1. **Revoke current browser session** — delete or mark the session revoked and clear its cookie.
 2. **Revoke all browser sessions** — invalidate all operator-session generations, optionally by rotating the server-side session-signing/encryption secret.
