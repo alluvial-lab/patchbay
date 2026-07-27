@@ -7,6 +7,7 @@ import {
   type SessionView,
 } from "../domain/model.js";
 import { renderIcon, type IconName } from "./icons.js";
+import { captureAnchor, restoreAnchor } from "./scroll-anchor.js";
 import {
   renderSessionDetail,
   type SessionDetailActions,
@@ -71,6 +72,9 @@ export function createCockpitShell(
     // (never yank a user reading history back down).
     const previousTimeline = root.querySelector<HTMLElement>(".timeline");
     const stickToBottom = !previousTimeline || isNearBottom(previousTimeline);
+    // Reading history (not near bottom): capture the visible anchor so the
+    // rebuild restores the same viewport position instead of resetting to 0.
+    const anchor = !stickToBottom && previousTimeline ? captureAnchor(previousTimeline) : undefined;
     root.replaceChildren();
     const content = document.createElement("div");
     content.className = "cockpit__content";
@@ -106,9 +110,10 @@ export function createCockpitShell(
       root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
     }
     applyLayout();
-    if (stickToBottom) {
-      const timeline = root.querySelector<HTMLElement>(".timeline");
-      if (timeline) timeline.scrollTop = timeline.scrollHeight;
+    const timeline = root.querySelector<HTMLElement>(".timeline");
+    if (timeline) {
+      if (stickToBottom) timeline.scrollTop = timeline.scrollHeight;
+      else if (anchor) restoreAnchor(timeline, anchor);
     }
     const selected = selectedSession();
     const selectedIdentity = selected ? sessionKey(selected.identity) : undefined;
