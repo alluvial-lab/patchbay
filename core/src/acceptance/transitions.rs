@@ -1,6 +1,6 @@
 //! Canonical command lifecycle transitions and transition-event application.
 
-use patchbay_contracts::patchbay::{CommandTransition, FailureCode, OperationState};
+use patchbay_contracts::patchbay::{CommandTransition, FailureCode, GrantRevocationEffect, OperationState};
 
 use crate::storage::StorageError;
 
@@ -74,6 +74,55 @@ pub const fn allowed_transition(from: OperationState, to: OperationState) -> boo
 /// invalid enum value indicates a corrupt/tampered log and fails fast. When a
 /// transition enters a terminal state, `event_lsn` is retained as the unique
 /// terminal transition's durable position.
+/// Apply one durable revocation-policy effect through the same lifecycle
+/// validator used by adapter transitions. The revocation LSN is the durable
+/// terminal boundary for the affected command.
+pub fn apply_grant_revocation_effect(
+    record: &mut CommandRecord,
+    effect: &GrantRevocationEffect,
+    revocation_lsn: u64,
+) -> Result<bool, AcceptanceError> {
+    let command_id = effect.command_id.as_ref().ok_or_else(|| {
+        AcceptanceError::CorruptLog("grant revocation effect is missing command_id".to_owned())
+    })?;
+    if command_id != &record.command_id {
+        return Err(AcceptanceError::CorruptLog(format!(
+            "grant revocation effect targets {:?}, record is {:?}", command_id, record.command_id
+        )));
+    }
+    let from = OperationState::try_from(effect.from_state).map_err(|_| {
+        AcceptanceError::CorruptLog(format!("unknown revocation effect from_state {}", effect.from_state))
+    })?;
+    let to = OperationState::try_from(effect.to_state).map_err(|_| {
+        AcceptanceError::CorruptLog(format!("unknown revocation effect to_state {}", effect.to_state))
+    })?;
+    let failure = FailureCode::try_from(effect.failure_code).map_err(|_| {
+        AcceptanceError::CorruptLog(format!("unknown revocation effect failure_code {}", effect.failure_code))
+    })?;
+    if record.state.is_terminal() {
+        return Ok(false);
+    }
+    if from != record.state || !allowed_transition(from, to) {
+        return Err(AcceptanceError::CorruptLog(format!(
+            "invalid revocation effect {:?} -> {:?} for command {:?}", from, to, record.command_id
+        )));
+    }
+    let expected_failure = match to {
+        OperationState::Cancelled => FailureCode::Cancelled,
+        OperationState::Rejected => FailureCode::AuthorizationDenied,
+        _ => return Err(AcceptanceError::CorruptLog("revocation effect must terminalize command".to_owned())),
+    };
+    if failure != expected_failure {
+        return Err(AcceptanceError::CorruptLog(format!(
+            "revocation effect for command {:?} has failure {:?}, expected {:?}", record.command_id, failure, expected_failure
+        )));
+    }
+    record.state = to;
+    record.terminal_lsn = Some(revocation_lsn);
+    record.failure_code = Some(failure);
+    Ok(true)
+}
+
 pub fn apply_transition(
     record: &mut CommandRecord,
     transition: &CommandTransition,

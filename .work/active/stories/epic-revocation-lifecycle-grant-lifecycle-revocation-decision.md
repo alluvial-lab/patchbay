@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle-revocation-decision
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-grant-lifecycle
 depends_on: [epic-revocation-lifecycle-grant-lifecycle-clock-expiry]
@@ -28,3 +28,14 @@ Add the self-scoped `RevokeGrant` control RPC and make its core-owned Revocation
 ## Ordering
 
 Consumes the clock/expiry checkpoint so revocation timestamps and self-authorization use the same injected time boundary.
+
+## Implementation notes
+
+- Added generated `GrantRevocationEffect` entries and replay folding through the canonical acceptance transition validator. `cancel` terminalizes accepted/delivered/running work; `require_reauthorization` rejects only accepted work; `continue` emits no effects.
+- Added self-scoped `RevokeGrant` with verified compound issuer checks, endpoint narrowing, expiry denial, non-cascade behavior, and same-subject idempotent repeats.
+- Added atomic source-plus-many-audits storage support. Revocation source, grant audit, and per-command policy audits commit as one transaction; the audit projection carries the grant id.
+- Accepted-operation grant provenance is checked by command and diagnostics replay; late transitions are terminal-final no-ops.
+
+## Verification
+
+`cargo test --workspace` passed, including replay, authority, storage atomicity, adapter, gRPC, and trust-boundary suites.

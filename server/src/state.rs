@@ -7,13 +7,14 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     acceptance::{
-        ActiveElicitation, Authorized, CommandIndex, CommandSnapshot, CommandStateLookup,
+        ActiveElicitation, Authorized, CommandIndex, CommandRecord, CommandSnapshot, CommandStateLookup,
         ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, TargetBinding,
         TargetNotFound, TargetResolver,
     },
     authority::{
         ingest_control_surface_principal, ingest_grant as ingest_authority_grant,
-        ingest_operator_record, AuthorityError, AuthorityRegistry, GrantRecord, IssuerContext,
+        ingest_revocation as ingest_authority_revocation, ingest_operator_record, AuthorityError,
+        AuthorityRegistry, GrantRecord, IssuerContext,
         OperatorError, OperatorRegistry,
     },
     diagnostics::DiagnosticsProjection,
@@ -356,6 +357,10 @@ impl ProjectionState {
         self.operator_sessions.revoke(session_id, actor_id).await
     }
 
+    pub async fn commands_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {
+        self.state_lookup.records_for_grant(grant_id).await
+    }
+
     pub async fn grant(&self, grant_id: &GrantId) -> Option<GrantRecord> {
         self.grant_check
             .inner
@@ -378,6 +383,20 @@ impl ProjectionState {
             grant,
         )
         .await
+    }
+
+    pub async fn ingest_revocation<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        revocation: patchbay_contracts::patchbay::Revocation,
+    ) -> Result<EventId, AuthorityError> {
+        ingest_authority_revocation(
+            storage,
+            &mut *self.grant_check.inner.lock().await,
+            authority_domain_id,
+            revocation,
+        ).await
     }
 
     pub async fn ingest_operator<S: Storage>(
@@ -570,6 +589,12 @@ impl LockedCommandStateLookup {
         event: &RecordedEvent,
     ) -> Result<(), patchbay_core::acceptance::AcceptanceError> {
         self.inner.lock().await.apply(event)
+    }
+}
+
+impl LockedCommandStateLookup {
+    pub async fn records_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {
+        self.inner.lock().await.records().filter(|record| record.grant_id.as_ref() == Some(grant_id)).cloned().collect()
     }
 }
 

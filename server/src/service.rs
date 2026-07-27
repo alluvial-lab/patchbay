@@ -1,7 +1,8 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition, DiagnosticsResult,
+    ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition,
+    DiagnosticsResult, GrantRevocationEffect, GrantRevocationPolicy, Generation, Revocation,
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
     LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
@@ -13,10 +14,10 @@ use patchbay_contracts::patchbay::{
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
-    acceptance::{self, AcceptanceError, CommandStateLookup},
+    acceptance::{self, AcceptanceError, CommandRecord, CommandStateLookup},
     time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
-    authority::{hash_principal_credential, IssuerContext, OperatorError},
+    authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
     storage::{AuditPageSpec, AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
@@ -257,9 +258,85 @@ where
 
     async fn revoke_grant(
         &self,
-        _request: Request<RevokeGrantRequest>,
+        request: Request<RevokeGrantRequest>,
     ) -> Result<Response<RevokeGrantResult>, Status> {
-        Err(Status::unimplemented("grant revocation is not wired yet"))
+        let requested_domain = required_domain(request.get_ref().authority_domain_id.clone())?;
+        self.require_configured_domain(&requested_domain)?;
+        let issuer = MetadataIssuerContext::from_request(&request, requested_domain.clone(), &self.state).await?;
+        let request = request.into_inner();
+        let grant_id = request.grant_id.ok_or_else(|| Status::invalid_argument("grant_id is required"))?;
+        if grant_id.value.is_empty() || grant_id.value.len() > 256 {
+            return Err(Status::invalid_argument("grant_id must be non-empty and bounded"));
+        }
+        validate_revocation_reason(&request.reason)?;
+
+        let _decision_guard = self.state.submit_guard().await;
+        self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
+        let grant = self.state.grant(&grant_id).await.ok_or_else(|| Status::permission_denied("grant revocation is not authorized"))?;
+        let actor = issuer.verified_actor().ok_or_else(|| Status::permission_denied("grant revocation is not authorized"))?;
+        let issuer_ref = IssuerRef {
+            actor,
+            endpoint: issuer.verified_endpoint(),
+            authority_domain_id: &requested_domain,
+        };
+        match authorize_self_revocation_at(&grant, &issuer_ref, &self.clock.now()) {
+            Ok(()) => {}
+            Err(GrantAdministrationDenied::Expired { grant_id }) => {
+                let mut audit = AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantExpired);
+                audit.actor_id = Some(actor.clone());
+                audit.endpoint_id = issuer.verified_endpoint().cloned();
+                audit.device_id = issuer.verified_device().cloned();
+                audit.grant_id = Some(grant_id);
+                audit.reason_code = "grant_expired".to_owned();
+                self.record_audit(audit).await?;
+                let _ = grant_id;
+                return Err(Status::permission_denied("grant revocation is not authorized"));
+            }
+            Err(GrantAdministrationDenied::MissingOrForeign | GrantAdministrationDenied::EndpointMismatch) => {
+                return Err(Status::permission_denied("grant revocation is not authorized"));
+            }
+        }
+        if grant.is_revoked() {
+            return Ok(Response::new(RevokeGrantResult {
+                changed: false,
+                already_revoked: true,
+                revocation_event_id: None,
+                applied_policy: grant.revocation_policy as i32,
+                command_effects: Vec::new(),
+            }));
+        }
+
+        let mut records = self.state.commands_for_grant(&grant_id).await;
+        records.sort_unstable_by(|left, right| left.command_id.value.cmp(&right.command_id.value));
+        let effects = revocation_effects(&grant, &records);
+        let revoked_by = ActorEndpointRef {
+            actor_id: issuer.verified_actor().cloned(),
+            endpoint_id: issuer.verified_endpoint().cloned(),
+            device_id: issuer.verified_device().cloned(),
+            endpoint_generation: issuer.endpoint_generation(),
+        };
+        let revocation = Revocation {
+            authority_domain_id: Some(requested_domain.clone()),
+            grant_id: Some(grant_id.clone()),
+            revoked_by: Some(revoked_by),
+            revoked_at: Some(self.clock.now()),
+            revocation_generation: Some(Generation { value: 1 }),
+            accepted_operation_policy: grant.revocation_policy as i32,
+            reason: request.reason,
+            command_effects: effects.clone(),
+            ..Revocation::default()
+        };
+        let event_id = self.state.ingest_revocation(&self.storage, &requested_domain, revocation)
+            .await
+            .map_err(map_authority_error_to_status)?;
+        self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
+        Ok(Response::new(RevokeGrantResult {
+            changed: true,
+            already_revoked: false,
+            revocation_event_id: Some(event_id),
+            applied_policy: grant.revocation_policy as i32,
+            command_effects: effects,
+        }))
     }
 
     async fn subscribe(
@@ -1005,6 +1082,36 @@ impl<S> ControlServiceImpl<S> {
     }
 }
 
+fn validate_revocation_reason(reason: &str) -> Result<(), Status> {
+    if reason.is_empty() || reason.len() > 128 || !reason.bytes().all(|byte| byte.is_ascii_graphic() && byte != b'=' ) {
+        return Err(Status::invalid_argument("reason must be 1..128 safe ASCII characters"));
+    }
+    Ok(())
+}
+
+fn revocation_effects(
+    grant: &GrantRecord,
+    records: &[CommandRecord],
+) -> Vec<GrantRevocationEffect> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let (to_state, failure_code) = match grant.revocation_policy {
+                GrantRevocationPolicy::Continue => return None,
+                GrantRevocationPolicy::Cancel if matches!(record.state, OperationState::Accepted | OperationState::Delivered | OperationState::Running) => (OperationState::Cancelled, FailureCode::Cancelled),
+                GrantRevocationPolicy::RequireReauthorization if record.state == OperationState::Accepted => (OperationState::Rejected, FailureCode::AuthorizationDenied),
+                _ => return None,
+            };
+            Some(GrantRevocationEffect {
+                command_id: Some(record.command_id.clone()),
+                from_state: record.state as i32,
+                to_state: to_state as i32,
+                failure_code: failure_code as i32,
+            })
+        })
+        .collect()
+}
+
 async fn append_query_transition<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
@@ -1299,6 +1406,16 @@ pub fn map_acceptance_error_to_status(error: AcceptanceError) -> Status {
         AcceptanceError::CorruptRecord(message) | AcceptanceError::CorruptLog(message) => {
             Status::internal(message)
         }
+    }
+}
+
+pub fn map_authority_error_to_status(error: patchbay_core::authority::AuthorityError) -> Status {
+    match error {
+        patchbay_core::authority::AuthorityError::GrantNotFound(_) => Status::permission_denied("grant revocation is not authorized"),
+        patchbay_core::authority::AuthorityError::InvalidGrant(message) => Status::invalid_argument(message),
+        patchbay_core::authority::AuthorityError::CorruptRecord(message)
+        | patchbay_core::authority::AuthorityError::CorruptLog(message) => Status::internal(message),
+        patchbay_core::authority::AuthorityError::Storage(error) => map_storage_error_to_status(error),
     }
 }
 

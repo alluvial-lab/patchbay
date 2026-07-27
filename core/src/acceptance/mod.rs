@@ -28,4 +28,4 @@ pub use ports::{
 };
 pub use replay::rebuild_from_log;
 pub use state::{is_terminal, CommandRecord, OperationStateExt};
-pub use transitions::{allowed_transition, apply_transition, AcceptanceError};
+pub use transitions::{allowed_transition, apply_grant_revocation_effect, apply_transition, AcceptanceError};

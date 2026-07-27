@@ -15,7 +15,7 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use super::{
-    AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
+    AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
@@ -340,6 +340,15 @@ where
             .append_audited(authority_domain_id, source, audit)
             .await
             .map(|result| result.source_event_id)
+    }
+
+    async fn append_decision_audited_many(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audits: Vec<AuditRecordDraft>,
+    ) -> Result<AuditedDecisionAppend, StorageError> {
+        self.inner.append_decision_audited_many(authority_domain_id, source, audits).await
     }
 
     async fn append_dedup_audited_with_payload(

@@ -15,6 +15,7 @@ pub mod rusqlite;
 pub use audited::{audit_draft_for_source, AuditedStorage};
 pub use port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
+    AuditedDecisionAppend,
     AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };

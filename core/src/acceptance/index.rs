@@ -7,13 +7,14 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, StoredEventKind,
+    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, Revocation,
+    StoredEventKind,
 };
 use prost::Message;
 
 use crate::storage::{RecordedEvent, TargetKey};
 
-use super::{apply_transition, target_key_for, AcceptanceError, CommandRecord};
+use super::{apply_grant_revocation_effect, apply_transition, target_key_for, AcceptanceError, CommandRecord};
 
 type DedupKey = (String, String, String);
 
@@ -51,6 +52,7 @@ impl CommandIndex {
         match kind {
             StoredEventKind::Operation => self.apply_operation(event),
             StoredEventKind::CommandTransition => self.apply_command_transition(event),
+            StoredEventKind::Revocation => self.apply_revocation(event),
             // Observations are evidence. Command state changes only through
             // explicit CommandTransition events, so replay does not derive a
             // second transition interpretation from an Observation.
@@ -58,7 +60,6 @@ impl CommandIndex {
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
-            | StoredEventKind::Revocation
             | StoredEventKind::SessionState
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
@@ -178,6 +179,32 @@ impl CommandIndex {
 
         let record = CommandRecord::new_accepted(operation, grant_id, event_lsn)?;
         self.insert_recovered_record(record)
+    }
+
+    fn apply_revocation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let revocation = Revocation::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AcceptanceError::CorruptRecord(format!("cannot decode revocation at LSN {event_lsn}: {error}"))
+        })?;
+        let grant_id = revocation.grant_id.ok_or_else(|| {
+            AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} is missing grant_id"))
+        })?;
+        for effect in revocation.command_effects {
+            let command_id = effect.command_id.as_ref().ok_or_else(|| {
+                AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} has effect without command_id"))
+            })?;
+            let record = self.commands.get_mut(command_id).ok_or_else(|| {
+                AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} references unknown command {:?}", command_id))
+            })?;
+            if record.grant_id.as_ref() != Some(&grant_id) {
+                return Err(AcceptanceError::CorruptLog(format!(
+                    "revocation at LSN {event_lsn} effect command {:?} was accepted under another grant",
+                    command_id
+                )));
+            }
+            let _ = apply_grant_revocation_effect(record, &effect, event_lsn)?;
+        }
+        Ok(())
     }
 
     fn apply_command_transition(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {

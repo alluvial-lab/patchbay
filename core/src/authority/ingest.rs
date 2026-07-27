@@ -6,8 +6,9 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, DescendantGrant, EventId, Grant, GrantId, GrantRevocationPolicy, Lsn,
-    Revocation, StoredEventPayload, TargetScope, TargetScopeKind,
+    AuthorityDomainId, DescendantGrant, EventId, FailureCode, Grant, GrantId,
+    GrantRevocationEffect, GrantRevocationPolicy, Lsn, OperationState, Revocation,
+    StoredEventPayload, TargetScope, TargetScopeKind,
 };
 
 use crate::{acceptance::Clock, storage::{AuditRecordDraft, RecordedEvent, Storage}};
@@ -128,13 +129,35 @@ where
         )));
     }
 
-    let payload = events::revocation(authority_domain_id.clone(), revocation);
-    let mut audit = AuditRecordDraft::new(
-        crate::acceptance::SystemClock.now(),
-        patchbay_contracts::patchbay::AuditEventKind::GrantRevoked,
-    );
+    validate_revocation_effects(&revocation.command_effects, &grant_id)?;
+    let payload = events::revocation(authority_domain_id.clone(), revocation.clone());
+    let occurred_at = revocation.revoked_at.clone().unwrap_or_else(|| crate::time::SystemClock.now());
+    let mut audits = Vec::with_capacity(1 + revocation.command_effects.len());
+    let mut audit = AuditRecordDraft::new(occurred_at, patchbay_contracts::patchbay::AuditEventKind::GrantRevoked);
+    audit.grant_id = Some(grant_id.clone());
     audit.reason_code = "grant_revoked".to_owned();
-    append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
+    audits.push(audit);
+    for effect in &revocation.command_effects {
+        let mut effect_audit = AuditRecordDraft::new(
+            revocation.revoked_at.clone().unwrap_or_else(|| crate::time::SystemClock.now()),
+            match OperationState::try_from(effect.to_state).ok() {
+                Some(OperationState::Cancelled) => patchbay_contracts::patchbay::AuditEventKind::CommandCancelled,
+                Some(OperationState::Rejected) => patchbay_contracts::patchbay::AuditEventKind::CommandRejected,
+                _ => patchbay_contracts::patchbay::AuditEventKind::CommandSubmissionRejected,
+            },
+        );
+        effect_audit.grant_id = Some(grant_id.clone());
+        effect_audit.command_id = effect.command_id.clone();
+        effect_audit.failure_code = FailureCode::try_from(effect.failure_code).ok().filter(|code| *code != FailureCode::Unspecified);
+        effect_audit.reason_code = "grant_revocation_policy".to_owned();
+        audits.push(effect_audit);
+    }
+    if revocation.command_effects.is_empty() {
+        let audit = audits.into_iter().next().expect("grant revocation has grant audit");
+        append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
+    } else {
+        append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
+    }
 }
 
 async fn append_and_warm<S, L>(
@@ -157,6 +180,23 @@ where
         payload,
     })?;
     Ok(event_id)
+}
+
+async fn append_and_warm_decision_many<S, L>(
+    storage: &S,
+    projection: &mut L,
+    authority_domain_id: &AuthorityDomainId,
+    payload: StoredEventPayload,
+    audits: Vec<AuditRecordDraft>,
+) -> Result<EventId, AuthorityError>
+where
+    S: Storage,
+    L: GrantProjection,
+{
+    let result = storage.append_decision_audited_many(authority_domain_id, payload.clone(), audits).await?;
+    validate_event_id(&result.source_event_id, authority_domain_id)?;
+    projection.observe(&RecordedEvent { event_id: result.source_event_id.clone(), payload })?;
+    Ok(result.source_event_id)
 }
 
 async fn append_and_warm_decision<S, L>(
@@ -271,6 +311,40 @@ fn validate_descendant_kinds(raw_kinds: &[i32]) -> Result<(), AuthorityError> {
             "descendant grant must contain exactly the canonical existing-session operation kinds"
                 .to_owned(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_revocation_effects(
+    effects: &[GrantRevocationEffect],
+    grant_id: &GrantId,
+) -> Result<(), AuthorityError> {
+    let mut command_ids = HashSet::new();
+    for effect in effects {
+        let command_id = effect.command_id.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!("revocation of grant {:?} has an effect without command_id", grant_id))
+        })?;
+        if command_id.value.is_empty() || !command_ids.insert(command_id.value.clone()) {
+            return Err(AuthorityError::InvalidGrant(format!(
+                "revocation of grant {:?} has a missing or duplicate command effect",
+                grant_id
+            )));
+        }
+        let from = OperationState::try_from(effect.from_state).map_err(|_| {
+            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown from_state", command_id))
+        })?;
+        let to = OperationState::try_from(effect.to_state).map_err(|_| {
+            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown to_state", command_id))
+        })?;
+        let failure = FailureCode::try_from(effect.failure_code).map_err(|_| {
+            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown failure_code", command_id))
+        })?;
+        if !matches!((from, to, failure),
+            (OperationState::Accepted | OperationState::Delivered | OperationState::Running, OperationState::Cancelled, FailureCode::Cancelled)
+            | (OperationState::Accepted, OperationState::Rejected, FailureCode::AuthorizationDenied)
+        ) {
+            return Err(AuthorityError::InvalidGrant(format!("revocation effect for {:?} has invalid state/failure combination", command_id)));
+        }
     }
     Ok(())
 }

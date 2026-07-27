@@ -253,6 +253,12 @@ pub struct AuditedBatchAppend {
     pub audit_event_id: EventId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditedDecisionAppend {
+    pub source_event_id: EventId,
+    pub audit_event_ids: Vec<EventId>,
+}
+
 /// Errors at the storage boundary.
 ///
 /// This type is deliberately backend-neutral: it does not carry `rusqlite::Error`
@@ -514,6 +520,18 @@ pub trait Storage: Send + Sync {
         _logical_payload: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<AuditedDedupOutcome, StorageError>> + Send {
         async move { self.append_dedup_audited(authority_domain_id, key, target, source, audit).await }
+    }
+
+    /// Atomically append one decision source and all of its typed audit
+    /// records. Every audit receives the source event id; either all records
+    /// commit or none do.
+    fn append_decision_audited_many(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _source: StoredEventPayload,
+        _audits: Vec<AuditRecordDraft>,
+    ) -> impl std::future::Future<Output = Result<AuditedDecisionAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
     }
 
     /// Append a domain decision. Production decorators override this to pair

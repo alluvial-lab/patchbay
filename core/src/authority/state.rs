@@ -115,6 +115,32 @@ pub struct IssuerRef<'a> {
     pub authority_domain_id: &'a AuthorityDomainId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantAdministrationDenied {
+    MissingOrForeign,
+    EndpointMismatch,
+    Expired { grant_id: GrantId },
+}
+
+pub fn authorize_self_revocation_at(
+    grant: &GrantRecord,
+    issuer: &IssuerRef<'_>,
+    now: &prost_types::Timestamp,
+) -> Result<(), GrantAdministrationDenied> {
+    if grant.authority_domain_id != *issuer.authority_domain_id
+        || grant.subject_actor_id != *issuer.actor
+    {
+        return Err(GrantAdministrationDenied::MissingOrForeign);
+    }
+    if grant.subject_endpoint_id.as_ref().is_some_and(|expected| issuer.endpoint != Some(expected)) {
+        return Err(GrantAdministrationDenied::EndpointMismatch);
+    }
+    match grant.liveness_at(now) {
+        GrantLiveness::Live | GrantLiveness::Revoked => Ok(()),
+        GrantLiveness::Expired => Err(GrantAdministrationDenied::Expired { grant_id: grant.grant_id.clone() }),
+    }
+}
+
 /// The canonical existing-session operation set for auto-issued descendant grants.
 ///
 /// Spawn requires a separate fleet/adapter grant, and attach is excluded because

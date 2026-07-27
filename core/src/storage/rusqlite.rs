@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
-    AuditedDedupOutcome, DedupOutcome,
+    AuditedDecisionAppend, AuditedDedupOutcome, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
@@ -239,6 +239,12 @@ enum WriterCommand {
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<AuditedBatchAppend, StorageError>>,
     },
+    AppendDecisionAuditedMany {
+        authority_domain_id: String,
+        source: StoredEventPayload,
+        audits: Vec<AuditRecordDraft>,
+        reply: oneshot::Sender<Result<AuditedDecisionAppend, StorageError>>,
+    },
 }
 
 /// rusqlite-backed storage. Cloneable — the actor handle and read connection
@@ -390,6 +396,15 @@ async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>)
                 reply,
             } => {
                 let result = do_append_batch_audited(&mut db, &authority_domain_id, sources, audit);
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendDecisionAuditedMany {
+                authority_domain_id,
+                source,
+                audits,
+                reply,
+            } => {
+                let result = do_append_decision_audited_many(&mut db, &authority_domain_id, source, audits);
                 let _ = reply.send(result);
             }
         }
@@ -648,6 +663,27 @@ fn do_append_batch_audited(
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
     tx.commit().map_err(map_write_err)?;
     Ok(AuditedBatchAppend { source_event_ids, audit_event_id })
+}
+
+fn do_append_decision_audited_many(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    source: StoredEventPayload,
+    mut audits: Vec<AuditRecordDraft>,
+) -> Result<AuditedDecisionAppend, StorageError> {
+    if audits.is_empty() {
+        return Err(StorageError::InvalidAuditRecord("decision must have at least one audit".to_owned()));
+    }
+    let tx = db.transaction().map_err(map_write_err)?;
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    let source_event_id = event_id(AuthorityDomainId { value: authority_domain_id.to_owned() }, source_lsn as u64);
+    let mut audit_event_ids = Vec::with_capacity(audits.len());
+    for audit in &mut audits {
+        audit.source_event_id = Some(source_event_id.clone());
+        audit_event_ids.push(append_audit_in_transaction(&tx, authority_domain_id, audit.clone())?);
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(AuditedDecisionAppend { source_event_id, audit_event_ids })
 }
 
 fn do_append_dedup_audited(
@@ -1198,6 +1234,27 @@ impl Storage for RusqliteStorage {
                 authority_domain_id: authority_domain_id.value.clone(),
                 sources,
                 audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_decision_audited_many(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audits: Vec<AuditRecordDraft>,
+    ) -> Result<AuditedDecisionAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendDecisionAuditedMany {
+                authority_domain_id: authority_domain_id.value.clone(),
+                source,
+                audits,
                 reply: reply_tx,
             })
             .await

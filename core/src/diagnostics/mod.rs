@@ -8,7 +8,8 @@ use patchbay_contracts::patchbay::{
     AuditQuery, AuditRecord,
     AuthorityDomainId, CommandId, CommandInspection, CommandInspectionQuery,
     CommandInspectionResult, CommandHistoryEntry, CommandSummary, DiagnosticsQuery, EventId,
-    FailureCode, Operation, OperationKind, OperationState, Observation, StoredEventKind,
+    FailureCode, Operation, OperationKind, OperationState, Observation,
+    Revocation, StoredEventKind,
     TargetScope, TargetScopeKind,
 };
 use prost::Message;
@@ -85,6 +86,7 @@ pub enum ValidatedDiagnosticsQuery {
 struct CommandTimeline {
     summary: CommandSummary,
     accepted_event_id: EventId,
+    grant_id: Option<patchbay_contracts::patchbay::GrantId>,
     current_state: OperationState,
     failure_code: FailureCode,
     terminal_event_id: Option<EventId>,
@@ -155,6 +157,7 @@ impl DiagnosticsProjection {
                     self.commands.entry(command_id).or_insert_with(|| CommandTimeline {
                         summary: summary.clone(),
                         accepted_event_id: event.event_id.clone(),
+                        grant_id: accepted.authorizing_grant_id,
                         current_state: OperationState::Accepted,
                         failure_code: FailureCode::Unspecified,
                         terminal_event_id: None,
@@ -204,6 +207,7 @@ impl DiagnosticsProjection {
             }
             StoredEventKind::Observation => self.observe_observation(event)?,
             StoredEventKind::AuditRecord => self.observe_audit(event)?,
+            StoredEventKind::Revocation => self.observe_revocation(event)?,
             StoredEventKind::SessionState => {
                 self.sessions
                     .observe(event)
@@ -212,12 +216,48 @@ impl DiagnosticsProjection {
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
-            | StoredEventKind::Revocation
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::Unspecified => {}
         }
         self.last_lsn = event_lsn;
+        Ok(())
+    }
+
+    fn observe_revocation(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let revocation = Revocation::decode(event.payload.payload.as_slice())
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        let grant_id = revocation.grant_id.ok_or_else(|| DiagnosticsError::CorruptEvent("revocation has no grant id".to_owned()))?;
+        for effect in revocation.command_effects {
+            let command_id = effect.command_id.clone().ok_or_else(|| DiagnosticsError::CorruptEvent("revocation effect has no command id".to_owned()))?;
+            let timeline = self.commands.get_mut(&command_id).ok_or_else(|| DiagnosticsError::CorruptEvent("revocation effect precedes command operation".to_owned()))?;
+            if timeline.grant_id.as_ref() != Some(&grant_id) {
+                return Err(DiagnosticsError::CorruptEvent("revocation effect grant does not match command provenance".to_owned()));
+            }
+            if is_terminal(timeline.current_state) {
+                return Err(DiagnosticsError::CorruptEvent("revocation effect targets terminal command".to_owned()));
+            }
+            let from = OperationState::try_from(effect.from_state).map_err(|_| DiagnosticsError::CorruptEvent("unknown revocation from_state".to_owned()))?;
+            let to = OperationState::try_from(effect.to_state).map_err(|_| DiagnosticsError::CorruptEvent("unknown revocation to_state".to_owned()))?;
+            let failure = FailureCode::try_from(effect.failure_code).map_err(|_| DiagnosticsError::CorruptEvent("unknown revocation failure_code".to_owned()))?;
+            if timeline.current_state != from
+                || !matches!((from, to, failure),
+                    (OperationState::Accepted | OperationState::Delivered | OperationState::Running, OperationState::Cancelled, FailureCode::Cancelled)
+                    | (OperationState::Accepted, OperationState::Rejected, FailureCode::AuthorizationDenied))
+            {
+                return Err(DiagnosticsError::CorruptEvent("invalid revocation effect adjacency".to_owned()));
+            }
+            timeline.current_state = to;
+            timeline.failure_code = failure;
+            timeline.history.push(CommandHistoryEntry {
+                event_id: Some(event.event_id.clone()),
+                state: to as i32,
+                failure_code: failure as i32,
+                occurred_at: revocation.revoked_at.clone(),
+                correlations: Vec::new(),
+            });
+            timeline.terminal_event_id = Some(event.event_id.clone());
+        }
         Ok(())
     }
 
