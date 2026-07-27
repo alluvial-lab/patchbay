@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation]
 parent: epic-revocation-lifecycle
 depends_on: []
