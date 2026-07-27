@@ -1,0 +1,10 @@
+{
+  "vector_id": "grant-revocation-policy-effects",
+  "property_id": "RevocationPreventsFuture",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.Revocation.accepted_operation_policy", "patchbay.Revocation.command_effects", "patchbay.GrantRevocationEffect.from_state", "patchbay.GrantRevocationEffect.to_state", "patchbay.GrantRevocationEffect.failure_code"],
+  "description": "Revocation policy effects are durable terminal choices: cancel affects accepted, delivered, and running work; require reauthorization rejects only accepted work; continue has no effects.",
+  "input": {"policies": ["GRANT_REVOCATION_POLICY_CONTINUE", "GRANT_REVOCATION_POLICY_CANCEL", "GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION"], "states": ["accepted", "delivered", "running", "completed"]},
+  "expected_outcome": {"continue": [], "cancel": ["accepted->cancelled", "delivered->cancelled", "running->cancelled"], "require_reauthorization": ["accepted->rejected"], "terminal_states_unchanged": true},
+  "invariant_check": "RevocationPreventsFuture: policy effects are replay-identical and terminal-final at the Revocation LSN."
+}

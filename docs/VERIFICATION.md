@@ -442,7 +442,7 @@ Summary: 44 modeled properties (8 promoted, 36 draft), 3 reserved-unmodeled stat
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 27 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 32 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -474,11 +474,11 @@ Summary: 27 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `LsnDeterminesTerminalWinner` | stated-normative | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |
 | `NoAcceptedToCompleted` | checked-model | [operation-query-diagnostics-lifecycle](../contracts/vectors/operation-query-diagnostics-lifecycle.json) (draft) | DiagnosticsResult.as_of_lsn<br>Operation.kind<br>QueryDiagnosticsRequest.operation<br>QueryDiagnosticsResponse.submission |
 | `NoCommandWithoutGrant` | stated-normative | [failure-missing-grant](../contracts/vectors/failure-missing-grant.json) (draft) | patchbay.Grant.allowed_operation_kinds<br>patchbay.Operation.kind<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome |
-| `NoOperationWithoutGrant` | stated-normative | — | — |
+| `NoOperationWithoutGrant` | stated-normative | [grant-expiry-rejected](../contracts/vectors/grant-expiry-rejected.json) (draft) | patchbay.Grant.expires_at<br>patchbay.SubmissionResult.decision_grant_id<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.SubmissionResult.reason_code |
 | `PreAppendTerminalChoice` | stated-normative | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |
 | `RetryAfterTerminalReturnsExisting` | stated-normative | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
 | `RetryReusesIdAndKey` | stated-normative | — | — |
-| `RevocationPreventsFuture` | stated-normative | — | — |
+| `RevocationPreventsFuture` | stated-normative | [grant-revocation-policy-effects](../contracts/vectors/grant-revocation-policy-effects.json) (draft)<br>[grant-revocation-prevents-future](../contracts/vectors/grant-revocation-prevents-future.json) (draft) | patchbay.AcceptedOperation.authorizing_grant_id<br>patchbay.FailureCode.FAILURE_CODE_AUTHORIZATION_DENIED<br>patchbay.GrantRevocationEffect.failure_code<br>patchbay.GrantRevocationEffect.from_state<br>patchbay.GrantRevocationEffect.to_state<br>patchbay.Revocation.accepted_operation_policy<br>patchbay.Revocation.command_effects<br>patchbay.Revocation.grant_id<br>patchbay.SubmissionResult.outcome |
 | `RevokedSessionCannotCommand` | checked-model | — | — |
 | `SenderMatchesClaim` | stated-normative | — | — |
 | `SessionIdentityTuple` | stated-normative | — | — |
@@ -488,8 +488,8 @@ Summary: 27 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |
-| `SubscriptionCursorReplayAuthorized` | stated-normative | — | — |
-| `SubscriptionGrantChecked` | stated-normative | — | — |
+| `SubscriptionCursorReplayAuthorized` | stated-normative | [subscription-resume-rechecked](../contracts/vectors/subscription-resume-rechecked.json) (draft) | patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED<br>patchbay.AuditRecord.grant_id<br>patchbay.SubscribeRequest.authority_domain_id<br>patchbay.SubscribeRequest.cursor |
+| `SubscriptionGrantChecked` | stated-normative | [subscription-grant-checked](../contracts/vectors/subscription-grant-checked.json) (draft) | patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED<br>patchbay.AuditRecord.grant_id<br>patchbay.OperationKind.OPERATION_KIND_QUERY<br>patchbay.SubscribeRequest.authority_domain_id<br>patchbay.TargetScope.TARGET_SCOPE_KIND_AUTHORITY_DOMAIN |
 | `TerminalFinality` | checked-model | [terminal-expiration-before-completion](../contracts/vectors/terminal-expiration-before-completion.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.lsn<br>patchbay.Operation.validity_window<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.operation_state |
 | `TimeoutNeitherSuccessNorDenial` | stated-normative | — | — |
 | `TypedCorrelation` | stated-normative | [reply-correlation](../contracts/vectors/reply-correlation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.reply_id<br>patchbay.ReplyId.value<br>patchbay.TypedCorrelation.command_id<br>patchbay.TypedCorrelation.message_id |

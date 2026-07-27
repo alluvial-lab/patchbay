@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle
 kind: feature
-stage: implementing
+stage: done
 tags: [security, foundation, protocol]
 parent: epic-revocation-lifecycle
 depends_on: []
@@ -459,6 +459,10 @@ The feature remains one cohesive implementation/review bundle; stories are durab
 - **`require_reauthorization` semantics**: rejecting only undelivered work is less stateful than a hold but irreversible for that command id. The operator can submit a new intent under a fresh grant; a resumable held state is a reserved future policy, not silently approximated.
 - **Formal assurance gap**: implementation evidence does not promote the existing draft authority/subscription properties. Foundation prose and vector metadata must continue to say stated-normative until the independent-evidence models clear their separate gate.
 - **Design-time advisory**: this delegated environment exposes no subagent/reviewer tool. Independent design review was unavailable and is non-blocking per the skill; the feature's normal standard implementation review remains required.
+
+## Verification summary
+
+All four stories are complete. `cargo test --workspace` passed; `cli` build and 28 tests passed; Buf generation completed via `npx --yes @bufbuild/buf generate`; vector, model-promotion, presentation, and presentation meta-checks passed. Generated drift is expected to report the uncommitted generated Rust contract during this checkpoint and must be rerun after the story commit.
 
 ## Extension pressure classification
 

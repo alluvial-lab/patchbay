@@ -13,6 +13,7 @@ import { auditQueryCommand } from "./commands/audit-query.js";
 import { cancelCommand } from "./commands/cancel.js";
 import { inspectCommandCommand } from "./commands/inspect-command.js";
 import { instructCommand } from "./commands/instruct.js";
+import { grantRevokeCommand } from "./commands/grant-revoke.js";
 import { interruptCommand } from "./commands/interrupt.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
@@ -46,8 +47,9 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
+  "grant-revoke": { flags: ["json"], values: ["reason"] },
   "audit-query": { flags: ["json"], values: [
-    "kind", "actor-id", "endpoint-id", "command-id", "target", "failure-code",
+    "kind", "actor-id", "endpoint-id", "command-id", "grant-id", "target", "failure-code",
     "reason-code", "since", "until", "before-event", "limit",
   ] },
   "inspect-command": { flags: ["json"], values: ["audit-before-event", "audit-limit"] },
@@ -59,6 +61,7 @@ const VALUE_OPTIONS = new Set([
   "device-id",
   "idempotency-key",
   "command-id",
+  "grant-id",
   "kind",
   "actor-id",
   "target",
@@ -71,6 +74,7 @@ const VALUE_OPTIONS = new Set([
   "audit-before-event",
   "audit-limit",
   "after-adapter-id",
+  "reason",
 ]);
 
 export const consoleOutput: CliOutput = {
@@ -218,6 +222,19 @@ export async function run(
           output,
         );
 
+      case "grant-revoke":
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await grantRevokeCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          config.authorityDomainId,
+          {
+            grantId: parsed.positionals[0]!,
+            reason: parsed.options.get("reason"),
+            json,
+          },
+          output,
+        );
+
       case "audit-query":
         requirePositionals(command, parsed.positionals, 0, 0);
         return await auditQueryCommand(
@@ -229,6 +246,7 @@ export async function run(
             actorId: parsed.options.get("actor-id"),
             endpointId: parsed.options.get("endpoint-id"),
             commandId: parsed.options.get("command-id"),
+            grantId: parsed.options.get("grant-id"),
             target: parsed.options.get("target"),
             failureCodes: parsed.options.get("failure-code"),
             reasonCodes: parsed.options.get("reason-code"),
@@ -344,8 +362,10 @@ export function usage(): string {
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",
     "  interrupt <command-id> [--idempotency-key K] [--command-id ID] [--json]",
+    "  grant-revoke <grant-id> [--reason TEXT] [--json]",
+    "      Revoke a self-scoped grant; repeats report already_revoked without changing state.",
     "  audit-query [--kind K[,K...]] [--actor-id ID] [--endpoint-id ID] [--command-id ID]",
-    "      [--target TARGET] [--failure-code C[,C...]] [--reason-code C[,C...]]",
+    "      [--grant-id ID] [--target TARGET] [--failure-code C[,C...]] [--reason-code C[,C...]]",
     "      [--since RFC3339] [--until RFC3339] [--before-event LSN] [--limit 1..500] [--json]",
     "      Query redacted audit records. --since is inclusive; --until and --before-event are exclusive.",
     "      TARGET is authority-domain, fleet, actor=ID, adapter=ID, group=VALUE, resource=ID, or",

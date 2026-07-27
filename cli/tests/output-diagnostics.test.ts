@@ -20,6 +20,7 @@ import {
   EventIdSchema,
   FailureCode,
   GenerationSchema,
+  GrantIdSchema,
   LsnSchema,
   OperationKind,
   OperationState,
@@ -308,6 +309,32 @@ test("diagnostics option grammar rejects cross-command and duplicate enum option
   assert.throws(() => parseArguments(["--kind", "login", "--kind", "logout"]), /duplicate option/);
   assert.match(usage(), /--since is inclusive/);
   assert.match(usage(), /canonical runtime identity/);
+});
+
+test("audit-query carries grant-id filters and renders grant ids safely", async () => {
+  const store = await credentialStore();
+  let operationPayload: Uint8Array | undefined;
+  const record = create(AuditRecordSchema, {
+    kind: AuditEventKind.GRANT_REVOKED,
+    grantId: create(GrantIdSchema, { value: "grant-safe-1" }),
+  });
+  const output = captureOutput();
+  const exit = await auditQueryCommand(
+    { async queryDiagnostics(request: { operation?: { payload?: { payload?: Uint8Array } } }) {
+      operationPayload = request.operation?.payload?.payload;
+      return diagnosticsResponse("audit", create(AuditPageSchema, { records: [record] }));
+    } } as never,
+    store,
+    DOMAIN,
+    { grantId: "grant-safe-1", json: true },
+    output,
+  );
+  assert.equal(exit, 0);
+  const query = fromBinary(DiagnosticsQuerySchema, operationPayload!);
+  assert.equal(query.query.case, "audit");
+  if (query.query.case === "audit") assert.equal(query.query.value.grantId?.value, "grant-safe-1");
+  assert.equal(JSON.parse(output.out[0]!).result.records[0].grantId, "grant-safe-1");
+  assert.doesNotMatch(output.out[0]!, /payload|descriptor|BEARER/);
 });
 
 test("omitted diagnostic limits remain absent so core applies its defaults", async () => {

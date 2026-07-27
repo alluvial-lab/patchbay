@@ -2,6 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import {
   ActorIdSchema,
   AuditEventKind,
+  GrantIdSchema,
   AuditQuerySchema,
   CommandIdSchema,
   DiagnosticsQuerySchema,
@@ -28,6 +29,7 @@ export interface AuditQueryOptions {
   actorId?: string;
   endpointId?: string;
   commandId?: string;
+  grantId?: string;
   target?: string;
   failureCodes?: string;
   reasonCodes?: string;
@@ -51,6 +53,7 @@ export async function auditQueryCommand(
   const actorId = options.actorId === undefined ? undefined : createRequiredId(options.actorId, "--actor-id", ActorIdSchema);
   const endpointId = options.endpointId === undefined ? undefined : createRequiredId(options.endpointId, "--endpoint-id", EndpointIdSchema);
   const commandId = options.commandId === undefined ? undefined : createRequiredId(options.commandId, "--command-id", CommandIdSchema);
+  const grantId = options.grantId === undefined ? undefined : createRequiredId(options.grantId, "--grant-id", GrantIdSchema);
   const since = parseRfc3339(options.since, "--since");
   const until = parseRfc3339(options.until, "--until");
   if (since && until && compareTimestamp(since, until) >= 0) {
@@ -69,6 +72,7 @@ export async function auditQueryCommand(
         actorId,
         endpointId,
         commandId,
+        grantId,
         targetScope: parseAuditTarget(options.target, authorityDomainId),
         failureCodes,
         reasonCodes,

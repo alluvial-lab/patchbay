@@ -1,0 +1,10 @@
+{
+  "vector_id": "subscription-resume-rechecked",
+  "property_id": "SubscriptionCursorReplayAuthorized",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.SubscribeRequest.cursor", "patchbay.SubscribeRequest.authority_domain_id", "patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED", "patchbay.AuditRecord.grant_id"],
+  "description": "A nonzero cursor is not prior authorization: reconnect after grant revocation rechecks the current grant and denies before replay.",
+  "input": {"cursor": 17, "grant_id": {"value": "query-grant"}, "grant_revoked_before_resume": true},
+  "expected_outcome": {"stream_established": false, "replayed_events": [], "audit_kind": "AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED", "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED"},
+  "invariant_check": "SubscriptionCursorReplayAuthorized: cursor resume is authorized only by the current live Query grant."
+}

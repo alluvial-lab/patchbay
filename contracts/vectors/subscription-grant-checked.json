@@ -1,0 +1,10 @@
+{
+  "vector_id": "subscription-grant-checked",
+  "property_id": "SubscriptionGrantChecked",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.SubscribeRequest.authority_domain_id", "patchbay.TargetScope.TARGET_SCOPE_KIND_AUTHORITY_DOMAIN", "patchbay.OperationKind.OPERATION_KIND_QUERY", "patchbay.AuditRecord.grant_id", "patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED"],
+  "description": "Subscribe establishment authorizes Query against the authority-domain scope and audits the selected grant without creating Operation state.",
+  "input": {"cursor": 0, "operation_kind": "OPERATION_KIND_QUERY", "target_scope": "TARGET_SCOPE_KIND_AUTHORITY_DOMAIN", "grant_id": {"value": "query-grant"}},
+  "expected_outcome": {"stream_established": true, "operation_record_created": false, "audit_kind": "AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED", "grant_id": {"value": "query-grant"}},
+  "invariant_check": "SubscriptionGrantChecked: no live Query grant means no replay, and an allowed establishment is durably audited."
+}

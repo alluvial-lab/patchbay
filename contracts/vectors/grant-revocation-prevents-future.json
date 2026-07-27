@@ -1,0 +1,10 @@
+{
+  "vector_id": "grant-revocation-prevents-future",
+  "property_id": "RevocationPreventsFuture",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.Revocation.grant_id", "patchbay.AcceptedOperation.authorizing_grant_id", "patchbay.SubmissionResult.outcome", "patchbay.FailureCode.FAILURE_CODE_AUTHORIZATION_DENIED"],
+  "description": "After a durable self-scoped grant revocation, a new Operation under that grant is rejected before acceptance while the grant record remains auditable.",
+  "input": {"grant_id": {"value": "grant-revoked"}, "revocation_generation": 1, "new_operation_command_id": {"value": "cmd-after-revoke"}},
+  "expected_outcome": {"outcome": "SUBMISSION_OUTCOME_REJECTED", "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED", "reason_code": "grant_revoked", "durable_acceptance_record_created": false},
+  "invariant_check": "RevocationPreventsFuture: revocation changes future authority without deleting command history."
+}

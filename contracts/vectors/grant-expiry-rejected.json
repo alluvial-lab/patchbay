@@ -1,0 +1,10 @@
+{
+  "vector_id": "grant-expiry-rejected",
+  "property_id": "NoOperationWithoutGrant",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.Grant.expires_at", "patchbay.SubmissionResult.outcome", "patchbay.SubmissionResult.failure_code", "patchbay.SubmissionResult.reason_code", "patchbay.SubmissionResult.decision_grant_id"],
+  "description": "An otherwise matching grant at its exact expiry instant rejects the Operation with the existing expired vocabulary and no durable command.",
+  "input": {"evaluated_at": "2030-01-01T00:00:00Z", "grant_expires_at": "2030-01-01T00:00:00Z", "operation_kind": "OPERATION_KIND_INSTRUCT"},
+  "expected_outcome": {"outcome": "SUBMISSION_OUTCOME_REJECTED", "failure_code": "FAILURE_CODE_EXPIRED", "reason_code": "grant_expired", "durable_acceptance_record_created": false, "audit_kind": "AUDIT_EVENT_KIND_GRANT_EXPIRED"},
+  "invariant_check": "NoOperationWithoutGrant: expiry is half-open and an expired grant cannot authorize acceptance."
+}

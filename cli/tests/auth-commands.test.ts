@@ -6,17 +6,24 @@ import test from "node:test";
 import { create } from "@bufbuild/protobuf";
 import {
   ActorIdSchema,
+  AuthorityDomainIdSchema,
+  FailureCode,
   BootstrapResultSchema,
   DeviceIdSchema,
   EndpointIdSchema,
   GenerationSchema,
+  EventIdSchema,
   GrantIdSchema,
+  GrantRevocationEffectSchema,
+  GrantRevocationPolicy,
+  RevokeGrantResultSchema,
   OperatorSessionIdSchema,
   PrincipalCredentialSchema,
   VerifyOperatorPasswordResultSchema,
 } from "@patchbay/contracts";
 import { loginCommand } from "../src/commands/login.js";
 import { logoutCommand } from "../src/commands/logout.js";
+import { grantRevokeCommand } from "../src/commands/grant-revoke.js";
 import { setupCommand } from "../src/commands/setup.js";
 import { CredentialStore } from "../src/credentials.js";
 import { BEARER_SECRET, captureOutput, DOMAIN } from "./helpers.js";
@@ -113,6 +120,38 @@ test("login enrolls a fresh CLI principal and stores the core-issued session", a
   assert.equal(enrollment.endpointId?.value, "fresh-cli-endpoint");
   assert.equal((await store.readRequired()).sessionId, "login-session");
   assert.equal([...output.out, ...output.err].join("\n").includes("fresh-bearer-secret"), false);
+});
+
+test("grant-revoke reports changed and idempotent outcomes without clearing credentials", async () => {
+  const output = captureOutput();
+  let calls = 0;
+  const client = {
+    async revokeGrant() {
+      calls += 1;
+      return create(RevokeGrantResultSchema, calls === 1 ? {
+        changed: true,
+        appliedPolicy: GrantRevocationPolicy.CANCEL,
+        revocationEventId: create(EventIdSchema, { authorityDomainId: create(AuthorityDomainIdSchema, { value: DOMAIN }), lsn: { value: 42n } }),
+        commandEffects: [create(GrantRevocationEffectSchema, { failureCode: FailureCode.CANCELLED })],
+      } : {
+        alreadyRevoked: true,
+        appliedPolicy: GrantRevocationPolicy.CANCEL,
+      });
+    },
+  };
+  assert.equal(await grantRevokeCommand(client as never, DOMAIN, { grantId: "grant-1", json: true }, output), 0);
+  assert.deepEqual(JSON.parse(output.out[0]!), {
+    grantId: "grant-1",
+    changed: true,
+    alreadyRevoked: false,
+    revocationEventId: { authorityDomainId: DOMAIN, lsn: "42" },
+    appliedPolicy: "cancel",
+    affectedCommandCount: 1,
+    commandEffects: [{ commandId: null, fromState: "unspecified", toState: "unspecified", failureCode: "cancelled" }],
+  });
+  const repeat = captureOutput();
+  assert.equal(await grantRevokeCommand(client as never, DOMAIN, { grantId: "grant-1", json: true }, repeat), 0);
+  assert.equal(JSON.parse(repeat.out[0]!).alreadyRevoked, true);
 });
 
 test("logout revokes before deleting local credentials", async () => {

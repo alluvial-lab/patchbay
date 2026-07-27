@@ -227,6 +227,7 @@ export interface AuditRecordView {
   endpointId: string | null;
   operatorSessionHash: string | null;
   commandId: string | null;
+  grantId: string | null;
   targetScope: unknown;
   failureCode: string | null;
   reasonCode: string | null;
@@ -253,6 +254,7 @@ export function auditRecordView(record: AuditRecord): AuditRecordView {
     endpointId: record.endpointId?.value || null,
     operatorSessionHash: record.operatorSessionHash.length ? bytesHex(record.operatorSessionHash) : null,
     commandId: record.commandId?.value || null,
+    grantId: record.grantId?.value || null,
     targetScope: targetScopeView(record.targetScope),
     failureCode: record.failureCode === FailureCode.UNSPECIFIED ? null : enumLabel(FailureCode, record.failureCode),
     reasonCode: record.reasonCode || null,
@@ -408,7 +410,7 @@ export function auditTable(page: import("@patchbay/contracts").AuditPage): Human
   return {
     sections: [{
       title: "AUDIT",
-      headers: ["LSN", "TIME", "KIND", "ACTOR", "ENDPOINT", "COMMAND", "TARGET", "FAILURE", "REASON"],
+      headers: ["LSN", "TIME", "KIND", "ACTOR", "ENDPOINT", "COMMAND", "GRANT", "TARGET", "FAILURE", "REASON"],
       rows: records.map((record) => [
         record.auditEventId?.lsn ?? "-",
         record.occurredAt ?? "-",
@@ -416,6 +418,7 @@ export function auditTable(page: import("@patchbay/contracts").AuditPage): Human
         record.actorId ?? "-",
         record.endpointId ?? "-",
         record.commandId ?? "-",
+        record.grantId ?? "-",
         formatTarget(record.targetScope),
         record.failureCode ?? "-",
         record.reasonCode ?? "-",
