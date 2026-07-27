@@ -252,12 +252,13 @@ function renderObservation(
   }
   message.append(body);
   if (observation.detail) {
-    // Args/result preview: plain text in a code block, never markdown — tool
-    // args are untrusted content (mirrors Pi's tool-call preview box).
+    // Args/result preview lives INSIDE the message body — one card with a
+    // divider, not a second floating box. Plain text, never markdown — tool
+    // args are untrusted content.
     const detail = document.createElement("pre");
     detail.className = "msg__detail";
     detail.textContent = observation.detail;
-    message.append(detail);
+    body.append(detail);
   }
   message.append(textElement(document, "div", "msg__footer", `${observation.role} · ${observation.kind}`));
   if (command) message.append(renderDelivery(document, command, options.actions));

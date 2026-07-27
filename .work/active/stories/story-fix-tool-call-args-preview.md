@@ -78,3 +78,12 @@ Operator feedback: the preview rendered as a separate sibling box — awkward.
 Folded the `<pre class="msg__detail">` INSIDE `msg__body` (one card) and
 restyled: no outer border/background, a top divider line instead. Suite 58/58
 and presentation conformance still green.
+
+## Correction (2026-07-27)
+
+The earlier "fold into the message card" commit (f6e7053) silently contained
+ONLY the CSS half: the session-detail.ts edit was in a rejected multi-edit
+batch and never applied, and I failed to verify. Sibling `<pre>` JS +
+unboxed CSS produced the operator-reported "tool call in a box, text outside
+the box." This correction applies the JS side (`body.append(detail)`) for
+real; verified present in the built bundle this time.
