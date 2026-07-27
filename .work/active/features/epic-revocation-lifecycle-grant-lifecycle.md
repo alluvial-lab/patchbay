@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation, protocol]
 parent: epic-revocation-lifecycle
 depends_on: []
