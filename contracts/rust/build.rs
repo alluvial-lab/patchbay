@@ -1,41 +1,12 @@
-use std::{env, fs, path::PathBuf};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! Single-generator enforcement: the committed bindings in `src/gen/` are
+//! produced by `buf generate` (protoc-gen-prost, the generator of record —
+//! see contracts/README.md). This build script intentionally does NOT
+//! regenerate them: prost-build and protoc-gen-prost output diverge
+//! cosmetically, and a build-time writer flipped the committed file between
+//! two generators' byte layouts, defeating the CI drift check. Edit protos →
+//! run `buf generate` from `contracts/` → commit. CI's check:drift enforces.
+fn main() {
     println!("cargo:rerun-if-changed=../proto/patchbay");
     println!("cargo:rerun-if-changed=../proto/buf.yaml");
-
-    let protoc = protoc_bin_vendored::protoc_bin_path()?;
-    env::set_var("PROTOC", protoc);
-
-    let out_dir = PathBuf::from("src/gen/patchbay");
-    fs::create_dir_all(&out_dir)?;
-
-    let protos = [
-        "../proto/patchbay/common.proto",
-        "../proto/patchbay/operations.proto",
-        "../proto/patchbay/observations.proto",
-        "../proto/patchbay/elicitations.proto",
-        "../proto/patchbay/sessions.proto",
-        "../proto/patchbay/authority.proto",
-        "../proto/patchbay/adapter.proto",
-        "../proto/patchbay/admin.proto",
-        "../proto/patchbay/control.proto",
-        "../proto/patchbay/diagnostics.proto",
-        "../proto/patchbay/adapter_control.proto",
-    ];
-
-    let mut config = prost_build::Config::new();
-    for oneof in [
-        ".patchbay.ObservationRequest.observation",
-        ".patchbay.DiagnosticsQuery.query",
-        ".patchbay.QueryDiagnosticsResponse.result",
-        ".patchbay.DiagnosticsResult.result",
-    ] {
-        config.enum_attribute(oneof, "#[allow(clippy::large_enum_variant)]");
-    }
-    config
-        .out_dir(out_dir)
-        .compile_protos(&protos, &["../proto"])?;
-
-    Ok(())
+    println!("cargo:warning=patchbay-contracts: bindings come from `buf generate`; do not edit src/gen by hand");
 }

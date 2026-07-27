@@ -1327,6 +1327,7 @@ pub struct ObservationRequest {
 }
 /// Nested message and enum types in `ObservationRequest`.
 pub mod observation_request {
+    #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Observation {
         #[prost(message, tag = "2")]
@@ -1676,6 +1677,7 @@ pub struct DiagnosticsQuery {
 }
 /// Nested message and enum types in `DiagnosticsQuery`.
 pub mod diagnostics_query {
+    #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Query {
         #[prost(message, tag = "1")]
@@ -1704,6 +1706,7 @@ pub struct QueryDiagnosticsResponse {
 }
 /// Nested message and enum types in `QueryDiagnosticsResponse`.
 pub mod query_diagnostics_response {
+    #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Result {
         #[prost(message, tag = "4")]
@@ -1898,6 +1901,7 @@ pub struct DiagnosticsResult {
 }
 /// Nested message and enum types in `DiagnosticsResult`.
 pub mod diagnostics_result {
+    #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Result {
         #[prost(message, tag = "2")]
