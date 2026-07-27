@@ -40,3 +40,15 @@ arc): revoke-all, endpoint/principal revocation, grant revocation + expiry
 enforcement, lockdown/exit per SECURITY:203-208, Subscribe grant check. Each
 piece has an existing contract anchor (GrantRevocationPolicy, Revocation
 events, the lockdown section).
+
+## Docs-audit evidence (2026-07-27)
+
+The audit confirmed the gap against the code: the public control contract only
+revokes the verified current session (`control.proto:20-21`,
+`server/src/service.rs:457-487`); the admin service exposes only bootstrap.
+Yet `docs/SECURITY.md:200-208,275` claims revoke-all, endpoint/device
+revocation, grant revocation, AND durable security lockdown as committed
+v0.1.0 operator-facing emergency controls. Lockdown has no decision surface
+at all (also why lockdown audit producers are deferred — see
+`epic-observability-dogfooding-core-diagnostics` receiver note). v0.1+
+decision needed per claim: implement, or descope the prose.
