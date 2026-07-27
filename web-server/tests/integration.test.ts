@@ -13,6 +13,7 @@ import {
   SubscribeEventSchema,
   VerifyOperatorPasswordResultSchema,
   EnrollControlSurfacePrincipalResultSchema,
+  RevokeGrantResultSchema,
   RevokeOperatorSessionResultSchema,
 } from "@patchbay/contracts";
 import assert from "node:assert/strict";
@@ -35,6 +36,7 @@ interface CoreCall {
     | "loadSnapshot"
     | "verifyOperatorPassword"
     | "revokeOperatorSession"
+    | "revokeGrant"
     | "recordControlSurfaceAudit";
   request: unknown;
   headers: Headers;
@@ -399,6 +401,14 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown } =
       });
       if (options.revokeError !== undefined) throw options.revokeError;
       return create(RevokeOperatorSessionResultSchema, { revoked: true });
+    },
+    async revokeGrant(_request, callOptions) {
+      calls.push({
+        method: "revokeGrant",
+        request: {},
+        headers: callHeaders(callOptions),
+      });
+      return create(RevokeGrantResultSchema, {});
     },
     async recordControlSurfaceAudit(request, callOptions) {
       calls.push({
