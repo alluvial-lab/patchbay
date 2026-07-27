@@ -131,7 +131,7 @@ where
 
     validate_revocation_effects(&revocation.command_effects, &grant_id)?;
     let payload = events::revocation(authority_domain_id.clone(), revocation.clone());
-    let occurred_at = revocation.revoked_at.clone().unwrap_or_else(|| crate::time::SystemClock.now());
+    let occurred_at = revocation.revoked_at.unwrap_or_else(|| crate::time::SystemClock.now());
     let mut audits = Vec::with_capacity(1 + revocation.command_effects.len());
     let mut audit = AuditRecordDraft::new(occurred_at, patchbay_contracts::patchbay::AuditEventKind::GrantRevoked);
     audit.grant_id = Some(grant_id.clone());
@@ -139,7 +139,7 @@ where
     audits.push(audit);
     for effect in &revocation.command_effects {
         let mut effect_audit = AuditRecordDraft::new(
-            revocation.revoked_at.clone().unwrap_or_else(|| crate::time::SystemClock.now()),
+            revocation.revoked_at.unwrap_or_else(|| crate::time::SystemClock.now()),
             match OperationState::try_from(effect.to_state).ok() {
                 Some(OperationState::Cancelled) => patchbay_contracts::patchbay::AuditEventKind::CommandCancelled,
                 Some(OperationState::Rejected) => patchbay_contracts::patchbay::AuditEventKind::CommandRejected,

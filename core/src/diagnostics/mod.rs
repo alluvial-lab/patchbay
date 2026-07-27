@@ -253,7 +253,7 @@ impl DiagnosticsProjection {
                 event_id: Some(event.event_id.clone()),
                 state: to as i32,
                 failure_code: failure as i32,
-                occurred_at: revocation.revoked_at.clone(),
+                occurred_at: revocation.revoked_at,
                 correlations: Vec::new(),
             });
             timeline.terminal_event_id = Some(event.event_id.clone());

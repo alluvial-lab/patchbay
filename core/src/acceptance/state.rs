@@ -52,7 +52,6 @@ impl CommandRecord {
     /// Build the initial projection for a legacy in-memory test operation.
     /// Durable replay uses [`Self::new_accepted`] and rejects absent grant
     /// provenance.
-
     ///
     /// `accept_lsn` identifies the source event in corruption diagnostics. The
     /// record retains only the terminal LSN because the accepted operation's

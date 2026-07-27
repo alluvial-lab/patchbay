@@ -345,7 +345,7 @@ where
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
-        let cursor = request.get_ref().cursor.clone().unwrap_or(Lsn { value: 0 });
+        let cursor = request.get_ref().cursor.unwrap_or(Lsn { value: 0 });
         let current_lsn = self.state.current_lsn().await;
         if cursor.value > current_lsn {
             return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
