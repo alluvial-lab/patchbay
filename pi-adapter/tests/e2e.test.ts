@@ -12,6 +12,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorEndpointRefSchema,
   ActorIdSchema,
+  AcceptedOperationSchema,
   AdapterDiagnosticState,
   AdapterIdSchema,
   AdapterRegistrationSchema,
@@ -53,6 +54,7 @@ import {
   TimeWindowSchema,
   VerifyOperatorPasswordRequestSchema,
   type AdapterStatus,
+  type GrantId,
   type PrincipalCredential,
   type StoredEventPayload,
 } from "@patchbay/contracts";
@@ -349,6 +351,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     appendAcceptedOperation(
       databasePath,
       operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
+      auth.grantId,
     );
     await waitForCommandState(control, "command-old-generation", OperationState.FAILED);
     const staleDeliveryEvents = await readAfter(control, 0n);
@@ -459,7 +462,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     await waitForExit(core);
     core = startCore(port, adminPort, databasePath);
     await waitForCoreListener(port, core);
-    control = makeControlClient(baseUrl, await loginAfterRestart(baseUrl));
+    control = makeControlClient(baseUrl, await loginAfterRestart(baseUrl, auth.grantId));
 
     const afterRestart = await waitForAdapterDiagnostic(
       control,
@@ -635,6 +638,7 @@ function targetScope(generation: number) {
 interface ControlAuth {
   principal: PrincipalCredential;
   operatorSessionId: string;
+  grantId: GrantId;
 }
 
 async function bootstrapAndLogin(
@@ -682,6 +686,7 @@ async function bootstrapAndLogin(
   return {
     principal: login.principal,
     operatorSessionId: login.operatorSessionId.value,
+    grantId: bootstrap.grantId,
   };
 }
 
@@ -762,7 +767,7 @@ function adapterStatusOperation(commandId: string) {
   });
 }
 
-async function loginAfterRestart(baseUrl: string): Promise<ControlAuth> {
+async function loginAfterRestart(baseUrl: string, grantId: GrantId): Promise<ControlAuth> {
   const coreAuthenticate: Interceptor = (next) => async (request) => {
     request.header.set("x-patchbay-core-secret", coreSecret);
     return next(request);
@@ -787,6 +792,7 @@ async function loginAfterRestart(baseUrl: string): Promise<ControlAuth> {
   return {
     principal: login.principal,
     operatorSessionId: login.operatorSessionId.value,
+    grantId,
   };
 }
 
@@ -905,6 +911,7 @@ function observationsFor(
 function appendAcceptedOperation(
   databasePath: string,
   acceptedOperation: ReturnType<typeof operation>,
+  authorizingGrantId: GrantId,
 ): void {
   const database = new DatabaseSync(databasePath);
   try {
@@ -917,7 +924,13 @@ function appendAcceptedOperation(
           StoredEventPayloadSchema,
           create(StoredEventPayloadSchema, {
             kind: StoredEventKind.OPERATION,
-            payload: toBinary(OperationSchema, acceptedOperation),
+            payload: toBinary(
+              AcceptedOperationSchema,
+              create(AcceptedOperationSchema, {
+                operation: acceptedOperation,
+                authorizingGrantId,
+              }),
+            ),
           }),
         ),
       );
