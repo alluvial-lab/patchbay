@@ -26,7 +26,7 @@ A human-facing interface such as web, CLI, future mobile app, desktop app, notif
 
 ## Core generation
 
-A marker of the coordination core's current incarnation, intended to reject snapshots or events from a prior incarnation outright during reconciliation. The field is wire-present but currently unset — core-generation persistence and validation are a reserved seam. See Generation for the unified entry covering all three scopes.
+A marker of the coordination core's current incarnation, intended to reject snapshots or events from a prior incarnation outright during reconciliation. The field is wire-present but currently unset — core-generation persistence and validation are a reserved seam. See Generation for the unified entry covering all generation scopes.
 
 ## Cursor
 
@@ -34,14 +34,14 @@ A log sequence number a control surface or adapter holds to express that it has 
 
 ## Generation
 
-A new lifetime of an entity that retains its identity. Patchbay uses generation at three scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
+A new lifetime of an entity that retains its identity. Patchbay uses generation at four scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
 
 - **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Wire-present but currently unset; cross-incarnation rejection is a reserved seam until persistence and validation exist.
 - **Runtime-session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
 - **Operator-session generation** — a core-assigned, monotonic incarnation of one authenticated browser or CLI operator session. All-session revocation persists an invalidated-through floor; restart replay preserves the floor while opaque session ids remain process-local.
 - **Adapter generation** — an incarnation of the adapter process, **adapter-reported on re-attach**. Used to reject stale events from a prior adapter attachment.
 
-The three scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / session / adapter) is the collision-protection discipline.
+The four scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / runtime-session / operator-session / adapter) is the collision-protection discipline.
 
 ## Device
 

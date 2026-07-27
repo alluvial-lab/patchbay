@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation
 kind: feature
-stage: implementing
+stage: done
 tags: [security, foundation]
 parent: epic-revocation-lifecycle
 depends_on: []
@@ -15,29 +15,25 @@ updated: 2026-07-27
 
 ## Brief
 
-v0.1.0 ships only "revoke current browser session"
-(`RevokeOperatorSession`). SECURITY.md commits two more session-plane
-controls: **revoke all browser sessions** (invalidate all operator sessions,
-optionally by rotating the session-signing secret) and **revoke
-endpoint/device** (mark a browser or CLI endpoint revoked, rejecting future
-Operations from it).
+v0.1.0 ships current-session revocation plus actor-scoped **revoke all
+operator sessions** (including CLI sessions) and **principal/endpoint/device
+revocation**. Revoke-all invalidates operator-session generations without a
+signing-secret rotation layer; principal/endpoint/device revocation marks a
+credential scope revoked and rejects future Operations and same-id enrollment.
 
-This feature delivers both, across the web-server session store and the
-core's control contract. Revoke-all covers the web session plane;
-endpoint/principal revocation covers the credential plane — a compromised
-principal credential becomes revocable short of rotating the core secret.
-Both write durable, audited revocation events (the audit substrate exists;
-`OperatorSessionRevoked` is the established pattern).
+This feature delivers the session/principal plane across the web-server session
+store, CLI credential controls, and core contract. Both durable scope families
+write audited revocation events; the core remains the authority and each
+control surface maintains a fail-closed local projection.
 
 The feature also absorbs the session-record fields gap
 (`backlog-session-record-fields-gap`): endpoint revocation requires records
 that identify endpoints — endpoint id, revoked-at, and (per SECURITY.md:94)
 session generation are added where missing rather than descoping the doc.
 
-Does NOT cover: grant revocation (sibling feature), lockdown (sibling
-feature), CLI/cockpit affordances beyond what the contract additions
-naturally expose (cockpit emergency-controls UX lives with the lockdown
-feature's mockup pass).
+Does NOT cover: grant revocation (sibling feature) or lockdown (sibling
+feature). Cockpit emergency-controls UX lives with the lockdown feature's
+mockup pass; this feature owns the generated RPCs and scriptable CLI controls.
 
 ## Epic context
 
@@ -416,12 +412,19 @@ Commands are `revoke-all-sessions`, `revoke-principal <principal-id>`,
   do not create a second follow-up for the same fields.
 
 **Acceptance Criteria**:
-- [ ] Unit/integration/restart tests prove future Operations and subscriptions
+- [x] Unit/integration/restart tests prove future Operations and subscriptions
   reject before acceptance after every revocation scope.
-- [ ] Model, vector, generated-contract, clippy, Rust workspace, TS workspace,
+- [x] Model, vector, generated-contract, clippy, Rust workspace, TS workspace,
   and generated-drift checks are green with traceable property ids.
-- [ ] Foundation docs describe the implemented contract and the self-lockout
+- [x] Foundation docs describe the implemented contract and the self-lockout
   recovery boundary without historical migration prose.
+
+## Completion evidence
+
+- Acceptance mapping: contract/model registries and four draft vectors are in `contracts/` and `specs/seed/session_principal_revocation.qnt`; replayable core scope fences and atomic source/audit writes are covered by core/server tests; web records and all three CSRF-protected gRPC-Web routes are covered by 29 web tests; CLI controls, safe output, selective credential cleanup, and recovery guidance are covered by 33 CLI tests; real gRPC scope, subscription, and restart tests are in `server/tests/grpc_smoke.rs`.
+- Verification: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, contracts build/vector/model/drift/presentation checks, `cd web-server && npm test`, `cd cli && npm test`, `cd web-cockpit && npm test`, and `cd pi-adapter && npm test` pass. Revocation model properties remain honestly stated-normative draft properties; current checker and mutation/non-vacuity evidence do not promote them without reviewed vectors.
+- Deviations: a duplicate endpoint decision-gate acquisition was removed when integrated gRPC tests exercised endpoint/device RPCs; no semantic deviation from the design.
+- Parked issues: none. `backlog-session-record-fields-gap` is absorbed and retained as `.work/archive/backlog-session-record-fields-gap.md`; no duplicate follow-up was created.
 
 ## Implementation Order
 
