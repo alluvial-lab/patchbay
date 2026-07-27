@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-grant-lifecycle-subscribe-authorization
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-grant-lifecycle
 depends_on: [epic-revocation-lifecycle-grant-lifecycle-clock-expiry]
@@ -27,3 +27,13 @@ Authorize every `Subscribe` RPC establishment as `OperationKind::Query` against 
 ## Ordering
 
 Consumes the clock/expiry checkpoint; independent of the revocation RPC implementation after that common boundary exists.
+
+## Implementation notes
+
+- `Subscribe` now checks `OperationKind::Query` against an authority-domain `TargetScope` using the verified compound issuer and one injected clock sample.
+- Establishment success and denial are durably audited before cursor replay; expired matching grants use `GrantExpired` with `subscription_grant_expired` and grant correlation.
+- Cursor resume follows the same establishment path, so a nonzero cursor is never treated as prior authorization. The established stream remains finite and is not continuously reauthorized.
+
+## Verification
+
+`cargo test -p patchbay-core-server --test grpc_smoke --test trust_boundary` passed; existing operator-facing allowlist and cursor-gap assertions remain green.

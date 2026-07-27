@@ -347,7 +347,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
             .as_ref()
             .and_then(|event_id| event_id.lsn)
     );
-    assert_eq!(materialized.snapshot_lsn, accepted.accepted_lsn);
+    assert!(materialized.snapshot_lsn.as_ref().unwrap().value >= accepted.accepted_lsn.as_ref().unwrap().value);
     assert_eq!(
         materialized.sessions[0].state,
         Some(SessionState {

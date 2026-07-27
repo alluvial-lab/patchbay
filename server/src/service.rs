@@ -14,7 +14,7 @@ use patchbay_contracts::patchbay::{
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
-    acceptance::{self, AcceptanceError, CommandRecord, CommandStateLookup},
+    acceptance::{self, AcceptanceError, CommandRecord, CommandStateLookup, GrantCheck},
     time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
@@ -345,19 +345,57 @@ where
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
-        MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state)
-            .await?;
-        let request = request.into_inner();
-        let cursor = request.cursor.unwrap_or(Lsn { value: 0 });
-        let events = self
-            .storage
-            .read_after(&authority_domain_id, cursor)
-            .await
-            .map_err(map_storage_error_to_status)?;
-        let events = events
-            .into_iter()
-            .filter_map(operator_facing_subscribe_event)
-            .map(Ok);
+        let cursor = request.get_ref().cursor.clone().unwrap_or(Lsn { value: 0 });
+        let current_lsn = self.state.current_lsn().await;
+        if cursor.value > current_lsn {
+            return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
+        }
+        let issuer = MetadataIssuerContext::from_request(&request, authority_domain_id.clone(), &self.state).await?;
+        let scope = subscription_scope();
+        let _decision_guard = self.state.submit_guard().await;
+        self.state.catch_up(&self.storage, &authority_domain_id).await.map_err(map_storage_error_to_status)?;
+        let evaluated_at = self.clock.now();
+        let decision = self.state.grant_check().check_at(
+            &authority_domain_id,
+            &issuer,
+            patchbay_contracts::patchbay::OperationKind::Query,
+            &scope,
+            &evaluated_at,
+        ).await;
+        let grant_id = match decision {
+            Ok(authorized) => authorized.grant_id,
+            Err(error) => {
+                let (kind, failure_code, reason_code, denied_grant_id) = match error {
+                    patchbay_core::acceptance::GrantDenied::NoGrant { actor, .. }
+                        if actor.starts_with("grant_expired:") => (AuditEventKind::GrantExpired, FailureCode::Expired, "subscription_grant_expired", actor.strip_prefix("grant_expired:").map(|value| patchbay_contracts::patchbay::GrantId { value: value.to_owned() })),
+                    patchbay_core::acceptance::GrantDenied::NoGrant { actor, .. }
+                        if actor.starts_with("grant_revoked:") => (AuditEventKind::SubscriptionDenied, FailureCode::AuthorizationDenied, "grant_revoked", actor.strip_prefix("grant_revoked:").map(|value| patchbay_contracts::patchbay::GrantId { value: value.to_owned() })),
+                    _ => (AuditEventKind::SubscriptionDenied, FailureCode::AuthorizationDenied, "authorization_denied", None),
+                };
+                let mut audit = AuditRecordDraft::new(evaluated_at, kind);
+                audit.actor_id = issuer.verified_actor().cloned();
+                audit.endpoint_id = issuer.verified_endpoint().cloned();
+                audit.device_id = issuer.verified_device().cloned();
+                audit.grant_id = denied_grant_id;
+                audit.target_scope = Some(scope.clone());
+                audit.failure_code = Some(failure_code);
+                audit.reason_code = reason_code.to_owned();
+                self.record_audit(audit).await?;
+                return Err(Status::permission_denied("subscription grant is not authorized"));
+            }
+        };
+        let grant_id = grant_id.ok_or_else(|| Status::internal("subscription authorization omitted grant provenance"))?;
+        let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
+        audit.actor_id = issuer.verified_actor().cloned();
+        audit.endpoint_id = issuer.verified_endpoint().cloned();
+        audit.device_id = issuer.verified_device().cloned();
+        audit.grant_id = Some(grant_id);
+        audit.target_scope = Some(scope);
+        audit.reason_code = "subscription_established".to_owned();
+        self.record_audit(audit).await?;
+        let events = self.storage.read_after(&authority_domain_id, cursor).await.map_err(map_storage_error_to_status)?;
+        let events = events.into_iter().filter_map(operator_facing_subscribe_event).map(Ok);
+        drop(_decision_guard);
         Ok(Response::new(Box::pin(stream::iter(events))))
     }
 
@@ -1353,6 +1391,13 @@ async fn find_diagnostics_result<S: Storage>(
         return Ok(Some((event.event_id, result, response_result)));
     }
     Ok(None)
+}
+
+fn subscription_scope() -> patchbay_contracts::patchbay::TargetScope {
+    patchbay_contracts::patchbay::TargetScope {
+        kind: patchbay_contracts::patchbay::TargetScopeKind::AuthorityDomain as i32,
+        ..patchbay_contracts::patchbay::TargetScope::default()
+    }
 }
 
 fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEvent> {
