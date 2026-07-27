@@ -34,6 +34,7 @@ import {
 import { createMobileElicitationSheet } from "./ui/elicitation.js";
 import { waitForOperatorLogin } from "./ui/login.js";
 import { createMarkdownRenderer } from "./ui/markdown.js";
+import { createRenderCoalescer } from "./ui/render-coalescer.js";
 import { createCockpitShell, type CockpitShell } from "./ui/shell.js";
 import type { SubmissionFeedback } from "./ui/session-detail.js";
 
@@ -91,6 +92,8 @@ interface ComposeOptions {
   idFactory?: () => string;
   startSubscription?: boolean;
   isMobile?: () => boolean;
+  /** Frame scheduler for render coalescing; defaults to requestAnimationFrame. */
+  scheduleFrame?: (callback: () => void) => void;
 }
 
 function composeCockpit(
@@ -223,10 +226,21 @@ function composeCockpit(
   mount.replaceChildren(shell.element);
 
   if (options.startSubscription !== false) {
+    // Fold every event as it arrives, but render at most once per frame: a
+    // streaming turn emits thousands of deltas, and one synchronous full
+    // timeline re-render per event saturates the main thread for the whole
+    // turn (found in live dogfooding: tool rows painted, text never did).
+    const frame =
+      options.scheduleFrame ??
+      (typeof globalThis.requestAnimationFrame === "function"
+        ? globalThis.requestAnimationFrame.bind(globalThis)
+        : (callback: () => void) => setTimeout(callback, 16));
+    const coalescer = createRenderCoalescer(frame, () => shell.update(projection.model));
     void (async () => {
       for await (const _ of reconciler.subscribe(authorityDomainId, abort.signal)) {
-        shell.update(projection.model);
+        coalescer.notify();
       }
+      coalescer.flush();
     })();
   }
 
