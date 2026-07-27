@@ -71,3 +71,10 @@ truncate at 240 chars with ellipsis; `tool_finished` previews the result.
   keep current two-row shape (single-row call lifecycle is a UX redesign,
   parked for the cockpit UX batch); one pre-existing sloppiness fixed along
   the way (requested and finished rows shared one id — now `…:finished`).
+
+## Review polish (2026-07-27)
+
+Operator feedback: the preview rendered as a separate sibling box — awkward.
+Folded the `<pre class="msg__detail">` INSIDE `msg__body` (one card) and
+restyled: no outer border/background, a top divider line instead. Suite 58/58
+and presentation conformance still green.

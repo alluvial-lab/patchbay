@@ -162,15 +162,15 @@ body > [data-patchbay-cockpit] {
   max-width: 100%;
   max-height: 12em;
   overflow: auto;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) 0 0;
   font: var(--font-size-xs)/1.5 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary, var(--color-bg-secondary));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
 }
 
 .cockpit .delivery-line {
