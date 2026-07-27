@@ -18,8 +18,11 @@ pub mod state;
 pub use ingest::{ingest_descendant_grant, ingest_grant, ingest_revocation};
 pub use issuer::IssuerContext;
 pub use operator::{
-    hash_principal_credential, ingest_control_surface_principal, ingest_operator_record,
-    rebuild_operator_registry, validate_operator_record, OperatorError, OperatorRegistry,
+    hash_principal_credential, ingest_control_surface_principal,
+    ingest_control_surface_revocation, ingest_operator_record,
+    ingest_operator_session_revocation, rebuild_operator_registry, validate_operator_record,
+    ControlSurfaceRevocationTarget, OperatorError, OperatorRegistry,
+    RecordedControlSurfaceRevocation, RecordedOperatorSessionRevocation, RevocationIngestResult,
 };
 pub use projection::{GrantLookup, GrantProjection};
 pub use registry::AuthorityRegistry;

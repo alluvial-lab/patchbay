@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle-session-principal-revocation-core-state
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: [epic-revocation-lifecycle-session-principal-revocation-contract-model]
@@ -47,3 +47,13 @@ secret exclusion, accepted-Operation `continue` semantics, and exhaustive
 Consumes the generated contract/model checkpoint. Hold the existing submit
 guard across target lookup, atomic append, catch-up, and result construction so
 login/enrollment cannot race the revocation decision.
+
+## Implementation notes
+- Execution capability: inline implementation; the core authority projection and server issuer/session boundary form one serialized decision path.
+- Review weight: standard (project default).
+- Files changed: `core/src/authority/{operator,mod,registry,spawn_tail}.rs`, `core/src/acceptance/{elicitation,index}.rs`, `core/src/diagnostics/mod.rs`, `core/src/storage/audited.rs`, `server/src/{operator_session,state,issuer,service,admin_service}.rs`, and gRPC smoke fixtures.
+- Tests added/removed: existing trust-boundary and gRPC smoke coverage was updated for compound endpoint/device/session binding; all core/server tests remained intact.
+- Simplification: one replayed `OperatorRegistry` owns principal/endpoint/device fences; process-local sessions share one `OperatorSessionRegistry` and the existing `CoreDecisionGate`.
+- Discrepancies from design: raw session records remain process-local as designed; durable events carry only generation/fence identity and typed redacted audit attribution.
+- Adjacent issues parked: none.
+- Verification: `cargo test -p patchbay-core -p patchbay-core-server`, `cargo clippy -p patchbay-core -p patchbay-core-server --all-targets -- -D warnings`, and gRPC smoke/trust-boundary tests passed.

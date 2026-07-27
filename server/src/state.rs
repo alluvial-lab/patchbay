@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
     Grant, GrantId, Lsn, OperationKind, OperatorRecord, Session, SessionSnapshot, TargetScope,
+    Generation, OperatorSessionRevocation, ControlSurfaceRevocation,
     TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
@@ -12,10 +13,11 @@ use patchbay_core::{
         TargetNotFound, TargetResolver,
     },
     authority::{
-        ingest_control_surface_principal, ingest_grant as ingest_authority_grant,
-        ingest_revocation as ingest_authority_revocation, ingest_operator_record, AuthorityError,
-        AuthorityRegistry, GrantRecord, IssuerContext,
-        OperatorError, OperatorRegistry,
+        ingest_control_surface_principal, ingest_control_surface_revocation,
+        ingest_grant as ingest_authority_grant, ingest_operator_record,
+        ingest_operator_session_revocation, ingest_revocation as ingest_authority_revocation,
+        AuthorityError, AuthorityRegistry, ControlSurfaceRevocationTarget, GrantRecord,
+        IssuerContext, OperatorError, OperatorRegistry, RevocationIngestResult,
     },
     diagnostics::DiagnosticsProjection,
     session::SessionRegistry,
@@ -46,7 +48,7 @@ pub struct ProjectionState {
     elicitation_slots: LockedElicitationContractLookup,
     diagnostics: Arc<Mutex<DiagnosticsProjection>>,
     operators: Arc<Mutex<OperatorRegistry>>,
-    operator_sessions: OperatorSessionRegistry,
+    pub(crate) operator_sessions: OperatorSessionRegistry,
     last_applied_lsn: Arc<Mutex<u64>>,
     decision_gate: CoreDecisionGate,
 }
@@ -91,6 +93,7 @@ impl ProjectionState {
         let mut elicitation_slots = ElicitationSlotLayer::new();
         let mut diagnostics = DiagnosticsProjection::new();
         let mut operators = OperatorRegistry::new();
+        let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
         let mut last_applied_lsn = 0;
         for event in &events {
             last_applied_lsn = validate_next_event(event, authority_domain_id, last_applied_lsn)?;
@@ -108,6 +111,10 @@ impl ProjectionState {
             operators
                 .observe(event)
                 .map_err(|error| error.to_string())?;
+            operator_sessions
+                .observe(event)
+                .await
+                .map_err(|error| error.to_string())?;
         }
         diagnostics.reset_adapter_liveness();
 
@@ -118,7 +125,7 @@ impl ProjectionState {
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
             operators: Arc::new(Mutex::new(operators)),
-            operator_sessions: OperatorSessionRegistry::new(operator_session_ttl)?,
+            operator_sessions,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             decision_gate,
         })
@@ -321,6 +328,20 @@ impl ProjectionState {
                 .await
                 .observe(&event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            if event.payload.kind == patchbay_contracts::patchbay::StoredEventKind::ControlSurfaceRevocation as i32 {
+                let revocation: ControlSurfaceRevocation = prost::Message::decode(event.payload.payload.as_slice())
+                    .map_err(|error| StorageError::CorruptRecord(format!("cannot decode control-surface revocation: {error}")))?;
+                let target = match revocation.target.ok_or_else(|| StorageError::CorruptRecord("control-surface revocation has no target".to_owned()))? {
+                    patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(id) => ControlSurfaceRevocationTarget::Principal(id),
+                    patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(id) => ControlSurfaceRevocationTarget::Endpoint(id),
+                    patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(id) => ControlSurfaceRevocationTarget::Device(id),
+                };
+                self.revoke_sessions_for_target(&target).await;
+            }
+            self.operator_sessions
+                .observe(&event)
+                .await
+                .map_err(StorageError::CorruptRecord)?;
             *cursor = next_lsn;
         }
         Ok(())
@@ -328,6 +349,32 @@ impl ProjectionState {
 
     pub async fn operator_exists(&self) -> bool {
         self.operators.lock().await.operator_record().is_some()
+    }
+
+    pub async fn principal_record(
+        &self,
+        principal_id: &str,
+    ) -> Option<ControlSurfacePrincipalRecord> {
+        self.operators
+            .lock()
+            .await
+            .principal_record(principal_id)
+            .cloned()
+    }
+
+    pub async fn has_endpoint(&self, endpoint_id: &patchbay_contracts::patchbay::EndpointId) -> bool {
+        self.operators.lock().await.has_endpoint(endpoint_id)
+    }
+
+    pub async fn has_device(&self, device_id: &patchbay_contracts::patchbay::DeviceId) -> bool {
+        self.operators.lock().await.has_device(device_id)
+    }
+
+    pub async fn count_matching_revocation_target(
+        &self,
+        target: &ControlSurfaceRevocationTarget,
+    ) -> u32 {
+        self.operators.lock().await.count_matching(target)
     }
 
     pub async fn verify_password(
@@ -354,25 +401,116 @@ impl ProjectionState {
 
     pub async fn issue_operator_session(
         &self,
-        actor_id: ActorId,
-    ) -> patchbay_contracts::patchbay::OperatorSessionId {
-        self.operator_sessions.issue(actor_id).await
+        binding: crate::operator_session::OperatorSessionBinding,
+    ) -> crate::operator_session::IssuedOperatorSession {
+        self.operator_sessions.issue(binding).await
     }
 
     pub async fn verify_operator_session(
         &self,
         session_id: &patchbay_contracts::patchbay::OperatorSessionId,
-        actor_id: &ActorId,
+        binding: &crate::operator_session::OperatorSessionBinding,
     ) -> bool {
-        self.operator_sessions.verify(session_id, actor_id).await
+        self.operator_sessions.verify(session_id, binding).await
     }
 
     pub async fn revoke_operator_session(
         &self,
         session_id: &patchbay_contracts::patchbay::OperatorSessionId,
-        actor_id: &ActorId,
+        binding: &crate::operator_session::OperatorSessionBinding,
     ) -> bool {
-        self.operator_sessions.revoke(session_id, actor_id).await
+        self.operator_sessions.revoke_current(session_id, binding).await
+    }
+
+    pub async fn current_operator_session_generation(&self, actor_id: &ActorId) -> Generation {
+        self.operator_sessions.current_generation(actor_id).await
+    }
+
+    pub async fn revoke_all_operator_sessions(
+        &self,
+        actor_id: &ActorId,
+        through: &Generation,
+    ) -> u32 {
+        self.operator_sessions.revoke_all_for_actor(actor_id, through).await
+    }
+
+    pub async fn revoke_sessions_for_target(
+        &self,
+        target: &ControlSurfaceRevocationTarget,
+    ) -> u32 {
+        match target {
+            ControlSurfaceRevocationTarget::Principal(principal_id) => {
+                let principal = self
+                    .operators
+                    .lock()
+                    .await
+                    .principal_record(principal_id)
+                    .cloned();
+                self.operator_sessions
+                    .revoke_matching_principal(|binding| {
+                        principal.as_ref().is_some_and(|record| {
+                            record.operator_actor_id.as_ref() == Some(&binding.actor_id)
+                                && record.endpoint_id.as_ref() == Some(&binding.endpoint_id)
+                                && record.device_id.as_ref() == Some(&binding.device_id)
+                                && record.endpoint_generation.as_ref() == Some(&binding.endpoint_generation)
+                        })
+                    })
+                    .await
+            }
+            ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => {
+                self.operator_sessions
+                    .revoke_matching_principal(|binding| &binding.endpoint_id == endpoint_id)
+                    .await
+            }
+            ControlSurfaceRevocationTarget::Device(device_id) => {
+                self.operator_sessions
+                    .revoke_matching_principal(|binding| &binding.device_id == device_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn ingest_operator_session_revocation<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        revocation: OperatorSessionRevocation,
+    ) -> Result<RevocationIngestResult, OperatorError> {
+        let actor = revocation
+            .operator_actor_id
+            .clone()
+            .ok_or_else(|| OperatorError::InvalidRecord("session revocation has no actor".to_owned()))?;
+        let generation = revocation
+            .invalidated_through_generation
+            .ok_or_else(|| OperatorError::InvalidRecord("session revocation has no generation".to_owned()))?;
+        let result = ingest_operator_session_revocation(
+            storage,
+            &mut *self.operators.lock().await,
+            authority_domain_id,
+            revocation,
+        )
+        .await?;
+        self.operator_sessions
+            .revoke_all_for_actor(&actor, &generation)
+            .await;
+        Ok(result)
+    }
+
+    pub async fn ingest_control_surface_revocation<S: Storage>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        revocation: ControlSurfaceRevocation,
+    ) -> Result<(RevocationIngestResult, ControlSurfaceRevocationTarget), OperatorError> {
+        let result = ingest_control_surface_revocation(
+            storage,
+            &mut *self.operators.lock().await,
+            authority_domain_id,
+            revocation,
+        )
+        .await?;
+        self.revoke_sessions_for_target(&result.1).await;
+        Ok(result)
     }
 
     pub async fn commands_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {

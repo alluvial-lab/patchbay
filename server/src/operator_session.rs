@@ -4,25 +4,49 @@ use std::{
     time::{Duration, Instant},
 };
 
-use patchbay_contracts::patchbay::{ActorId, OperatorSessionId};
+use patchbay_contracts::patchbay::{
+    ActorId, DeviceId, EndpointId, Generation, OperatorSessionId, StoredEventKind,
+    OperatorSessionRevocation,
+};
+use prost::Message;
 use tokio::sync::Mutex;
 
 use crate::identity::random_token;
+use patchbay_core::storage::RecordedEvent;
 
 pub const DEFAULT_OPERATOR_SESSION_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
-#[derive(Debug, Clone)]
-struct OperatorSessionRecord {
-    actor_id: ActorId,
-    expires_at: Instant,
-    revoked: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorSessionBinding {
+    pub actor_id: ActorId,
+    pub endpoint_id: EndpointId,
+    pub device_id: DeviceId,
+    pub endpoint_generation: Generation,
 }
 
-/// Core-owned, process-local operator sessions. Restart invalidates every
-/// token, which fails closed; callers must authenticate again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedOperatorSession {
+    pub id: OperatorSessionId,
+    pub session_generation: Generation,
+}
+
+#[derive(Debug, Clone)]
+struct OperatorSessionRecord {
+    binding: OperatorSessionBinding,
+    session_generation: Generation,
+    created_at: Instant,
+    last_used_at: Instant,
+    expires_at: Instant,
+    revoked_at: Option<Instant>,
+}
+
+/// Core-owned operator sessions. Opaque session ids remain process-local and
+/// are invalid after restart; only the durable generation fence is replayed.
 #[derive(Debug, Clone)]
 pub struct OperatorSessionRegistry {
     sessions: Arc<Mutex<HashMap<String, OperatorSessionRecord>>>,
+    next_generation: Arc<Mutex<HashMap<String, u64>>>,
+    invalidated_through_generation: Arc<Mutex<HashMap<String, u64>>>,
     ttl: Duration,
 }
 
@@ -33,44 +57,196 @@ impl OperatorSessionRegistry {
         }
         Ok(Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_generation: Arc::new(Mutex::new(HashMap::new())),
+            invalidated_through_generation: Arc::new(Mutex::new(HashMap::new())),
             ttl,
         })
     }
 
-    pub async fn issue(&self, actor_id: ActorId) -> OperatorSessionId {
+    pub async fn issue(&self, binding: OperatorSessionBinding) -> IssuedOperatorSession {
+        let mut next_generation = self.next_generation.lock().await;
+        let floor = self
+            .invalidated_through_generation
+            .lock()
+            .await
+            .get(&binding.actor_id.value)
+            .copied()
+            .unwrap_or(0);
+        let entry = next_generation
+            .entry(binding.actor_id.value.clone())
+            .or_insert(floor);
+        *entry = (*entry).max(floor);
+        let generation = entry.saturating_add(1);
+        *entry = generation;
+        drop(next_generation);
+
+        let now = Instant::now();
         let mut sessions = self.sessions.lock().await;
         let mut value = format!("operator-session-{}", random_token());
         while sessions.contains_key(&value) {
             value = format!("operator-session-{}", random_token());
         }
+        let id = OperatorSessionId { value: value.clone() };
         sessions.insert(
-            value.clone(),
+            value,
             OperatorSessionRecord {
-                actor_id,
-                expires_at: Instant::now() + self.ttl,
-                revoked: false,
+                binding,
+                session_generation: Generation { value: generation },
+                created_at: now,
+                last_used_at: now,
+                expires_at: now + self.ttl,
+                revoked_at: None,
             },
         );
-        OperatorSessionId { value }
+        IssuedOperatorSession {
+            id,
+            session_generation: Generation { value: generation },
+        }
     }
 
-    pub async fn verify(&self, session_id: &OperatorSessionId, actor_id: &ActorId) -> bool {
-        let sessions = self.sessions.lock().await;
-        sessions.get(&session_id.value).is_some_and(|session| {
-            !session.revoked && Instant::now() < session.expires_at && &session.actor_id == actor_id
-        })
-    }
-
-    pub async fn revoke(&self, session_id: &OperatorSessionId, actor_id: &ActorId) -> bool {
+    pub async fn verify(
+        &self,
+        session_id: &OperatorSessionId,
+        binding: &OperatorSessionBinding,
+    ) -> bool {
         let mut sessions = self.sessions.lock().await;
         let Some(session) = sessions.get_mut(&session_id.value) else {
             return false;
         };
-        if &session.actor_id != actor_id || session.revoked || Instant::now() >= session.expires_at
+        let now = Instant::now();
+        if session.revoked_at.is_some()
+            || now >= session.expires_at
+            || session.binding != *binding
         {
             return false;
         }
-        session.revoked = true;
+        session.last_used_at = now;
         true
     }
+
+    pub async fn revoke_current(
+        &self,
+        session_id: &OperatorSessionId,
+        binding: &OperatorSessionBinding,
+    ) -> bool {
+        let mut sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get_mut(&session_id.value) else {
+            return false;
+        };
+        if session.binding != *binding || session.revoked_at.is_some() || Instant::now() >= session.expires_at {
+            return false;
+        }
+        session.revoked_at = Some(Instant::now());
+        true
+    }
+
+    pub async fn current_generation(&self, actor_id: &ActorId) -> Generation {
+        let next = self
+            .next_generation
+            .lock()
+            .await
+            .get(&actor_id.value)
+            .copied()
+            .unwrap_or(0);
+        let floor = self
+            .invalidated_through_generation
+            .lock()
+            .await
+            .get(&actor_id.value)
+            .copied()
+            .unwrap_or(0);
+        Generation {
+            value: next.max(floor).max(1),
+        }
+    }
+
+    pub async fn revoke_all_for_actor(
+        &self,
+        actor_id: &ActorId,
+        through: &Generation,
+    ) -> u32 {
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock().await;
+        let mut revoked = 0;
+        for session in sessions.values_mut() {
+            if session.binding.actor_id == *actor_id
+                && session.session_generation.value <= through.value
+                && session.revoked_at.is_none()
+                && now < session.expires_at
+            {
+                session.revoked_at = Some(now);
+                revoked += 1;
+            }
+        }
+        revoked
+    }
+
+    pub async fn revoke_matching_principal(
+        &self,
+        binding: impl Fn(&OperatorSessionBinding) -> bool,
+    ) -> u32 {
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock().await;
+        let mut revoked = 0;
+        for session in sessions.values_mut() {
+            if binding(&session.binding)
+                && session.revoked_at.is_none()
+                && now < session.expires_at
+            {
+                session.revoked_at = Some(now);
+                revoked += 1;
+            }
+        }
+        revoked
+    }
+
+    /// Fold a durable revoke-all event into the generation fence. Session
+    /// records are process-local, so replay only restores the fence itself.
+    pub async fn observe(&self, event: &RecordedEvent) -> Result<(), String> {
+        if StoredEventKind::try_from(event.payload.kind).ok()
+            != Some(StoredEventKind::OperatorSessionRevocation)
+        {
+            return Ok(());
+        }
+        let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())
+            .map_err(|error| format!("cannot decode operator session revocation: {error}"))?;
+        let actor = revocation
+            .operator_actor_id
+            .ok_or_else(|| "operator session revocation has no actor".to_owned())?;
+        let generation = revocation
+            .invalidated_through_generation
+            .ok_or_else(|| "operator session revocation has no generation".to_owned())?;
+        let mut floors = self.invalidated_through_generation.lock().await;
+        let floor = floors.entry(actor.value.clone()).or_insert(0);
+        if generation.value > *floor {
+            *floor = generation.value;
+        }
+        drop(floors);
+        let mut next = self.next_generation.lock().await;
+        let value = next.entry(actor.value.clone()).or_insert(0);
+        *value = (*value).max(generation.value);
+        drop(next);
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if session.binding.actor_id == actor
+                && session.session_generation.value <= generation.value
+                && session.revoked_at.is_none()
+                && now < session.expires_at
+            {
+                session.revoked_at = Some(now);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub async fn session_count(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+}
+
+#[allow(dead_code)]
+fn _record_fields_are_intentional(record: &OperatorSessionRecord) -> (&Instant, &Instant) {
+    (&record.created_at, &record.last_used_at)
 }

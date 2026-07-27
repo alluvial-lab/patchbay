@@ -195,7 +195,21 @@ where
             .await
             .map_err(map_storage_error_to_status)?;
 
-        let session_id = self.control.state.issue_operator_session(actor_id.clone()).await;
+        let session_binding = crate::operator_session::OperatorSessionBinding {
+            actor_id: actor_id.clone(),
+            endpoint_id: principal_credential
+                .endpoint_id
+                .clone()
+                .ok_or_else(|| Status::internal("issued principal has no endpoint"))?,
+            device_id: principal_credential
+                .device_id
+                .clone()
+                .ok_or_else(|| Status::internal("issued principal has no device"))?,
+            endpoint_generation: principal_credential
+                .endpoint_generation
+                .ok_or_else(|| Status::internal("issued principal has no endpoint generation"))?,
+        };
+        let session = self.control.state.issue_operator_session(session_binding).await;
         let mut session_audit = patchbay_core::storage::AuditRecordDraft::new(
             now_timestamp()?,
             patchbay_contracts::patchbay::AuditEventKind::OperatorSessionCreated,
@@ -206,8 +220,9 @@ where
         setup.consumed = true;
         Ok(Response::new(BootstrapResult {
             grant_id: Some(grant_id),
-            session_id: Some(session_id),
+            session_id: Some(session.id),
             principal: Some(principal_credential),
+            operator_session_generation: Some(session.session_generation),
         }))
     }
 }

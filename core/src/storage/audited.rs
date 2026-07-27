@@ -184,6 +184,44 @@ pub fn audit_draft_for_source(
             draft.kind = AuditEventKind::OperatorSessionCreated;
             draft.reason_code = "control_surface_enrolled".to_owned();
         }
+        StoredEventKind::OperatorSessionRevocation => {
+            let revocation = patchbay_contracts::patchbay::OperatorSessionRevocation::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!("cannot decode operator-session revocation for audit: {error}"))
+            })?;
+            draft.actor_id = revocation.operator_actor_id;
+            draft.endpoint_id = revocation.verified_revoker.as_ref().and_then(|value| value.endpoint_id.clone());
+            draft.device_id = revocation.verified_revoker.as_ref().and_then(|value| value.device_id.clone());
+            draft.kind = AuditEventKind::OperatorSessionRevoked;
+            draft.reason_code = revocation.reason_code;
+        }
+        StoredEventKind::ControlSurfaceRevocation => {
+            let revocation = patchbay_contracts::patchbay::ControlSurfaceRevocation::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!("cannot decode control-surface revocation for audit: {error}"))
+            })?;
+            draft.actor_id = revocation.verified_revoker.as_ref().and_then(|value| value.actor_id.clone());
+            draft.endpoint_id = revocation.verified_revoker.as_ref().and_then(|value| value.endpoint_id.clone());
+            draft.device_id = revocation.verified_revoker.as_ref().and_then(|value| value.device_id.clone());
+            draft.kind = match revocation.target.as_ref() {
+                Some(patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(id)) => {
+                    draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
+                        kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
+                        resource_id: id.clone(),
+                        ..Default::default()
+                    });
+                    AuditEventKind::ControlSurfacePrincipalRevoked
+                }
+                Some(patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(id)) => {
+                    draft.endpoint_id = Some(id.clone());
+                    AuditEventKind::ControlSurfaceEndpointRevoked
+                }
+                Some(patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(id)) => {
+                    draft.device_id = Some(id.clone());
+                    AuditEventKind::ControlSurfaceDeviceRevoked
+                }
+                None => return Err(StorageError::CorruptRecord("control-surface revocation has no target".to_owned())),
+            };
+            draft.reason_code = revocation.reason_code;
+        }
         StoredEventKind::SessionState | StoredEventKind::Elicitation => {
             return Err(StorageError::UnsupportedOperation);
         }

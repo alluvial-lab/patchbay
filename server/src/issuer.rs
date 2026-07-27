@@ -4,7 +4,10 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::authority::IssuerContext;
 use tonic::{Request, Status};
 
-use crate::state::ProjectionState;
+use crate::{
+    operator_session::OperatorSessionBinding,
+    state::ProjectionState,
+};
 
 pub const OPERATOR_SESSION_HEADER: &str = "x-patchbay-operator-session-id";
 pub const OPERATOR_ID_HEADER: &str = "x-patchbay-operator-id";
@@ -57,7 +60,7 @@ impl MetadataIssuerContext {
                 "transport principal belongs to another authority domain",
             ));
         }
-        let verified_actor = principal.operator_actor_id.ok_or_else(|| {
+        let verified_actor = principal.operator_actor_id.clone().ok_or_else(|| {
             Status::internal("verified transport principal has no operator actor")
         })?;
         if verified_actor != claimed_actor {
@@ -65,24 +68,28 @@ impl MetadataIssuerContext {
                 "operator actor is not bound to the verified transport principal",
             ));
         }
-        if !state
-            .verify_operator_session(&operator_session_id, &verified_actor)
-            .await
-        {
-            return Err(Status::unauthenticated(
-                "invalid, expired, revoked, or actor-mismatched operator session",
-            ));
-        }
         let verified_endpoint = principal
             .endpoint_id
+            .clone()
             .ok_or_else(|| Status::internal("verified transport principal has no endpoint"))?;
         let verified_device = principal
             .device_id
+            .clone()
             .ok_or_else(|| Status::internal("verified transport principal has no device"))?;
         let endpoint_generation = principal.endpoint_generation.ok_or_else(|| {
             Status::internal("verified transport principal has no endpoint generation")
         })?;
-
+        let binding = OperatorSessionBinding {
+            actor_id: verified_actor.clone(),
+            endpoint_id: verified_endpoint.clone(),
+            device_id: verified_device.clone(),
+            endpoint_generation,
+        };
+        if !state.verify_operator_session(&operator_session_id, &binding).await {
+            return Err(Status::unauthenticated(
+                "invalid, expired, revoked, or actor-mismatched operator session",
+            ));
+        }
         Ok(Self {
             operator_session_id,
             verified_actor,
@@ -96,6 +103,16 @@ impl MetadataIssuerContext {
     #[must_use]
     pub fn operator_session_id(&self) -> &OperatorSessionId {
         &self.operator_session_id
+    }
+
+    #[must_use]
+    pub fn binding(&self) -> OperatorSessionBinding {
+        OperatorSessionBinding {
+            actor_id: self.verified_actor.clone(),
+            endpoint_id: self.verified_endpoint.clone(),
+            device_id: self.verified_device.clone(),
+            endpoint_generation: self.endpoint_generation,
+        }
     }
 }
 
@@ -203,12 +220,27 @@ mod tests {
                 .unwrap();
         }
 
-        let session = state.issue_operator_session(actor_id.clone()).await;
-        let web = verified_request("web-principal", "web-secret", &session.value);
+        let session = state
+            .issue_operator_session(OperatorSessionBinding {
+                actor_id: actor_id.clone(),
+                endpoint_id: EndpointId { value: "web".to_owned() },
+                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_generation: Generation { value: 3 },
+            })
+            .await;
+        let web = verified_request("web-principal", "web-secret", &session.id.value);
         let web = MetadataIssuerContext::from_request(&web, authority_domain_id.clone(), &state)
             .await
             .unwrap();
-        let cli = verified_request("cli-principal", "cli-secret", &session.value);
+        let cli_session = state
+            .issue_operator_session(OperatorSessionBinding {
+                actor_id: actor_id.clone(),
+                endpoint_id: EndpointId { value: "cli".to_owned() },
+                device_id: DeviceId { value: "cli-host".to_owned() },
+                endpoint_generation: Generation { value: 7 },
+            })
+            .await;
+        let cli = verified_request("cli-principal", "cli-secret", &cli_session.id.value);
         let cli = MetadataIssuerContext::from_request(&cli, authority_domain_id, &state)
             .await
             .unwrap();
@@ -309,12 +341,15 @@ mod tests {
         );
 
         let other_actor_session = state
-            .issue_operator_session(ActorId {
-                value: "another-operator".to_owned(),
+            .issue_operator_session(OperatorSessionBinding {
+                actor_id: ActorId { value: "another-operator".to_owned() },
+                endpoint_id: EndpointId { value: "web".to_owned() },
+                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_generation: Generation { value: 1 },
             })
             .await;
         let mismatched =
-            verified_request("web-principal", "web-secret", &other_actor_session.value);
+            verified_request("web-principal", "web-secret", &other_actor_session.id.value);
         assert_eq!(
             MetadataIssuerContext::from_request(&mismatched, authority_domain_id.clone(), &state,)
                 .await
@@ -323,13 +358,25 @@ mod tests {
             tonic::Code::Unauthenticated
         );
 
-        let revoked_session = state.issue_operator_session(actor_id.clone()).await;
+        let revoked_session = state
+            .issue_operator_session(OperatorSessionBinding {
+                actor_id: actor_id.clone(),
+                endpoint_id: EndpointId { value: "web".to_owned() },
+                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_generation: Generation { value: 1 },
+            })
+            .await;
         assert!(
             state
-                .revoke_operator_session(&revoked_session, &actor_id)
+                .revoke_operator_session(&revoked_session.id, &OperatorSessionBinding {
+                    actor_id: actor_id.clone(),
+                    endpoint_id: EndpointId { value: "web".to_owned() },
+                    device_id: DeviceId { value: "web-host".to_owned() },
+                    endpoint_generation: Generation { value: 1 },
+                })
                 .await
         );
-        let revoked = verified_request("web-principal", "web-secret", &revoked_session.value);
+        let revoked = verified_request("web-principal", "web-secret", &revoked_session.id.value);
         assert_eq!(
             MetadataIssuerContext::from_request(&revoked, authority_domain_id.clone(), &state,)
                 .await
@@ -338,9 +385,16 @@ mod tests {
             tonic::Code::Unauthenticated
         );
 
-        let expired_session = state.issue_operator_session(actor_id).await;
+        let expired_session = state
+            .issue_operator_session(OperatorSessionBinding {
+                actor_id,
+                endpoint_id: EndpointId { value: "web".to_owned() },
+                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_generation: Generation { value: 1 },
+            })
+            .await;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let expired = verified_request("web-principal", "web-secret", &expired_session.value);
+        let expired = verified_request("web-principal", "web-secret", &expired_session.id.value);
         assert_eq!(
             MetadataIssuerContext::from_request(&expired, authority_domain_id, &state)
                 .await

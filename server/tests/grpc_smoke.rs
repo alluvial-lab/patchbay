@@ -198,11 +198,18 @@ impl Storage for FailPostAppendReadOnceStorage {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TestAuth {
+    session_id: String,
+    principal_id: String,
+    principal_secret: String,
+}
+
 struct TestServer {
     client: ControlServiceClient<Channel>,
     storage: RusqliteStorage,
     task: JoinHandle<()>,
-    operator_session: String,
+    operator_session: TestAuth,
     _directory: TempDir,
 }
 
@@ -546,7 +553,7 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
 #[tokio::test]
 async fn grant_subject_uses_verified_actor_not_operator_session() {
     let mut server = start_server().await;
-    assert_ne!(server.operator_session, OPERATOR_ACTOR);
+    assert_ne!(server.operator_session.session_id, OPERATOR_ACTOR);
 
     let result = server
         .client
@@ -699,7 +706,7 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .query_audit(&domain(), AuditPageSpec {
             kinds: vec![AuditEventKind::GrantRevoked],
             actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-            endpoint_id: Some(EndpointId { value: "patchbay-web-server".to_owned() }),
+            endpoint_id: Some(EndpointId { value: "grpc-smoke-login".to_owned() }),
             command_id: None,
             grant_id: Some(GrantId { value: "operator-grant".to_owned() }),
             target: None,
@@ -1070,7 +1077,7 @@ async fn start_server() -> TestServer {
     }
 }
 
-async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>, String)
+async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
@@ -1080,7 +1087,7 @@ where
 async fn serve_with_clock<S>(
     storage: S,
     clock: Arc<dyn Clock>,
-) -> (ControlServiceClient<Channel>, JoinHandle<()>, String)
+) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
@@ -1127,7 +1134,18 @@ where
         .operator_session_id
         .expect("test login returns a session")
         .value;
-    (client, task, operator_session)
+    let principal = login
+        .principal
+        .expect("test login returns a principal credential");
+    (
+        client,
+        task,
+        TestAuth {
+            session_id: operator_session,
+            principal_id: principal.principal_id,
+            principal_secret: principal.secret,
+        },
+    )
 }
 
 async fn seed_authority_and_session(storage: &RusqliteStorage) {
@@ -1252,7 +1270,7 @@ fn core_request<T>(message: T) -> Request<T> {
     request
 }
 
-fn authenticated_request<T>(message: T, secret: &str, operator_session: &str) -> Request<T> {
+fn authenticated_request<T>(message: T, secret: &str, operator_session: &TestAuth) -> Request<T> {
     let mut request = Request::new(message);
     request.metadata_mut().insert(
         CORE_SECRET_HEADER,
@@ -1261,6 +1279,7 @@ fn authenticated_request<T>(message: T, secret: &str, operator_session: &str) ->
     request.metadata_mut().insert(
         OPERATOR_SESSION_HEADER,
         operator_session
+            .session_id
             .parse()
             .expect("test operator session is valid metadata"),
     );
@@ -1272,13 +1291,15 @@ fn authenticated_request<T>(message: T, secret: &str, operator_session: &str) ->
     );
     request.metadata_mut().insert(
         PRINCIPAL_ID_HEADER,
-        PRINCIPAL_ID
+        operator_session
+            .principal_id
             .parse()
             .expect("test principal id is valid metadata"),
     );
     request.metadata_mut().insert(
         PRINCIPAL_SECRET_HEADER,
-        PRINCIPAL_SECRET
+        operator_session
+            .principal_secret
             .parse()
             .expect("test principal secret is valid metadata"),
     );

@@ -63,6 +63,8 @@ impl CommandIndex {
             | StoredEventKind::SessionState
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
+            | StoredEventKind::OperatorSessionRevocation
+            | StoredEventKind::ControlSurfaceRevocation
             | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => Ok(()),
         }
