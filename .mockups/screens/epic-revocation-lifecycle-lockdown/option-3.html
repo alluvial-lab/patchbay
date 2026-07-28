@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay lockdown — Option 3: Command palette, keyboard-first</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; font: 13px/1.4 system-ui, sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta strong { font-weight: 600; } .mock-meta span { color: #8b949e; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); }
+    .console { min-height: calc(100vh - 37px); display: grid; grid-template-rows: auto 1fr auto; }
+    .topline, .statusbar, .detail-heading, .message-meta, .blocked-action, .palette-row { display: flex; align-items: center; gap: var(--space-3); }
+    .topline { justify-content: space-between; flex-wrap: wrap; } .topline-actions, .statusbar__right { display: flex; gap: var(--space-2); align-items: center; }
+    .workarea { display: grid; grid-template-columns: minmax(280px, 34%) 1fr; min-height: 0; }
+    .sessions { border-right: 1px solid var(--color-border); overflow: auto; } .sessions-header, .detail { padding: var(--space-3) var(--space-4); }
+    .detail { min-width: 0; display: grid; grid-template-rows: auto 1fr auto; gap: var(--space-3); } .detail-heading { justify-content: space-between; }
+    .transcript { display: grid; align-content: start; gap: var(--space-2); overflow: auto; } .message { max-width: 80ch; } .message p { margin: var(--space-2) 0 0; }
+    .message-meta { justify-content: space-between; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+    .identity { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+    .statusbar { justify-content: space-between; padding: var(--space-1) var(--space-3); border-top: 1px solid var(--color-border); background: var(--color-bg-secondary); font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); }
+    .blocked-action { justify-content: space-between; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-secondary); }
+    .readonly-dim { opacity: .58; }
+    .palette-layer { position: fixed; inset: 0; display: grid; place-items: start center; padding-top: min(14vh, var(--space-16)); background: rgb(0 0 0 / .55); /* TODO: add overlay token to tokens.css */ }
+    .palette { width: min(720px, calc(100% - var(--space-6))); display: grid; gap: var(--space-3); }
+    .palette-results { display: grid; gap: var(--space-1); } .palette-row { width: 100%; justify-content: space-between; text-align: left; }
+    .palette-row[aria-selected="true"] { border-color: var(--color-accent); }
+    .palette-shortcut { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+    .palette-layer[hidden], dialog[hidden] { display: none; }
+    dialog.card { max-width: min(550px, calc(100% - var(--space-8))); } dialog::backdrop { background: rgb(0 0 0 / .6); /* TODO: add overlay token to tokens.css */ }
+    .dialog-form { display: grid; gap: var(--space-4); }.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+    @media (max-width: 760px) { .workarea { display: block; } .sessions { border-right: 0; } .detail { display: none; } .sessions[data-detail-open="true"] { display: none; } .workarea:has(.sessions[data-detail-open="true"]) .detail { display: grid; min-height: 72vh; } .mock-meta { flex-direction: column; gap: var(--space-1); align-items: flex-start; } .statusbar__right { display: none; } .palette-layer { padding-top: var(--space-8); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 3 — Command-palette, keyboard-first</strong><span>High-density operational cockpit: destructive controls are searchable commands, never scattered chrome.</span></header>
+  <main class="console" id="console">
+    <header class="nav-bar topline"><span class="nav-bar__brand">PATCHBAY :: default</span><div class="topline-actions"><span class="identity">operator@web-local-01</span><button class="btn btn-secondary btn--sm" id="openPalette" type="button">Command palette <kbd>Ctrl K</kbd></button><button class="btn btn-ghost btn--sm" id="previewBtn" type="button" aria-pressed="false">Preview lockdown</button></div></header>
+    <div class="alert alert--danger" id="lockBanner" role="alert" hidden><div><p class="alert__title">LOCKDOWN / default</p><p class="alert__body">suspected endpoint compromise · 2026-07-18 14:32 UTC · bootstrap exit: <code>patchbay-cli lockdown-exit</code></p></div></div>
+    <div class="workarea">
+      <aside class="sessions" id="sessions"><div class="sessions-header"><strong>SESSION INDEX</strong><p class="identity">2 authoritative records · LSN 8401</p></div><button class="session-row session-row--active" type="button" data-session><span class="session-row__label">patchbay-main</span><span class="session-row__identity">pi/local/patchbay-main/gen-1</span><span class="session-row__context">openai-codex/gpt-5.6-sol · /home/agent/projects/patchbay</span><span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span></button><button class="session-row" type="button" data-session><span class="session-row__label">release-check</span><span class="session-row__identity">pi/local/release-check/gen-1</span><span class="session-row__context">openai-codex/gpt-5.6-terra</span><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></button></aside>
+      <section class="detail" aria-labelledby="title"><header class="detail-heading"><div><h1 id="title">patchbay-main</h1><p class="identity">adapter=pi; scope=local; runtime=patchbay-main; generation=1</p></div><span class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span><span class="command-step__lsn">cmd-224</span></span></header><div class="transcript"><article class="card message"><div class="message-meta"><strong>OBS / pi</strong><span>LSN 8401</span></div><p>Reading the security and UX requirements for lockdown.</p></article><article class="card message"><div class="message-meta"><strong>OP / operator</strong><span class="delivery-line">delivered · cmd-224</span></div><p>Generate four distinct emergency-control mockup directions.</p></article><div class="blocked-action readonly-dim" id="blockedNote" hidden><span><strong>Composer and session actions are disabled during lockdown.</strong> New Operations are rejected before acceptance.</span><span class="identity">reason: lockdown</span></div></div><footer class="composer"><div><label class="identity" for="prompt">INSTRUCT / new idempotency key</label><textarea class="composer__input" id="prompt" placeholder="Type instruction…"></textarea></div><div class="composer__actions"><button class="btn btn-secondary" id="interrupt" type="button">Interrupt</button><button class="btn btn-primary" id="send" type="button">Send</button></div></footer></section>
+    </div>
+    <footer class="statusbar"><span>Ctrl/Cmd+K: operations · type “lockdown” for emergency posture</span><span class="statusbar__right"><span>adapter pi / generation 1</span><span>cursor 8401</span></span></footer>
+  </main>
+  <section class="palette-layer" id="paletteLayer" aria-label="Command palette"><div class="card card--raised palette"><div class="field"><label class="field__label" for="commandSearch">Command</label><input class="input" id="commandSearch" value="lockdown" autocomplete="off" aria-controls="commandResults"><p class="field__helper">Press Enter to select · Esc to close</p></div><div class="palette-results" id="commandResults" role="listbox"><button class="btn btn-secondary palette-row" type="button" data-command="lockdown" aria-selected="true"><span><strong>Enter security lockdown</strong><span class="identity">Reject Operations; stale runtime views; fresh login required</span></span><span class="palette-shortcut">ENTER</span></button><button class="btn btn-ghost palette-row" type="button" data-command="revoke current session"><span><strong>Revoke current browser session</strong><span class="identity">endpoint web-local-01</span></span><span class="palette-shortcut">SEC</span></button><button class="btn btn-ghost palette-row" type="button" data-command="revoke all sessions"><span><strong>Revoke all operator sessions</strong><span class="identity">generation fence for operator</span></span><span class="palette-shortcut">SEC</span></button><button class="btn btn-ghost palette-row" type="button" data-command="revoke endpoint"><span><strong>Revoke endpoint/device</strong><span class="identity">choose a registered endpoint</span></span><span class="palette-shortcut">SEC</span></button><button class="btn btn-ghost palette-row" type="button" data-command="revoke grant"><span><strong>Revoke grant</strong><span class="identity">stop future acceptance for target scope</span></span><span class="palette-shortcut">SEC</span></button></div></div></section>
+  <dialog class="card" id="confirmDialog" aria-labelledby="confirmTitle"><form class="dialog-form" method="dialog"><div><h2 id="confirmTitle">Enter security lockdown?</h2><p>This command rejects future Operations in <code>default</code>. It does not silently cancel already accepted work.</p></div><div class="field"><label class="field__label" for="word">Type <code>LOCKDOWN</code></label><input class="input" id="word" autocomplete="off"></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="enter" value="default" disabled>Enter lockdown</button></div></form></dialog>
+  <script>
+    const layer = document.querySelector('#paletteLayer'), search = document.querySelector('#commandSearch'), dialog = document.querySelector('#confirmDialog');
+    const consoleEl = document.querySelector('#console'), banner = document.querySelector('#lockBanner'), blocked = document.querySelector('#blockedNote'), preview = document.querySelector('#previewBtn');
+    const controls = [document.querySelector('#prompt'), document.querySelector('#send'), document.querySelector('#interrupt')];
+    function palette(open) { layer.hidden = !open; if (open) { search.focus(); search.select(); } }
+    function lockdown(on) { banner.hidden = !on; blocked.hidden = !on; controls.forEach(c => c.disabled = on); preview.setAttribute('aria-pressed', String(on)); preview.textContent = on ? 'Return to preview' : 'Preview lockdown'; }
+    document.querySelector('#openPalette').addEventListener('click', () => palette(true));
+    document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); palette(true); } if (e.key === 'Escape') palette(false); if (e.key === 'Enter' && !layer.hidden && document.activeElement === search) { dialog.showModal(); palette(false); } });
+    search.addEventListener('input', () => document.querySelectorAll('[data-command]').forEach(row => row.hidden = !row.dataset.command.includes(search.value.toLowerCase())));
+    document.querySelector('[data-command="lockdown"]').addEventListener('click', () => { palette(false); dialog.showModal(); });
+    const word = document.querySelector('#word'), enter = document.querySelector('#enter'); word.addEventListener('input', () => enter.disabled = word.value !== 'LOCKDOWN'); enter.addEventListener('click', () => lockdown(true));
+    preview.addEventListener('click', () => lockdown(preview.getAttribute('aria-pressed') !== 'true')); document.querySelectorAll('[data-session]').forEach(row => row.addEventListener('click', () => document.querySelector('#sessions').dataset.detailOpen = 'true'));
+  </script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay lockdown — Option 1: Inline banner + header trigger</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    /* Shared mock chrome; page rules below only compose existing primitives. */
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; font: 13px/1.4 system-ui, sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta strong { font-weight: 600; } .mock-meta span { color: #8b949e; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); }
+    .cockpit { min-height: calc(100vh - 37px); display: grid; grid-template-rows: auto 1fr; }
+    .app-header { justify-content: space-between; flex-wrap: wrap; }
+    .header-actions, .banner-copy, .detail-heading, .message-head, .lock-note { display: flex; align-items: center; gap: var(--space-3); }
+    .app-body { display: grid; grid-template-columns: minmax(240px, 30%) 1fr; min-height: 0; }
+    .session-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .list-heading, .detail { padding: var(--space-4); }
+    .list-heading { display: flex; justify-content: space-between; align-items: center; }
+    .detail { display: grid; gap: var(--space-4); grid-template-rows: auto 1fr auto; min-width: 0; }
+    .transcript { display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
+    .message { max-width: 72ch; }
+    .message--operator { justify-self: end; }
+    .message p { margin: var(--space-2) 0 0; }
+    .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+    .lockdown-banner { margin: var(--space-3) var(--space-4) 0; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .lockdown-banner[hidden], .readonly-note[hidden] { display: none; }
+    .readonly-note { margin: 0; }
+    dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
+    dialog::backdrop { background: rgb(0 0 0 / 0.6); /* TODO: add overlay token to tokens.css */ }
+    .dialog-form { display: grid; gap: var(--space-4); }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+    @media (max-width: 760px) {
+      .app-body { display: block; } .session-list { border-right: 0; } .detail { display: none; }
+      .session-list[data-detail-open="true"] { display: none; } .app-body:has(.session-list[data-detail-open="true"]) .detail { display: grid; min-height: 70vh; }
+      .mock-meta { align-items: flex-start; flex-direction: column; gap: var(--space-1); } .lockdown-banner { margin: var(--space-2); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: 0.01ms !important; } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 1 — Inline banner + header trigger</strong><span>Conventional, calm emergency control: obvious in the header, persistent only when active.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <div class="header-actions">
+        <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+        <button class="btn btn-secondary btn--sm" id="previewBtn" type="button" aria-pressed="false">Preview lockdown</button>
+        <button class="btn btn-ghost btn--sm" id="emergencyBtn" type="button">Emergency</button>
+      </div>
+    </header>
+    <section class="alert alert--danger lockdown-banner" id="lockdownBanner" role="alert" hidden>
+      <div class="banner-copy"><div><p class="alert__title">Security lockdown active</p><p class="alert__body">Reason: suspected endpoint compromise · entered 2026-07-18 14:32 UTC</p></div></div>
+      <div><span class="identity">Exit from trusted console:</span> <code>patchbay-cli lockdown-exit</code></div>
+    </section>
+    <div class="app-body">
+      <aside class="session-list" id="sessionList" aria-label="Sessions">
+        <div class="list-heading"><strong>Sessions</strong><span class="attention-badge" aria-label="One pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></div>
+        <button class="session-row session-row--active" type="button" data-session><span class="session-row__label">patchbay-main</span><span class="session-row__identity">pi · local · patchbay-main · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span></button>
+        <button class="session-row" type="button" data-session><span class="session-row__label">release-check</span><span class="session-row__identity">pi · local · release-check · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></button>
+      </aside>
+      <section class="detail" aria-labelledby="detailTitle">
+        <div class="detail-heading"><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
+        <p class="alert alert--warning readonly-note" id="readonlyNote" role="status" hidden><span><strong>Read-only during lockdown.</strong> Controls remain visible for continuity; new Operations are rejected until trusted bootstrap exit.</span></p>
+        <div class="transcript" aria-label="Session transcript"><article class="card message"><div class="message-head"><strong>Pi</strong><span class="delivery-line">Observation · source authenticated</span></div><p>Checked protocol presentation bindings. Reviewing the active worktree now.</p></article><article class="card message message--operator"><div class="message-head"><strong>operator</strong><span class="delivery-line">Command delivered</span></div><p>Continue with the cockpit mockup.</p></article><section class="card" aria-labelledby="revocationTitle"><div class="detail-heading"><div><strong id="revocationTitle">Authority &amp; revocation</strong><p class="identity">Natural homes: this session, operator sessions, device, and target grant</p></div></div><div class="btn-group"><button class="btn btn-secondary btn--sm" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected." data-revoke="current browser session">Revoke current session</button><button class="btn btn-secondary btn--sm" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected." data-revoke="all operator sessions">Revoke all sessions</button><button class="btn btn-secondary btn--sm" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected." data-revoke="endpoint web-local-01">Revoke endpoint</button><button class="btn btn-secondary btn--sm" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected." data-revoke="grant grant-session-main">Revoke grant</button></div><p class="identity" id="revokeStatus" role="status">Revocation preserves audit history and prevents future authority.</p></section></div>
+        <footer class="composer"><div><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" placeholder="Send an instruction to patchbay-main"></textarea><div class="composer__idempotency">New command · idempotency key generated on submit</div></div><div class="composer__actions"><span tabindex="0" title="Disabled during lockdown: new Operations are rejected."><button class="btn btn-secondary" id="interrupt" type="button">Interrupt</button></span><span tabindex="0" title="Disabled during lockdown: new Operations are rejected."><button class="btn btn-primary" id="send" type="button">Send</button></span></div></footer>
+      </section>
+    </div>
+  </main>
+  <dialog class="card" id="confirmDialog" aria-labelledby="confirmTitle">
+    <form class="dialog-form" method="dialog"><div><h2 id="confirmTitle">Enter security lockdown?</h2><p>New Operations will be rejected, runtime sessions marked stale, and every operator session will require fresh authentication. Exit only through a configured trusted bootstrap channel.</p></div><div class="field"><label class="field__label" for="confirmWord">Type <code>LOCKDOWN</code> to confirm</label><input class="input" id="confirmWord" autocomplete="off" spellcheck="false"><p class="field__helper">Authority domain: <code>default</code></p></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="activateBtn" value="default" disabled>Enter lockdown</button></div></form>
+  </dialog>
+  <script>
+    const dialog = document.querySelector('#confirmDialog'), word = document.querySelector('#confirmWord'), activate = document.querySelector('#activateBtn');
+    const banner = document.querySelector('#lockdownBanner'), note = document.querySelector('#readonlyNote'), preview = document.querySelector('#previewBtn');
+    const controls = [document.querySelector('#send'), document.querySelector('#interrupt'), document.querySelector('#instruction'), ...document.querySelectorAll('[data-lockable]')];
+    function lockdown(on) { banner.hidden = !on; note.hidden = !on; controls.forEach(el => { el.disabled = on; }); preview.setAttribute('aria-pressed', String(on)); preview.textContent = on ? 'Return to peacetime preview' : 'Preview lockdown'; }
+    document.querySelector('#emergencyBtn').addEventListener('click', () => { word.value = ''; activate.disabled = true; dialog.showModal(); word.focus(); });
+    word.addEventListener('input', () => activate.disabled = word.value !== 'LOCKDOWN');
+    activate.addEventListener('click', () => lockdown(true));
+    preview.addEventListener('click', () => lockdown(preview.getAttribute('aria-pressed') !== 'true'));
+    document.querySelectorAll('[data-session]').forEach(row => row.addEventListener('click', () => document.querySelector('#sessionList').dataset.detailOpen = 'true'));
+    document.querySelectorAll('[data-revoke]').forEach(button => button.addEventListener('click', () => document.querySelector('#revokeStatus').textContent = `Revoke ${button.dataset.revoke} — confirmation would record a durable audit event.`));
+  </script>
+</body>
+</html>

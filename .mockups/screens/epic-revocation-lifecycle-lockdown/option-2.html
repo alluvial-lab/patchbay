@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay lockdown — Option 2: Dedicated security view</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: 8px 16px; background: #0d1117; color: #c9d1d9; display: flex; gap: 16px; align-items: baseline; font: 13px/1.4 system-ui, sans-serif; border-bottom: 1px solid #30363d; }
+    .mock-meta strong { font-weight: 600; } .mock-meta span { color: #8b949e; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); }
+    .shell { min-height: calc(100vh - 37px); display: grid; grid-template-columns: 220px 1fr; }
+    .sidebar { padding: var(--space-4); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-3); }
+    .sidebar nav { display: grid; gap: var(--space-1); } .sidebar .btn { justify-content: flex-start; }
+    .sidebar-footer { margin-top: auto; display: grid; gap: var(--space-2); }
+    .view { padding: var(--space-6); max-width: 1100px; width: 100%; margin: 0 auto; }
+    .view-header, .section-heading, .row-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+    .view-header { margin-bottom: var(--space-6); } .security-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+    .security-grid .card:first-child { grid-column: 1 / -1; }
+    .security-list { display: grid; gap: var(--space-3); } .security-row { display: grid; gap: var(--space-1); }
+    .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+    .hero-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-4); }
+    .interstitial { min-height: calc(100vh - 37px); display: grid; place-items: center; padding: var(--space-4); }
+    .interstitial .card { width: min(680px, 100%); display: grid; gap: var(--space-4); }
+    .change-list { margin: 0; padding-left: var(--space-6); display: grid; gap: var(--space-2); color: var(--color-text-secondary); }
+    dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
+    dialog::backdrop { background: rgb(0 0 0 / 0.6); /* TODO: add overlay token to tokens.css */ }
+    .dialog-form { display: grid; gap: var(--space-4); } .dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) { .shell { display: block; } .sidebar { flex-direction: row; overflow: auto; padding: var(--space-2); border-right: 0; border-bottom: 1px solid var(--color-border); } .sidebar nav { display: flex; } .sidebar .btn { white-space: nowrap; } .sidebar-footer { margin: 0 0 0 auto; display: flex; } .view { padding: var(--space-4); } .security-grid { grid-template-columns: 1fr; } .security-grid .card:first-child { grid-column: auto; } .mock-meta { flex-direction: column; gap: var(--space-1); align-items: flex-start; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 2 — Dedicated security view</strong><span>Security is a navigable operating area; lockdown intentionally replaces the cockpit rather than merely disabling it.</span></header>
+  <div class="shell" id="cockpit">
+    <aside class="sidebar"><span class="nav-bar__brand">PATCHBAY</span><nav aria-label="Cockpit sections"><button class="btn btn-ghost" type="button">Sessions</button><button class="btn btn-ghost" type="button">Attention <span class="attention-badge" aria-label="1 pending"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button><button class="btn btn-secondary" type="button" aria-current="page">Security</button></nav><div class="sidebar-footer"><span class="identity">domain default</span><button class="btn btn-ghost btn--sm" id="previewBtn" type="button" aria-pressed="false">Preview lockdown</button></div></aside>
+    <main class="view" aria-labelledby="pageTitle">
+      <header class="view-header"><div><h1 id="pageTitle">Security</h1><p class="identity">operator · authority domain default</p></div><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span></header>
+      <div class="security-grid">
+        <section class="card card--raised" aria-labelledby="lockdownTitle"><div class="section-heading"><div><h2 id="lockdownTitle">Security lockdown</h2><p class="identity">Emergency posture for the whole authority domain</p></div><span class="retry-safety-indicator retry-safety-indicator--unsafe">high impact</span></div><p>Reject new Operations, mark runtime sessions stale, and require fresh login. Exit is intentionally unavailable to routine web authentication.</p><div class="hero-actions"><button class="btn btn-danger btn--lg" id="armBtn" type="button">Arm lockdown</button><button class="btn btn-secondary" id="previewHero" type="button">Preview active state</button></div></section>
+        <section class="card" aria-labelledby="operatorSessions"><div class="section-heading"><h2 id="operatorSessions">Operator sessions</h2><button class="btn btn-danger btn--sm" type="button" id="revokeAll">Revoke all sessions</button></div><div class="security-list"><div class="security-row"><strong>Current browser session</strong><span class="identity">operator · endpoint web-local-01 · generation 8</span><div class="row-actions"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>authenticated</span><button class="btn btn-secondary btn--sm" type="button" data-revoke="current session">Revoke current session</button></div></div><hr class="divider"><div class="security-row"><strong>CLI on trusted console</strong><span class="identity">operator · endpoint cli-console-01 · generation 7</span><span class="identity">Accepted work continues; future Operations require a new login.</span></div></div></section>
+        <section class="card" aria-labelledby="endpoints"><div class="section-heading"><h2 id="endpoints">Endpoints &amp; devices</h2></div><div class="security-list"><div class="security-row"><strong>local workstation</strong><span class="identity">device workstation-01 · endpoint web-local-01</span><button class="btn btn-secondary btn--sm" type="button" data-revoke="endpoint web-local-01">Revoke endpoint</button></div><hr class="divider"><div class="security-row"><strong>trusted console</strong><span class="identity">device console-01 · endpoint cli-console-01</span><button class="btn btn-secondary btn--sm" type="button" data-revoke="device console-01">Revoke device</button></div></div></section>
+        <section class="card" aria-labelledby="grants"><div class="section-heading"><h2 id="grants">Active grants</h2></div><div class="security-list"><div class="security-row"><strong>patchbay-main control</strong><span class="identity">grant grant-session-main · pi/local/patchbay-main/gen-1</span><button class="btn btn-secondary btn--sm" type="button" data-revoke="grant grant-session-main">Revoke grant</button></div><hr class="divider"><div class="security-row"><strong>Fleet spawn</strong><span class="identity">grant grant-fleet-spawn · scope fleet</span><button class="btn btn-secondary btn--sm" type="button" data-revoke="grant grant-fleet-spawn">Revoke grant</button></div></div></section>
+      </div>
+      <p class="alert" id="status" role="status" hidden><span><strong>Revocation queued for confirmation.</strong> This mock preserves the entry point; the production flow must show durable audit outcome.</span></p>
+    </main>
+  </div>
+  <main class="interstitial" id="interstitial" hidden aria-labelledby="interstitialTitle"><section class="card card--raised"><span class="failure-banner__term">security lockdown active</span><div><h1 id="interstitialTitle">Control is paused.</h1><p>Entered for <strong>suspected endpoint compromise</strong> at 2026-07-18 14:32 UTC in authority domain <code>default</code>.</p></div><div class="alert alert--danger" role="alert"><div><p class="alert__title">What changed</p><ul class="change-list"><li>New Operations are rejected before acceptance.</li><li>Runtime sessions are marked stale rather than shown as live.</li><li>Existing browser and CLI sessions require fresh authentication.</li></ul></div></div><div class="card"><strong>Bootstrap exit required</strong><p class="identity">Run on the configured local console, SSH host, or other trusted bootstrap channel:</p><code>patchbay-cli lockdown-exit</code></div><button class="btn btn-secondary" id="returnPreview" type="button">Return to peacetime preview</button></section></main>
+  <dialog class="card" id="armDialog" aria-labelledby="armTitle"><form class="dialog-form" method="dialog"><div><h2 id="armTitle">Arm security lockdown</h2><p>Step 1 of 2: arm this action. No change is made yet.</p></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="confirmStep" value="default">Continue to confirmation</button></div></form></dialog>
+  <dialog class="card" id="confirmDialog" aria-labelledby="confirmTitle"><form class="dialog-form" method="dialog"><div><h2 id="confirmTitle">Confirm lockdown</h2><p>Step 2 of 2: this durably rejects new Operations and ejects routine sessions. Trusted bootstrap exit is required.</p></div><div class="field"><label class="field__label" for="confirmWord">Type <code>LOCKDOWN</code></label><input class="input" id="confirmWord" autocomplete="off"><p class="field__helper">This is not an Elicitation; it is a core-imposed security posture.</p></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="enterLockdown" value="default" disabled>Enter lockdown</button></div></form></dialog>
+  <script>
+    const cockpit = document.querySelector('#cockpit'), interstitial = document.querySelector('#interstitial'), preview = document.querySelector('#previewBtn');
+    const arm = document.querySelector('#armDialog'), confirm = document.querySelector('#confirmDialog'), word = document.querySelector('#confirmWord'), enter = document.querySelector('#enterLockdown');
+    function active(on) { cockpit.hidden = on; interstitial.hidden = !on; preview.setAttribute('aria-pressed', String(on)); }
+    document.querySelector('#armBtn').addEventListener('click', () => arm.showModal());
+    document.querySelector('#confirmStep').addEventListener('click', () => { confirm.showModal(); word.focus(); });
+    word.addEventListener('input', () => enter.disabled = word.value !== 'LOCKDOWN'); enter.addEventListener('click', () => active(true));
+    document.querySelector('#previewHero').addEventListener('click', () => active(true)); document.querySelector('#returnPreview').addEventListener('click', () => active(false));
+    preview.addEventListener('click', () => active(preview.getAttribute('aria-pressed') !== 'true'));
+    document.querySelectorAll('[data-revoke]').forEach(button => button.addEventListener('click', () => { const s = document.querySelector('#status'); s.hidden = false; s.querySelector('strong').textContent = `Revoke ${button.dataset.revoke}?`; }));
+  </script>
+</body>
+</html>

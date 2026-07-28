@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay emergency controls — review options</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    h1 { padding: 16px 24px; margin: 0; font-weight: 500; font-size: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 8px; padding: 8px; height: calc(100vh - 56px); box-sizing: border-box; }
+    .cell { background: #fff; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; }
+    .cell h2 { margin: 0; padding: 8px 12px; font-size: 13px; font-weight: 600; background: #222; color: #eee; display: flex; justify-content: space-between; gap: 12px; }
+    .cell h2 span { color: #a7b0ba; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell iframe { border: 0; flex: 1; width: 100%; } .cell a { color: #6cf; text-decoration: none; white-space: nowrap; }
+    @media (max-width: 760px) { .grid { height: auto; grid-template-columns: 1fr; grid-template-rows: repeat(5, minmax(440px, 1fr)); } .cell iframe { min-height: 400px; } }
+  </style>
+</head>
+<body>
+  <h1>epic-revocation-lifecycle-lockdown — pick a direction</h1>
+  <div class="grid">
+    <section class="cell"><h2>Option 1 — Inline banner <span>Conventional, calm, discoverable</span><a href="option-1.html" target="_blank">open ↗</a></h2><iframe src="option-1.html" title="Option 1 — Inline banner and header trigger"></iframe></section>
+    <section class="cell"><h2>Option 2 — Security view <span>Structured entry, unambiguous interstitial</span><a href="option-2.html" target="_blank">open ↗</a></h2><iframe src="option-2.html" title="Option 2 — Dedicated security view"></iframe></section>
+    <section class="cell"><h2>Option 3 — Command palette <span>Dense, keyboard-first operations</span><a href="option-3.html" target="_blank">open ↗</a></h2><iframe src="option-3.html" title="Option 3 — Command palette"></iframe></section>
+    <section class="cell"><h2>Option 4 — Ritual <span>Maximum friction, hard takeover</span><a href="option-4.html" target="_blank">open ↗</a></h2><iframe src="option-4.html" title="Option 4 — Maximal-friction ritual"></iframe></section>
+    <section class="cell"><h2>Option 5 — Hybrid: nav shell + security view + inline banner <span>Chat-first Sessions, dedicated Security, and a scalable destination shell</span><a href="option-hybrid.html" target="_blank">open ↗</a></h2><iframe src="option-hybrid.html" title="Option 5 — Hybrid: nav shell, security view, and inline banner"></iframe></section>
+  </div>
+</body>
+</html>

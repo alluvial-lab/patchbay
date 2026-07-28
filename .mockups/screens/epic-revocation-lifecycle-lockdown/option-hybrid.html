@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patchbay cockpit — Option 5: nav shell, security view, inline banner</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    /* Layout composes the existing design-system primitives and tokens. */
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); } .mock-meta span { color: var(--color-text-secondary); }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); }
+    .cockpit { min-height: calc(100vh - 37px); height: calc(100vh - 37px); display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
+    .app-header, .header-actions, .detail-heading, .message-head, .section-heading, .row-actions, .banner-copy, .view-header, .rail-head, .list-heading { display: flex; align-items: center; gap: var(--space-3); }
+    .app-header, .view-header, .rail-head, .list-heading, .section-heading { justify-content: space-between; }
+    .app-header, .view-header, .section-heading { flex-wrap: wrap; }
+    .lockdown-banner { margin: var(--space-3) var(--space-4) 0; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .lockdown-banner[hidden], .lock-reason[hidden], .view[hidden], .overflow-menu[hidden] { display: none; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .rail { width: 236px; padding: var(--space-4) var(--space-3); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); transition: width 120ms; }
+    .rail--collapsed { width: 64px; padding-inline: var(--space-2); }
+    .rail-footer { margin-top: auto; display: grid; gap: var(--space-2); }
+    .rail--collapsed .rail-brand, .rail--collapsed .destination__label, .rail--collapsed .rail-footer { display: none; }
+    .destination { justify-content: flex-start; width: 100%; }
+    .rail--collapsed .destination { justify-content: center; }
+    .destination[aria-current="page"] { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border); }
+    .destination-list { display: grid; gap: var(--space-1); }
+    .workspace { min-width: 0; min-height: 0; overflow: auto; }
+    .view { min-height: 100%; }
+    .sessions-view { display: grid; grid-template-columns: minmax(240px, 30%) minmax(0, 1fr); }
+    .sessions-view--panel-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+    .session-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .sessions-view--panel-collapsed .session-list { border: 0; overflow: hidden; }
+    .sessions-view--panel-collapsed .session-list > * { display: none; }
+    .panel-edge-toggle {
+      position: absolute; left: 0; top: 50%; transform: translate(-50%, -50%);
+      z-index: 2; width: 22px; height: 48px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm); color: var(--color-text-tertiary); cursor: pointer;
+    }
+    .panel-edge-toggle:hover, .panel-edge-toggle:focus-visible { color: var(--color-text-primary); border-color: var(--color-accent); }
+    .rail { position: relative; }
+    .rail-edge-toggle { left: 100%; }
+    .rail--collapsed .rail-edge-toggle { left: 100%; }
+    .rail--collapsed .rail-edge-toggle svg { transform: rotate(180deg); }
+    .sessions-view--panel-collapsed .panel-edge-toggle { left: 11px; }
+    .sessions-view--panel-collapsed .panel-edge-toggle svg { transform: rotate(180deg); }
+    .detail { position: relative; }
+    .list-heading, .detail { padding: var(--space-4); }
+    .detail { display: grid; gap: var(--space-4); grid-template-rows: auto auto minmax(0, 1fr) auto; min-width: 0; }
+    .transcript { display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
+    .message { max-width: 72ch; } .message--operator { justify-self: end; } .message p { margin: var(--space-2) 0 0; }
+    .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+    .lock-reason { margin: 0; }
+    .panel-toggle .show-panel { display: none; }
+    .sessions-view--panel-collapsed .panel-toggle .hide-panel { display: none; }
+    .sessions-view--panel-collapsed .panel-toggle .show-panel { display: inline; }
+    /* Normalize native button chrome so every session uses the cockpit row primitive. */
+    .session-row { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--color-border); text-align: left; }
+    .session-row--active { background: var(--color-accent-muted); border-left: 3px solid var(--color-accent); }
+    /* Stale remains the cockpit row, only desaturated and dimmed—never a light card. */
+    .session-row--stale { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); filter: grayscale(1); opacity: .65; /* TODO: add stale-surface/opacity tokens */ }
+    .session-row--stale:hover { background: var(--color-bg-tertiary); }
+    .composer__input:disabled { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); cursor: not-allowed; }
+    .session-row:focus-visible, .tabs__tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+    .security-view { padding: var(--space-6); max-width: 960px; width: 100%; margin: 0 auto; }
+    .view-header { margin-bottom: var(--space-6); }
+    .security-flow { display: grid; gap: var(--space-4); }
+    .security-list, .security-row { display: grid; gap: var(--space-2); }
+    .hero-actions, .dialog-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .hero-actions { margin-top: var(--space-4); }
+    .composer { align-self: end; }
+    .planned-view { display: grid; place-items: center; padding: var(--space-6); }
+    .planned-view .empty-state { max-width: 42rem; border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
+    dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
+    dialog::backdrop { background: rgb(0 0 0 / 0.6); /* TODO: add overlay token to tokens.css */ }
+    .dialog-form { display: grid; gap: var(--space-4); }
+    .dialog-actions { justify-content: flex-end; }
+    .bottom-tabs { display: none; }
+    .overflow-menu { position: fixed; right: var(--space-2); bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); z-index: 4; width: min(240px, calc(100% - var(--space-4))); padding: var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); box-shadow: var(--shadow-raised); }
+    .overflow-menu .destination { text-align: left; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+    @media (max-width: 760px) {
+      .cockpit { height: auto; min-height: calc(100vh - 55px); overflow: visible; padding-bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); }
+      .rail { display: none; } .shell { display: block; } .workspace { overflow: visible; }
+      .lockdown-banner { position: fixed; inset: auto 0 calc(var(--space-16) + env(safe-area-inset-bottom)) 0; z-index: 3; margin: 0; border-radius: 0; }
+      .lockdown-banner:not([hidden]) ~ .shell { padding-bottom: calc(var(--space-16) * 2); }
+      .sessions-view, .sessions-view--panel-collapsed { display: block; }
+      .session-list { border-right: 0; } .detail { display: none; }
+      .session-list[data-detail-open="true"] { display: none; }
+      .sessions-view:has(.session-list[data-detail-open="true"]) .detail { display: grid; min-height: 70vh; }
+      .panel-toggle { display: none; }
+      .security-view { padding: var(--space-4); }
+      .bottom-tabs { position: fixed; inset: auto 0 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
+      .bottom-tabs .tabs { display: contents; }
+      .bottom-tabs .tabs__tab { padding: var(--space-3) var(--space-2); }
+      .mock-meta { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } /* TODO: add motion-duration token */ }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 5 — Hybrid: nav shell + security view + inline banner</strong><span>Sessions remains chat-first; Security is a calm, dedicated operating area.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <div class="header-actions">
+        <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+        <button class="btn btn-secondary btn--sm" id="previewBtn" type="button" aria-pressed="false">Preview lockdown</button>
+      </div>
+    </header>
+
+    <section class="alert alert--danger lockdown-banner" id="lockdownBanner" role="alert" aria-live="assertive" hidden>
+      <div class="banner-copy"><div><p class="alert__title">Security lockdown active</p><p class="alert__body">Reason: suspected endpoint compromise · entered 2026-07-18 14:32 UTC · authority domain <code>default</code></p></div></div>
+      <div><span class="identity">Exit from local console:</span> <code>patchbay-cli lockdown-exit</code></div>
+    </section>
+
+    <div class="shell">
+      <aside class="rail" id="rail">
+        <div class="rail-head"><span class="nav-bar__brand rail-brand">PATCHBAY</span></div>
+        <button class="panel-edge-toggle rail-edge-toggle" id="collapseRail" type="button" aria-controls="rail" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
+        <nav class="destination-list" aria-label="Cockpit destinations">
+          <button class="btn btn-secondary destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" title="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="security" aria-label="Security" title="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span class="destination__label">Security</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="diagnostics" aria-label="Diagnostics" title="Diagnostics"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg><span class="destination__label">Diagnostics</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="files" aria-label="Files" title="Files"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h6l2 2h8v12H4z"></path></svg><span class="destination__label">Files</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="git" aria-label="Git" title="Git"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle><path d="M8 6h4a4 4 0 0 1 4 4v6"></path></svg><span class="destination__label">Git</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="settings" aria-label="Settings" title="Settings"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.1 2.1-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-3v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.1-2.1.06-.06A1.7 1.7 0 0 0 7.12 15a1.7 1.7 0 0 0-1.55-1H5.5v-3h.07a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.1-2.1.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4h3v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.1 2.1-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1h.05v3h-.05a1.7 1.7 0 0 0-1.55 2Z"></path></svg><span class="destination__label">Settings</span></button>
+        </nav>
+        <div class="rail-footer"><span class="identity">operator · domain default</span><span class="identity">adapter pi · gen 1</span></div>
+      </aside>
+
+      <div class="workspace">
+        <section class="view sessions-view" id="sessionsView" aria-labelledby="detailTitle">
+          <aside class="session-list" id="sessionList" aria-label="Sessions">
+            <div class="list-heading"><strong>Sessions</strong><div><span class="attention-badge" aria-label="One pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></div></div>
+            <button class="session-row session-row--active" type="button" data-session><span class="session-row__label">patchbay-main</span><span class="session-row__identity">pi · local · patchbay-main · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status" id="mainStatus"><span class="connectivity-indicator connectivity-indicator--live" id="mainConnection"><span class="connectivity-indicator__dot"></span><span class="connection-label">live</span></span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span></button>
+            <button class="session-row session-row--stale" type="button" data-session><span class="session-row__label">release-check</span><span class="session-row__identity">pi · local · release-check · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status session-status--stale"><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></span></button>
+          </aside>
+          <section class="detail">
+            <button class="panel-edge-toggle" id="collapsePanelEdge" type="button" aria-controls="sessionList" aria-expanded="true" aria-label="Hide sessions panel" title="Hide sessions panel"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
+            <div class="detail-heading"><div class="panel-toggle"><button class="btn btn-ghost btn--sm" id="collapsePanel" type="button" aria-controls="sessionList" aria-expanded="true"><span class="hide-panel">Hide sessions panel</span><span class="show-panel">Show sessions panel</span></button></div><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
+            <p class="alert alert--warning lock-reason" id="sessionLockReason" role="status" hidden><span><strong>Read-only during lockdown.</strong> New Operations are rejected until trusted bootstrap exit.</span></p>
+            <div class="transcript" aria-label="Session transcript"><article class="card message"><div class="message-head"><strong>Pi</strong><span class="delivery-line">Observation · source authenticated</span></div><p>Checked protocol presentation bindings. Reviewing the active worktree now.</p></article><article class="card message message--operator"><div class="message-head"><strong>operator</strong><span class="delivery-line">Command delivered</span></div><p>Continue with the cockpit mockup.</p></article></div>
+            <footer class="composer"><div><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" placeholder="Send an instruction to patchbay-main"></textarea><div class="composer__idempotency">New command · idempotency key generated on submit</div></div><div class="composer__actions"><button class="btn btn-secondary" id="interrupt" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Interrupt</button><button class="btn btn-primary" id="send" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Send</button></div></footer>
+          </section>
+        </section>
+
+        <section class="view security-view" id="securityView" aria-labelledby="securityTitle" hidden>
+          <header class="view-header"><div><h1 id="securityTitle">Security</h1><p class="identity">operator · authority domain default · adapter pi · generation 1</p></div><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span></header>
+          <p class="alert alert--warning lock-reason" id="securityLockReason" role="status" hidden><span><strong>Read-only during lockdown.</strong> Revocations and new Operations are unavailable until trusted bootstrap exit.</span></p>
+          <div class="security-flow">
+            <section class="card card--raised" aria-labelledby="lockdownTitle"><div class="section-heading"><div><h2 id="lockdownTitle">Security lockdown</h2><p class="identity">Emergency posture for the whole authority domain</p></div><span class="retry-safety-indicator retry-safety-indicator--unsafe">high impact</span></div><p>Reject new Operations, mark runtime sessions stale, and require fresh login. Routine web authentication cannot exit this posture.</p><div class="hero-actions"><button class="btn btn-danger btn--lg" id="armBtn" type="button" data-lockable title="Disabled during lockdown: the posture is already active.">Arm lockdown</button><button class="btn btn-secondary" id="previewHero" type="button">Preview active state</button></div></section>
+            <section class="card" aria-labelledby="operatorSessions"><div class="section-heading"><h2 id="operatorSessions">Operator sessions</h2><button class="btn btn-danger btn--sm" type="button" data-lockable data-revoke="all operator sessions" title="Disabled during lockdown: revocations are unavailable.">Revoke all sessions</button></div><div class="security-list"><div class="security-row"><strong>Current browser session</strong><span class="identity">operator · endpoint web-local-01 · generation 8</span><div class="row-actions"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>authenticated</span><button class="btn btn-secondary btn--sm" type="button" data-lockable data-revoke="current browser session" title="Disabled during lockdown: revocations are unavailable.">Revoke current session</button></div></div><hr class="divider"><div class="security-row"><strong>CLI on local console</strong><span class="identity">operator · endpoint cli-console-01 · generation 7</span><span class="identity">Accepted work continues; future Operations require a new login.</span></div></div></section>
+            <section class="card" aria-labelledby="endpoints"><div class="section-heading"><h2 id="endpoints">Endpoints &amp; devices</h2></div><div class="security-list"><div class="security-row"><strong>local workstation</strong><span class="identity">device workstation-01 · endpoint web-local-01</span><button class="btn btn-secondary btn--sm" type="button" data-lockable data-revoke="endpoint web-local-01" title="Disabled during lockdown: revocations are unavailable.">Revoke endpoint</button></div><hr class="divider"><div class="security-row"><strong>local console</strong><span class="identity">device console-01 · endpoint cli-console-01</span><button class="btn btn-secondary btn--sm" type="button" data-lockable data-revoke="device console-01" title="Disabled during lockdown: revocations are unavailable.">Revoke device</button></div></div></section>
+            <section class="card" aria-labelledby="grants"><div class="section-heading"><h2 id="grants">Active grants</h2></div><div class="security-list"><div class="security-row"><strong>patchbay-main control</strong><span class="identity">grant grant-session-main · pi/local/patchbay-main/gen-1</span><button class="btn btn-secondary btn--sm" type="button" data-lockable data-revoke="grant grant-session-main" title="Disabled during lockdown: revocations are unavailable.">Revoke grant</button></div><hr class="divider"><div class="security-row"><strong>Fleet spawn</strong><span class="identity">grant grant-fleet-spawn · scope fleet</span><button class="btn btn-secondary btn--sm" type="button" data-lockable data-revoke="grant grant-fleet-spawn" title="Disabled during lockdown: revocations are unavailable.">Revoke grant</button></div></div></section>
+          </div>
+          <p class="alert" id="revokeStatus" role="status" hidden><span><strong>Revocation queued for confirmation.</strong> Production must show the durable audit outcome.</span></p>
+        </section>
+
+        <section class="view planned-view" id="plannedView" aria-labelledby="plannedTitle" hidden><div class="empty-state"><p class="identity">PLANNED DESTINATION</p><h1 class="empty-state__title" id="plannedTitle">Diagnostics</h1><p class="empty-state__body" id="plannedBody">Diagnostics is planned for a future Patchbay release. Sessions and Security remain available now.</p><button class="btn btn-secondary" type="button" data-destination="sessions">Return to Sessions</button></div></section>
+      </div>
+    </div>
+
+    <nav class="bottom-tabs" aria-label="Cockpit destinations">
+      <div class="tabs">
+        <button class="tabs__tab" type="button" data-destination="sessions" aria-current="page">Sessions</button>
+        <button class="tabs__tab" type="button" data-destination="security">Security</button>
+        <button class="tabs__tab" id="moreBtn" type="button" aria-expanded="false" aria-controls="overflowMenu">More</button>
+      </div>
+    </nav>
+    <nav class="overflow-menu" id="overflowMenu" aria-label="More cockpit destinations" hidden>
+      <button class="btn btn-ghost destination" type="button" data-destination="diagnostics">Diagnostics</button>
+      <button class="btn btn-ghost destination" type="button" data-destination="files">Files</button>
+      <button class="btn btn-ghost destination" type="button" data-destination="git">Git</button>
+      <button class="btn btn-ghost destination" type="button" data-destination="settings">Settings</button>
+    </nav>
+  </main>
+
+  <dialog class="card" id="armDialog" aria-labelledby="armTitle"><form class="dialog-form" method="dialog"><div><h2 id="armTitle">Arm security lockdown</h2><p>Step 1 of 2: arm this action. No change is made yet.</p></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="confirmStep" type="button">Continue to confirmation</button></div></form></dialog>
+  <dialog class="card" id="confirmDialog" aria-labelledby="confirmTitle"><form class="dialog-form" method="dialog"><div><h2 id="confirmTitle">Confirm lockdown</h2><p>Step 2 of 2: this durably rejects new Operations and ejects routine sessions. Exit requires <code>patchbay-cli lockdown-exit</code> from the local console.</p></div><div class="field"><label class="field__label" for="confirmWord">Type <code>LOCKDOWN</code></label><input class="input" id="confirmWord" autocomplete="off" spellcheck="false"><p class="field__helper">This is not an Elicitation; it is a core-imposed security posture.</p></div><div class="dialog-actions"><button class="btn btn-secondary" value="cancel">Cancel</button><button class="btn btn-danger" id="enterLockdown" value="default" disabled>Enter lockdown</button></div></form></dialog>
+
+  <script>
+    const banner = document.querySelector('#lockdownBanner');
+    const preview = document.querySelector('#previewBtn');
+    const arm = document.querySelector('#armDialog');
+    const confirm = document.querySelector('#confirmDialog');
+    const word = document.querySelector('#confirmWord');
+    const enter = document.querySelector('#enterLockdown');
+    const lockables = document.querySelectorAll('[data-lockable], #instruction');
+    const destinationButtons = document.querySelectorAll('[data-destination]');
+    const views = { sessions: document.querySelector('#sessionsView'), security: document.querySelector('#securityView'), planned: document.querySelector('#plannedView') };
+    const plannedTitles = { diagnostics: 'Diagnostics', files: 'Files', git: 'Git', settings: 'Settings' };
+
+    function selectDestination(destination) {
+      const isPlanned = Object.hasOwn(plannedTitles, destination);
+      views.sessions.hidden = destination !== 'sessions';
+      views.security.hidden = destination !== 'security';
+      views.planned.hidden = !isPlanned;
+      if (isPlanned) {
+        document.querySelector('#plannedTitle').textContent = plannedTitles[destination];
+        document.querySelector('#plannedBody').textContent = `${plannedTitles[destination]} is planned for a future Patchbay release. Sessions and Security remain available now.`;
+      }
+      destinationButtons.forEach(button => {
+        const selected = button.dataset.destination === destination;
+        button.toggleAttribute('aria-current', selected);
+        if (button.classList.contains('destination')) {
+          button.classList.toggle('btn-secondary', selected);
+          button.classList.toggle('btn-ghost', !selected);
+        }
+      });
+      document.querySelector('#moreBtn').toggleAttribute('aria-current', isPlanned);
+      document.querySelector('#overflowMenu').hidden = true;
+      document.querySelector('#moreBtn').setAttribute('aria-expanded', 'false');
+    }
+
+    function setLockdown(on) {
+      banner.hidden = !on;
+      document.querySelectorAll('.lock-reason').forEach(message => { message.hidden = !on; });
+      lockables.forEach(control => { control.disabled = on; });
+      const connection = document.querySelector('#mainConnection');
+      connection.classList.toggle('connectivity-indicator--live', !on);
+      connection.classList.toggle('connectivity-indicator--stale', on);
+      connection.querySelector('.connection-label').textContent = on ? 'stale' : 'live';
+      document.querySelector('#mainStatus').classList.toggle('session-status--stale', on);
+      preview.setAttribute('aria-pressed', String(on));
+      preview.textContent = on ? 'Return to peacetime preview' : 'Preview lockdown';
+    }
+
+    destinationButtons.forEach(button => button.addEventListener('click', () => selectDestination(button.dataset.destination)));
+    document.querySelector('#moreBtn').addEventListener('click', () => {
+      const menu = document.querySelector('#overflowMenu');
+      menu.hidden = !menu.hidden;
+      document.querySelector('#moreBtn').setAttribute('aria-expanded', String(!menu.hidden));
+    });
+    document.querySelector('#collapseRail').addEventListener('click', () => {
+      const rail = document.querySelector('#rail');
+      const collapsed = rail.classList.toggle('rail--collapsed');
+      const button = document.querySelector('#collapseRail');
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+      button.title = button.getAttribute('aria-label');
+    });
+    const togglePanel = () => {
+      const sessions = document.querySelector('#sessionsView');
+      const collapsed = sessions.classList.toggle('sessions-view--panel-collapsed');
+      document.querySelector('#collapsePanel').setAttribute('aria-expanded', String(!collapsed));
+      const edge = document.querySelector('#collapsePanelEdge');
+      edge.setAttribute('aria-expanded', String(!collapsed));
+      edge.setAttribute('aria-label', collapsed ? 'Show sessions panel' : 'Hide sessions panel');
+      edge.title = edge.getAttribute('aria-label');
+    };
+    document.querySelector('#collapsePanel').addEventListener('click', togglePanel);
+    document.querySelector('#collapsePanelEdge').addEventListener('click', togglePanel);
+    document.querySelectorAll('[data-session]').forEach(row => row.addEventListener('click', () => { document.querySelector('#sessionList').dataset.detailOpen = 'true'; }));
+    document.querySelector('#armBtn').addEventListener('click', () => arm.showModal());
+    document.querySelector('#confirmStep').addEventListener('click', () => { arm.close(); confirm.showModal(); word.focus(); });
+    word.addEventListener('input', () => { enter.disabled = word.value !== 'LOCKDOWN'; });
+    enter.addEventListener('click', () => setLockdown(true));
+    preview.addEventListener('click', () => setLockdown(preview.getAttribute('aria-pressed') !== 'true'));
+    document.querySelector('#previewHero').addEventListener('click', () => setLockdown(true));
+    document.querySelectorAll('[data-revoke]').forEach(button => button.addEventListener('click', () => {
+      const status = document.querySelector('#revokeStatus');
+      status.hidden = false;
+      status.querySelector('strong').textContent = `Revoke ${button.dataset.revoke}?`;
+    }));
+  </script>
+</body>
+</html>
