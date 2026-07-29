@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown-cli-conformance
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-lockdown
 depends_on: [epic-revocation-lifecycle-lockdown-trigger-exit-rpcs]
 release_binding: null
 gate_origin: null
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-07-30
 ---
 
 # Ship CLI recovery, integrated conformance, and rolling foundation
@@ -45,5 +45,22 @@ implemented behavior and honest assurance tier.
 
 Consumes the proved RPC/recovery boundary and may proceed in parallel with the
 cockpit story. Do not weaken the admin listener or introduce a routine-web exit
+
+## Implementation notes
+
+- Added `lockdown-enter` and `lockdown-exit` command handlers with local
+  confirmation/reason validation, strict response validation, safe human/JSON
+  projections, decimal-string event/generation values, and honest failure
+  exit codes.
+- Entry uses the authenticated ControlService and clears the credential store
+  only after a committed active posture is validated. Exit uses only the
+  loopback-constrained AdminService client and never reads the credential file.
+- Added conformance tests for literal confirmation, post-commit credential
+  clearing, bootstrap-channel output, redaction, and no-success-on-malformed
+  responses.
+
+## Verification
+
+- `cd cli && npm test` passed (36 tests).
 to make CLI tests easier. The feature remains open for integrated review until
 both final checkpoints are done.

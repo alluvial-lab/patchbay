@@ -22,6 +22,7 @@ import {
 } from "./commands/revocation.js";
 import { interruptCommand } from "./commands/interrupt.js";
 import { loginCommand } from "./commands/login.js";
+import { lockdownEnterCommand, lockdownExitCommand } from "./commands/lockdown.js";
 import { logoutCommand } from "./commands/logout.js";
 import { sessionHealthCommand } from "./commands/session-health.js";
 import { setupCommand } from "./commands/setup.js";
@@ -54,6 +55,8 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   "grant-revoke": { flags: ["json"], values: ["reason"] },
+  "lockdown-enter": { flags: ["json"], values: ["reason-code", "confirm"] },
+  "lockdown-exit": { flags: ["json"], values: ["reason-code"] },
   "revoke-all-sessions": { flags: ["json"], values: ["reason-code"] },
   "revoke-principal": { flags: ["json"], values: ["reason-code"] },
   "revoke-endpoint": { flags: ["json"], values: ["reason-code"] },
@@ -77,6 +80,7 @@ const VALUE_OPTIONS = new Set([
   "target",
   "failure-code",
   "reason-code",
+  "confirm",
   "since",
   "until",
   "before-event",
@@ -280,6 +284,29 @@ export async function run(
           output,
         );
 
+      case "lockdown-enter":
+        requirePositionals(command, parsed.positionals, 0, 0);
+        return await lockdownEnterCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            reasonCode: parsed.options.get("reason-code") ?? defaultReasonCode(),
+            confirm: parsed.options.get("confirm") ?? "",
+            json,
+          },
+          output,
+        );
+
+      case "lockdown-exit":
+        requirePositionals(command, parsed.positionals, 0, 0);
+        return await lockdownExitCommand(
+          makeAdminClient(config.adminAddr, config.coreSecret),
+          config.authorityDomainId,
+          { reasonCode: parsed.options.get("reason-code"), json },
+          output,
+        );
+
       case "grant-revoke":
         requirePositionals(command, parsed.positionals, 1, 1);
         return await grantRevokeCommand(
@@ -421,6 +448,10 @@ export function usage(): string {
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",
     "  interrupt <command-id> [--idempotency-key K] [--command-id ID] [--json]",
+    "  lockdown-enter --confirm LOCKDOWN [--reason-code CODE] [--json]",
+    "      Enter lockdown through the authenticated ControlService; confirmed entry clears local credentials.",
+    "  lockdown-exit [--reason-code CODE] [--json]",
+    "      Exit lockdown only through the loopback AdminService bootstrap channel; never uses stored credentials.",
     "  grant-revoke <grant-id> [--reason TEXT] [--json]",
     "      Revoke a self-scoped grant; repeats report already_revoked without changing state.",
     "  revoke-all-sessions [--reason-code CODE] [--json]",
