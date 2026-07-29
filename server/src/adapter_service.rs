@@ -662,7 +662,16 @@ where
                     model: report.model,
                     spawn_origin: report.spawn_origin,
                 };
+                // The adapter owns an independent session projection. Rebuild
+                // it at the gate boundary before deriving the next report
+                // delta; otherwise a lockdown (or any core-side append) can
+                // leave this writer with a stale pre-event view and produce a
+                // live registration/transition that replay correctly rejects.
+                let rebuilt = session::rebuild_from_log(&self.storage, &domain)
+                    .await
+                    .map_err(map_session_error)?;
                 let mut sessions = self.sessions.lock().await;
+                *sessions = rebuilt;
                 let result = match session::ingest_session_report(&self.storage, &mut *sessions, report)
                     .await
                 {

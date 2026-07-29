@@ -8,7 +8,7 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, CommandId,
-    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
+    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
     RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
@@ -29,13 +29,15 @@ use patchbay_core::{
     },
 };
 use patchbay_core_server::{
+    admin_service::{AdminServiceImpl, SetupSecret},
     decision_gate::CoreDecisionGate,
     login_security::{LoginLimiter, StderrLoginAuditSink},
     issuer::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
     rpc::{
-        control_service_client::ControlServiceClient, control_service_server::ControlServiceServer,
+        admin_service_server::AdminService, control_service_client::ControlServiceClient,
+        control_service_server::{ControlService, ControlServiceServer},
     },
     service::{
         map_storage_error_to_status, ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER,
@@ -61,6 +63,7 @@ struct FailPostAppendReadOnceStorage {
     fail_post_append_read: bool,
     fail_next_read: Arc<AtomicBool>,
     fail_next_query_audit: Arc<AtomicBool>,
+    fail_next_decision: Arc<AtomicBool>,
 }
 
 impl FailPostAppendReadOnceStorage {
@@ -70,6 +73,7 @@ impl FailPostAppendReadOnceStorage {
             fail_post_append_read: true,
             fail_next_read: Arc::new(AtomicBool::new(false)),
             fail_next_query_audit: Arc::new(AtomicBool::new(false)),
+            fail_next_decision: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -79,6 +83,17 @@ impl FailPostAppendReadOnceStorage {
             fail_post_append_read: false,
             fail_next_read: Arc::new(AtomicBool::new(false)),
             fail_next_query_audit: Arc::new(AtomicBool::new(true)),
+            fail_next_decision: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn failing_next_decision(inner: RusqliteStorage) -> Self {
+        Self {
+            inner,
+            fail_post_append_read: false,
+            fail_next_read: Arc::new(AtomicBool::new(false)),
+            fail_next_query_audit: Arc::new(AtomicBool::new(false)),
+            fail_next_decision: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -158,6 +173,9 @@ impl Storage for FailPostAppendReadOnceStorage {
         source: StoredEventPayload,
         audit: AuditRecordDraft,
     ) -> Result<EventId, StorageError> {
+        if self.fail_next_decision.swap(false, Ordering::SeqCst) {
+            return Err(StorageError::WriteFailed { message: "injected decision failure".to_owned(), retryable: true });
+        }
         self.inner
             .append_audited(authority_domain_id, source, audit)
             .await
@@ -800,6 +818,253 @@ async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
         retry.result,
         Some(query_diagnostics_response::Result::Audit(_))
     ));
+}
+
+#[tokio::test]
+async fn lockdown_entry_decision_failure_leaves_posture_and_operations_usable() {
+    let directory = tempfile::tempdir().expect("test directory must be created");
+    let database_path = directory.path().join("patchbay.sqlite3");
+    let inner = RusqliteStorage::open(database_path.to_str().expect("UTF-8 test path"))
+        .expect("test storage must open");
+    seed_authority_and_session(&inner).await;
+    let storage = FailPostAppendReadOnceStorage::failing_next_decision(inner);
+    let (mut client, task, auth) = serve(storage).await;
+
+    let enter = client
+        .enter_security_lockdown(authenticated_request(
+            EnterSecurityLockdownRequest {
+                authority_domain_id: Some(domain()),
+                reason_code: "injected_write_failure".to_owned(),
+            },
+            SECRET,
+            &auth,
+        ))
+        .await
+        .expect_err("failed source/audit transaction must not report entry success");
+    assert_eq!(enter.code(), Code::Unavailable);
+
+    let submitted = client
+        .submit(authenticated_request(
+            SubmitRequest { operation: Some(operation("post-failure-command", "post-failure-key")) },
+            SECRET,
+            &auth,
+        ))
+        .await
+        .expect("entry failure must leave the old authority usable")
+        .into_inner();
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted as i32);
+    task.abort();
+}
+
+#[tokio::test]
+async fn lockdown_exit_decision_failure_keeps_the_posture_active() {
+    let inner = RusqliteStorage::open_in_memory().expect("storage opens");
+    seed_authority_and_session(&inner).await;
+    let storage = FailPostAppendReadOnceStorage::new(inner);
+    let control = ControlServiceImpl::new_with_security(
+        storage.clone(),
+        domain(),
+        Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+    )
+    .await
+    .expect("control service initializes");
+    let login = control
+        .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            password: "correct-password".to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId { value: "exit-test".to_owned() }),
+                device_id: Some(DeviceId { value: "exit-host".to_owned() }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .expect("login succeeds")
+        .into_inner();
+    let principal = login.principal.expect("login principal");
+    let auth = TestAuth {
+        session_id: login.operator_session_id.expect("login session").value,
+        session_generation: login.operator_session_generation.expect("login generation").value,
+        principal_id: principal.principal_id,
+        principal_secret: principal.secret,
+    };
+    control
+        .enter_security_lockdown(authenticated_request(
+            EnterSecurityLockdownRequest { authority_domain_id: Some(domain()), reason_code: "exit_failure".to_owned() },
+            SECRET,
+            &auth,
+        ))
+        .await
+        .expect("entry succeeds before exit failure injection");
+    storage.fail_next_decision.store(true, Ordering::SeqCst);
+    let admin = AdminServiceImpl::new(
+        control.clone(),
+        SetupSecret::new("unused".to_owned(), Duration::from_secs(60)),
+    );
+    let exit = admin
+        .exit_security_lockdown(Request::new(ExitSecurityLockdownRequest {
+            authority_domain_id: Some(domain()),
+            reason_code: "exit_failure".to_owned(),
+        }))
+        .await
+        .expect_err("failed exit source/audit transaction must not reopen operations");
+    assert_eq!(exit.code(), Code::Unavailable);
+    assert!(control.projection_state().lockdown_state().await.active);
+}
+
+#[tokio::test]
+async fn lockdown_and_submit_race_is_ordered_by_the_shared_decision_gate() {
+    let directory = tempfile::tempdir().expect("test directory must be created");
+    let database_path = directory.path().join("patchbay.sqlite3");
+    let storage = RusqliteStorage::open(database_path.to_str().expect("UTF-8 test path"))
+        .expect("test storage must open");
+    seed_authority_and_session(&storage).await;
+    let (client, task, auth) = serve_with_gate(storage.clone(), CoreDecisionGate::default()).await;
+    let mut entry_client = client.clone();
+    let mut submit_client = client.clone();
+    let entry_auth = auth.clone();
+    let submit_auth = auth.clone();
+    let (entry, submit) = tokio::join!(
+        entry_client.enter_security_lockdown(authenticated_request(
+            EnterSecurityLockdownRequest {
+                authority_domain_id: Some(domain()),
+                reason_code: "race_entry".to_owned(),
+            },
+            SECRET,
+            &entry_auth,
+        )),
+        submit_client.submit(authenticated_request(
+            SubmitRequest { operation: Some(operation("race-command", "race-key")) },
+            SECRET,
+            &submit_auth,
+        )),
+    );
+    let entry = entry.expect("lockdown writer must not fail in the race").into_inner();
+    assert!(entry.lockdown.expect("entry posture").active);
+    match submit {
+        Ok(response) => {
+            let result = response.into_inner();
+            assert!(
+                result.outcome == SubmissionOutcome::Accepted as i32
+                    || (result.outcome == SubmissionOutcome::Rejected as i32
+                        && result.reason_code == "security_lockdown_active"),
+                "submit must either commit before entry or receive the canonical lockdown rejection"
+            );
+        }
+        Err(status) => assert_eq!(status.code(), Code::Unauthenticated),
+    }
+    let events = storage.read_after(&domain(), Lsn { value: 0 }).await.expect("race log is readable");
+    let entry_lsn = events
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::SecurityLockdown as i32)
+        .and_then(|event| event.event_id.lsn.as_ref())
+        .expect("lockdown source event")
+        .value;
+    if let Some(operation_lsn) = events
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .and_then(|event| event.event_id.lsn.as_ref())
+        .map(|lsn| lsn.value)
+    {
+        assert!(operation_lsn < entry_lsn, "accepted submit must commit before lockdown");
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_validation() {
+    let mut server = start_server().await;
+    let exact_query = QueryDiagnosticsRequest {
+        operation: Some(diagnostic_query_operation(
+            "lockdown-query-retry",
+            "lockdown-query-retry-key",
+            DiagnosticsQuery {
+                query: Some(diagnostics_query::Query::Audit(AuditQuery { limit: Some(1), ..Default::default() })),
+            },
+        )),
+    };
+    let before = server
+        .client
+        .query_diagnostics(authenticated_request(exact_query.clone(), SECRET, &server.operator_session))
+        .await
+        .expect("query before lockdown must complete")
+        .into_inner();
+    assert_eq!(before.submission.expect("query submission").outcome, SubmissionOutcome::Accepted as i32);
+
+    let mut enter = Request::new(patchbay_contracts::patchbay::EnterSecurityLockdownRequest {
+        authority_domain_id: Some(domain()),
+        reason_code: "test_lockdown".to_owned(),
+    });
+    // The helper uses the same compound issuer headers as Submit.
+    enter.metadata_mut().insert(CORE_SECRET_HEADER, SECRET.parse().unwrap());
+    enter.metadata_mut().insert(OPERATOR_SESSION_HEADER, server.operator_session.session_id.parse().unwrap());
+    enter.metadata_mut().insert(OPERATOR_ID_HEADER, OPERATOR_ACTOR.parse().unwrap());
+    enter.metadata_mut().insert(PRINCIPAL_ID_HEADER, server.operator_session.principal_id.parse().unwrap());
+    enter.metadata_mut().insert(PRINCIPAL_SECRET_HEADER, server.operator_session.principal_secret.parse().unwrap());
+    server
+        .client
+        .enter_security_lockdown(enter)
+        .await
+        .expect("lockdown entry must be authorized");
+
+    let fresh = login_surface(&mut server.client, "lockdown-read", "lockdown-host").await;
+    let malformed = QueryDiagnosticsRequest {
+        operation: Some(diagnostic_query_operation(
+            "lockdown-malformed-query",
+            "lockdown-malformed-query-key",
+            DiagnosticsQuery::default(),
+        )),
+    };
+    let malformed_result = server
+        .client
+        .query_diagnostics(authenticated_request(malformed, SECRET, &fresh))
+        .await
+        .expect("lockdown rejection is a protocol result")
+        .into_inner()
+        .submission
+        .expect("malformed query has a rejection result");
+    assert_eq!(malformed_result.failure_code, FailureCode::AuthorizationDenied as i32);
+    assert_eq!(malformed_result.reason_code, "security_lockdown_active");
+
+    let retry_result = server
+        .client
+        .query_diagnostics(authenticated_request(exact_query, SECRET, &fresh))
+        .await
+        .expect("exact query retry is rejected while locked")
+        .into_inner()
+        .submission
+        .expect("retry has a rejection result");
+    assert_eq!(retry_result.failure_code, FailureCode::AuthorizationDenied as i32);
+    assert_eq!(retry_result.reason_code, "security_lockdown_active");
+
+    let kinds = [
+        OperationKind::Spawn,
+        OperationKind::Attach,
+        OperationKind::Instruct,
+        OperationKind::Cancel,
+        OperationKind::Interrupt,
+        OperationKind::Query,
+        OperationKind::ApprovalResponse,
+        OperationKind::ElicitationResponse,
+        OperationKind::Reconfigure,
+        OperationKind::SessionManagement,
+    ];
+    for (index, kind) in kinds.into_iter().enumerate() {
+        let mut candidate = operation(&format!("lockdown-kind-{index}"), &format!("lockdown-kind-key-{index}"));
+        candidate.kind = kind as i32;
+        let result = server
+            .client
+            .submit(authenticated_request(SubmitRequest { operation: Some(candidate) }, SECRET, &fresh))
+            .await
+            .expect("lockdown operation rejection is a protocol result")
+            .into_inner();
+        assert_eq!(result.outcome, SubmissionOutcome::Rejected as i32, "{kind:?}");
+        assert_eq!(result.failure_code, FailureCode::AuthorizationDenied as i32, "{kind:?}");
+        assert_eq!(result.reason_code, "security_lockdown_active", "{kind:?}");
+    }
+    assert_eq!(operation_event_count(&server.storage).await, 1, "lockdown rejects must append no command events");
 }
 
 #[tokio::test]
@@ -1702,6 +1967,20 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .append(&domain(), authority_events::grant(domain(), query_grant))
         .await
         .expect("query grant fixture must append");
+    let lockdown_grant = Grant {
+        grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
+        authority_domain_id: Some(domain()),
+        subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+        target_scope: Some(TargetScope { kind: TargetScopeKind::AuthorityDomain as i32, ..TargetScope::default() }),
+        allowed_operation_kinds: vec![OperationKind::SessionManagement as i32],
+        provenance: Some(GrantProvenance { reason: "lockdown fixture".to_owned(), ..GrantProvenance::default() }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    };
+    storage
+        .append(&domain(), authority_events::grant(domain(), lockdown_grant))
+        .await
+        .expect("lockdown grant fixture must append");
 
     let operator = OperatorRecord {
         actor_id: Some(ActorId {

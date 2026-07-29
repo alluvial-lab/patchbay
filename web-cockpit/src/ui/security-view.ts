@@ -1,9 +1,10 @@
-import type { AuthorityDomainId } from "@patchbay/contracts";
+import { OperationKind, TargetScopeKind, type AuthorityDomainId } from "@patchbay/contracts";
 
 import type { PresentationModel } from "../domain/model.js";
 
 export interface SecurityViewActions {
   enterLockdown(reasonCode: string): Promise<void>;
+  revokeCurrentSession?(): Promise<void>;
   revokeAllSessions(): Promise<void>;
   revokePrincipal(principalId: string): Promise<void>;
   revokeEndpoint(endpointId: string): Promise<void>;
@@ -45,8 +46,8 @@ export function renderSecurityView(
   flow.className = "security-flow";
   flow.append(lockdownHero(document, model, actions));
   flow.append(operatorSessions(document, model, actions));
-  flow.append(simpleCard(document, "Endpoints & devices", "Control-surface inventory is redacted to safe endpoint and device identifiers."));
-  flow.append(simpleCard(document, "Active grants", "Grant ids, target scope, allowed OperationKinds, expiry, and revocation status are shown without provenance prose."));
+  flow.append(controlSurfaceInventory(document, model, actions));
+  flow.append(grantInventory(document, model, actions));
   view.append(flow);
   return view;
 }
@@ -141,27 +142,136 @@ function lockdownHero(
 }
 
 function operatorSessions(document: Document, model: PresentationModel, actions?: SecurityViewActions): HTMLElement {
+  const card = inventoryCard(document, "Operator sessions");
+  const revoke = button(document, "Revoke all sessions", "btn btn-danger btn--sm");
+  revoke.disabled = model.lockdown.active || !actions;
+  revoke.title = mutationTitle(model.lockdown.active, "Revoke all operator sessions");
+  revoke.addEventListener("click", () => void actions?.revokeAllSessions());
+  const heading = card.querySelector<HTMLElement>(".section-heading")!;
+  heading.append(revoke);
+  if (actions?.revokeCurrentSession) {
+    const current = button(document, "Revoke current session", "btn btn-secondary btn--sm");
+    current.disabled = model.lockdown.active;
+    current.title = mutationTitle(model.lockdown.active, "Revoke current browser session");
+    current.addEventListener("click", () => void actions.revokeCurrentSession?.());
+    heading.append(current);
+  }
+
+  if (model.security.operatorSessions.length === 0) {
+    card.append(textElement(document, "p", "identity", "No operator sessions are currently visible."));
+    return card;
+  }
+  const list = document.createElement("div");
+  list.className = "security-list";
+  model.security.operatorSessions.forEach((summary, index) => {
+    const row = document.createElement("div");
+    row.className = "security-row";
+    row.append(
+      textElement(document, "strong", "", "Operator session"),
+      textElement(document, "span", "identity", `actor ${summary.actorId} · endpoint ${summary.endpointId} · device ${summary.deviceId} · generation ${summary.generation}`),
+      textElement(document, "span", "identity", sessionStatus(summary)),
+    );
+    list.append(row);
+    if (index < model.security.operatorSessions.length - 1) list.append(document.createElement("hr"));
+  });
+  card.append(list);
+  return card;
+}
+
+function controlSurfaceInventory(document: Document, model: PresentationModel, actions?: SecurityViewActions): HTMLElement {
+  const card = inventoryCard(document, "Endpoints & devices");
+  if (model.security.controlSurfaces.length === 0) {
+    card.append(textElement(document, "p", "identity", "No enrolled endpoints or devices are currently visible."));
+    return card;
+  }
+  const list = document.createElement("div");
+  list.className = "security-list";
+  model.security.controlSurfaces.forEach((summary, index) => {
+    const row = document.createElement("div");
+    row.className = "security-row";
+    row.append(
+      textElement(document, "strong", "", summary.deviceId),
+      textElement(document, "span", "identity", `principal ${summary.principalId} · endpoint ${summary.endpointId} · generation ${summary.generation}`),
+    );
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "row-actions";
+    const endpoint = button(document, "Revoke endpoint", "btn btn-secondary btn--sm");
+    endpoint.disabled = model.lockdown.active || !actions;
+    endpoint.title = mutationTitle(model.lockdown.active, `Revoke endpoint ${summary.endpointId}`);
+    endpoint.addEventListener("click", () => void actions?.revokeEndpoint(summary.endpointId));
+    const device = button(document, "Revoke device", "btn btn-secondary btn--sm");
+    device.disabled = model.lockdown.active || !actions;
+    device.title = mutationTitle(model.lockdown.active, `Revoke device ${summary.deviceId}`);
+    device.addEventListener("click", () => void actions?.revokeDevice(summary.deviceId));
+    actionsRow.append(endpoint, device);
+    row.append(actionsRow);
+    list.append(row);
+    if (index < model.security.controlSurfaces.length - 1) list.append(document.createElement("hr"));
+  });
+  card.append(list);
+  return card;
+}
+
+function grantInventory(document: Document, model: PresentationModel, actions?: SecurityViewActions): HTMLElement {
+  const card = inventoryCard(document, "Active grants");
+  if (model.security.grants.length === 0) {
+    card.append(textElement(document, "p", "identity", "No grants are currently visible."));
+    return card;
+  }
+  const list = document.createElement("div");
+  list.className = "security-list";
+  model.security.grants.forEach((summary, index) => {
+    const row = document.createElement("div");
+    row.className = "security-row";
+    row.append(
+      textElement(document, "strong", "", summary.grantId),
+      textElement(document, "span", "identity", `${summary.subjectActorId} · ${scopeLabel(summary.targetScope)} · ${summary.allowedOperationKinds.map(operationKindLabel).join(", ") || "no Operations"}`),
+      textElement(document, "span", "identity", summary.revoked ? "revoked" : summary.expiresAt ? `expires ${summary.expiresAt.toISOString()}` : "active"),
+    );
+    const revoke = button(document, "Revoke grant", "btn btn-secondary btn--sm");
+    revoke.disabled = model.lockdown.active || !actions;
+    revoke.title = mutationTitle(model.lockdown.active, `Revoke grant ${summary.grantId}`);
+    revoke.addEventListener("click", () => void actions?.revokeGrant(summary.grantId));
+    row.append(revoke);
+    list.append(row);
+    if (index < model.security.grants.length - 1) list.append(document.createElement("hr"));
+  });
+  card.append(list);
+  return card;
+}
+
+function inventoryCard(document: Document, title: string): HTMLElement {
   const card = document.createElement("section");
   card.className = "card";
   const heading = document.createElement("div");
   heading.className = "section-heading";
-  heading.append(textElement(document, "h2", "", "Operator sessions"));
-  const revoke = button(document, "Revoke all sessions", "btn btn-danger btn--sm");
-  revoke.disabled = model.lockdown.active || !actions;
-  revoke.title = model.lockdown.active ? "Disabled during lockdown: revocations are unavailable." : "Revoke all operator sessions";
-  revoke.addEventListener("click", () => void actions?.revokeAllSessions());
-  heading.append(revoke);
+  heading.append(textElement(document, "h2", "", title));
   card.append(heading);
-  const count = [...model.sessions.values()].length;
-  card.append(textElement(document, "p", "identity", `${count} runtime session${count === 1 ? "" : "s"} currently visible; opaque operator-session ids are never shown.`));
   return card;
 }
 
-function simpleCard(document: Document, title: string, body: string): HTMLElement {
-  const card = document.createElement("section");
-  card.className = "card";
-  card.append(textElement(document, "h2", "", title), textElement(document, "p", "identity", body));
-  return card;
+function sessionStatus(summary: { active: boolean; revoked: boolean; expired: boolean }): string {
+  if (summary.revoked) return "revoked";
+  if (summary.expired) return "expired";
+  return summary.active ? "authenticated" : "inactive";
+}
+
+function operationKindLabel(value: number): string {
+  const label = OperationKind[value];
+  return label ? label.replace(/^RESERVED_/, "").toLowerCase().replaceAll("_", "-") : `kind-${value}`;
+}
+
+function scopeLabel(scope: { kind: number; adapterId?: { value: string }; runtimeSessionId?: { value: string }; deploymentScope: string } | undefined): string {
+  if (!scope) return "unknown scope";
+  if (scope.kind === TargetScopeKind.AUTHORITY_DOMAIN) return "authority domain";
+  if (scope.kind === TargetScopeKind.RUNTIME_SESSION) {
+    return `${scope.adapterId?.value ?? "adapter"}/${scope.deploymentScope}/${scope.runtimeSessionId?.value ?? "session"}`;
+  }
+  return `scope kind ${scope.kind}`;
+}
+
+function mutationTitle(active: boolean, action: string): string {
+  return active ? "Disabled during lockdown: revocations are unavailable." : action;
 }
 
 function alert(document: Document, title: string, body: string, tone: "warning" | "danger"): HTMLElement {

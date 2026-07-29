@@ -72,6 +72,28 @@ impl ValidationRejection {
     }
 }
 
+/// Validate the structural operation envelope without performing any
+/// stateful authorization or durable work.
+///
+/// Query-specific payload validation is intentionally owned by the diagnostics
+/// boundary. Callers that need a posture check to precede that validation use
+/// this helper for the shared command/kind/target/time envelope first.
+pub fn validate_operation_boundary(
+    operation: &Operation,
+    now: &Timestamp,
+) -> Result<(), Box<SubmissionResult>> {
+    match validate_operation(operation, now) {
+        Ok(_) => Ok(()),
+        Err(rejection) => Err(Box::new(rejected_result(
+            operation.command_id.clone(),
+            rejection.failure_code,
+            rejection.reason_code,
+            rejection.decision_grant_id,
+            rejection.diagnostic,
+        ))),
+    }
+}
+
 /// Submit an operation for acceptance using the production wall clock.
 ///
 /// The ordering is protocol-significant: boundary validation, authority check,

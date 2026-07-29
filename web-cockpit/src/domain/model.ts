@@ -29,6 +29,7 @@ import {
   type AdapterStatus,
   type AdapterDiagnosticSeverity,
   type SecurityLockdownState,
+  type SecuritySnapshot,
 } from "@patchbay/contracts";
 
 import type { ReconcileProjection } from "./reconcile.js";
@@ -128,6 +129,41 @@ export interface LockdownView {
   enteredEventLsn?: bigint;
 }
 
+export interface OperatorSessionSummaryView {
+  actorId: string;
+  endpointId: string;
+  deviceId: string;
+  generation: bigint;
+  active: boolean;
+  revoked: boolean;
+  expired: boolean;
+}
+
+export interface ControlSurfaceSummaryView {
+  principalId: string;
+  endpointId: string;
+  deviceId: string;
+  generation: bigint;
+  revoked: boolean;
+}
+
+export interface GrantSummaryView {
+  grantId: string;
+  subjectActorId: string;
+  targetScope?: TargetScope;
+  allowedOperationKinds: number[];
+  expiresAt?: Date;
+  revoked: boolean;
+  revocationPolicy: number;
+}
+
+export interface SecurityInventoryView {
+  snapshotLsn: bigint;
+  operatorSessions: OperatorSessionSummaryView[];
+  controlSurfaces: ControlSurfaceSummaryView[];
+  grants: GrantSummaryView[];
+}
+
 export interface AdapterView {
   adapterId: string;
   status?: AdapterStatus;
@@ -145,6 +181,7 @@ export interface PresentationModel {
   adapters: Map<string, AdapterView>;
   observations: ObservationView[];
   lockdown: LockdownView;
+  security: SecurityInventoryView;
 }
 
 export function emptyPresentationModel(): PresentationModel {
@@ -157,6 +194,16 @@ export function emptyPresentationModel(): PresentationModel {
     adapters: new Map(),
     observations: [],
     lockdown: { active: false },
+    security: emptySecurityInventory(),
+  };
+}
+
+function emptySecurityInventory(): SecurityInventoryView {
+  return {
+    snapshotLsn: 0n,
+    operatorSessions: [],
+    controlSurfaces: [],
+    grants: [],
   };
 }
 
@@ -234,6 +281,7 @@ export function replaceFromSnapshot(
     adapters: new Map(),
     observations: [],
     lockdown: lockdownFromState(snapshot.lockdown),
+    security: emptySecurityInventory(),
   };
 
   let replayCursor = 0n;
@@ -271,6 +319,70 @@ export function replaceFromSnapshot(
   return model;
 }
 
+/**
+ * Installs the redacted security inventory returned by the dedicated snapshot
+ * RPC. It is separate from SessionSnapshot because the two projections have
+ * different authority and redaction boundaries.
+ */
+export function replaceSecuritySnapshot(
+  model: PresentationModel,
+  snapshot: SecuritySnapshot,
+): PresentationModel {
+  const authorityDomainId = required(snapshot.authorityDomainId?.value, "security snapshot authority domain");
+  if (model.authorityDomainId && model.authorityDomainId !== authorityDomainId) {
+    throw new Error("cross-domain security snapshot rejected");
+  }
+  const snapshotLsn = requiredBigint(snapshot.snapshotLsn?.value, "security snapshot LSN");
+  // A startup/reconnect read can complete after the live stream has already
+  // folded a newer visible event. Never let that older inventory response
+  // roll the presentation posture or summaries backward.
+  if (snapshotLsn < model.cursor) return model;
+  const next = cloneModel(model);
+  next.authorityDomainId = authorityDomainId;
+  next.security = {
+    snapshotLsn,
+    operatorSessions: snapshot.operatorSessions.map((summary) => ({
+      actorId: required(summary.actorId?.value, "operator session actor"),
+      endpointId: required(summary.endpointId?.value, "operator session endpoint"),
+      deviceId: required(summary.deviceId?.value, "operator session device"),
+      generation: requiredBigint(summary.operatorSessionGeneration?.value, "operator session generation"),
+      active: summary.active,
+      revoked: summary.revoked,
+      expired: summary.expired,
+    })),
+    controlSurfaces: snapshot.controlSurfaces.map((summary) => ({
+      principalId: required(summary.principalId, "control-surface principal"),
+      endpointId: required(summary.endpointId?.value, "control-surface endpoint"),
+      deviceId: required(summary.deviceId?.value, "control-surface device"),
+      generation: requiredBigint(summary.endpointGeneration?.value, "control-surface generation"),
+      revoked: summary.revoked,
+    })),
+    grants: snapshot.grants.map((summary) => ({
+      grantId: required(summary.grantId?.value, "grant id"),
+      subjectActorId: required(summary.subjectActorId?.value, "grant subject actor"),
+      targetScope: summary.targetScope,
+      allowedOperationKinds: [...summary.allowedOperationKinds],
+      expiresAt: timestampDate(summary.expiresAt),
+      revoked: summary.revoked,
+      revocationPolicy: summary.revocationPolicy,
+    })),
+  };
+  next.lockdown = lockdownFromState(snapshot.lockdown);
+  if (next.lockdown.active) {
+    next.sessions = new Map(
+      [...next.sessions].map(([key, session]) => [key, {
+        ...session,
+        connectivity: SessionConnectivityState.STALE,
+        activity: SessionActivityState.UNKNOWN,
+        activityDetail: undefined,
+        lockdownActive: true,
+        needsYou: false,
+      }]),
+    );
+  }
+  return next;
+}
+
 /** Marks cached axes honestly while a stream/snapshot gap is unresolved. */
 export function markUnreconciled(model: PresentationModel): PresentationModel {
   const next = cloneModel(model);
@@ -306,6 +418,10 @@ export class PresentationProjection implements ReconcileProjection {
 
   replaceFromSnapshot(snapshot: SessionSnapshot, replayEvents: readonly SubscribeEvent[]): void {
     this.model = replaceFromSnapshot(snapshot, replayEvents);
+  }
+
+  replaceSecuritySnapshot(snapshot: SecuritySnapshot): void {
+    this.model = replaceSecuritySnapshot(this.model, snapshot);
   }
 
   foldEvent(event: SubscribeEvent): void {

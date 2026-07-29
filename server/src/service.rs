@@ -20,7 +20,10 @@ use patchbay_contracts::patchbay::{
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
-    acceptance::{self, AcceptanceError, CommandRecord, CommandStateLookup, GrantCheck},
+    acceptance::{
+        self, AcceptanceError, CommandRecord, CommandStateLookup, GrantCheck, OperationPosture,
+        OperationPostureDenied,
+    },
     security,
     time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
@@ -1229,9 +1232,45 @@ where
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
 
-        // Decode and validate the typed query before any persistence read. A
-        // malformed query is a normal pre-acceptance rejection, not a gRPC
-        // framing error and not an opportunity to touch the log.
+        // Keep the shared operation envelope/time boundary ahead of the
+        // stateful gate. Query payload decoding is deliberately later: while
+        // lockdown is active the canonical posture denial must win over a
+        // malformed typed diagnostics payload.
+        let evaluated_at = self.clock.now();
+        if let Err(submission) = acceptance::validate_operation_boundary(&operation, &evaluated_at) {
+            let submission = *submission;
+            self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+            return Ok(Response::new(QueryDiagnosticsResponse {
+                submission: Some(submission),
+                ..QueryDiagnosticsResponse::default()
+            }));
+        }
+
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
+            .await?;
+        if let Err(OperationPostureDenied::SecurityLockdown { reason_code, .. }) = self
+            .state
+            .operation_posture()
+            .check(&authority_domain_id)
+            .await
+        {
+            let submission = rejected_query_lockdown_submission(&operation, reason_code);
+            self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+            return Ok(Response::new(QueryDiagnosticsResponse {
+                submission: Some(submission),
+                ..QueryDiagnosticsResponse::default()
+            }));
+        }
+
+        // Decode and validate the typed query only after catch-up and posture
+        // enforcement. A malformed query is still a normal pre-acceptance
+        // rejection and never touches the durable command log.
         let current_lsn = self.state.current_lsn().await;
         let validated = match diagnostics::validate_query(&operation, current_lsn) {
             Ok(validated) => validated,
@@ -1244,15 +1283,6 @@ where
                 }));
             }
         };
-
-        let _decision_guard = self.decision_gate.acquire().await;
-        self.state
-            .catch_up(&self.storage, &authority_domain_id)
-            .await
-            .map_err(map_storage_error_to_status)?;
-        let issuer = self
-            .issuer_from_request(&request, authority_domain_id.clone())
-            .await?;
 
         let submission = match acceptance::submit_with_clock_and_posture(
             &self.storage,
@@ -1819,6 +1849,23 @@ async fn materialize_diagnostics_result<S: Storage>(
                 patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page),
             ))
         }
+    }
+}
+
+fn rejected_query_lockdown_submission(
+    operation: &patchbay_contracts::patchbay::Operation,
+    reason_code: String,
+) -> SubmissionResult {
+    SubmissionResult {
+        outcome: SubmissionOutcome::Rejected as i32,
+        command_id: operation.command_id.clone(),
+        operation_state: OperationState::Unspecified as i32,
+        failure_code: FailureCode::AuthorizationDenied as i32,
+        diagnostic_message: format!("security lockdown is active: {reason_code}"),
+        accepted_lsn: None,
+        deduplicated: false,
+        decision_grant_id: None,
+        reason_code: "security_lockdown_active".to_owned(),
     }
 }
 

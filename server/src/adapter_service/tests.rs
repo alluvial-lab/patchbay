@@ -4,17 +4,18 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, typed_correlation, AcceptedOperation, AdapterCapability, AdapterDiagnosticPayload,
-    AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
+    observation_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
+    SecurityLockdownEntered,
     PayloadContentType, PayloadEnvelope, ReceiveRequest, RuntimeSessionId, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
 };
-use patchbay_core::storage::{
+use patchbay_core::{security::events as security_events, storage::{
     DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
-};
+}};
 use prost::Message;
 use tokio::sync::Notify;
 use tokio_stream::StreamExt;
@@ -269,6 +270,75 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
             .is_err(),
         "an idle delivery subscription remains pending"
     );
+}
+
+#[tokio::test]
+async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_derivation() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("initial live report succeeds");
+
+    // Simulate a lockdown committed by the control service after this adapter
+    // service's independent projection was last used.
+    let lockdown = security_events::entered(
+        domain.clone(),
+        SecurityLockdownEntered {
+            reason_code: "test_lockdown".into(),
+            occurred_at: Some(prost_types::Timestamp { seconds: 2, nanos: 0 }),
+            entered_by: Some(ActorEndpointRef {
+                actor_id: Some(ActorId { value: "operator".into() }),
+                ..Default::default()
+            }),
+            invalidated_through_operator_session_generation: Some(Generation { value: 1 }),
+            affected_runtime_session_count: 1,
+        },
+    );
+    storage
+        .append(&domain, security_events::encode(&lockdown))
+        .await
+        .expect("lockdown source event appends");
+
+    // The report is still live adapter evidence, but the catch-up fold must
+    // make the stale clamp visible before ingest derives its transition.
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("live report is reconciled as stale during lockdown");
+
+    let replayed = session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("entry then live report remains replayable");
+    let current = replayed
+        .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+        .expect("session remains present");
+    assert_eq!(current.state.connectivity(), SessionConnectivityState::Stale);
 }
 
 #[tokio::test]

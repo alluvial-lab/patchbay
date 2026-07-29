@@ -1,8 +1,8 @@
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, BootstrapRequest, EnterSecurityLockdownRequest,
-    ExitSecurityLockdownRequest, PrincipalEnrollment,
+    ActorId, AuditEventKind, AuthorityDomainId, BootstrapRequest, EnterSecurityLockdownRequest,
+    ExitSecurityLockdownRequest, PrincipalEnrollment, TargetScopeKind,
 };
-use patchbay_core::storage::{AuditedStorage, RusqliteStorage};
+use patchbay_core::storage::{AuditPageSpec, AuditedStorage, RusqliteStorage, Storage};
 use patchbay_core_server::{
     admin_service::{AdminServiceImpl, SetupSecret},
     login_security::{LoginLimiter, StderrLoginAuditSink},
@@ -106,4 +106,44 @@ async fn entry_restart_and_credential_independent_admin_exit_recover_posture() {
         })
         .await;
     assert!(next.session_generation.value > 1);
+
+    // The durable audit index preserves the verified entry attribution and the
+    // bootstrap-channel exit record without exposing session credentials.
+    let page = storage
+        .query_audit(
+            &authority_domain_id,
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::LockdownEntered, AuditEventKind::LockdownExited],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: Vec::new(),
+                reason_codes: Vec::new(),
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("lockdown audit query must remain available");
+    let entered_audit = page
+        .records
+        .iter()
+        .find(|record| record.kind == AuditEventKind::LockdownEntered as i32)
+        .expect("entry audit record is indexed");
+    assert_eq!(entered_audit.actor_id.as_ref().map(|id| id.value.as_str()), Some(ACTOR));
+    assert_eq!(entered_audit.endpoint_id.as_ref().map(|id| id.value.as_str()), Some("cli"));
+    assert_eq!(entered_audit.device_id.as_ref().map(|id| id.value.as_str()), Some("console"));
+    assert_eq!(entered_audit.reason_code, "suspected_endpoint_compromise");
+    assert_eq!(entered_audit.target_scope.as_ref().map(|scope| scope.kind), Some(TargetScopeKind::AuthorityDomain as i32));
+    let exited_audit = page
+        .records
+        .iter()
+        .find(|record| record.kind == AuditEventKind::LockdownExited as i32)
+        .expect("exit audit record is indexed");
+    assert_eq!(exited_audit.reason_code, "operator_recovery");
+    assert_eq!(exited_audit.target_scope.as_ref().map(|scope| scope.kind), Some(TargetScopeKind::AuthorityDomain as i32));
 }

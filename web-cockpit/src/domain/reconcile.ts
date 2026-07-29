@@ -1,10 +1,14 @@
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
+  LoadSecuritySnapshotRequestSchema,
   LoadSnapshotRequestSchema,
   LsnSchema,
   SessionSnapshotSchema,
   SubscribeRequestSchema,
   type AuthorityDomainId,
+  type LoadSecuritySnapshotRequest,
+  type LoadSecuritySnapshotResponse,
+  type SecuritySnapshot,
   type LoadSnapshotRequest,
   type LoadSnapshotResponse,
   type SessionSnapshot,
@@ -15,6 +19,7 @@ import {
 export interface ReconcileClient {
   subscribe(input: SubscribeRequest, options?: { signal?: AbortSignal }): AsyncIterable<SubscribeEvent>;
   loadSnapshot(input: LoadSnapshotRequest): Promise<LoadSnapshotResponse>;
+  loadSecuritySnapshot?(input: LoadSecuritySnapshotRequest): Promise<LoadSecuritySnapshotResponse>;
 }
 
 /** Port implemented by the pure presentation projection in model.ts. */
@@ -24,6 +29,7 @@ export interface ReconcileProjection {
     snapshot: SessionSnapshot,
     replayEvents: readonly SubscribeEvent[],
   ): void | Promise<void>;
+  replaceSecuritySnapshot?(snapshot: SecuritySnapshot): void | Promise<void>;
   foldEvent(event: SubscribeEvent): void | Promise<void>;
 }
 
@@ -58,6 +64,18 @@ export class Reconciler {
 
   get currentCursor(): bigint {
     return this.cursor;
+  }
+
+  /** Refresh the dedicated, redacted security inventory projection. */
+  async loadSecuritySnapshot(authorityDomainId: AuthorityDomainId): Promise<void> {
+    if (!this.client.loadSecuritySnapshot || !this.projection.replaceSecuritySnapshot) return;
+    const response = await this.client.loadSecuritySnapshot(
+      create(LoadSecuritySnapshotRequestSchema, { authorityDomainId }),
+    );
+    if (!response.snapshot) throw new Error("security snapshot is unavailable");
+    const snapshotDomain = required(response.snapshot.authorityDomainId?.value, "security snapshot authority domain");
+    if (snapshotDomain !== authorityDomainId.value) throw new Error("cross-domain security snapshot rejected");
+    await this.projection.replaceSecuritySnapshot(response.snapshot);
   }
 
   async *subscribe(
@@ -129,6 +147,7 @@ export class Reconciler {
     // cached browser state or skipping events hidden behind snapshot_lsn.
     const replayEvents = await this.replayThrough(authorityDomainId, snapshotLsn);
     await this.projection.replaceFromSnapshot(snapshot, replayEvents);
+    await this.loadSecuritySnapshot(authorityDomainId);
     this.cursor = snapshotLsn;
     this.onReconciliationComplete?.("stream-reconnect");
   }

@@ -66,6 +66,7 @@ export function csrfInterceptor(readToken: () => string | undefined): Intercepto
       request.method.name === "Submit"
       || request.method.name === "QueryDiagnostics"
       || request.method.name === "EnterSecurityLockdown"
+      || request.method.name === "RevokeOperatorSession"
       || request.method.name === "RevokeGrant"
       || request.method.name === "RevokeAllOperatorSessions"
       || request.method.name === "RevokeControlSurfacePrincipal"

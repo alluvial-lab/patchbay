@@ -594,3 +594,34 @@ Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
    QueryDiagnostics lockdown outcomes, adapter-report race, mutation race,
    transaction-failure atomicity, attributed entry/exit audit queries. Fix:
    add the designed deterministic tests alongside the code fixes.
+
+## Review resolution
+
+1. **Adapter projection stale at session-report decisions** — fixed by rebuilding
+   the adapter-owned `SessionRegistry` from the authority-domain log under the
+   shared `CoreDecisionGate` before deriving a session report delta. Added
+   `lockdown_entry_then_live_report_catches_up_adapter_projection_before_derivation`;
+   the entry → live report path now replays with a stale session rather than
+   producing a lockdown-invalid live transition.
+2. **Malformed QueryDiagnostics lockdown ordering** — fixed by validating the
+   shared operation envelope/time boundary first, then acquiring the gate,
+   catching up, enforcing `OperationPosture`, and only then decoding the typed
+   diagnostics query. Added malformed, valid exact-retry, and all committed
+   `OperationKind` lockdown cases; each returns
+   `authorization_denied/security_lockdown_active` without a command event.
+3. **Cockpit security inventory and rail** — fixed by adding the redacted
+   `SecuritySnapshot` projection to `PresentationModel`, loading it through
+   `Reconciler` at startup and reconnect, rendering operator-session,
+   endpoint/device, and grant rows/actions from that snapshot, and visually
+   hiding desktop rail labels while retaining `aria-label` names. The built
+   bundle contains `loadSecuritySnapshot`, `operatorSessions`,
+   `controlSurfaces`, and grant inventory rendering.
+4. **Security test evidence** — added deterministic adapter-report replay,
+   lockdown/Submit ordering race, entry/exit transaction-failure atomicity,
+   OperationKind matrix and exact QueryDiagnostics retry coverage, and durable
+   entry/exit audit-query attribution checks. Cockpit inventory rendering is
+   covered by a DOM test.
+
+Resolution verification: `cargo test -p patchbay-core-server --lib`, the
+lockdown recovery and gRPC smoke suites, and `cd web-cockpit && npm test` pass;
+full required verification is recorded in the implementation report.

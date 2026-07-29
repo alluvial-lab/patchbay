@@ -23,7 +23,7 @@ pub use observation::{
 };
 pub use pipeline::{
     submit, submit_with_clock, submit_with_clock_and_posture, target_key_for,
-    COMMITTED_OPERATION_KINDS,
+    validate_operation_boundary, COMMITTED_OPERATION_KINDS,
 };
 pub use ports::{
     ActiveElicitation, AllowOperations, Authorized, Clock, ElicitationContractLookup, GrantCheck,

@@ -116,6 +116,7 @@ function composeCockpit(
     // diagnostics refreshes must subscribe to the completed reconnect itself.
     onReconciliationComplete() {
       if (!shell) return;
+      shell.update(projection.model);
       const selectedKey = shell.selectedSessionKey;
       const selected = selectedKey
         ? projection.model.sessions.get(selectedKey)
@@ -210,6 +211,9 @@ function composeCockpit(
         }),
       );
     },
+    async revokeCurrentSession(): Promise<void> {
+      await protocol.client.revokeOperatorSession({});
+    },
     async revokeAllSessions(): Promise<void> {
       await protocol.client.revokeAllOperatorSessions({ reasonCode: "operator_security_action" });
     },
@@ -281,6 +285,16 @@ function composeCockpit(
     },
   });
   mount.replaceChildren(shell.element);
+
+  // Security inventory is a separate redacted snapshot projection. Load it
+  // at startup (and again on stream reconnect) instead of inferring endpoint,
+  // device, or grant rows from session events or audit prose.
+  void reconciler.loadSecuritySnapshot(authorityDomainId)
+    .then(() => shell.update(projection.model))
+    .catch(() => {
+      // The session cockpit remains readable if the dedicated inventory read
+      // is temporarily unavailable; the next reconnect retries it.
+    });
 
   if (options.startSubscription !== false) {
     // Fold every event as it arrives, but render at most once per frame: a
