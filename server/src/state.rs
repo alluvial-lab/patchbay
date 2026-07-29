@@ -345,7 +345,7 @@ impl ProjectionState {
                         .iter()
                         .map(|kind| *kind as i32)
                         .collect(),
-                    expires_at: grant.expires_at.clone(),
+                    expires_at: grant.expires_at,
                     revoked: grant.is_revoked(),
                     revocation_policy: grant.revocation_policy as i32,
                 })
