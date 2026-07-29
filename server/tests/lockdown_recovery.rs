@@ -87,7 +87,7 @@ async fn entry_restart_and_credential_independent_admin_exit_recover_posture() {
     let exit = AdminServiceImpl::new(restarted.clone(), SetupSecret::new("unused".to_owned(), std::time::Duration::from_secs(60)))
         .exit_security_lockdown(Request::new(ExitSecurityLockdownRequest {
             authority_domain_id: Some(authority_domain_id.clone()),
-            reason_code: Some("operator_recovery".to_owned()).unwrap_or_default(),
+            reason_code: "operator_recovery".to_owned(),
         }))
         .await
         .unwrap()
