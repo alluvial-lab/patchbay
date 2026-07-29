@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation, ui]
 parent: epic-revocation-lifecycle
 depends_on: [epic-revocation-lifecycle-grant-lifecycle]
 release_binding: null
 gate_origin: null
 created: 2026-07-27
-updated: 2026-07-30
+updated: 2026-07-31
 ---
 
 # Security lockdown & bootstrap-channel exit
