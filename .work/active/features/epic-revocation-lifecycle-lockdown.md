@@ -565,3 +565,32 @@ Deviations and parked issues:
 - **Committed v0.1.0**: authority-domain durable lockdown; all-Operation pre-acceptance rejection; existing-session generation invalidation; stale runtime-session projection; fresh-login read-only snapshots/subscriptions; SessionManagement/authority-domain trigger; loopback-admin bootstrap exit; existing entry/exit audit vocabulary; signed-off web/CLI surfaces.
 - **Reserved seam**: multiple authority domains/operators, scoped/partial lockdown, additional configured bootstrap-channel variants, continuous subscription reauthorization, richer incident taxonomy, and future native/desktop surfaces. Domain ids and `BootstrapChannelKind` keep these promotions additive.
 - **Explicitly rejected for v0.1.0**: routine web reauthentication as exit proof, browser/admin proxy exit, arbitrary free-text durable reasons, grant-revocation fanout as posture, automatic liveness restoration on exit, a lockdown OperationKind/CommandState, and a takeover interstitial.
+
+## Review findings (standard pass 1, 2026-07-29 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Adapter projection stale at session-report decisions** — after lockdown
+   commits, the adapter service holds the shared gate but evaluates reports
+   against its pre-lockdown SessionRegistry; a live report can append a live
+   registration/transition that replay then rejects as corruption. Fix:
+   catch up the adapter projection under the gate before deriving/appending;
+   regression: entry → live session report → successful replay.
+2. **Malformed QueryDiagnostics bypasses the canonical lockdown outcome** —
+   query validation runs before gate/posture enforcement, so a malformed
+   query gets validation_failed instead of the required
+   authorization_denied/security_lockdown_active. Fix: query-specific
+   validation under the gate after catch-up + posture check; test
+   malformed/valid/exact-retry during lockdown.
+3. **Cockpit doesn't match the signed-off security inventory** — never calls
+   LoadSecuritySnapshot; operator-sessions section reports a runtime-session
+   count; endpoint/device/grant sections are static cards without inventory
+   rows or controls; rail shows visible labels (not icon-only). Confirmed in
+   the built bundle. Fix: load + reconcile SecuritySnapshot into the
+   presentation model, render signed-off rows/actions, hide rail labels
+   visually (keep accessible names).
+4. **Required security test evidence absent** — only one recovery test
+   exists; missing: OperationKind matrix + exact retry during lockdown,
+   QueryDiagnostics lockdown outcomes, adapter-report race, mutation race,
+   transaction-failure atomicity, attributed entry/exit audit queries. Fix:
+   add the designed deterministic tests alongside the code fixes.
