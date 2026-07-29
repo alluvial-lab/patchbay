@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle
 kind: epic
-stage: implementing
+stage: review
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -132,3 +132,31 @@ grant-lifecycle feature owns the injected-clock cleanup plus a stale
   implementation.
 - **Write-set collisions** between lockdown and grant-lifecycle if
   parallelized anyway — the depends_on edge exists to prevent that.
+
+## Aggregate completion note (2026-07-29)
+
+All three child features are `done`. The SECURITY.md emergency-control
+contract is now implemented end to end:
+
+- `grant-lifecycle` — Clock port + expiry enforcement, `RevokeGrant` (durable,
+  policy-aware), Subscribe grant check. 4 review blockers fixed (shared
+  CoreDecisionGate, test evidence, CLI validation, audit attribution).
+- `session-principal-revocation` — revoke-all, principal/endpoint/device
+  revocation fences, CLI controls; session-record fields gap absorbed. 3
+  review blockers fixed (stale-issuer race, audit misattribution, count bug).
+- `lockdown` — durable posture (survives restart), all-Operation rejection,
+  stale-session clamp, session-generation invalidation, authorized entry,
+  bootstrap-channel-only exit, entry/exit audit producers (deferred
+  obligation discharged), cockpit nav shell + security view per signed-off
+  mockup, CLI lockdown-enter/exit. 4 review blockers fixed (adapter
+  projection race, query-validation ordering, security inventory wiring,
+  test evidence).
+
+Also landed: single-generator-of-record for contract bindings (build.rs no
+longer races buf), cockpit nav-shell architecture (research-grounded),
+SECURITY.md status notes rolled forward (#1–#5 now implemented).
+
+Verification at epic close: cargo 33 suites + clippy, cli 36, web-server 31,
+web-cockpit 73, pi-adapter 24, e2e (incl. lockdown → restart → bootstrap
+exit), contracts drift/vectors/models/presentation — all green. Formal
+properties/vectors remain honestly draft/stated-normative.
