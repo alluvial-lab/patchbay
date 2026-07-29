@@ -264,6 +264,7 @@ where
                     lockdown: Some(current),
                     lockdown_event_id: None,
                     already_inactive: true,
+                    entered_event_id: None,
                 },
             ));
         }
@@ -315,6 +316,7 @@ where
                 lockdown: Some(lockdown),
                 lockdown_event_id: Some(event_id),
                 already_inactive: false,
+                entered_event_id: Some(entered_event_id),
             },
         ))
     }

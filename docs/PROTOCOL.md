@@ -205,6 +205,12 @@ A submission is the request to create or retrieve a command record. Not every su
 
 `LocalSubmissionState` exists only inside a control surface before or while it reconciles with Patchbay. It is not persisted as durable command state.
 
+### Security lockdown posture
+
+Security lockdown is a domain-keyed durable posture, not an `OperationKind` or command state. While active, all `ControlService.Submit` and `QueryDiagnostics` Operations are refused before acceptance with `SubmissionOutcome = rejected`, `FailureCode = authorization_denied`, and reason `security_lockdown_active`; no command record is appended. This includes exact retries and every committed OperationKind. Already accepted Operations may continue through their existing lifecycle, and adapter observations/reports are still accepted for reconciliation but cannot restore a runtime session to `live` while the posture is active.
+
+The named non-Operation read exceptions are `Subscribe`, `LoadSnapshot`, and `LoadSecuritySnapshot`; fresh `VerifyOperatorPassword` login, logout/current-session revocation, and required audit ingress also remain available. A fresh login may inspect read-only snapshots/subscriptions but cannot submit Operations or perform security mutations until exit. `EnterSecurityLockdown` requires the authenticated authority-domain/session-management grant. `ExitSecurityLockdown` is present only on the loopback bootstrap `AdminService`; v0.1.0's CLI surface is `patchbay-cli lockdown-exit`, and no routine web bridge exists. Entry/exit source events and `LOCKDOWN_ENTERED`/`LOCKDOWN_EXITED` audit records commit atomically. Persisted reasons are bounded `[a-z0-9_]{1,64}` codes only; snapshots and audit projections do not expose bearer/session secrets.
+
 | State | Meaning |
 |---|---|
 | `draft` | Local-only operator input that has not been submitted to Patchbay. It may be edited or discarded without protocol history. |

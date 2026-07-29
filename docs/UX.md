@@ -96,8 +96,9 @@ Patchbay targets the confidence and continuity of a mature first-party remote ag
 - **Session detail** — message timeline + command delivery timeline.
 - **Composer.**
 - **Elicitation/attention surface.** — pending approvals and questions.
+- **Security** — lockdown trigger, redacted operator-session/control-surface/grant summaries, and revocation controls.
 
-The navigation pattern between these screens is an instance decision, deferred to the v0.1.0 surface-design mockup follow-on (see Reserved follow-up); the floor requires the screens exist, not their layout.
+The signed-off lockdown surface at `.mockups/screens/epic-revocation-lifecycle-lockdown/option-hybrid.html` is the authority for the v0.1.0 cockpit shell: desktop icon rail and Sessions punch-out, mobile Sessions/Security/More tabs, inline lockdown banner, and a single-column Security destination. The banner is persistent and inline rather than a takeover interstitial. During active lockdown the cockpit stays readable but presents sessions and controls as stale/read-only with an explicit reason; no browser surface exposes exit.
 
 ### Session list visible fields
 
@@ -135,7 +136,7 @@ The responsive web cockpit prioritizes: a readable session list on phone; clear 
 
 ### CLI
 
-The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics. It never touches persistence directly. Diagnostic reads are served by the core: `audit-query`, `inspect-command`, and `adapter-status` run as authority-domain `query` Operations via `QueryDiagnostics` (`docs/PROTOCOL.md` Persistence and recovery), while `session-health` reads the authoritative snapshot (`LoadSnapshot`).
+The CLI provides setup, administration, debugging, and scripted access — not a second independent product surface with divergent semantics. It never touches persistence directly. Diagnostic reads are served by the core: `audit-query`, `inspect-command`, and `adapter-status` run as authority-domain `query` Operations via `QueryDiagnostics` (`docs/PROTOCOL.md` Persistence and recovery), while `session-health` reads the authoritative snapshot (`LoadSnapshot`). Emergency recovery is explicit: `lockdown-enter --reason-code CODE --confirm LOCKDOWN` uses the authenticated ControlService and clears local credentials only after confirmed entry; `lockdown-exit [--reason-code CODE]` uses only the loopback bootstrap AdminService and requires no credential file. Neither command prints bearer material or advertises the consumed setup secret as recovery.
 
 The diagnostic commands are:
 

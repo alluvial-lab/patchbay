@@ -70,7 +70,7 @@ export async function lockdownExitCommand(
   print({
     kind: "security_lockdown_exit", active: false, authorityDomainId,
     bootstrapChannel: "loopback_admin", lockdownEventId: eventIdView(result.lockdownEventId),
-    alreadyInactive: result.alreadyInactive, enteredEventId: eventIdView(result.lockdown?.enteredEventId),
+    alreadyInactive: result.alreadyInactive, enteredEventId: eventIdView(result.enteredEventId),
   }, options.json, output);
   output.stderr("lockdown is inactive; run patchbay-cli login to obtain a fresh operator session");
   return 0;
@@ -87,7 +87,7 @@ function validateExitResult(result: ExitSecurityLockdownResult, domain: string):
   if (!result.lockdown || result.lockdown.active) throw new Error("malformed lockdown exit response: posture remains active");
   if (!result.alreadyInactive) {
     validateEvent(result.lockdownEventId, domain, "lockdown exit event");
-    validateEvent(result.lockdown.enteredEventId, domain, "prior lockdown entry event");
+    validateEvent(result.enteredEventId, domain, "prior lockdown entry event");
   } else if (result.lockdownEventId) throw new Error("contradictory lockdown exit response: inactive result has an event");
 }
 

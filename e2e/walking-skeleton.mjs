@@ -41,20 +41,7 @@ try {
   await runChecked("npm", ["run", "build"], adapterRoot, process.env);
   await runChecked("npm", ["run", "build"], cliRoot, process.env);
 
-  const core = spawn(join(repoRoot, "target/debug/patchbay-core-server"), [], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      PATCHBAY_CORE_SECRET: coreSecret,
-      PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterSecret,
-      PATCHBAY_AUTHORITY_DOMAIN_ID: authorityDomainId,
-      PATCHBAY_BIND_ADDR: `127.0.0.1:${corePort}`,
-      PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
-      PATCHBAY_DB_PATH: databasePath,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  children.push(core);
+  let core = spawnCoreProcess();
   const coreOutput = capture(core);
   const setupSecret = await waitForMatch(
     coreOutput,
@@ -159,8 +146,56 @@ try {
   const settled = await waitForSessionActivity(cliEnv, "idle", 5_000);
   assert.equal(settled.connectivity, "live");
 
+  const entered = await runCli(
+    ["lockdown-enter", "--reason-code", "suspected_endpoint_compromise", "--confirm", "LOCKDOWN", "--json"],
+    cliEnv,
+  );
+  assert.equal(entered.code, 0, `${entered.stderr}\n${entered.stdout}`);
+  assert.equal(JSON.parse(entered.stdout).active, true);
+
+  const readOnlyLogin = await runCli(
+    ["login", "--operator-id", operatorId, "--endpoint-id", "lockdown-login", "--device-id", "walking-device"],
+    { ...cliEnv, PATCHBAY_OPERATOR_PASSWORD: operatorPassword },
+  );
+  assert.equal(readOnlyLogin.code, 0, readOnlyLogin.stderr);
+  const rejectedDuringLockdown = await runCli(
+    ["instruct", runtimeSessionId, "must be rejected", "--json"],
+    cliEnv,
+  );
+  assert.equal(rejectedDuringLockdown.code, 2, `${rejectedDuringLockdown.stderr}\n${rejectedDuringLockdown.stdout}`);
+  assert.match(`${rejectedDuringLockdown.stderr}\n${rejectedDuringLockdown.stdout}`, /security_lockdown_active|lockdown/i);
+
+  await terminate(core);
+  core = spawnCoreProcess();
+  await waitForPort(corePort, core, 15_000);
+  const postRestartLogin = await runCli(
+    ["login", "--operator-id", operatorId, "--endpoint-id", "post-restart-login", "--device-id", "walking-device"],
+    { ...cliEnv, PATCHBAY_OPERATOR_PASSWORD: operatorPassword },
+  );
+  assert.equal(postRestartLogin.code, 0, postRestartLogin.stderr);
+  const restartedHealth = await runCli(["session-health", "--json"], cliEnv);
+  assert.equal(restartedHealth.code, 0, restartedHealth.stderr);
+
+  await rm(credentialPath, { force: true });
+  const exited = await runCli(["lockdown-exit", "--json"], cliEnv);
+  assert.equal(exited.code, 0, `${exited.stderr}\n${exited.stdout}`);
+  const exitView = JSON.parse(exited.stdout);
+  assert.equal(exitView.active, false);
+  assert.equal(exitView.bootstrapChannel, "loopback_admin");
+
+  const recoveredLogin = await runCli(
+    ["login", "--operator-id", operatorId, "--endpoint-id", "recovered-login", "--device-id", "walking-device"],
+    { ...cliEnv, PATCHBAY_OPERATOR_PASSWORD: operatorPassword },
+  );
+  assert.equal(recoveredLogin.code, 0, recoveredLogin.stderr);
+  const recoveredInstruct = await runCli(
+    ["instruct", runtimeSessionId, "recovered after bootstrap exit", "--command-id", "recovered-command", "--json"],
+    cliEnv,
+  );
+  assert.equal(recoveredInstruct.code, 0, `${recoveredInstruct.stderr}\n${recoveredInstruct.stdout}`);
+
   console.log(
-    "Walking skeleton: core → Pi adapter/AgentSession → CLI login/instruct → durable completed/idle passed",
+    "Walking skeleton: core → Pi adapter/AgentSession → CLI lifecycle plus lockdown → restart → bootstrap exit passed",
   );
 } finally {
   for (const child of children.reverse()) await terminate(child);
@@ -169,6 +204,25 @@ try {
 
 function runCli(args, env) {
   return runProcess(process.execPath, [join(cliRoot, "dist/src/main.js"), ...args], cliRoot, env);
+}
+
+function spawnCoreProcess() {
+  const core = spawn(join(repoRoot, "target/debug/patchbay-core-server"), [], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PATCHBAY_CORE_SECRET: coreSecret,
+      PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterSecret,
+      PATCHBAY_AUTHORITY_DOMAIN_ID: authorityDomainId,
+      PATCHBAY_BIND_ADDR: `127.0.0.1:${corePort}`,
+      PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
+      PATCHBAY_DB_PATH: databasePath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  children.push(core);
+  capture(core);
+  return core;
 }
 
 async function waitForSessionActivity(env, expected, timeoutMs) {

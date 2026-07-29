@@ -121,9 +121,9 @@ module security_lockdown {
 
   // Exit is intentionally channel-sensitive. Routine web reauthentication is
   // represented as an attempted channel but cannot clear the posture.
-  action exit(channel) = all {
+  action attemptExit(channel) = all {
     attemptedExitChannel' = channel,
-    exitSucceeded' = lockdown and channel == "loopback_admin",
+    exitSucceeded' = if (lockdown and channel == "loopback_admin") { true } else { false },
     lockdown' = if (lockdown and channel == "loopback_admin") { false } else { lockdown },
     reasonCode' = reasonCode,
     runtimeSessions' = runtimeSessions,
@@ -141,8 +141,8 @@ module security_lockdown {
     submitOperation,
     terminalizeAccepted,
     restartAndReplay,
-    exit("loopback_admin"),
-    exit("routine_web"),
+    attemptExit("loopback_admin"),
+    attemptExit("routine_web"),
   }
 
   val LockdownRejectsNewOperations = not(lockdown and attemptedOperation) or not(operationAccepted)
@@ -218,5 +218,6 @@ module security_lockdown {
   run entry_then_operation = (init).then(enter("suspected_endpoint_compromise", 8)).then(submitOperation).expect(not(operationAccepted))
   run entry_then_restart = (init).then(enter("suspected_endpoint_compromise", 8)).then(restartAndReplay).expect(replayedLockdown and lockdown)
   run entry_stales_all = (init).then(enter("suspected_endpoint_compromise", 8)).expect(staleSessions == runtimeSessions)
-  run web_exit_denied = (init).then(enter("suspected_endpoint_compromise", 8)).then(exit("routine_web")).expect(lockdown and not(exitSucceeded))
+  run admin_exit_succeeds = (init).then(enter("suspected_endpoint_compromise", 8)).then(attemptExit("loopback_admin")).expect(not(lockdown) and exitSucceeded and committedLog == "exited")
+  run web_exit_denied = (init).then(enter("suspected_endpoint_compromise", 8)).then(attemptExit("routine_web")).expect(lockdown and not(exitSucceeded))
 }

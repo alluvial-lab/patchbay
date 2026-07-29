@@ -32,6 +32,8 @@ Current checked-model properties:
 
 The session/principal revocation model and its four vectors are present as draft artifacts. They remain **stated-normative** until the independent attempted-evidence formulas, mutation gates, and vector promotion review are completed; passing the current checker is not presented as checked-normative evidence.
 
+The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft properties/four draft vectors exercise rejection, replay persistence, stale-session dominance, operator-session invalidation, and bootstrap-only exit. They are **stated-normative**: Quint parses/compiles, model-promotion metadata checks, vector schema checks, and implementation tests pass, but no lockdown vector is promoted and no stronger checked-normative claim is made.
+
 **checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
 
 **stated-normative** — documented v0.1.0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
@@ -316,7 +318,8 @@ Formal models produce implementation obligations. The implementation uses:
 - adapter conformance tests for declared capabilities;
 - replay tests for event logs and snapshots;
 - reconnect tests for stale control surfaces;
-- session/principal/endpoint/device revocation vectors and real-process/replay tests covering old generations, same-id fences, unaffected identities, accepted-work continuation, and filtered subscription establishment.
+- session/principal/endpoint/device revocation vectors and real-process/replay tests covering old generations, same-id fences, unaffected identities, accepted-work continuation, and filtered subscription establishment;
+- security-lockdown vectors and recovery tests covering all-Operation rejection, durable replay, stale-session/generation clamps, atomic source/audit writes, and loopback bootstrap exit.
 
 ### Conformance-vector reservations (stated-normative until promoted)
 

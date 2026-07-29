@@ -165,7 +165,11 @@ An external session, process, harness, job, or agent context controlled through 
 
 ## Security lockdown
 
-An emergency posture where Patchbay rejects new commands, marks affected runtime sessions stale, requires fresh authentication or operator action, and records the reason in audit history.
+A domain-keyed, durable emergency posture. While active, Patchbay rejects every new Operation before acceptance (including retries and `QueryDiagnostics`) with `authorization_denied/security_lockdown_active`, marks affected runtime sessions stale, invalidates existing operator-session generations, and records only a bounded reason code. Fresh login can inspect read-only snapshots/subscriptions but cannot submit or mutate. Exit is exclusively the configured bootstrap channel; v0.1.0 uses the loopback `AdminService` via `patchbay-cli lockdown-exit`, never routine web re-authentication.
+
+## Bootstrap channel
+
+The separately protected trust boundary used to establish or recover the operator's highest-authority state. In v0.1.0 the wire value is `loopback_admin`; it is distinct from routine ControlService/web login and is the only channel allowed to exit security lockdown.
 
 ## Snapshot
 

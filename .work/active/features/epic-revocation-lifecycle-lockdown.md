@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown
 kind: feature
-stage: implementing
+stage: review
 tags: [security, foundation, ui]
 parent: epic-revocation-lifecycle
 depends_on: [epic-revocation-lifecycle-grant-lifecycle]
 release_binding: null
 gate_origin: null
 created: 2026-07-27
-updated: 2026-07-29
+updated: 2026-07-30
 ---
 
 # Security lockdown & bootstrap-channel exit
@@ -207,6 +207,7 @@ message ExitSecurityLockdownResult {
   SecurityLockdownState lockdown = 1;
   EventId lockdown_event_id = 2;
   bool already_inactive = 3;
+  EventId entered_event_id = 4;
 }
 ```
 
@@ -517,6 +518,47 @@ The feature remains one cohesive ownership/review bundle despite heterogeneous c
 - **Exit-channel erosion**: adding an admin proxy route, using routine password proof for exit, or merging listeners destroys lockdown's protection. Route-inventory tests and the explicit bootstrap-channel enum make that regression visible.
 - **Formal overclaim**: a green model can still be self-defining. Mutation/non-vacuity evidence and executable vectors are required; otherwise properties remain stated-normative and the implementation review must not label them checked-normative.
 - **Design-time advisory**: no subagent/reviewer mechanism is available in this delegated context. Independent design advisory was therefore unavailable and non-blocking; implementation remains subject to the project-standard feature review, with the verification-tagged core checkpoint taking the deep review lane.
+
+## Acceptance mapping and integrated evidence
+
+| Acceptance area | Landed evidence |
+|---|---|
+| Durable all-Operation lockdown fence | Generated `SecurityLockdownEvent`/state/RPC contracts; replay-backed `SecurityPostureProjection`; domain-owned `OperationPosture`; `Submit` and `QueryDiagnostics` reject before append with `authorization_denied/security_lockdown_active`; accepted lifecycle and adapter reports remain reconciliable. |
+| Session and login containment | Entry folds stale runtime sessions, clamps incoming reports, and raises the operator-session generation floor; fresh password login remains available for read-only inspection; stale sessions cannot render live. |
+| Authorized entry and bootstrap-only exit | `CoreDecisionGate` orders catch-up, authorization, source/audit append, and projection refresh; entry requires authority-domain SessionManagement grant; exit is AdminService-only, loopback constrained, credential-independent, restart-safe, and no web route exists. |
+| Atomicity and redaction | Source posture event and typed lockdown audit append atomically; injected append failure leaves the prior posture authoritative; state/snapshot/CLI projections expose bounded reason codes and decimal event/generation values without bearer/session material. |
+| Cockpit contract | Signed-off hybrid shell is landed with desktop rail/punch-out, mobile tabs/More, persisted namespaced collapse, inline alert/read-only controls, stale-dominant presentation, and Security Arm → safe-reason → literal `LOCKDOWN` ritual. No browser exit affordance or transport exists. |
+| CLI contract | `lockdown-enter` validates exact confirmation and clears credentials only after a valid response; `lockdown-exit` uses `makeAdminClient` with no credential read; human/JSON output is safe and failure paths never claim success. |
+
+Verification evidence:
+
+- `cargo test --workspace` — passed.
+- `node contracts/scripts/check-models.mjs` and
+  `node contracts/scripts/check-vectors.mjs` — passed; 40 vectors remain draft,
+  with no checked-normative promotion claimed.
+- `npx --yes @informalsystems/quint@0.32.0 compile specs/seed/security_lockdown.qnt`
+  — passed; five named mutation/conformance runs passed 10,000 simulations
+  each (`entry_then_operation`, `entry_then_restart`, `entry_stales_all`,
+  `admin_exit_succeeds`, `web_exit_denied`).
+- `cd contracts/ts && npm run check:presentation` — passed.
+- `cd web-server && npm test` — 31 passed; `cd web-cockpit && npm test` — 72
+  passed; `cd cli && npm test` — 36 passed; `cd e2e && npm test` — passed.
+- Final cockpit bundle build passed and contained lockdown, banner, exact
+  confirmation, bootstrap-exit guidance, CSRF, and destination-shell strings.
+
+Deviations and parked issues:
+
+- No behavior deviation from the signed-off design or the four story
+  checkpoints. The QNT seed and design-system token/component updates are
+  intentional foundation artifacts required by Units 2 and 5, not production
+  contract forks.
+- Formal lockdown properties and vectors are deliberately still
+  **stated-normative/draft**; this checkpoint does not promote them to
+  checked-normative semantics. Multi-operator/partial lockdown, additional
+  bootstrap channels, automatic liveness restoration, and browser/admin proxy
+  exit remain reserved seams, not silently implemented requirements.
+- No additional parked implementation issue was created. The feature is left
+  at `stage: review` for the feature-level integrated review.
 
 ## Extension pressure classification
 

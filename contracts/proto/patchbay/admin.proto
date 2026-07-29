@@ -77,6 +77,7 @@ message ExitSecurityLockdownResult {
   SecurityLockdownState lockdown = 1;
   EventId lockdown_event_id = 2;
   bool already_inactive = 3;
+  EventId entered_event_id = 4;
 }
 
 // Durable source event that raises the operator-session generation fence for

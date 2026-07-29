@@ -1787,6 +1787,8 @@ pub struct ExitSecurityLockdownResult {
     pub lockdown_event_id: ::core::option::Option<EventId>,
     #[prost(bool, tag = "3")]
     pub already_inactive: bool,
+    #[prost(message, optional, tag = "4")]
+    pub entered_event_id: ::core::option::Option<EventId>,
 }
 /// Durable source event that raises the operator-session generation fence for
 /// an operator. Session ids and other bearer material remain process-local.

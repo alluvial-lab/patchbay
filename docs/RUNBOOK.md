@@ -27,7 +27,7 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_DB_PATH` | core | no | SQLite durable event log path. |
 | `PATCHBAY_SETUP_SECRET_TTL_SECS` | core | no (default 600) | One-time setup-secret lifetime. |
 | `PATCHBAY_CORE_ADDR` | web-server, CLI, pi-adapter | yes | The core's network listener address. |
-| `PATCHBAY_CORE_ADMIN_ADDR` | CLI | setup only | The core's loopback admin listener (for `setup`). |
+| `PATCHBAY_CORE_ADMIN_ADDR` | CLI | setup and lockdown recovery | The core's loopback admin listener (for `setup` and `lockdown-exit`). |
 | `PATCHBAY_WEB_BIND_ADDR` | web-server | no | HTTP listener for the cockpit. |
 | `PATCHBAY_TLS_CERT` / `PATCHBAY_TLS_KEY` | web-server | non-localhost | Direct TLS for browser sessions on non-loopback binds. |
 | `PATCHBAY_TRUST_LOOPBACK_PROXY` | web-server | no (default `false`) | Allow an explicitly configured loopback reverse proxy only when it attests `X-Forwarded-Proto: https`. |
@@ -85,6 +85,24 @@ surfaces (browser cockpit + CLI).
   related redacted audit history.
 - `patchbay-cli adapter-status [adapter-id ...] [flags]` — inspect adapter
   state, capabilities, and recent diagnostics.
+- `patchbay-cli lockdown-enter --reason-code CODE --confirm LOCKDOWN` — enter
+  lockdown through authenticated ControlService; credentials are cleared only
+  after a confirmed active response.
+- `patchbay-cli lockdown-exit [--reason-code CODE]` — exit only through the
+  loopback AdminService bootstrap channel; it intentionally reads no credential
+  file and accepts no setup-secret/password flags.
+
+### Lockdown recovery
+
+Run `patchbay-cli lockdown-enter --reason-code suspected_endpoint_compromise
+--confirm LOCKDOWN` from an authenticated trusted surface. It rejects new
+Operations, clamps runtime sessions stale, and invalidates existing operator
+sessions. Fresh login is read-only until recovery. After a restart or
+self-lockout, run `patchbay-cli lockdown-exit` on the core host with
+`PATCHBAY_CORE_ADMIN_ADDR` pointing at the configured loopback listener and no
+credential file; then run `patchbay-cli login` for a higher-generation session.
+If exit fails, posture remains locked. Never use the consumed setup secret as a
+recovery shortcut.
 
 The diagnostics and emergency-control CLI is VM-local in v0.1.0 because the core listener is loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, `adapter-status`, or revocation commands on the VM; workstation operators may use an SSH tunnel or run the CLI on the VM. After confirmed all-session revocation, run `patchbay-cli login` from that trusted host. If the principal, endpoint, or device itself was revoked, use a distinct unrevoked identity or new endpoint/device configuration. The one-time `setup` secret is consumed bootstrap material, not recovery. Supported remote CLI transport is reserved for the future split-transport milestone.
 

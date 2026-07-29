@@ -71,8 +71,8 @@ test("lockdown-enter clears bearer material only after confirmed active posture"
 test("lockdown-exit uses the bootstrap channel and emits no credential fields", async () => {
   const output = captureOutput();
   const result = create(ExitSecurityLockdownResultSchema, {
-    lockdown: create(SecurityLockdownStateSchema, { active: false, enteredEventId: event(11n) }),
-    lockdownEventId: event(12n),
+    lockdown: create(SecurityLockdownStateSchema, { active: false }),
+    lockdownEventId: event(12n), enteredEventId: event(11n),
   });
   let request: unknown;
   assert.equal(await lockdownExitCommand({ exitSecurityLockdown: async (value) => { request = value; return result; } }, DOMAIN, { json: true }, output), 0);
