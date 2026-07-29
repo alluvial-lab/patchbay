@@ -1,7 +1,7 @@
 ---
 id: epic-revocation-lifecycle
 kind: epic
-stage: review
+stage: done
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -239,3 +239,31 @@ Verification evidence: `cargo build --workspace --all-targets`,
 warnings`, contracts build/vector/model/drift/presentation checks,
 `cd web-server && npm test`, `cd web-cockpit && npm test`, `cd cli && npm
  test`, `cd pi-adapter && npm test`, and `cd e2e && npm test` all passed.
+
+## Epic review resolution (2026-07-29)
+
+Aggregate review verdict: blockers-found; five blockers, all
+receiver-confirmed and fixed in `f433b6e`:
+
+1. Stale adapter token race → attach/token replacement + all adapter
+   decision paths serialized through CoreDecisionGate with post-gate
+   re-authentication; barrier tests added.
+2. Last-grant bricking → routine revocation of the final recovery-capable
+   authority-domain grant refused (audited `authorization_denied`);
+   high-impact confirmations for broad grants in CLI/cockpit.
+3. Subscribe cursor ordering → cursor validation after gate-held catch-up
+   and issuer re-verification; reconnect regression added.
+4. Audit gaps → lockdown-blocked mutations, repeated entry/exit,
+   security-snapshot decisions, and pre-mutation session-revocation all
+   durably audited; audit-query and injected-failure tests added.
+5. Optimistic cockpit lockdown → non-authoritative submitting state;
+   "active" only from confirmed result or reconciliation; denial rollback;
+   unknown-outcome reconcile.
+
+Final verification: cargo 33 suites + clippy, cli 36, web-server 31,
+web-cockpit 75, pi-adapter 24, e2e (lockdown → restart → bootstrap exit),
+contracts drift/vectors/models/presentation — all green.
+
+Epic totals: 3 features, 13 stories, 16 blockers found and fixed across 4
+independent review passes (3 feature + 1 epic aggregate). SECURITY.md
+emergency-control contract #1–#5 now implemented and true.
