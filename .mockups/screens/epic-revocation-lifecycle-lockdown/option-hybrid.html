@@ -18,14 +18,17 @@
     .app-header, .view-header, .section-heading { flex-wrap: wrap; }
     .lockdown-banner { margin: var(--space-3) var(--space-4) 0; justify-content: space-between; align-items: center; flex-wrap: wrap; }
     .lockdown-banner[hidden], .lock-reason[hidden], .view[hidden], .overflow-menu[hidden] { display: none; }
-    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; }
-    .rail { width: 236px; padding: var(--space-4) var(--space-3); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); transition: width 120ms; }
-    .rail--collapsed { width: 64px; padding-inline: var(--space-2); }
-    .rail-footer { margin-top: auto; display: grid; gap: var(--space-2); }
-    .rail--collapsed .rail-brand, .rail--collapsed .destination__label, .rail--collapsed .rail-footer { display: none; }
-    .destination { justify-content: flex-start; width: 100%; }
-    .rail--collapsed .destination { justify-content: center; }
-    .destination[aria-current="page"] { background: var(--color-bg-secondary); color: var(--color-text-primary); border-color: var(--color-border); }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; grid-row: 3; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .rail-footer { margin-top: auto; display: none; }
+    .destination { justify-content: center; width: 100%; position: relative; }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination[aria-current="page"] { background: transparent; color: var(--color-text-primary); border-color: transparent; }
+    .destination[aria-current="page"]::before {
+      content: ""; position: absolute; left: calc(-1 * var(--space-2)); top: 15%; bottom: 15%;
+      width: 3px; border-radius: 0 2px 2px 0; background: var(--color-accent);
+    }
     .destination-list { display: grid; gap: var(--space-1); }
     .workspace { min-width: 0; min-height: 0; overflow: auto; }
     .view { min-height: 100%; }
@@ -43,9 +46,6 @@
     }
     .panel-edge-toggle:hover, .panel-edge-toggle:focus-visible { color: var(--color-text-primary); border-color: var(--color-accent); }
     .rail { position: relative; }
-    .rail-edge-toggle { left: 100%; }
-    .rail--collapsed .rail-edge-toggle { left: 100%; }
-    .rail--collapsed .rail-edge-toggle svg { transform: rotate(180deg); }
     .sessions-view--panel-collapsed .panel-edge-toggle { left: 11px; top: calc(50% + 56px); }
     .sessions-view--panel-collapsed .panel-edge-toggle svg { transform: rotate(180deg); }
     .detail { position: relative; }
@@ -121,7 +121,6 @@
     <div class="shell">
       <aside class="rail" id="rail">
         <div class="rail-head"><span class="nav-bar__brand rail-brand">PATCHBAY</span></div>
-        <button class="panel-edge-toggle rail-edge-toggle" id="collapseRail" type="button" aria-controls="rail" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
         <nav class="destination-list" aria-label="Cockpit destinations">
           <button class="btn btn-secondary destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" title="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
           <button class="btn btn-ghost destination" type="button" data-destination="security" aria-label="Security" title="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span class="destination__label">Security</span></button>
@@ -196,6 +195,16 @@
     const plannedTitles = { diagnostics: 'Diagnostics', files: 'Files', git: 'Git', settings: 'Settings' };
 
     function selectDestination(destination) {
+      const wasActive = document.querySelector(`.destination[data-destination="${destination}"]`)?.hasAttribute('aria-current');
+      if (destination === 'sessions' && wasActive) {
+        // VS Code model: clicking the active destination punches its panel in/out.
+        togglePanel();
+        return;
+      }
+      if (destination === 'sessions') {
+        // Entering Sessions always shows its panel.
+        document.querySelector('#sessionsView').classList.remove('sessions-view--panel-collapsed');
+      }
       const isPlanned = Object.hasOwn(plannedTitles, destination);
       views.sessions.hidden = destination !== 'sessions';
       views.security.hidden = destination !== 'security';
@@ -235,14 +244,6 @@
       const menu = document.querySelector('#overflowMenu');
       menu.hidden = !menu.hidden;
       document.querySelector('#moreBtn').setAttribute('aria-expanded', String(!menu.hidden));
-    });
-    document.querySelector('#collapseRail').addEventListener('click', () => {
-      const rail = document.querySelector('#rail');
-      const collapsed = rail.classList.toggle('rail--collapsed');
-      const button = document.querySelector('#collapseRail');
-      button.setAttribute('aria-expanded', String(!collapsed));
-      button.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
-      button.title = button.getAttribute('aria-label');
     });
     const togglePanel = () => {
       const sessions = document.querySelector('#sessionsView');
