@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/common.proto";
+import "patchbay/authority.proto";
+import "patchbay/operations.proto";
+
+// The bootstrap channel is deliberately a separate trust boundary from
+// routine operator authentication. New variants must be promoted through the
+// protocol registry before they can authorize an exit.
+enum BootstrapChannelKind {
+  BOOTSTRAP_CHANNEL_KIND_UNSPECIFIED = 0;
+  BOOTSTRAP_CHANNEL_KIND_LOOPBACK_ADMIN = 1;
+}
+
+// One durable source event represents a posture transition. The source event
+// is authority-domain keyed and folds into the security/session projections.
+message SecurityLockdownEvent {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof transition {
+    SecurityLockdownEntered entered = 2;
+    SecurityLockdownExited exited = 3;
+  }
+}
+
+message SecurityLockdownEntered {
+  string reason_code = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  ActorEndpointRef entered_by = 3;
+  Generation invalidated_through_operator_session_generation = 4;
+  uint32 affected_runtime_session_count = 5;
+}
+
+message SecurityLockdownExited {
+  string reason_code = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  EventId entered_event_id = 3;
+  BootstrapChannelKind bootstrap_channel = 4;
+}
+
+message SecurityLockdownState {
+  bool active = 1;
+  string reason_code = 2;
+  google.protobuf.Timestamp entered_at = 3;
+  ActorEndpointRef entered_by = 4;
+  EventId entered_event_id = 5;
+}
+
+// Redacted security-screen summaries. These deliberately omit opaque session
+// ids, credential hashes, provenance prose, and arbitrary metadata.
+message OperatorSessionSummary {
+  ActorId actor_id = 1;
+  EndpointId endpoint_id = 2;
+  DeviceId device_id = 3;
+  Generation operator_session_generation = 4;
+  bool active = 5;
+  bool revoked = 6;
+  bool expired = 7;
+}
+
+message ControlSurfaceSummary {
+  string principal_id = 1;
+  EndpointId endpoint_id = 2;
+  DeviceId device_id = 3;
+  Generation endpoint_generation = 4;
+  bool revoked = 5;
+}
+
+message GrantSummary {
+  GrantId grant_id = 1;
+  ActorId subject_actor_id = 2;
+  TargetScope target_scope = 3;
+  repeated OperationKind allowed_operation_kinds = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  bool revoked = 6;
+  GrantRevocationPolicy revocation_policy = 7;
+}
+
+message SecuritySnapshot {
+  AuthorityDomainId authority_domain_id = 1;
+  Lsn snapshot_lsn = 2;
+  SecurityLockdownState lockdown = 3;
+  repeated OperatorSessionSummary operator_sessions = 4;
+  repeated ControlSurfaceSummary control_surfaces = 5;
+  repeated GrantSummary grants = 6;
+}

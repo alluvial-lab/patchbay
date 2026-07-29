@@ -2,22 +2,26 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition,
+    EnterSecurityLockdownRequest, EnterSecurityLockdownResult,
     DiagnosticsResult, GrantRevocationEffect, GrantRevocationPolicy, Generation, Revocation,
     ControlSurfaceRevocation, OperatorSessionRevocation, RevokeAllOperatorSessionsRequest,
     RevokeAllOperatorSessionsResult, RevokeControlSurfaceEndpointRequest,
     RevokeControlSurfacePrincipalRequest, RevokeControlSurfaceResult,
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
-    LoadSnapshotRequest, LoadSnapshotResponse, Lsn,
+    LoadSnapshotRequest, LoadSnapshotResponse, LoadSecuritySnapshotRequest,
+    LoadSecuritySnapshotResponse, Lsn,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
-    RevokeGrantRequest, RevokeGrantResult,
+    RevokeGrantRequest, RevokeGrantResult, SecurityLockdownEntered,
     RecordControlSurfaceAuditResponse, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
     StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
     SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
-    TypedCorrelation, typed_correlation, OperationState, FailureCode,
+    TypedCorrelation, typed_correlation, OperationState, FailureCode, TargetScope,
+    TargetScopeKind,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{self, AcceptanceError, CommandRecord, CommandStateLookup, GrantCheck},
+    security,
     time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
@@ -255,12 +259,13 @@ where
         let issuer = self
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
-        let result = match acceptance::submit_with_clock(
+        let result = match acceptance::submit_with_clock_and_posture(
             &self.storage,
             self.state.grant_check(),
             self.state.target_resolver(),
             self.state.state_lookup(),
             self.state.elicitation_contract_lookup(),
+            self.state.operation_posture(),
             &issuer,
             operation.clone(),
             self.clock.as_ref(),
@@ -288,6 +293,163 @@ where
 
     type SubscribeStream = SubscribeStream;
 
+    async fn enter_security_lockdown(
+        &self,
+        request: Request<EnterSecurityLockdownRequest>,
+    ) -> Result<Response<EnterSecurityLockdownResult>, Status> {
+        let requested_domain = required_domain(request.get_ref().authority_domain_id.clone())?;
+        self.require_configured_domain(&requested_domain)?;
+        validate_control_surface_reason(&request.get_ref().reason_code)?;
+        let _ = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        let scope = authority_domain_scope();
+        let evaluated_at = self.clock.now();
+        let grant = match self
+            .state
+            .grant_check()
+            .check_at(
+                &requested_domain,
+                &issuer,
+                patchbay_contracts::patchbay::OperationKind::SessionManagement,
+                &scope,
+                &evaluated_at,
+            )
+            .await
+        {
+            Ok(authorized) => authorized.grant_id,
+            Err(_) => {
+                let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+                audit.actor_id = issuer.verified_actor().cloned();
+                audit.endpoint_id = issuer.verified_endpoint().cloned();
+                audit.device_id = issuer.verified_device().cloned();
+                audit.target_scope = Some(scope);
+                audit.failure_code = Some(FailureCode::AuthorizationDenied);
+                audit.reason_code = "security_lockdown_authorization_denied".to_owned();
+                self.record_audit(audit).await?;
+                return Err(Status::permission_denied(
+                    "security lockdown requires authority-domain session-management grant",
+                ));
+            }
+        };
+        let grant = grant.ok_or_else(|| Status::internal("lockdown authorization omitted grant provenance"))?;
+
+        let current = self.state.lockdown_state().await;
+        if current.active {
+            let entered_event_id = current.entered_event_id.clone();
+            let generation = issuer
+                .verified_actor()
+                .map(|actor| async { self.state.current_operator_session_generation(actor).await });
+            let generation = match generation {
+                Some(future) => future.await,
+                None => return Err(Status::internal("verified lockdown issuer has no actor")),
+            };
+            return Ok(Response::new(EnterSecurityLockdownResult {
+                lockdown: Some(current),
+                lockdown_event_id: entered_event_id,
+                already_active: true,
+                affected_runtime_session_count: self.state.current_runtime_session_count().await,
+                invalidated_through_operator_session_generation: Some(generation),
+            }));
+        }
+
+        let actor = issuer
+            .verified_actor()
+            .cloned()
+            .ok_or_else(|| Status::internal("verified lockdown issuer has no actor"))?;
+        let generation = self.state.current_operator_session_generation(&actor).await;
+        let affected = self.state.current_runtime_session_count().await;
+        let occurred_at = self.clock.now();
+        let source = security::events::entered(
+            requested_domain.clone(),
+            SecurityLockdownEntered {
+                reason_code: request.get_ref().reason_code.clone(),
+                occurred_at: Some(occurred_at),
+                entered_by: Some(issuer_to_endpoint_ref(&issuer)),
+                invalidated_through_operator_session_generation: Some(generation),
+                affected_runtime_session_count: affected,
+            },
+        );
+        let mut audit = AuditRecordDraft::new(occurred_at, AuditEventKind::LockdownEntered);
+        audit.actor_id = Some(actor);
+        audit.endpoint_id = issuer.verified_endpoint().cloned();
+        audit.device_id = issuer.verified_device().cloned();
+        audit.grant_id = Some(grant);
+        audit.target_scope = Some(authority_domain_scope());
+        audit.reason_code = request.get_ref().reason_code.clone();
+        let event_id = self
+            .storage
+            .append_decision(&requested_domain, security::events::encode(&source), audit)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let lockdown = self.state.lockdown_state().await;
+        if !lockdown.active {
+            return Err(Status::internal("committed lockdown event did not activate posture"));
+        }
+        Ok(Response::new(EnterSecurityLockdownResult {
+            lockdown: Some(lockdown),
+            lockdown_event_id: Some(event_id),
+            already_active: false,
+            affected_runtime_session_count: affected,
+            invalidated_through_operator_session_generation: Some(generation),
+        }))
+    }
+
+    async fn load_security_snapshot(
+        &self,
+        request: Request<LoadSecuritySnapshotRequest>,
+    ) -> Result<Response<LoadSecuritySnapshotResponse>, Status> {
+        let requested_domain = required_domain(request.get_ref().authority_domain_id.clone())?;
+        self.require_configured_domain(&requested_domain)?;
+        let _ = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        let scope = authority_domain_scope();
+        let grant = self
+            .state
+            .grant_check()
+            .check_at(
+                &requested_domain,
+                &issuer,
+                patchbay_contracts::patchbay::OperationKind::Query,
+                &scope,
+                &self.clock.now(),
+            )
+            .await
+            .map_err(|_| Status::permission_denied("security snapshot is not authorized"))?
+            .grant_id
+            .ok_or_else(|| Status::internal("security snapshot authorization omitted grant provenance"))?;
+        let snapshot = self
+            .state
+            .materialize_security_snapshot(requested_domain)
+            .await;
+        let _ = grant;
+        Ok(Response::new(LoadSecuritySnapshotResponse {
+            snapshot: Some(snapshot),
+        }))
+    }
+
     async fn revoke_grant(
         &self,
         request: Request<RevokeGrantRequest>,
@@ -297,6 +459,7 @@ where
         let _ = self
             .issuer_from_request(&request, requested_domain.clone())
             .await?;
+        self.require_operations_open().await?;
         let grant_id = request
             .get_ref()
             .grant_id
@@ -742,6 +905,7 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open().await?;
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
@@ -788,6 +952,7 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open().await?;
         let principal_id = request.get_ref().principal_id.clone();
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         if principal_id.is_empty() {
@@ -859,6 +1024,7 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open().await?;
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
@@ -946,6 +1112,7 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open().await?;
         let enrollment = request
             .get_ref()
             .principal
@@ -1082,12 +1249,13 @@ where
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
 
-        let submission = match acceptance::submit_with_clock(
+        let submission = match acceptance::submit_with_clock_and_posture(
             &self.storage,
             self.state.grant_check(),
             &AuthorityDomainTargetResolver,
             self.state.state_lookup(),
             self.state.elicitation_contract_lookup(),
+            self.state.operation_posture(),
             &issuer,
             operation.clone(),
             self.clock.as_ref(),
@@ -1315,6 +1483,15 @@ where
                 Err(error)
             }
         }
+    }
+
+    async fn require_operations_open(&self) -> Result<(), Status> {
+        if self.state.lockdown_state().await.active {
+            return Err(Status::failed_precondition(
+                "security lockdown is active; operation and security mutations are read-only",
+            ));
+        }
+        Ok(())
     }
 
     async fn audit_authentication_failure(&self) -> Result<(), Status> {
@@ -1827,6 +2004,13 @@ fn required_actor(actor: Option<ActorId>) -> Result<ActorId, Status> {
         ));
     }
     Ok(actor)
+}
+
+fn authority_domain_scope() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::AuthorityDomain as i32,
+        ..TargetScope::default()
+    }
 }
 
 fn required_domain(domain: Option<AuthorityDomainId>) -> Result<AuthorityDomainId, Status> {

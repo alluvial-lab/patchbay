@@ -9,7 +9,8 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::{
     acceptance::{
         ActiveElicitation, Authorized, CommandIndex, CommandRecord, CommandSnapshot, CommandStateLookup,
-        ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, TargetBinding,
+        ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, OperationPosture,
+        OperationPostureDenied, TargetBinding,
         TargetNotFound, TargetResolver,
     },
     authority::{
@@ -20,6 +21,7 @@ use patchbay_core::{
         IssuerContext, OperatorError, OperatorRegistry, RevocationIngestResult,
     },
     diagnostics::DiagnosticsProjection,
+    security::SecurityPostureProjection,
     session::SessionRegistry,
     storage::{RecordedEvent, Storage, StorageError},
 };
@@ -47,6 +49,7 @@ pub struct ProjectionState {
     state_lookup: LockedCommandStateLookup,
     elicitation_slots: LockedElicitationContractLookup,
     diagnostics: Arc<Mutex<DiagnosticsProjection>>,
+    security_posture: LockedSecurityPosture,
     operators: Arc<Mutex<OperatorRegistry>>,
     pub(crate) operator_sessions: OperatorSessionRegistry,
     last_applied_lsn: Arc<Mutex<u64>>,
@@ -92,6 +95,7 @@ impl ProjectionState {
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
         let mut diagnostics = DiagnosticsProjection::new();
+        let mut security_posture = SecurityPostureProjection::new();
         let mut operators = OperatorRegistry::new();
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
         let mut last_applied_lsn = 0;
@@ -106,6 +110,9 @@ impl ProjectionState {
                 .observe(event)
                 .map_err(|error| error.to_string())?;
             diagnostics
+                .observe(event)
+                .map_err(|error| error.to_string())?;
+            security_posture
                 .observe(event)
                 .map_err(|error| error.to_string())?;
             operators
@@ -124,6 +131,7 @@ impl ProjectionState {
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
+            security_posture: LockedSecurityPosture::new(security_posture),
             operators: Arc::new(Mutex::new(operators)),
             operator_sessions,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
@@ -149,6 +157,15 @@ impl ProjectionState {
     #[must_use]
     pub fn elicitation_contract_lookup(&self) -> &LockedElicitationContractLookup {
         &self.elicitation_slots
+    }
+
+    #[must_use]
+    pub fn operation_posture(&self) -> &LockedSecurityPosture {
+        &self.security_posture
+    }
+
+    pub async fn lockdown_state(&self) -> patchbay_contracts::patchbay::SecurityLockdownState {
+        self.security_posture.state().await
     }
 
     pub async fn diagnostics_command_result(
@@ -208,6 +225,10 @@ impl ProjectionState {
 
     pub async fn current_lsn(&self) -> u64 {
         *self.last_applied_lsn.lock().await
+    }
+
+    pub async fn current_runtime_session_count(&self) -> u32 {
+        self.target_resolver.inner.lock().await.sessions().count() as u32
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
@@ -276,6 +297,7 @@ impl ProjectionState {
             })
             .collect();
 
+        let lockdown = self.security_posture.state().await;
         SessionSnapshot {
             authority_domain_id: Some(authority_domain_id),
             snapshot_lsn: Some(Lsn { value: *cursor }),
@@ -285,6 +307,58 @@ impl ProjectionState {
             sessions,
             view_revisions,
             materialized_at: Some(materialized_at),
+            lockdown: Some(lockdown),
+        }
+    }
+
+    pub async fn materialize_security_snapshot(
+        &self,
+        authority_domain_id: AuthorityDomainId,
+    ) -> patchbay_contracts::patchbay::SecuritySnapshot {
+        let snapshot_lsn = self.current_lsn().await;
+        let lockdown = self.security_posture.state().await;
+        let operator_sessions = self.operator_sessions.summaries().await;
+        let (control_surfaces, grants) = {
+            let operators = self.operators.lock().await;
+            let control_surfaces = operators
+                .principals()
+                .map(|principal| patchbay_contracts::patchbay::ControlSurfaceSummary {
+                    principal_id: principal.principal_id.clone(),
+                    endpoint_id: principal.endpoint_id.clone(),
+                    device_id: principal.device_id.clone(),
+                    endpoint_generation: principal.endpoint_generation,
+                    revoked: operators.is_principal_revoked(&principal.principal_id),
+                })
+                .collect();
+            let grants = self
+                .grant_check
+                .inner
+                .lock()
+                .await
+                .grants()
+                .map(|grant| patchbay_contracts::patchbay::GrantSummary {
+                    grant_id: Some(grant.grant_id.clone()),
+                    subject_actor_id: Some(grant.subject_actor_id.clone()),
+                    target_scope: Some(grant.target_scope.clone()),
+                    allowed_operation_kinds: grant
+                        .allowed_operation_kinds
+                        .iter()
+                        .map(|kind| *kind as i32)
+                        .collect(),
+                    expires_at: grant.expires_at.clone(),
+                    revoked: grant.is_revoked(),
+                    revocation_policy: grant.revocation_policy as i32,
+                })
+                .collect();
+            (control_surfaces, grants)
+        };
+        patchbay_contracts::patchbay::SecuritySnapshot {
+            authority_domain_id: Some(authority_domain_id),
+            snapshot_lsn: Some(Lsn { value: snapshot_lsn }),
+            lockdown: Some(lockdown),
+            operator_sessions,
+            control_surfaces,
+            grants,
         }
     }
 
@@ -322,6 +396,10 @@ impl ProjectionState {
                 .lock()
                 .await
                 .observe(&event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            self.security_posture
+                .observe(&event)
+                .await
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.operators
                 .lock()
@@ -615,6 +693,37 @@ fn validate_next_event(
         ));
     }
     Ok(lsn)
+}
+
+#[derive(Clone)]
+pub struct LockedSecurityPosture {
+    inner: Arc<Mutex<SecurityPostureProjection>>,
+}
+
+impl LockedSecurityPosture {
+    fn new(projection: SecurityPostureProjection) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(projection)),
+        }
+    }
+
+    async fn observe(&self, event: &RecordedEvent) -> Result<(), patchbay_core::security::SecurityError> {
+        self.inner.lock().await.observe(event)
+    }
+
+    async fn state(&self) -> patchbay_contracts::patchbay::SecurityLockdownState {
+        self.inner.lock().await.state()
+    }
+}
+
+impl OperationPosture for LockedSecurityPosture {
+    async fn check(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+    ) -> Result<(), OperationPostureDenied> {
+        let projection = self.inner.lock().await;
+        OperationPosture::check(&*projection, authority_domain_id).await
+    }
 }
 
 #[derive(Clone)]

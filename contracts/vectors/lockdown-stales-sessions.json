@@ -1,0 +1,10 @@
+{
+  "vector_id": "lockdown-stales-sessions",
+  "property_id": "LockdownEntryStalesSessions",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.SecurityLockdownEntered.affected_runtime_session_count", "patchbay.SessionConnectivityState.SESSION_CONNECTIVITY_STATE_STALE"],
+  "description": "Lockdown entry clamps every current runtime session to stale at the entry event LSN.",
+  "input": {"current_runtime_session_count": 2, "affected_runtime_session_count": 2},
+  "expected_outcome": {"all_connectivity": "SESSION_CONNECTIVITY_STATE_STALE", "last_authoritative_lsn": "entry_lsn"},
+  "invariant_check": "LockdownEntryStalesSessions: stale dominance is folded from one durable source event."
+}

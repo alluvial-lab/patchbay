@@ -7,11 +7,12 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    session_state_event, AdapterId, AuthorityDomainId, Generation, RuntimeSessionId,
+    security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
+    RuntimeSessionId,
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
     SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
     SessionRelabeled,
-    SessionState, StoredEventKind, TargetScope,
+    SecurityLockdownEvent, SessionState, StoredEventKind, TargetScope,
 };
 use prost::Message;
 
@@ -51,6 +52,7 @@ pub struct SessionTombstone {
 pub struct SessionRegistry {
     sessions: HashMap<SessionLiveKey, SessionRecord>,
     tombstones: HashMap<SessionTombstoneKey, SessionTombstone>,
+    lockdown_active: bool,
 }
 
 /// Identity minus generation: one live generation occupies each key.
@@ -85,6 +87,9 @@ impl SessionRegistry {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             SessionError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
         })?;
+        if kind == StoredEventKind::SecurityLockdown {
+            return self.observe_security_lockdown(event);
+        }
         if kind != StoredEventKind::SessionState {
             return Ok(());
         }
@@ -137,6 +142,57 @@ impl SessionRegistry {
                 self.observe_model_changed(mutation, event_lsn)
             }
         }
+    }
+
+    /// Whether the replayed security posture currently clamps reports.
+    #[must_use]
+    pub fn lockdown_active(&self) -> bool {
+        self.lockdown_active
+    }
+
+    fn observe_security_lockdown(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let source = SecurityLockdownEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+            SessionError::CorruptRecord(format!("cannot decode security event at LSN {event_lsn}: {error}"))
+        })?;
+        let source_domain = source.authority_domain_id.as_ref().ok_or_else(|| {
+            SessionError::CorruptRecord(format!("security event at LSN {event_lsn} has no authority domain"))
+        })?;
+        if source_domain != event_domain {
+            return Err(SessionError::CorruptLog(format!(
+                "security event domain {:?} does not match {:?} at LSN {event_lsn}",
+                source_domain, event_domain
+            )));
+        }
+        match source.transition.ok_or_else(|| {
+            SessionError::CorruptRecord(format!("security event at LSN {event_lsn} has no transition"))
+        })? {
+            security_lockdown_event::Transition::Entered(entered) => {
+                let expected = entered.affected_runtime_session_count as usize;
+                if expected != self.sessions.len() {
+                    return Err(SessionError::CorruptLog(format!(
+                        "lockdown entry at LSN {event_lsn} reports {expected} sessions, projection has {}",
+                        self.sessions.len()
+                    )));
+                }
+                for record in self.sessions.values_mut() {
+                    record.state.connectivity = SessionConnectivityState::Stale as i32;
+                    record.last_authoritative_lsn = Some(event_lsn);
+                }
+                self.lockdown_active = true;
+            }
+            security_lockdown_event::Transition::Exited(_) => {
+                if !self.lockdown_active {
+                    return Err(SessionError::CorruptLog(format!(
+                        "lockdown exit at LSN {event_lsn} without active clamp"
+                    )));
+                }
+                // Exit only clears the report clamp. It deliberately does not
+                // synthesize a live signal; a later adapter report must do so.
+                self.lockdown_active = false;
+            }
+        }
+        Ok(())
     }
 
     /// Resolve a protocol target to the live delivery identity.
@@ -263,6 +319,11 @@ impl SessionRegistry {
             ))
         })?;
         validate_state(&initial_state, "session registration", event_lsn)?;
+        if self.lockdown_active && initial_state.connectivity == SessionConnectivityState::Live as i32 {
+            return Err(SessionError::CorruptLog(format!(
+                "session registration at LSN {event_lsn} would restore live connectivity during lockdown"
+            )));
+        }
         let key = live_key(&identity);
 
         // First-write-wins. A replayed registration must never reset a later
@@ -318,6 +379,11 @@ impl SessionRegistry {
             ))
         })?;
         validate_state(&initial_state, "session generation bump", event_lsn)?;
+        if self.lockdown_active && initial_state.connectivity == SessionConnectivityState::Live as i32 {
+            return Err(SessionError::CorruptLog(format!(
+                "session generation bump at LSN {event_lsn} would restore live connectivity during lockdown"
+            )));
+        }
 
         if let Some(existing) = self.get_tombstone(
             &from_identity.adapter_id,
@@ -398,6 +464,11 @@ impl SessionRegistry {
         )?;
         let from = connectivity_state(mutation.from, "from", event_lsn)?;
         let to = connectivity_state(mutation.to, "to", event_lsn)?;
+        if self.lockdown_active && to == SessionConnectivityState::Live {
+            return Err(SessionError::CorruptLog(format!(
+                "connectivity change at LSN {event_lsn} would restore live state during lockdown"
+            )));
+        }
         if !allowed_connectivity_transition(from, to) {
             return Err(SessionError::CorruptLog(format!(
                 "disallowed connectivity transition {from:?} -> {to:?} at LSN {event_lsn}"

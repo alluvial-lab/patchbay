@@ -286,6 +286,8 @@ pub enum StoredEventKind {
     OperatorSessionRevocation = 12,
     /// Durable principal/endpoint/device revocation fence (admin.proto).
     ControlSurfaceRevocation = 13,
+    /// Durable security lockdown posture transition (security.proto).
+    SecurityLockdown = 14,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -308,6 +310,7 @@ impl StoredEventKind {
             Self::AuditRecord => "STORED_EVENT_KIND_AUDIT_RECORD",
             Self::OperatorSessionRevocation => "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION",
             Self::ControlSurfaceRevocation => "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION",
+            Self::SecurityLockdown => "STORED_EVENT_KIND_SECURITY_LOCKDOWN",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -327,6 +330,7 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_AUDIT_RECORD" => Some(Self::AuditRecord),
             "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION" => Some(Self::OperatorSessionRevocation),
             "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION" => Some(Self::ControlSurfaceRevocation),
+            "STORED_EVENT_KIND_SECURITY_LOCKDOWN" => Some(Self::SecurityLockdown),
             _ => None,
         }
     }
@@ -793,6 +797,299 @@ impl AdapterSnapshotSupport {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Grant {
+    #[prost(message, optional, tag = "1")]
+    pub grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag = "2")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "3")]
+    pub subject_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "4")]
+    pub subject_endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(string, tag = "5")]
+    pub subject_endpoint_class: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "6")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
+    pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "8")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "9")]
+    pub provenance: ::core::option::Option<GrantProvenance>,
+    #[prost(message, optional, tag = "10")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "11")]
+    pub revocation_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "12")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
+    pub revocation_policy: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GrantProvenance {
+    #[prost(message, optional, tag = "1")]
+    pub created_by: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "2")]
+    pub created_by_operation_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "3")]
+    pub audit_id: ::core::option::Option<EventId>,
+    #[prost(string, tag = "4")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DescendantGrant {
+    #[prost(message, optional, tag = "1")]
+    pub grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag = "2")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "3")]
+    pub subject_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "4")]
+    pub subject_endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(string, tag = "5")]
+    pub subject_endpoint_class: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "6")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    /// Must explicitly enumerate existing-session OperationKinds only: instruct, cancel, interrupt, query,
+    /// approval-response, elicitation-response, reconfigure, and session-management. Spawn and attach are excluded.
+    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
+    pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "8")]
+    pub provenance: ::core::option::Option<DescendantGrantProvenance>,
+    #[prost(message, optional, tag = "9")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "10")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "11")]
+    pub revocation_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "12")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
+    pub revocation_policy: i32,
+    #[prost(message, optional, tag = "14")]
+    pub audit_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DescendantGrantProvenance {
+    #[prost(message, optional, tag = "1")]
+    pub spawn_operation_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag = "2")]
+    pub spawning_grant_id: ::core::option::Option<GrantId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GrantRevocationEffect {
+    #[prost(message, optional, tag = "1")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(enumeration = "OperationState", tag = "2")]
+    pub from_state: i32,
+    #[prost(enumeration = "OperationState", tag = "3")]
+    pub to_state: i32,
+    #[prost(enumeration = "FailureCode", tag = "4")]
+    pub failure_code: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Revocation {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag = "3")]
+    pub revoked_by: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "4")]
+    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    pub revocation_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "GrantRevocationPolicy", tag = "6")]
+    pub accepted_operation_policy: i32,
+    #[prost(string, tag = "7")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "8")]
+    pub audit_id: ::core::option::Option<EventId>,
+    #[prost(message, repeated, tag = "9")]
+    pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum GrantRevocationPolicy {
+    Unspecified = 0,
+    Continue = 1,
+    Cancel = 2,
+    RequireReauthorization = 3,
+}
+impl GrantRevocationPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "GRANT_REVOCATION_POLICY_UNSPECIFIED",
+            Self::Continue => "GRANT_REVOCATION_POLICY_CONTINUE",
+            Self::Cancel => "GRANT_REVOCATION_POLICY_CANCEL",
+            Self::RequireReauthorization => "GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "GRANT_REVOCATION_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "GRANT_REVOCATION_POLICY_CONTINUE" => Some(Self::Continue),
+            "GRANT_REVOCATION_POLICY_CANCEL" => Some(Self::Cancel),
+            "GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION" => Some(Self::RequireReauthorization),
+            _ => None,
+        }
+    }
+}
+/// One durable source event represents a posture transition. The source event
+/// is authority-domain keyed and folds into the security/session projections.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SecurityLockdownEvent {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(oneof = "security_lockdown_event::Transition", tags = "2, 3")]
+    pub transition: ::core::option::Option<security_lockdown_event::Transition>,
+}
+/// Nested message and enum types in `SecurityLockdownEvent`.
+pub mod security_lockdown_event {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Transition {
+        #[prost(message, tag = "2")]
+        Entered(super::SecurityLockdownEntered),
+        #[prost(message, tag = "3")]
+        Exited(super::SecurityLockdownExited),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SecurityLockdownEntered {
+    #[prost(string, tag = "1")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "3")]
+    pub entered_by: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "4")]
+    pub invalidated_through_operator_session_generation: ::core::option::Option<Generation>,
+    #[prost(uint32, tag = "5")]
+    pub affected_runtime_session_count: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SecurityLockdownExited {
+    #[prost(string, tag = "1")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "3")]
+    pub entered_event_id: ::core::option::Option<EventId>,
+    #[prost(enumeration = "BootstrapChannelKind", tag = "4")]
+    pub bootstrap_channel: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SecurityLockdownState {
+    #[prost(bool, tag = "1")]
+    pub active: bool,
+    #[prost(string, tag = "2")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub entered_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "4")]
+    pub entered_by: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag = "5")]
+    pub entered_event_id: ::core::option::Option<EventId>,
+}
+/// Redacted security-screen summaries. These deliberately omit opaque session
+/// ids, credential hashes, provenance prose, and arbitrary metadata.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperatorSessionSummary {
+    #[prost(message, optional, tag = "1")]
+    pub actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "2")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "3")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "4")]
+    pub operator_session_generation: ::core::option::Option<Generation>,
+    #[prost(bool, tag = "5")]
+    pub active: bool,
+    #[prost(bool, tag = "6")]
+    pub revoked: bool,
+    #[prost(bool, tag = "7")]
+    pub expired: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlSurfaceSummary {
+    #[prost(string, tag = "1")]
+    pub principal_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub endpoint_id: ::core::option::Option<EndpointId>,
+    #[prost(message, optional, tag = "3")]
+    pub device_id: ::core::option::Option<DeviceId>,
+    #[prost(message, optional, tag = "4")]
+    pub endpoint_generation: ::core::option::Option<Generation>,
+    #[prost(bool, tag = "5")]
+    pub revoked: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GrantSummary {
+    #[prost(message, optional, tag = "1")]
+    pub grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag = "2")]
+    pub subject_actor_id: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag = "3")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(enumeration = "OperationKind", repeated, tag = "4")]
+    pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag = "5")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(bool, tag = "6")]
+    pub revoked: bool,
+    #[prost(enumeration = "GrantRevocationPolicy", tag = "7")]
+    pub revocation_policy: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SecuritySnapshot {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub snapshot_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag = "3")]
+    pub lockdown: ::core::option::Option<SecurityLockdownState>,
+    #[prost(message, repeated, tag = "4")]
+    pub operator_sessions: ::prost::alloc::vec::Vec<OperatorSessionSummary>,
+    #[prost(message, repeated, tag = "5")]
+    pub control_surfaces: ::prost::alloc::vec::Vec<ControlSurfaceSummary>,
+    #[prost(message, repeated, tag = "6")]
+    pub grants: ::prost::alloc::vec::Vec<GrantSummary>,
+}
+/// The bootstrap channel is deliberately a separate trust boundary from
+/// routine operator authentication. New variants must be promoted through the
+/// protocol registry before they can authorize an exit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BootstrapChannelKind {
+    Unspecified = 0,
+    LoopbackAdmin = 1,
+}
+impl BootstrapChannelKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BOOTSTRAP_CHANNEL_KIND_UNSPECIFIED",
+            Self::LoopbackAdmin => "BOOTSTRAP_CHANNEL_KIND_LOOPBACK_ADMIN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BOOTSTRAP_CHANNEL_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "BOOTSTRAP_CHANNEL_KIND_LOOPBACK_ADMIN" => Some(Self::LoopbackAdmin),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Session {
     #[prost(message, optional, tag = "1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
@@ -845,6 +1142,8 @@ pub struct SessionSnapshot {
     pub view_revisions: ::prost::alloc::vec::Vec<ViewRevision>,
     #[prost(message, optional, tag = "6")]
     pub materialized_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "7")]
+    pub lockdown: ::core::option::Option<SecurityLockdownState>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ViewRevision {
@@ -1473,6 +1772,22 @@ pub struct BootstrapResult {
     #[prost(message, optional, tag = "4")]
     pub operator_session_generation: ::core::option::Option<Generation>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExitSecurityLockdownRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(string, tag = "2")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExitSecurityLockdownResult {
+    #[prost(message, optional, tag = "1")]
+    pub lockdown: ::core::option::Option<SecurityLockdownState>,
+    #[prost(message, optional, tag = "2")]
+    pub lockdown_event_id: ::core::option::Option<EventId>,
+    #[prost(bool, tag = "3")]
+    pub already_inactive: bool,
+}
 /// Durable source event that raises the operator-session generation fence for
 /// an operator. Session ids and other bearer material remain process-local.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1515,150 +1830,6 @@ pub mod control_surface_revocation {
         EndpointId(super::EndpointId),
         #[prost(message, tag = "4")]
         DeviceId(super::DeviceId),
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Grant {
-    #[prost(message, optional, tag = "1")]
-    pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
-    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
-    pub subject_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "4")]
-    pub subject_endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(string, tag = "5")]
-    pub subject_endpoint_class: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "6")]
-    pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
-    pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "8")]
-    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "9")]
-    pub provenance: ::core::option::Option<GrantProvenance>,
-    #[prost(message, optional, tag = "10")]
-    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "11")]
-    pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "12")]
-    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
-    pub revocation_policy: i32,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GrantProvenance {
-    #[prost(message, optional, tag = "1")]
-    pub created_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "2")]
-    pub created_by_operation_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "3")]
-    pub audit_id: ::core::option::Option<EventId>,
-    #[prost(string, tag = "4")]
-    pub reason: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DescendantGrant {
-    #[prost(message, optional, tag = "1")]
-    pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
-    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
-    pub subject_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "4")]
-    pub subject_endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(string, tag = "5")]
-    pub subject_endpoint_class: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "6")]
-    pub target_scope: ::core::option::Option<TargetScope>,
-    /// Must explicitly enumerate existing-session OperationKinds only: instruct, cancel, interrupt, query,
-    /// approval-response, elicitation-response, reconfigure, and session-management. Spawn and attach are excluded.
-    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
-    pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "8")]
-    pub provenance: ::core::option::Option<DescendantGrantProvenance>,
-    #[prost(message, optional, tag = "9")]
-    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "10")]
-    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "11")]
-    pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "12")]
-    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
-    pub revocation_policy: i32,
-    #[prost(message, optional, tag = "14")]
-    pub audit_id: ::core::option::Option<EventId>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DescendantGrantProvenance {
-    #[prost(message, optional, tag = "1")]
-    pub spawn_operation_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "2")]
-    pub spawning_grant_id: ::core::option::Option<GrantId>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GrantRevocationEffect {
-    #[prost(message, optional, tag = "1")]
-    pub command_id: ::core::option::Option<CommandId>,
-    #[prost(enumeration = "OperationState", tag = "2")]
-    pub from_state: i32,
-    #[prost(enumeration = "OperationState", tag = "3")]
-    pub to_state: i32,
-    #[prost(enumeration = "FailureCode", tag = "4")]
-    pub failure_code: i32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Revocation {
-    #[prost(message, optional, tag = "1")]
-    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
-    pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "3")]
-    pub revoked_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "4")]
-    pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "5")]
-    pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "6")]
-    pub accepted_operation_policy: i32,
-    #[prost(string, tag = "7")]
-    pub reason: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "8")]
-    pub audit_id: ::core::option::Option<EventId>,
-    #[prost(message, repeated, tag = "9")]
-    pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum GrantRevocationPolicy {
-    Unspecified = 0,
-    Continue = 1,
-    Cancel = 2,
-    RequireReauthorization = 3,
-}
-impl GrantRevocationPolicy {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "GRANT_REVOCATION_POLICY_UNSPECIFIED",
-            Self::Continue => "GRANT_REVOCATION_POLICY_CONTINUE",
-            Self::Cancel => "GRANT_REVOCATION_POLICY_CANCEL",
-            Self::RequireReauthorization => "GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "GRANT_REVOCATION_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
-            "GRANT_REVOCATION_POLICY_CONTINUE" => Some(Self::Continue),
-            "GRANT_REVOCATION_POLICY_CANCEL" => Some(Self::Cancel),
-            "GRANT_REVOCATION_POLICY_REQUIRE_REAUTHORIZATION" => Some(Self::RequireReauthorization),
-            _ => None,
-        }
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2318,6 +2489,36 @@ pub struct RevokeGrantResult {
     pub applied_policy: i32,
     #[prost(message, repeated, tag = "5")]
     pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EnterSecurityLockdownRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(string, tag = "2")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EnterSecurityLockdownResult {
+    #[prost(message, optional, tag = "1")]
+    pub lockdown: ::core::option::Option<SecurityLockdownState>,
+    #[prost(message, optional, tag = "2")]
+    pub lockdown_event_id: ::core::option::Option<EventId>,
+    #[prost(bool, tag = "3")]
+    pub already_active: bool,
+    #[prost(uint32, tag = "4")]
+    pub affected_runtime_session_count: u32,
+    #[prost(message, optional, tag = "5")]
+    pub invalidated_through_operator_session_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LoadSecuritySnapshotRequest {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadSecuritySnapshotResponse {
+    #[prost(message, optional, tag = "1")]
+    pub snapshot: ::core::option::Option<SecuritySnapshot>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnrollControlSurfacePrincipalRequest {

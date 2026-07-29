@@ -7,6 +7,7 @@ import "patchbay/authority.proto";
 import "patchbay/common.proto";
 import "patchbay/diagnostics.proto";
 import "patchbay/operations.proto";
+import "patchbay/security.proto";
 
 // The internal control-plane service the TS web server speaks to the Rust
 // core over gRPC/HTTP2. Browser-facing surfaces are a subset reachable
@@ -26,6 +27,8 @@ service ControlService {
   // Self-scoped grant attenuation. The request never carries issuer identity;
   // the compound issuer is verified from transport metadata.
   rpc RevokeGrant(RevokeGrantRequest) returns (RevokeGrantResult);
+  rpc EnterSecurityLockdown(EnterSecurityLockdownRequest) returns (EnterSecurityLockdownResult);
+  rpc LoadSecuritySnapshot(LoadSecuritySnapshotRequest) returns (LoadSecuritySnapshotResponse);
   // An already verified compound issuer may enroll another endpoint.
   rpc EnrollControlSurfacePrincipal(EnrollControlSurfacePrincipalRequest) returns (EnrollControlSurfacePrincipalResult);
   rpc QueryDiagnostics(QueryDiagnosticsRequest) returns (QueryDiagnosticsResponse);
@@ -119,6 +122,27 @@ message RevokeGrantResult {
   EventId revocation_event_id = 3;
   GrantRevocationPolicy applied_policy = 4;
   repeated GrantRevocationEffect command_effects = 5;
+}
+
+message EnterSecurityLockdownRequest {
+  AuthorityDomainId authority_domain_id = 1;
+  string reason_code = 2;
+}
+
+message EnterSecurityLockdownResult {
+  SecurityLockdownState lockdown = 1;
+  EventId lockdown_event_id = 2;
+  bool already_active = 3;
+  uint32 affected_runtime_session_count = 4;
+  Generation invalidated_through_operator_session_generation = 5;
+}
+
+message LoadSecuritySnapshotRequest {
+  AuthorityDomainId authority_domain_id = 1;
+}
+
+message LoadSecuritySnapshotResponse {
+  SecuritySnapshot snapshot = 1;
 }
 
 message EnrollControlSurfacePrincipalRequest {

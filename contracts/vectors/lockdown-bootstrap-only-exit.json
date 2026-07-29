@@ -1,0 +1,10 @@
+{
+  "vector_id": "lockdown-bootstrap-only-exit",
+  "property_id": "BootstrapOnlyExit",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.BootstrapChannelKind", "patchbay.ExitSecurityLockdownRequest", "patchbay.ExitSecurityLockdownResult"],
+  "description": "Routine web authentication cannot clear lockdown; the configured loopback admin channel can.",
+  "input": {"active": true, "routine_web_exit": true, "loopback_admin_exit": true},
+  "expected_outcome": {"routine_web": "locked", "loopback_admin": "inactive", "bootstrap_channel": "BOOTSTRAP_CHANNEL_KIND_LOOPBACK_ADMIN"},
+  "invariant_check": "BootstrapOnlyExit: exit authorization is the distinct bootstrap listener boundary."
+}

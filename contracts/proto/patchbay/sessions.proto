@@ -4,6 +4,7 @@ package patchbay;
 
 import "google/protobuf/timestamp.proto";
 import "patchbay/common.proto";
+import "patchbay/security.proto";
 
 message Session {
   AuthorityDomainId authority_domain_id = 1;
@@ -51,6 +52,7 @@ message SessionSnapshot {
   repeated Session sessions = 4;
   repeated ViewRevision view_revisions = 5;
   google.protobuf.Timestamp materialized_at = 6;
+  SecurityLockdownState lockdown = 7;
 }
 
 message ViewRevision {

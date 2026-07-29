@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown-core-posture
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol, verification]
 parent: epic-revocation-lifecycle-lockdown
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-07-30
 ---
 
 # Build the durable lockdown posture and acceptance fence
@@ -47,3 +47,22 @@ This is the foundation checkpoint. Trigger/exit RPCs, cockpit, and CLI all
 consume its generated contract and replay semantics. Keep the lockdown event
 keyed by authority domain and fold it through every exhaustive stored-event
 consumer before advancing this story.
+
+## Implementation notes
+
+- Added the schema-owned `SecurityLockdownEvent` family, bootstrap channel enum,
+  security snapshot summaries, ControlService entry/read RPCs, AdminService exit
+  RPC, and `SessionSnapshot.lockdown`; Rust and TypeScript bindings were regenerated
+  with `buf generate`.
+- Added event-log replay for `SecurityPostureProjection`, an acceptance-owned
+  `OperationPosture` port, stale session clamp, and operator-session generation-floor
+  replay. All exhaustive `StoredEventKind` consumers fail closed on the new event.
+- Added the independent Quint seed model and four draft executable vectors. The
+  property tier remains stated-normative/checked-model as appropriate; no stronger
+  checked-normative claim is made.
+
+## Verification
+
+- `cargo test --workspace` passed.
+- `cd contracts/ts && npm run check:vectors` passed; `npm run check:models` passed
+  after its generated `docs/VERIFICATION.md` traceability refresh.

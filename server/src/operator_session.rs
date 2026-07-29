@@ -5,8 +5,8 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    ActorId, DeviceId, EndpointId, Generation, OperatorSessionId, StoredEventKind,
-    OperatorSessionRevocation,
+    security_lockdown_event, ActorId, DeviceId, EndpointId, Generation, OperatorSessionId,
+    OperatorSessionRevocation, SecurityLockdownEvent, StoredEventKind,
 };
 use prost::Message;
 use tokio::sync::Mutex;
@@ -200,22 +200,39 @@ impl OperatorSessionRegistry {
         revoked
     }
 
-    /// Fold a durable revoke-all event into the generation fence. Session
-    /// records are process-local, so replay only restores the fence itself.
+    /// Fold durable generation-fence events into the process-local session
+    /// registry. Lockdown entry uses the same monotonic fence as revoke-all.
     pub async fn observe(&self, event: &RecordedEvent) -> Result<(), String> {
-        if StoredEventKind::try_from(event.payload.kind).ok()
-            != Some(StoredEventKind::OperatorSessionRevocation)
-        {
+        let kind = StoredEventKind::try_from(event.payload.kind).ok();
+        let (actor, generation) = if kind == Some(StoredEventKind::OperatorSessionRevocation) {
+            let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())
+                .map_err(|error| format!("cannot decode operator session revocation: {error}"))?;
+            (
+                revocation
+                    .operator_actor_id
+                    .ok_or_else(|| "operator session revocation has no actor".to_owned())?,
+                revocation
+                    .invalidated_through_generation
+                    .ok_or_else(|| "operator session revocation has no generation".to_owned())?,
+            )
+        } else if kind == Some(StoredEventKind::SecurityLockdown) {
+            let source = SecurityLockdownEvent::decode(event.payload.payload.as_slice())
+                .map_err(|error| format!("cannot decode security event: {error}"))?;
+            let entered = match source.transition {
+                Some(security_lockdown_event::Transition::Entered(entered)) => entered,
+                _ => return Ok(()),
+            };
+            let actor = entered
+                .entered_by
+                .and_then(|value| value.actor_id)
+                .ok_or_else(|| "lockdown entry has no verified actor".to_owned())?;
+            let generation = entered
+                .invalidated_through_operator_session_generation
+                .ok_or_else(|| "lockdown entry has no session generation".to_owned())?;
+            (actor, generation)
+        } else {
             return Ok(());
-        }
-        let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())
-            .map_err(|error| format!("cannot decode operator session revocation: {error}"))?;
-        let actor = revocation
-            .operator_actor_id
-            .ok_or_else(|| "operator session revocation has no actor".to_owned())?;
-        let generation = revocation
-            .invalidated_through_generation
-            .ok_or_else(|| "operator session revocation has no generation".to_owned())?;
+        };
         let mut floors = self.invalidated_through_generation.lock().await;
         let floor = floors.entry(actor.value.clone()).or_insert(0);
         if generation.value > *floor {
@@ -238,6 +255,23 @@ impl OperatorSessionRegistry {
             }
         }
         Ok(())
+    }
+
+    pub async fn summaries(&self) -> Vec<patchbay_contracts::patchbay::OperatorSessionSummary> {
+        let now = Instant::now();
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .map(|session| patchbay_contracts::patchbay::OperatorSessionSummary {
+                actor_id: Some(session.binding.actor_id.clone()),
+                endpoint_id: Some(session.binding.endpoint_id.clone()),
+                device_id: Some(session.binding.device_id.clone()),
+                operator_session_generation: Some(session.session_generation),
+                active: session.revoked_at.is_none() && now < session.expires_at,
+                revoked: session.revoked_at.is_some(),
+                expired: now >= session.expires_at,
+            })
+            .collect()
     }
 
     #[cfg(test)]

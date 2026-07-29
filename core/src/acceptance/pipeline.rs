@@ -15,8 +15,9 @@ use crate::{
 };
 
 use super::{
-    validate_response_payload, AcceptanceError, Clock, CommandStateLookup,
-    ElicitationContractLookup, GrantCheck, SystemClock, TargetResolver,
+    validate_response_payload, AcceptanceError, AllowOperations, Clock, CommandStateLookup,
+    ElicitationContractLookup, GrantCheck, OperationPosture, OperationPostureDenied, SystemClock,
+    TargetResolver,
 };
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
@@ -92,12 +93,13 @@ where
     L: CommandStateLookup,
     E: ElicitationContractLookup,
 {
-    submit_with_clock(
+    submit_with_clock_and_posture(
         storage,
         grant_check,
         target_resolver,
         state_lookup,
         contract_lookup,
+        &AllowOperations,
         issuer,
         operation,
         &SystemClock,
@@ -133,6 +135,44 @@ where
     E: ElicitationContractLookup,
     C: Clock + ?Sized,
 {
+    submit_with_clock_and_posture(
+        storage,
+        grant_check,
+        target_resolver,
+        state_lookup,
+        contract_lookup,
+        &AllowOperations,
+        issuer,
+        operation,
+        clock,
+    )
+    .await
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the posture port is an explicit acceptance boundary alongside the existing domain ports"
+)]
+pub async fn submit_with_clock_and_posture<S, G, R, L, E, P, C>(
+    storage: &S,
+    grant_check: &G,
+    target_resolver: &R,
+    state_lookup: &L,
+    contract_lookup: &E,
+    posture: &P,
+    issuer: &dyn IssuerContext,
+    operation: Operation,
+    clock: &C,
+) -> Result<SubmissionResult, AcceptanceError>
+where
+    S: Storage,
+    G: GrantCheck,
+    R: TargetResolver,
+    L: CommandStateLookup,
+    E: ElicitationContractLookup,
+    P: OperationPosture,
+    C: Clock + ?Sized,
+{
     let evaluated_at = clock.now();
     let validated = match validate_operation(&operation, &evaluated_at) {
         Ok(validated) => validated,
@@ -159,6 +199,20 @@ where
             ));
         }
     };
+
+    if let Err(OperationPostureDenied::SecurityLockdown {
+        reason_code,
+        entered_event_id,
+    }) = posture.check(validated.authority_domain_id).await
+    {
+        return Ok(rejected_result(
+            Some(validated.command_id.clone()),
+            FailureCode::AuthorizationDenied,
+            "security_lockdown_active".to_owned(),
+            None,
+            format!("security lockdown is active: {reason_code} (entered at {:?})", entered_event_id.lsn),
+        ));
+    }
 
     if matches!(
         validated.operation_kind,

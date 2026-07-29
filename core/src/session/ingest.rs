@@ -101,6 +101,12 @@ pub trait SessionLookup: Send + Sync {
 /// must be reflected in the hot projection even when a later append fails.
 pub trait SessionProjection: SessionLookup {
     fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError>;
+
+    /// A security projection may clamp incoming adapter evidence without
+    /// widening this port for unrelated server concerns.
+    fn lockdown_active(&self) -> bool {
+        false
+    }
 }
 
 impl SessionLookup for SessionRegistry {
@@ -118,6 +124,10 @@ impl SessionLookup for SessionRegistry {
 impl SessionProjection for SessionRegistry {
     fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
         SessionRegistry::observe(self, event)
+    }
+
+    fn lockdown_active(&self) -> bool {
+        SessionRegistry::lockdown_active(self)
     }
 }
 
@@ -146,6 +156,12 @@ where
     L: SessionProjection,
 {
     validate_report(&report)?;
+    let mut report = report;
+    if session_lookup.lockdown_active() {
+        // Lockdown is an event-folded stale clamp. Adapter evidence remains
+        // ingestible for reconciliation, but cannot manufacture liveness.
+        report.connectivity = SessionConnectivityState::Stale;
+    }
     let authority_domain_id = report.authority_domain_id.clone();
     let live = session_lookup
         .current_session(

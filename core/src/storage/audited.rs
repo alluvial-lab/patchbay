@@ -10,7 +10,7 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode, Grant,
     Observation, ObservationKind, OperationKind, OperatorRecord, Revocation,
-    StoredEventKind, StoredEventPayload,
+    SecurityLockdownEvent, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -231,6 +231,25 @@ pub fn audit_draft_for_source(
             };
             draft.reason_code = revocation.reason_code;
         }
+        StoredEventKind::SecurityLockdown => {
+            let source = SecurityLockdownEvent::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!("cannot decode security lockdown for audit: {error}"))
+            })?;
+            match source.transition {
+                Some(patchbay_contracts::patchbay::security_lockdown_event::Transition::Entered(entered)) => {
+                    draft.kind = AuditEventKind::LockdownEntered;
+                    draft.actor_id = entered.entered_by.as_ref().and_then(|value| value.actor_id.clone());
+                    draft.endpoint_id = entered.entered_by.as_ref().and_then(|value| value.endpoint_id.clone());
+                    draft.device_id = entered.entered_by.as_ref().and_then(|value| value.device_id.clone());
+                    draft.reason_code = entered.reason_code;
+                }
+                Some(patchbay_contracts::patchbay::security_lockdown_event::Transition::Exited(exited)) => {
+                    draft.kind = AuditEventKind::LockdownExited;
+                    draft.reason_code = exited.reason_code;
+                }
+                None => return Err(StorageError::CorruptRecord("security lockdown has no transition".to_owned())),
+            }
+        }
         StoredEventKind::SessionState | StoredEventKind::Elicitation => {
             return Err(StorageError::UnsupportedOperation);
         }
@@ -286,6 +305,7 @@ where
                 | StoredEventKind::Revocation
                 | StoredEventKind::OperatorRecord
                 | StoredEventKind::ControlSurfacePrincipal
+                | StoredEventKind::SecurityLockdown
         ) {
             let audit = audit_draft_for_source(&payload)?;
             return self

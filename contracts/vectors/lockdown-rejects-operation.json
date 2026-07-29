@@ -1,0 +1,10 @@
+{
+  "vector_id": "lockdown-rejects-operation",
+  "property_id": "LockdownRejectsNewOperations",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.SecurityLockdownState.active", "patchbay.SubmissionResult.outcome", "patchbay.SubmissionResult.failure_code", "patchbay.SubmissionResult.reason_code"],
+  "description": "An Operation attempt made after a committed security lockdown is rejected before command acceptance.",
+  "input": {"lockdown_active": true, "operation_kind": "OPERATION_KIND_INSTRUCT", "exact_retry": true},
+  "expected_outcome": {"outcome": "SUBMISSION_OUTCOME_REJECTED", "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED", "reason_code": "security_lockdown_active", "durable_acceptance_record_created": false},
+  "invariant_check": "LockdownRejectsNewOperations: posture rejection precedes grant, target, and dedup acceptance."
+}

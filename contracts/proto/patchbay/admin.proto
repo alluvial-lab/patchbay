@@ -4,11 +4,13 @@ package patchbay;
 
 import "google/protobuf/timestamp.proto";
 import "patchbay/common.proto";
+import "patchbay/security.proto";
 
 // Local-console administration. This service is served only on the core's
 // dedicated loopback listener; it is never registered on the network listener.
 service AdminService {
   rpc BootstrapOperator(BootstrapRequest) returns (BootstrapResult);
+  rpc ExitSecurityLockdown(ExitSecurityLockdownRequest) returns (ExitSecurityLockdownResult);
 }
 
 // The core-owned durable operator authentication record. Password hashes use
@@ -64,6 +66,17 @@ message BootstrapResult {
   OperatorSessionId session_id = 2;
   PrincipalCredential principal = 3;
   Generation operator_session_generation = 4;
+}
+
+message ExitSecurityLockdownRequest {
+  AuthorityDomainId authority_domain_id = 1;
+  string reason_code = 2;
+}
+
+message ExitSecurityLockdownResult {
+  SecurityLockdownState lockdown = 1;
+  EventId lockdown_event_id = 2;
+  bool already_inactive = 3;
 }
 
 // Durable source event that raises the operator-session generation fence for

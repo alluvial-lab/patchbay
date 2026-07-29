@@ -163,6 +163,8 @@ enum StoredEventKind {
   STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION = 12;
   // Durable principal/endpoint/device revocation fence (admin.proto).
   STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION = 13;
+  // Durable security lockdown posture transition (security.proto).
+  STORED_EVENT_KIND_SECURITY_LOCKDOWN = 14;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

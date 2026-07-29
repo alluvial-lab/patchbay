@@ -6,15 +6,17 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ActorEndpointRef, ActorId, AuthorityDomainId, DeviceId, EndpointId, Generation, GrantId, OperatorSessionId } from "./common_pb.js";
+import type { ActorEndpointRef, ActorId, AuthorityDomainId, DeviceId, EndpointId, EventId, Generation, GrantId, OperatorSessionId } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
+import type { SecurityLockdownState } from "./security_pb.js";
+import { file_patchbay_security } from "./security_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file patchbay/admin.proto.
  */
 export const file_patchbay_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChRwYXRjaGJheS9hZG1pbi5wcm90bxIIcGF0Y2hiYXkitgEKDk9wZXJhdG9yUmVjb3JkEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIVCg1wYXNzd29yZF9oYXNoGAIgASgJEi4KCmNyZWF0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjgKE2F1dGhvcml0eV9kb21haW5faWQYBCABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZCKaAQoTUHJpbmNpcGFsRW5yb2xsbWVudBIpCgtlbmRwb2ludF9pZBgBIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAIgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSMQoTZW5kcG9pbnRfZ2VuZXJhdGlvbhgDIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24i6wIKHUNvbnRyb2xTdXJmYWNlUHJpbmNpcGFsUmVjb3JkEhQKDHByaW5jaXBhbF9pZBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAyABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgEIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEhcKD2NyZWRlbnRpYWxfaGFzaBgGIAEoDBIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAggASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQi7gEKE1ByaW5jaXBhbENyZWRlbnRpYWwSFAoMcHJpbmNpcGFsX2lkGAEgASgJEg4KBnNlY3JldBgCIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgDIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYBCABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgFIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBiABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIp8BChBCb290c3RyYXBSZXF1ZXN0EhQKDHNldHVwX3NlY3JldBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSFQoNcGFzc3dvcmRfaGFzaBgDIAEoCRIwCglwcmluY2lwYWwYBCABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxFbnJvbGxtZW50ItQBCg9Cb290c3RyYXBSZXN1bHQSIwoIZ3JhbnRfaWQYASABKAsyES5wYXRjaGJheS5HcmFudElkEi8KCnNlc3Npb25faWQYAiABKAsyGy5wYXRjaGJheS5PcGVyYXRvclNlc3Npb25JZBIwCglwcmluY2lwYWwYAyABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsEjkKG29wZXJhdG9yX3Nlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24ivQIKGU9wZXJhdG9yU2Vzc2lvblJldm9jYXRpb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEiwKEW9wZXJhdG9yX2FjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBI8Ch5pbnZhbGlkYXRlZF90aHJvdWdoX2dlbmVyYXRpb24YAyABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjQKEHZlcmlmaWVkX3Jldm9rZXIYBCABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgGIAEoCSLIAgoYQ29udHJvbFN1cmZhY2VSZXZvY2F0aW9uEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIWCgxwcmluY2lwYWxfaWQYAiABKAlIABIrCgtlbmRwb2ludF9pZBgDIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWRIABInCglkZXZpY2VfaWQYBCABKAsyEi5wYXRjaGJheS5EZXZpY2VJZEgAEjQKEHZlcmlmaWVkX3Jldm9rZXIYBSABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgHIAEoCUIICgZ0YXJnZXQyWgoMQWRtaW5TZXJ2aWNlEkoKEUJvb3RzdHJhcE9wZXJhdG9yEhoucGF0Y2hiYXkuQm9vdHN0cmFwUmVxdWVzdBoZLnBhdGNoYmF5LkJvb3RzdHJhcFJlc3VsdGIGcHJvdG8z", [file_google_protobuf_timestamp, file_patchbay_common]);
+  fileDesc("ChRwYXRjaGJheS9hZG1pbi5wcm90bxIIcGF0Y2hiYXkitgEKDk9wZXJhdG9yUmVjb3JkEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIVCg1wYXNzd29yZF9oYXNoGAIgASgJEi4KCmNyZWF0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjgKE2F1dGhvcml0eV9kb21haW5faWQYBCABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZCKaAQoTUHJpbmNpcGFsRW5yb2xsbWVudBIpCgtlbmRwb2ludF9pZBgBIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAIgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSMQoTZW5kcG9pbnRfZ2VuZXJhdGlvbhgDIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24i6wIKHUNvbnRyb2xTdXJmYWNlUHJpbmNpcGFsUmVjb3JkEhQKDHByaW5jaXBhbF9pZBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAyABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgEIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEhcKD2NyZWRlbnRpYWxfaGFzaBgGIAEoDBIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAggASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQi7gEKE1ByaW5jaXBhbENyZWRlbnRpYWwSFAoMcHJpbmNpcGFsX2lkGAEgASgJEg4KBnNlY3JldBgCIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgDIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYBCABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgFIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBiABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIp8BChBCb290c3RyYXBSZXF1ZXN0EhQKDHNldHVwX3NlY3JldBgBIAEoCRIsChFvcGVyYXRvcl9hY3Rvcl9pZBgCIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSFQoNcGFzc3dvcmRfaGFzaBgDIAEoCRIwCglwcmluY2lwYWwYBCABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxFbnJvbGxtZW50ItQBCg9Cb290c3RyYXBSZXN1bHQSIwoIZ3JhbnRfaWQYASABKAsyES5wYXRjaGJheS5HcmFudElkEi8KCnNlc3Npb25faWQYAiABKAsyGy5wYXRjaGJheS5PcGVyYXRvclNlc3Npb25JZBIwCglwcmluY2lwYWwYAyABKAsyHS5wYXRjaGJheS5QcmluY2lwYWxDcmVkZW50aWFsEjkKG29wZXJhdG9yX3Nlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24ibAobRXhpdFNlY3VyaXR5TG9ja2Rvd25SZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBITCgtyZWFzb25fY29kZRgCIAEoCSKXAQoaRXhpdFNlY3VyaXR5TG9ja2Rvd25SZXN1bHQSMQoIbG9ja2Rvd24YASABKAsyHy5wYXRjaGJheS5TZWN1cml0eUxvY2tkb3duU3RhdGUSLAoRbG9ja2Rvd25fZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEhgKEGFscmVhZHlfaW5hY3RpdmUYAyABKAgivQIKGU9wZXJhdG9yU2Vzc2lvblJldm9jYXRpb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEiwKEW9wZXJhdG9yX2FjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBI8Ch5pbnZhbGlkYXRlZF90aHJvdWdoX2dlbmVyYXRpb24YAyABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjQKEHZlcmlmaWVkX3Jldm9rZXIYBCABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgGIAEoCSLIAgoYQ29udHJvbFN1cmZhY2VSZXZvY2F0aW9uEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIWCgxwcmluY2lwYWxfaWQYAiABKAlIABIrCgtlbmRwb2ludF9pZBgDIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWRIABInCglkZXZpY2VfaWQYBCABKAsyEi5wYXRjaGJheS5EZXZpY2VJZEgAEjQKEHZlcmlmaWVkX3Jldm9rZXIYBSABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi8KC29jY3VycmVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtyZWFzb25fY29kZRgHIAEoCUIICgZ0YXJnZXQyvwEKDEFkbWluU2VydmljZRJKChFCb290c3RyYXBPcGVyYXRvchIaLnBhdGNoYmF5LkJvb3RzdHJhcFJlcXVlc3QaGS5wYXRjaGJheS5Cb290c3RyYXBSZXN1bHQSYwoURXhpdFNlY3VyaXR5TG9ja2Rvd24SJS5wYXRjaGJheS5FeGl0U2VjdXJpdHlMb2NrZG93blJlcXVlc3QaJC5wYXRjaGJheS5FeGl0U2VjdXJpdHlMb2NrZG93blJlc3VsdGIGcHJvdG8z", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_security]);
 
 /**
  * The core-owned durable operator authentication record. Password hashes use
@@ -246,6 +248,55 @@ export const BootstrapResultSchema: GenMessage<BootstrapResult> = /*@__PURE__*/
   messageDesc(file_patchbay_admin, 5);
 
 /**
+ * @generated from message patchbay.ExitSecurityLockdownRequest
+ */
+export type ExitSecurityLockdownRequest = Message<"patchbay.ExitSecurityLockdownRequest"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from field: string reason_code = 2;
+   */
+  reasonCode: string;
+};
+
+/**
+ * Describes the message patchbay.ExitSecurityLockdownRequest.
+ * Use `create(ExitSecurityLockdownRequestSchema)` to create a new message.
+ */
+export const ExitSecurityLockdownRequestSchema: GenMessage<ExitSecurityLockdownRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_admin, 6);
+
+/**
+ * @generated from message patchbay.ExitSecurityLockdownResult
+ */
+export type ExitSecurityLockdownResult = Message<"patchbay.ExitSecurityLockdownResult"> & {
+  /**
+   * @generated from field: patchbay.SecurityLockdownState lockdown = 1;
+   */
+  lockdown?: SecurityLockdownState | undefined;
+
+  /**
+   * @generated from field: patchbay.EventId lockdown_event_id = 2;
+   */
+  lockdownEventId?: EventId | undefined;
+
+  /**
+   * @generated from field: bool already_inactive = 3;
+   */
+  alreadyInactive: boolean;
+};
+
+/**
+ * Describes the message patchbay.ExitSecurityLockdownResult.
+ * Use `create(ExitSecurityLockdownResultSchema)` to create a new message.
+ */
+export const ExitSecurityLockdownResultSchema: GenMessage<ExitSecurityLockdownResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_admin, 7);
+
+/**
  * Durable source event that raises the operator-session generation fence for
  * an operator. Session ids and other bearer material remain process-local.
  *
@@ -288,7 +339,7 @@ export type OperatorSessionRevocation = Message<"patchbay.OperatorSessionRevocat
  * Use `create(OperatorSessionRevocationSchema)` to create a new message.
  */
 export const OperatorSessionRevocationSchema: GenMessage<OperatorSessionRevocation> = /*@__PURE__*/
-  messageDesc(file_patchbay_admin, 6);
+  messageDesc(file_patchbay_admin, 8);
 
 /**
  * Durable source event that permanently fences a principal, endpoint, or
@@ -346,7 +397,7 @@ export type ControlSurfaceRevocation = Message<"patchbay.ControlSurfaceRevocatio
  * Use `create(ControlSurfaceRevocationSchema)` to create a new message.
  */
 export const ControlSurfaceRevocationSchema: GenMessage<ControlSurfaceRevocation> = /*@__PURE__*/
-  messageDesc(file_patchbay_admin, 7);
+  messageDesc(file_patchbay_admin, 9);
 
 /**
  * Local-console administration. This service is served only on the core's
@@ -362,6 +413,14 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof BootstrapRequestSchema;
     output: typeof BootstrapResultSchema;
+  },
+  /**
+   * @generated from rpc patchbay.AdminService.ExitSecurityLockdown
+   */
+  exitSecurityLockdown: {
+    methodKind: "unary";
+    input: typeof ExitSecurityLockdownRequestSchema;
+    output: typeof ExitSecurityLockdownResultSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_patchbay_admin, 0);

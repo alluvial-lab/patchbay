@@ -5,8 +5,8 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, ElicitationId, Generation, GrantId, Operation, OperationKind,
-    ResponseContract, RuntimeSessionId, TargetScope,
+    AdapterId, AuthorityDomainId, ElicitationId, EventId, Generation, GrantId, Operation,
+    OperationKind, ResponseContract, RuntimeSessionId, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -20,6 +20,40 @@ pub use crate::time::{Clock, SystemClock, TestClock};
 /// Implementations perform a side-effect-free read. The durable acceptance
 /// event is the audit record for a successful check; denied attempts may be
 /// recorded separately by the audit subsystem without creating command state.
+/// Domain-owned acceptance fence for a durable security posture.
+///
+/// The acceptance pipeline invokes this after envelope/time/issuer validation
+/// and before grant, target, or dedup work. Production implementations fold
+/// the event-native security projection; focused acceptance tests may use the
+/// permissive adapter below.
+pub trait OperationPosture: Send + Sync {
+    fn check(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+    ) -> impl std::future::Future<Output = Result<(), OperationPostureDenied>> + Send;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OperationPostureDenied {
+    #[error("security lockdown is active: {reason_code}")]
+    SecurityLockdown {
+        reason_code: String,
+        entered_event_id: EventId,
+    },
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AllowOperations;
+
+impl OperationPosture for AllowOperations {
+    async fn check(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+    ) -> Result<(), OperationPostureDenied> {
+        Ok(())
+    }
+}
+
 pub trait GrantCheck: Send + Sync {
     fn check(
         &self,

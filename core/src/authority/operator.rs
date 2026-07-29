@@ -123,6 +123,15 @@ impl OperatorRegistry {
         self.principals.get(principal_id)
     }
 
+    pub fn principals(&self) -> impl Iterator<Item = &ControlSurfacePrincipalRecord> {
+        self.principals.values()
+    }
+
+    #[must_use]
+    pub fn is_principal_revoked(&self, principal_id: &str) -> bool {
+        self.principal_revocations.contains_key(principal_id)
+    }
+
     /// Verify a password against the core-owned scrypt record.
     pub fn verify_password(
         &self,
@@ -244,6 +253,7 @@ impl OperatorRegistry {
             | StoredEventKind::Revocation
             | StoredEventKind::SessionState
             | StoredEventKind::CommandTransition
+            | StoredEventKind::SecurityLockdown
             | StoredEventKind::AuditRecord
             | StoredEventKind::Unspecified => Ok(()),
         }

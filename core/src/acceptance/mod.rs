@@ -21,10 +21,14 @@ pub use index::CommandIndex;
 pub use observation::{
     ingest_observation, CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,
 };
-pub use pipeline::{submit, submit_with_clock, target_key_for, COMMITTED_OPERATION_KINDS};
+pub use pipeline::{
+    submit, submit_with_clock, submit_with_clock_and_posture, target_key_for,
+    COMMITTED_OPERATION_KINDS,
+};
 pub use ports::{
-    ActiveElicitation, Authorized, Clock, ElicitationContractLookup, GrantCheck, GrantDenied,
-    SystemClock, TargetBinding, TargetNotFound, TargetResolver,
+    ActiveElicitation, AllowOperations, Authorized, Clock, ElicitationContractLookup, GrantCheck,
+    GrantDenied, OperationPosture, OperationPostureDenied, SystemClock, TargetBinding,
+    TargetNotFound, TargetResolver,
 };
 pub use replay::rebuild_from_log;
 pub use state::{is_terminal, CommandRecord, OperationStateExt};

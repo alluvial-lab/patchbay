@@ -11,6 +11,7 @@ use patchbay_core::{
     acceptance::COMMITTED_OPERATION_KINDS,
     authority::{validate_operator_record, AuthorityError},
     storage::Storage,
+    security,
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -224,6 +225,98 @@ where
             principal: Some(principal_credential),
             operator_session_generation: Some(session.session_generation),
         }))
+    }
+
+    async fn exit_security_lockdown(
+        &self,
+        request: Request<patchbay_contracts::patchbay::ExitSecurityLockdownRequest>,
+    ) -> Result<Response<patchbay_contracts::patchbay::ExitSecurityLockdownResult>, Status> {
+        let request = request.into_inner();
+        let authority_domain_id = request
+            .authority_domain_id
+            .ok_or_else(|| Status::invalid_argument("authority_domain_id is required"))?;
+        if authority_domain_id.value.is_empty() {
+            return Err(Status::invalid_argument("authority_domain_id must not be empty"));
+        }
+        self.control.require_configured_domain(&authority_domain_id)?;
+        if !request.reason_code.is_empty()
+            && (request.reason_code.len() > 64
+                || !request.reason_code.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                }))
+        {
+            return Err(Status::invalid_argument("reason_code must match [a-z0-9_]{1,64}"));
+        }
+
+        // This is the bootstrap trust boundary: no operator credential or
+        // routine ControlService issuer is read here. The admin listener's
+        // loopback-only binding is the configured authorization boundary.
+        let _decision_guard = self.control.state.submit_guard().await;
+        self.control
+            .state
+            .catch_up(&self.control.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let current = self.control.state.lockdown_state().await;
+        if !current.active {
+            return Ok(Response::new(
+                patchbay_contracts::patchbay::ExitSecurityLockdownResult {
+                    lockdown: Some(current),
+                    lockdown_event_id: None,
+                    already_inactive: true,
+                },
+            ));
+        }
+        let entered_event_id = current
+            .entered_event_id
+            .clone()
+            .ok_or_else(|| Status::internal("active lockdown has no entry event"))?;
+        let reason_code = if request.reason_code.is_empty() {
+            "bootstrap_exit".to_owned()
+        } else {
+            request.reason_code
+        };
+        let occurred_at = now_timestamp()?;
+        let source = security::events::exited(
+            authority_domain_id.clone(),
+            patchbay_contracts::patchbay::SecurityLockdownExited {
+                reason_code: reason_code.clone(),
+                occurred_at: Some(occurred_at),
+                entered_event_id: Some(entered_event_id.clone()),
+                bootstrap_channel: patchbay_contracts::patchbay::BootstrapChannelKind::LoopbackAdmin as i32,
+            },
+        );
+        let mut audit = patchbay_core::storage::AuditRecordDraft::new(
+            occurred_at,
+            patchbay_contracts::patchbay::AuditEventKind::LockdownExited,
+        );
+        audit.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
+            kind: patchbay_contracts::patchbay::TargetScopeKind::AuthorityDomain as i32,
+            ..patchbay_contracts::patchbay::TargetScope::default()
+        });
+        audit.reason_code = reason_code;
+        let event_id = self
+            .control
+            .storage
+            .append_decision(&authority_domain_id, security::events::encode(&source), audit)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        self.control
+            .state
+            .catch_up(&self.control.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let lockdown = self.control.state.lockdown_state().await;
+        if lockdown.active {
+            return Err(Status::internal("committed lockdown exit did not clear posture"));
+        }
+        Ok(Response::new(
+            patchbay_contracts::patchbay::ExitSecurityLockdownResult {
+                lockdown: Some(lockdown),
+                lockdown_event_id: Some(event_id),
+                already_inactive: false,
+            },
+        ))
     }
 }
 

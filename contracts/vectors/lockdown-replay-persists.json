@@ -1,0 +1,10 @@
+{
+  "vector_id": "lockdown-replay-persists",
+  "property_id": "LockdownReplayPersists",
+  "promotion_status": "draft",
+  "proto_fields_constrained": ["patchbay.SecurityLockdownEvent", "patchbay.SecurityLockdownState.active", "patchbay.SecurityLockdownEntered.reason_code"],
+  "description": "Replay of the durable lockdown entry preserves the active posture after restart.",
+  "input": {"committed_transition": "entered", "reason_code": "suspected_endpoint_compromise", "restart": true},
+  "expected_outcome": {"lockdown_active": true, "reason_code": "suspected_endpoint_compromise"},
+  "invariant_check": "LockdownReplayPersists: the event log, not process memory, is the posture source."
+}

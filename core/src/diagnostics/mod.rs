@@ -220,6 +220,7 @@ impl DiagnosticsProjection {
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
+            | StoredEventKind::SecurityLockdown
             | StoredEventKind::Unspecified => {}
         }
         self.last_lsn = event_lsn;

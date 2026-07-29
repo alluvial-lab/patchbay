@@ -13,5 +13,6 @@ pub mod adapter;
 pub mod authority;
 pub mod diagnostics;
 pub mod session;
+pub mod security;
 pub mod storage;
 pub mod time;
