@@ -49,8 +49,8 @@
     .sessions-view--panel-collapsed .panel-edge-toggle svg { transform: rotate(180deg); }
     .detail { position: relative; }
     .list-heading, .detail { padding: var(--space-4); }
-    .detail { display: grid; gap: var(--space-4); grid-template-rows: auto auto minmax(0, 1fr) auto; min-width: 0; }
-    .transcript { display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
+    .detail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; }
+    .transcript { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
     .message { max-width: 72ch; } .message--operator { justify-self: end; } .message p { margin: var(--space-2) 0 0; }
     .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
     .lock-reason { margin: 0; }
@@ -71,7 +71,7 @@
     .security-list, .security-row { display: grid; gap: var(--space-2); }
     .hero-actions, .dialog-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
     .hero-actions { margin-top: var(--space-4); }
-    .composer { align-self: end; }
+    .composer { margin-top: auto; }
     .planned-view { display: grid; place-items: center; padding: var(--space-6); }
     .planned-view .empty-state { max-width: 42rem; border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
     dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
