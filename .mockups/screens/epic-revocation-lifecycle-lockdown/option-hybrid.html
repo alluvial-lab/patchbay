@@ -17,7 +17,7 @@
     .app-header, .view-header, .section-heading { flex-wrap: wrap; }
     .lockdown-banner { margin: var(--space-3) var(--space-4) 0; justify-content: space-between; align-items: center; flex-wrap: wrap; }
     .lockdown-banner[hidden], .lock-reason[hidden], .view[hidden], .overflow-menu[hidden] { display: none; }
-    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; }
     .rail { width: 236px; padding: var(--space-4) var(--space-3); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); transition: width 120ms; }
     .rail--collapsed { width: 64px; padding-inline: var(--space-2); }
     .rail-footer { margin-top: auto; display: grid; gap: var(--space-2); }
@@ -45,7 +45,7 @@
     .rail-edge-toggle { left: 100%; }
     .rail--collapsed .rail-edge-toggle { left: 100%; }
     .rail--collapsed .rail-edge-toggle svg { transform: rotate(180deg); }
-    .sessions-view--panel-collapsed .panel-edge-toggle { left: 11px; }
+    .sessions-view--panel-collapsed .panel-edge-toggle { left: 11px; top: calc(50% + 56px); }
     .sessions-view--panel-collapsed .panel-edge-toggle svg { transform: rotate(180deg); }
     .detail { position: relative; }
     .list-heading, .detail { padding: var(--space-4); }
