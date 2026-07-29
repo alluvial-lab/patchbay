@@ -24,7 +24,9 @@
     .rail-footer { margin-top: auto; display: none; }
     .destination { justify-content: center; width: 100%; position: relative; }
     .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-    .destination[aria-current="page"] { background: transparent; color: var(--color-text-primary); border-color: transparent; }
+    .destination[aria-current="page"], .destination[aria-current="page"].btn-secondary {
+      background: transparent; color: var(--color-text-primary); border-color: transparent; box-shadow: none;
+    }
     .destination[aria-current="page"]::before {
       content: ""; position: absolute; left: calc(-1 * var(--space-2)); top: 15%; bottom: 15%;
       width: 3px; border-radius: 0 2px 2px 0; background: var(--color-accent);
@@ -55,15 +57,18 @@
     .message { max-width: 72ch; } .message--operator { justify-self: end; } .message p { margin: var(--space-2) 0 0; }
     .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
     .lock-reason { margin: 0; }
-    .panel-toggle .show-panel { display: none; }
-    .sessions-view--panel-collapsed .panel-toggle .hide-panel { display: none; }
-    .sessions-view--panel-collapsed .panel-toggle .show-panel { display: inline; }
+    .back-to-list { display: none; }
+    @media (max-width: 760px) {
+      .back-to-list { display: inline-flex; }
+      .session-list[data-detail-open="true"] ~ .detail .back-to-list { display: inline-flex; }
+    }
     /* Normalize native button chrome so every session uses the cockpit row primitive. */
     .session-row { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--color-border); text-align: left; }
     .session-row--active { background: var(--color-accent-muted); border-left: 3px solid var(--color-accent); }
     /* Stale remains the cockpit row, only desaturated and dimmed—never a light card. */
     .session-row--stale { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); filter: grayscale(1); opacity: .65; /* TODO: add stale-surface/opacity tokens */ }
     .session-row--stale:hover { background: var(--color-bg-tertiary); }
+    .composer__input { resize: none; height: 3.2em; }
     .composer__input:disabled { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); cursor: not-allowed; }
     .session-row:focus-visible, .tabs__tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
     .security-view { padding: var(--space-6); max-width: 960px; width: 100%; margin: 0 auto; }
@@ -91,8 +96,8 @@
       .sessions-view, .sessions-view--panel-collapsed { display: block; }
       .session-list { border-right: 0; } .detail { display: none; }
       .session-list[data-detail-open="true"] { display: none; }
-      .sessions-view:has(.session-list[data-detail-open="true"]) .detail { display: grid; min-height: 70vh; }
-      .panel-toggle { display: none; }
+      .sessions-view:has(.session-list[data-detail-open="true"]) { display: flex; flex-direction: column; min-height: calc(100dvh - 160px); }
+      .sessions-view:has(.session-list[data-detail-open="true"]) .detail { display: flex; flex: 1 1 auto; min-height: 0; }
       .security-view { padding: var(--space-4); }
       .bottom-tabs { position: fixed; inset: auto 0 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
       .bottom-tabs .tabs { display: contents; }
@@ -140,8 +145,7 @@
             <button class="session-row session-row--stale" type="button" data-session><span class="session-row__label">release-check</span><span class="session-row__identity">pi · local · release-check · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status session-status--stale"><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></span></button>
           </aside>
           <section class="detail">
-            <button class="panel-edge-toggle" id="collapsePanelEdge" type="button" aria-controls="sessionList" aria-expanded="true" aria-label="Hide sessions panel" title="Hide sessions panel"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
-            <div class="detail-heading"><div class="panel-toggle"><button class="btn btn-ghost btn--sm" id="collapsePanel" type="button" aria-controls="sessionList" aria-expanded="true"><span class="hide-panel">Hide sessions panel</span><span class="show-panel">Show sessions panel</span></button></div><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
+            <div class="detail-heading"><button class="btn btn-ghost btn--icon-only back-to-list" id="backToList" type="button" aria-label="Back to sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
             <p class="alert alert--warning lock-reason" id="sessionLockReason" role="status" hidden><span><strong>Read-only during lockdown.</strong> New Operations are rejected until trusted bootstrap exit.</span></p>
             <div class="transcript" aria-label="Session transcript"><article class="card message"><div class="message-head"><strong>Pi</strong><span class="delivery-line">Observation · source authenticated</span></div><p>Checked protocol presentation bindings. Reviewing the active worktree now.</p></article><article class="card message message--operator"><div class="message-head"><strong>operator</strong><span class="delivery-line">Command delivered</span></div><p>Continue with the cockpit mockup.</p></article></div>
             <footer class="composer"><div><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" placeholder="Send an instruction to patchbay-main"></textarea><div class="composer__idempotency">New command · idempotency key generated on submit</div></div><div class="composer__actions"><button class="btn btn-secondary" id="interrupt" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Interrupt</button><button class="btn btn-primary" id="send" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Send</button></div></footer>
@@ -168,7 +172,7 @@
       <div class="tabs">
         <button class="tabs__tab" type="button" data-destination="sessions" aria-current="page">Sessions</button>
         <button class="tabs__tab" type="button" data-destination="security">Security</button>
-        <button class="tabs__tab" id="moreBtn" type="button" aria-expanded="false" aria-controls="overflowMenu">More</button>
+        <button class="tabs__tab" id="moreBtn" type="button" aria-expanded="false" aria-controls="overflowMenu" aria-label="More destinations"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </div>
     </nav>
     <nav class="overflow-menu" id="overflowMenu" aria-label="More cockpit destinations" hidden>
@@ -216,10 +220,6 @@
       destinationButtons.forEach(button => {
         const selected = button.dataset.destination === destination;
         button.toggleAttribute('aria-current', selected);
-        if (button.classList.contains('destination')) {
-          button.classList.toggle('btn-secondary', selected);
-          button.classList.toggle('btn-ghost', !selected);
-        }
       });
       document.querySelector('#moreBtn').toggleAttribute('aria-current', isPlanned);
       document.querySelector('#overflowMenu').hidden = true;
@@ -246,17 +246,10 @@
       document.querySelector('#moreBtn').setAttribute('aria-expanded', String(!menu.hidden));
     });
     const togglePanel = () => {
-      const sessions = document.querySelector('#sessionsView');
-      const collapsed = sessions.classList.toggle('sessions-view--panel-collapsed');
-      document.querySelector('#collapsePanel').setAttribute('aria-expanded', String(!collapsed));
-      const edge = document.querySelector('#collapsePanelEdge');
-      edge.setAttribute('aria-expanded', String(!collapsed));
-      edge.setAttribute('aria-label', collapsed ? 'Show sessions panel' : 'Hide sessions panel');
-      edge.title = edge.getAttribute('aria-label');
+      document.querySelector('#sessionsView').classList.toggle('sessions-view--panel-collapsed');
     };
-    document.querySelector('#collapsePanel').addEventListener('click', togglePanel);
-    document.querySelector('#collapsePanelEdge').addEventListener('click', togglePanel);
     document.querySelectorAll('[data-session]').forEach(row => row.addEventListener('click', () => { document.querySelector('#sessionList').dataset.detailOpen = 'true'; }));
+    document.querySelector('#backToList').addEventListener('click', () => { delete document.querySelector('#sessionList').dataset.detailOpen; });
     document.querySelector('#armBtn').addEventListener('click', () => arm.showModal());
     document.querySelector('#confirmStep').addEventListener('click', () => { arm.close(); confirm.showModal(); word.focus(); });
     word.addEventListener('input', () => { enter.disabled = word.value !== 'LOCKDOWN'; });
