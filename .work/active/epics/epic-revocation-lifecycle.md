@@ -160,3 +160,37 @@ Verification at epic close: cargo 33 suites + clippy, cli 36, web-server 31,
 web-cockpit 73, pi-adapter 24, e2e (incl. lockdown → restart → bootstrap
 exit), contracts drift/vectors/models/presentation — all green. Formal
 properties/vectors remain honestly draft/stated-normative.
+
+## Epic review findings (standard pass 1, 2026-07-29 — independent reviewer: gpt-5.6-sol)
+
+Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
+
+1. **Stale adapter token survives replacement race** — adapter
+   attach/token replacement isn't under CoreDecisionGate;
+   ingest/report/deliveries authenticate before gate acquisition without
+   re-authentication after. Fix: serialize attachment + decision
+   establishment through the gate; re-auth + re-read current attachment
+   under it; barrier tests for stale IngestObservation/ReportDiagnostics/
+   ReceiveDeliveries.
+2. **Revoking the last broad grant bricks the deployment** — RevokeGrant
+   accepts the sole bootstrap authority-domain grant; no recovery path
+   exists (setup secret consumed, admin has only Bootstrap+ExitLockdown).
+   Fix (receiver's choice, least-irreversible): REFUSE routine revocation of
+   the last recovery-capable authority-domain grant (typed failure) +
+   high-impact confirmation for broad grants in CLI/cockpit; an admin
+   grant-recovery op is a possible future design, not this fix.
+3. **Subscribe cursor validation before gate/catch-up** — valid resume
+   cursors from adapter-originated events can be rejected "beyond current
+   LSN" while the projection lags. Fix: cursor comparison under the gate
+   after catch-up + issuer re-verification; reconnect regression test.
+4. **Aggregate audit coverage gaps** — lockdown-blocked mutations return
+   unaudited; repeated lockdown entry/exit unaudited; LoadSecuritySnapshot
+   decisions unaudited; current-session revocation mutates before auditing
+   (audit failure → unaudited success). Fix: audit all of these; reorder
+   mutation/audit; audit-query + injected-write-failure tests.
+5. **Cockpit claims lockdown before core confirmation** — sets
+   lockdown.active=true before the EnterSecurityLockdown result; on denial
+   it falsely presents containment. Fix: lockdown_submitting local state
+   while awaiting; "active" only from confirmed result or reconciled
+   snapshot; on denial restore prior posture; on unknown outcome force
+   reconcile without claiming success.
