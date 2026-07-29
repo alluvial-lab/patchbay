@@ -62,3 +62,31 @@ multi-operator lockdown scope (reserved).
   bootstrap-channel requirement, channel-distinction rationale)
 - `docs/PROTOCOL.md` — Snapshots and streams (staleness), failure vocabulary
 - `docs/UX.md` — emergency-control presentation (to be extended via mockups)
+
+## Mockups
+
+- Screens: `.mockups/screens/epic-revocation-lifecycle-lockdown/index.html`
+- Selected: **option-hybrid** (operator sign-off "good MVP", 2026-07-29), after four initial options + iterative revision.
+- **Navigation architecture** (locked, applies cockpit-wide; grounded in
+  `.research/analysis/briefs/cockpit-navigation-architecture.md`):
+  icon-only left rail as the canonical desktop form (VS Code activity-bar
+  model), left-accent highlighter for the active destination, destinations
+  punch out contextual panels (Sessions ↔ session list; future Files/Git
+  panels during chat), bottom tab bar on mobile (equal-width icon+label
+  items, top-accent indicator, hamburger "More" overflow), drill-in with
+  back affordance on mobile, inspector material as sheets/subroutes.
+- **Security screen**: single-column flow — lockdown hero (two-step
+  arm-then-confirm ritual), operator sessions, endpoints/devices, grants.
+- **Lockdown state**: inline persistent banner over a read-only cockpit
+  (reason, timestamp, bootstrap-exit instructions) — NOT a takeover
+  interstitial; all actions disabled with lock reasons; server-side
+  enforcement is authoritative (UI disabling is presentation).
+- **Sessions/chat pane**: production `session-detail` structure and
+  `shell.css` ported verbatim (msg/delivery/composer parity, attach button,
+  Enter-to-send, auto-grow input, timeline activity indicator).
+- Collapse discipline: one control per region — rail destinations drive
+  panel punch-out; no separate panel chevrons.
+- Implementer flags recorded: overlay/stale/motion tokens to add to
+  tokens.css; promote session-row + stale treatment into components.css;
+  persist rail/panel collapse state per user; lockdown exit is
+  bootstrap-channel only.
