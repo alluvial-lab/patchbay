@@ -13,7 +13,7 @@
     html, body { height: 100%; }
     body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
     .cockpit { flex: 1 1 auto; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
-    .app-header, .header-actions, .detail-heading, .message-head, .section-heading, .row-actions, .banner-copy, .view-header, .rail-head, .list-heading { display: flex; align-items: center; gap: var(--space-3); }
+    .app-header, .header-actions, .section-heading, .row-actions, .banner-copy, .view-header, .rail-head, .list-heading { display: flex; align-items: center; gap: var(--space-3); }
     .app-header, .view-header, .rail-head, .list-heading, .section-heading { justify-content: space-between; }
     .app-header, .view-header, .section-heading { flex-wrap: wrap; }
     .lockdown-banner { margin: var(--space-3) var(--space-4) 0; justify-content: space-between; align-items: center; flex-wrap: wrap; }
@@ -57,12 +57,44 @@
     .sessions-view--panel-collapsed .panel-edge-toggle { left: 11px; top: calc(50% + 56px); }
     .sessions-view--panel-collapsed .panel-edge-toggle svg { transform: rotate(180deg); }
     .detail { position: relative; }
-    .list-heading, .detail { padding: var(--space-4); }
-    .detail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; }
-    .transcript { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
-    .message { max-width: 72ch; background: var(--color-bg-secondary); }
-    .message--operator { justify-self: end; background: var(--color-accent-muted); border-color: var(--color-accent); }
-    .message p { margin: var(--space-2) 0 0; }
+    .list-heading { padding: var(--space-4); }
+    .cockpit .session-detail {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+    }
+    .cockpit .session-detail__header[hidden] { display: none; }
+    .cockpit .timeline {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: var(--space-4);
+      width: 100%;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: var(--space-6);
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .cockpit .msg { display: flex; flex-direction: column; gap: var(--space-2); max-width: 78%; }
+    .cockpit .msg--operator { align-self: flex-end; align-items: flex-end; }
+    .cockpit .msg--agent { align-self: flex-start; width: min(560px, 100%); }
+    .cockpit .msg__body { max-width: 100%; padding: var(--space-3) var(--space-4); overflow-wrap: anywhere; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+    .cockpit .msg--operator .msg__body { background: var(--color-accent-muted); }
+    .cockpit .msg__footer { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-tertiary); }
+    .cockpit .msg__detail { max-width: 100%; max-height: 12em; overflow: auto; margin: var(--space-2) 0 0; padding: var(--space-2) 0 0; font: var(--font-size-xs)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-secondary); border: 0; border-top: 1px solid var(--color-border); border-radius: 0; }
+    .cockpit .timeline-activity { align-self: flex-start; padding: var(--space-2) var(--space-4); }
+    .cockpit .activity-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-tertiary); }
+    .cockpit .activity-indicator__icon { width: 8px; height: 8px; border-radius: 50%; background: var(--color-accent); flex: none; }
+    .cockpit .activity-indicator--working .activity-indicator__icon { animation: activity-pulse 1.2s ease-in-out infinite; }
+    @keyframes activity-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    .cockpit .delivery-line { max-width: 100%; flex-wrap: wrap; }
+    .cockpit .delivery-line .failure-banner { flex-basis: 100%; }
+    .cockpit .composer { flex-wrap: wrap; }
+    .cockpit .composer__idempotency { flex-basis: 100%; }
     .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
     .lock-reason { margin: 0; }
     .back-to-list { display: none; }
@@ -76,8 +108,6 @@
     /* Stale remains the cockpit row, only desaturated and dimmed—never a light card. */
     .session-row--stale { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); filter: grayscale(1); opacity: .65; /* TODO: add stale-surface/opacity tokens */ }
     .session-row--stale:hover { background: var(--color-bg-tertiary); }
-    .composer__input { resize: none; min-height: 4.5em; max-height: 10em; }
-    .composer__input:disabled { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); cursor: not-allowed; }
     .session-row:focus-visible, .tabs__tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
     .security-view { padding: var(--space-6); max-width: 960px; width: 100%; margin: 0 auto; }
     .view-header { margin-bottom: var(--space-6); }
@@ -85,8 +115,6 @@
     .security-list, .security-row { display: grid; gap: var(--space-2); }
     .hero-actions, .dialog-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
     .hero-actions { margin-top: var(--space-4); }
-    .composer { margin-top: auto; display: flex; align-items: flex-end; gap: var(--space-2); }
-    .composer .composer__input { flex: 1 1 auto; width: auto; }
     .planned-view { display: grid; place-items: center; padding: var(--space-6); }
     .planned-view .empty-state { max-width: 42rem; border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
     dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
@@ -94,7 +122,7 @@
     .dialog-form { display: grid; gap: var(--space-4); }
     .dialog-actions { justify-content: flex-end; }
     .bottom-tabs { display: none; }
-    .overflow-menu { position: fixed; right: var(--space-2); bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); z-index: 4; width: min(240px, calc(100% - var(--space-4))); padding: var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); box-shadow: var(--shadow-raised); }
+    .overflow-menu { position: fixed; right: var(--space-2); bottom: calc(var(--space-16) + env(safe-area-inset-bottom)); z-index: 4; width: min(240px, calc(100% - var(--space-4))); padding: var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); box-shadow: 0 2px 8px rgb(0 0 0 / 0.08); }
     .overflow-menu .destination { text-align: left; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
     @media (max-width: 760px) {
@@ -103,10 +131,13 @@
       .lockdown-banner { position: fixed; inset: auto 0 calc(var(--space-16) + env(safe-area-inset-bottom)) 0; z-index: 3; margin: 0; border-radius: 0; }
       .lockdown-banner:not([hidden]) ~ .shell { padding-bottom: calc(var(--space-16) * 2); }
       .sessions-view, .sessions-view--panel-collapsed { display: block; }
-      .session-list { border-right: 0; } .detail { display: none; }
+      .session-list { border-right: 0; } .cockpit .session-detail { display: none; }
       .session-list[data-detail-open="true"] { display: none; }
       .sessions-view:has(.session-list[data-detail-open="true"]) { display: flex; flex-direction: column; min-height: calc(100dvh - 160px); }
       .sessions-view:has(.session-list[data-detail-open="true"]) .detail { display: flex; flex: 1 1 auto; min-height: 0; }
+      .cockpit .timeline { padding: var(--space-3); }
+      .cockpit .msg { width: 100%; max-width: 88%; }
+      .cockpit .composer { position: sticky; bottom: 0; }
       .security-view { padding: var(--space-4); }
       .bottom-tabs { position: fixed; inset: auto 0 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
       .bottom-tabs .tabs { display: contents; }
@@ -115,7 +146,7 @@
       .bottom-tabs .tabs__tab[aria-current] { box-shadow: inset 0 2px 0 var(--color-accent); }
       .mock-meta { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } /* TODO: add motion-duration token */ }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } .cockpit .activity-indicator--working .activity-indicator__icon { animation: none; } /* TODO: add motion-duration token */ }
   </style>
 </head>
 <body>
@@ -155,11 +186,61 @@
             <button class="session-row session-row--active" type="button" data-session><span class="session-row__label">patchbay-main</span><span class="session-row__identity">pi · local · patchbay-main · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status" id="mainStatus"><span class="connectivity-indicator connectivity-indicator--live" id="mainConnection"><span class="connectivity-indicator__dot"></span><span class="connection-label">live</span></span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span></button>
             <button class="session-row session-row--stale" type="button" data-session><span class="session-row__label">release-check</span><span class="session-row__identity">pi · local · release-check · gen 1</span><span class="session-row__context">/home/agent/projects/patchbay</span><span class="session-status session-status--stale"><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></span></button>
           </aside>
-          <section class="detail">
-            <div class="detail-heading"><button class="btn btn-ghost btn--icon-only back-to-list" id="backToList" type="button" aria-label="Back to sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
+          <section class="detail session-detail">
+            <header class="session-detail__header nav-bar">
+              <button class="btn btn-ghost btn--sm btn--icon-only back-to-list" id="backToList" type="button" aria-label="Back to sessions" title="Back to sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path></svg></button>
+              <span class="session-row__identity" id="detailTitle">pi · local · patchbay-main · gen 1</span>
+              <span class="session-row__context">umans-glm-5.2</span>
+              <span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+            </header>
             <p class="alert alert--warning lock-reason" id="sessionLockReason" role="status" hidden><span><strong>Read-only during lockdown.</strong> New Operations are rejected until trusted bootstrap exit.</span></p>
-            <div class="transcript" aria-label="Session transcript"><article class="card message"><div class="message-head"><strong>Pi</strong><span class="delivery-line">Observation · source authenticated</span></div><p>Checked protocol presentation bindings. Reviewing the active worktree now.</p></article><article class="card message message--operator"><div class="message-head"><strong>operator</strong><span class="delivery-line">Command delivered</span></div><p>Continue with the cockpit mockup.</p></article></div>
-            <footer class="composer"><button class="btn btn-secondary btn--icon-only" id="attach" type="button" data-lockable aria-label="Attach file or image" data-tip="Attach file or image" title="Disabled during lockdown: new Operations are rejected."><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" rows="1" placeholder="Instruct or enter a slash-command…"></textarea><button class="btn btn-primary btn--icon-only" id="send" type="button" data-lockable aria-label="Send instruction" data-tip="Send (Enter)" title="Disabled during lockdown: new Operations are rejected."><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></footer>
+            <div class="timeline" aria-live="polite" aria-label="Session transcript">
+              <article class="msg msg--operator">
+                <div class="msg__body">Continue with the cockpit mockup, then verify the session-detail markup against production.</div>
+                <div class="msg__footer">operator · instruct</div>
+                <div class="delivery-line"><div class="command-step command-step--completed"><span class="command-step__marker"></span><span class="command-step__state">completed</span></div><span class="command-step__race">Last transition: running → completed</span></div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>I’m comparing the mock’s session pane with the cockpit component now.</p></div>
+                <div class="msg__footer">agent · text</div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>Running <strong>bash</strong></p><pre class="msg__detail">git diff -- web-cockpit/src/ui/session-detail.ts web-cockpit/src/ui/shell.css</pre></div>
+                <div class="msg__footer">tool · tool_call</div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>Finished <strong>bash</strong></p><pre class="msg__detail">web-cockpit/src/ui/session-detail.ts | 18 ++++++---
+web-cockpit/src/ui/shell.css          | 42 ++++++++++++++++-----</pre></div>
+                <div class="msg__footer">tool · tool_finished</div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>The production header uses the stable session identity and model context rather than a page title.</p></div>
+                <div class="msg__footer">agent · text</div>
+              </article>
+              <article class="msg msg--operator msg--action">
+                <div class="msg__body">Inspect the active mockup and keep the mobile drill-in behavior intact.</div>
+                <div class="delivery-line"><div class="command-step command-step--running"><span class="command-step__marker"></span><span class="command-step__state">running</span></div><span class="command-step__race">Last transition: delivered → running</span><div class="btn-group"><button class="btn btn-secondary btn--sm btn--icon-only" type="button" aria-label="Cancel running operation" title="Cancel running operation"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m18 6-12 12"></path><path d="m6 6 12 12"></path></svg></button><button class="btn btn-danger btn--sm btn--icon-only" type="button" aria-label="Interrupt running operation" title="Interrupt running operation"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path></svg></button></div></div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>The timeline now owns scrolling, while the composer remains at the bottom of the detail pane.</p></div>
+                <div class="msg__footer">agent · text</div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>Delivery state remains distinct from the session’s live connectivity and working activity.</p></div>
+                <div class="msg__footer">agent · text</div>
+              </article>
+              <article class="msg msg--agent">
+                <div class="msg__body"><p>Reviewing the final selectors before the mockup is ready for sign-off.</p></div>
+                <div class="msg__footer">agent · text</div>
+              </article>
+              <div class="timeline-activity" role="status"><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>using read</span></div>
+            </div>
+            <form class="composer">
+              <button class="btn btn-secondary btn--icon-only" id="attach" type="button" data-lockable aria-label="Attach file or image" title="Attach file or image"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>
+              <textarea class="composer__input" id="instruction" rows="1" aria-label="Instruction" placeholder="Instruct or enter a slash-command…"></textarea>
+              <button class="btn btn-primary btn--sm btn--icon-only" id="send" type="submit" data-lockable aria-label="Send instruction" title="Send instruction"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg></button>
+              <span class="composer__idempotency session-row__identity">Target: pi · local · patchbay-main · gen 1</span>
+            </form>
           </section>
         </section>
 
@@ -269,6 +350,11 @@
     const composerInput = document.querySelector('#instruction');
     const grow = () => { composerInput.style.height = 'auto'; composerInput.style.height = Math.min(composerInput.scrollHeight, 10 * parseFloat(getComputedStyle(composerInput).fontSize) * 1.5) + 'px'; };
     composerInput.addEventListener('input', grow);
+    document.querySelector('.composer').addEventListener('submit', (event) => {
+      event.preventDefault();
+      composerInput.value = '';
+      grow();
+    });
     // Live-composer parity: Enter sends, Shift+Enter inserts a newline.
     composerInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); composerInput.value = ''; grow(); }
