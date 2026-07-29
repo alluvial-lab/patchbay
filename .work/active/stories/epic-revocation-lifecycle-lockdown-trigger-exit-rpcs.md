@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown-trigger-exit-rpcs
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: epic-revocation-lifecycle-lockdown
 depends_on: [epic-revocation-lifecycle-lockdown-core-posture]
 release_binding: null
 gate_origin: null
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-07-30
 ---
 
 # Expose authorized lockdown entry and bootstrap-only exit
@@ -47,3 +47,27 @@ Depends on the generated event and core posture checkpoint. Land and prove the
 self-lockout/re-entry path before cockpit or CLI polish. Hold the composition-root
 `CoreDecisionGate` across catch-up, issuer re-verification, authorization,
 append, and result construction; a service-local mutex is not sufficient.
+
+## Implementation notes
+
+- `EnterSecurityLockdown` now re-verifies the compound issuer under the shared
+  gate, requires the authority-domain `session-management` grant, and atomically
+  appends the posture source plus typed `LockdownEntered` audit.
+- `ExitSecurityLockdown` is implemented only by `AdminService`; it requires no
+  operator credential, uses the loopback-admin channel enum, and atomically pairs
+  the exit source with `LockdownExited`. Password login and browser ControlService
+  expose no exit path.
+- Security snapshots materialize redacted operator-session, control-surface, and
+  grant summaries. Lockdown blocks security mutations with `FAILED_PRECONDITION`
+  while preserving snapshot/subscription/password-read paths.
+- The web server bridges entry, security snapshots, and grant revocation with the
+  existing CSRF/session guards. Entry encodes the committed response before
+  revoking all local browser sessions; unknown transport outcomes fail closed.
+
+## Verification
+
+- `cargo test -p patchbay-core-server --test lockdown_recovery` passed, including
+  entry, restart replay, credential-independent admin exit, and higher-generation
+  issuance.
+- `cd web-server && npm test` passed (31 tests), including CSRF, local session
+  invalidation, security snapshot read, grant bridge, and no browser admin route.

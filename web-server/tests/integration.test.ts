@@ -3,8 +3,12 @@ import { Code, ConnectError, createClient, type CallOptions } from "@connectrpc/
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import {
   ControlService,
+  EnterSecurityLockdownRequestSchema,
+  EnterSecurityLockdownResultSchema,
   EndpointIdSchema,
   LoadSnapshotResponseSchema,
+  LoadSecuritySnapshotRequestSchema,
+  LoadSecuritySnapshotResponseSchema,
   PrincipalCredentialSchema,
   QueryDiagnosticsResponseSchema,
   RecordControlSurfaceAuditResponseSchema,
@@ -14,6 +18,7 @@ import {
   SubscribeEventSchema,
   VerifyOperatorPasswordResultSchema,
   EnrollControlSurfacePrincipalResultSchema,
+  RevokeGrantRequestSchema,
   RevokeGrantResultSchema,
   RevokeOperatorSessionResultSchema,
   RevokeAllOperatorSessionsRequestSchema,
@@ -37,6 +42,8 @@ import { hashPassword, SessionStore } from "../src/sessions.js";
 interface CoreCall {
   method:
     | "submit"
+    | "enterSecurityLockdown"
+    | "loadSecuritySnapshot"
     | "queryDiagnostics"
     | "subscribe"
     | "loadSnapshot"
@@ -439,6 +446,88 @@ test("Connect-Web Subscribe streams frames and reconnects from the supplied curs
   }
 });
 
+test("lockdown entry requires CSRF, invalidates local sessions after encoding, and security reads remain CSRF-free", async () => {
+  const fixture = makeFixture();
+  const caller = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "patchbay-web-server",
+    deviceId: "web-device",
+    sessionGeneration: 1n,
+    coreSessionId: "core-issued-session",
+  });
+  const sibling = fixture.sessions.create({
+    operatorActorId,
+    endpointId: "other-endpoint",
+    deviceId: "other-device",
+    sessionGeneration: 2n,
+    coreSessionId: "sibling-core-session",
+  });
+  const cookie = `${SESSION_COOKIE_NAME}=${caller.sessionId}`;
+  const noProof = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/EnterSecurityLockdown",
+    headers: { "content-type": "application/grpc-web+proto", cookie },
+    payload: protobufFrame(toBinary(EnterSecurityLockdownRequestSchema, create(EnterSecurityLockdownRequestSchema, {
+      authorityDomainId: { value: "default" }, reasonCode: "operator_lockdown",
+    }))),
+  });
+  assert.equal(noProof.statusCode, 403);
+
+  const entered = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/EnterSecurityLockdown",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie,
+      [CSRF_HEADER_NAME]: caller.csrfSecret,
+    },
+    payload: protobufFrame(toBinary(EnterSecurityLockdownRequestSchema, create(EnterSecurityLockdownRequestSchema, {
+      authorityDomainId: { value: "default" }, reasonCode: "operator_lockdown",
+    }))),
+  });
+  assert.equal(entered.statusCode, 200);
+  assert.equal(fixture.sessions.lookup(caller.sessionId)?.status, "revoked");
+  assert.equal(fixture.sessions.lookup(sibling.sessionId)?.status, "revoked");
+  assert.equal(fixture.calls.filter((call) => call.method === "enterSecurityLockdown").length, 1);
+
+  const fresh = fixture.sessions.create(operatorActorId, "core-issued-session");
+  const securityRead = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/LoadSecuritySnapshot",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie: `${SESSION_COOKIE_NAME}=${fresh.sessionId}`,
+    },
+    payload: protobufFrame(toBinary(LoadSecuritySnapshotRequestSchema, create(LoadSecuritySnapshotRequestSchema, {
+      authorityDomainId: { value: "default" },
+    }))),
+  });
+  assert.equal(securityRead.statusCode, 200);
+  assert.equal(fixture.calls.filter((call) => call.method === "loadSecuritySnapshot").length, 1);
+  await fixture.app.close();
+});
+
+test("browser exposes grant revocation but no bootstrap exit route", async () => {
+  const fixture = makeFixture();
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/patchbay.ControlService/RevokeGrant",
+    headers: {
+      "content-type": "application/grpc-web+proto",
+      cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+      [CSRF_HEADER_NAME]: session.csrfSecret,
+    },
+    payload: protobufFrame(toBinary(RevokeGrantRequestSchema, create(RevokeGrantRequestSchema, {
+      authorityDomainId: { value: "default" }, grantId: { value: "grant-1" }, reason: "operator_lockdown",
+    }))),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(fixture.calls.filter((call) => call.method === "revokeGrant").length, 1);
+  assert.equal((await fixture.app.inject({ method: "POST", url: "/patchbay.AdminService/ExitSecurityLockdown" })).statusCode, 404);
+  await fixture.app.close();
+});
+
 test("CSRF token issuance and LoadSnapshot are authenticated reads without CSRF", async () => {
   const fixture = makeFixture();
   const session = fixture.sessions.create(operatorActorId, "core-issued-session");
@@ -473,6 +562,19 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown; re
       calls.push({ method: "submit", request, headers: callHeaders(callOptions) });
       if (options.submitError !== undefined) throw options.submitError;
       return create(SubmissionResultSchema, { outcome: SubmissionOutcome.ACCEPTED });
+    },
+    async enterSecurityLockdown(request, callOptions) {
+      calls.push({ method: "enterSecurityLockdown", request, headers: callHeaders(callOptions) });
+      return create(EnterSecurityLockdownResultSchema, {
+        lockdown: { active: true, reasonCode: "operator_lockdown" },
+        lockdownEventId: { authorityDomainId: { value: "default" }, lsn: { value: 2n } },
+      });
+    },
+    async loadSecuritySnapshot(request, callOptions) {
+      calls.push({ method: "loadSecuritySnapshot", request, headers: callHeaders(callOptions) });
+      return create(LoadSecuritySnapshotResponseSchema, {
+        snapshot: { authorityDomainId: { value: "default" }, lockdown: { active: false } },
+      });
     },
     async *subscribe(request, options) {
       calls.push({ method: "subscribe", request, headers: callHeaders(options) });

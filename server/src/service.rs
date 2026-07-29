@@ -220,6 +220,11 @@ where
     pub async fn is_bootstrapped(&self) -> bool {
         self.state.operator_exists().await
     }
+
+    #[must_use]
+    pub fn projection_state(&self) -> &ProjectionState {
+        &self.state
+    }
 }
 
 type SubscribeStream = Pin<Box<dyn Stream<Item = Result<SubscribeEvent, Status>> + Send + 'static>>;
@@ -1943,6 +1948,7 @@ fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEven
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
             | StoredEventKind::CommandTransition
+            | StoredEventKind::SecurityLockdown
     )
     .then_some(SubscribeEvent {
         event_id: Some(event.event_id),

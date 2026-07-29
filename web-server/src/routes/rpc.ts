@@ -4,13 +4,19 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   ActorEndpointRefSchema,
   AuditEventKind,
+  EnterSecurityLockdownRequestSchema,
+  EnterSecurityLockdownResultSchema,
   LoadSnapshotRequestSchema,
   LoadSnapshotResponseSchema,
+  LoadSecuritySnapshotRequestSchema,
+  LoadSecuritySnapshotResponseSchema,
   QueryDiagnosticsRequestSchema,
   QueryDiagnosticsResponseSchema,
   RecordControlSurfaceAuditRequestSchema,
   RevokeAllOperatorSessionsRequestSchema,
   RevokeAllOperatorSessionsResultSchema,
+  RevokeGrantRequestSchema,
+  RevokeGrantResultSchema,
   RevokeControlSurfaceEndpointRequestSchema,
   RevokeControlSurfacePrincipalRequestSchema,
   RevokeControlSurfaceResultSchema,
@@ -90,6 +96,57 @@ export function registerRpcRoutes(
   );
 
   app.post(
+    "/patchbay.ControlService/EnterSecurityLockdown",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          EnterSecurityLockdownRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        const output = await app.coreClient.enterSecurityLockdown(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        // Encode the committed response before invalidating local sessions;
+        // the caller must be able to observe the durable result once.
+        const encoded = toBinary(EnterSecurityLockdownResultSchema, output);
+        if (output.lockdown?.active && request.verifiedOperator) {
+          app.sessions.revokeAllForOperator(request.verifiedOperator);
+        }
+        return sendUnary(reply, encoded);
+      } catch (error) {
+        const rpcError = ConnectError.from(error, Code.Internal);
+        if ([Code.Unavailable, Code.Internal, Code.Unknown].includes(rpcError.code)
+            && request.verifiedSessionId) {
+          // An unknown transport outcome must not leave a browser credential
+          // available to issue Operations while core posture is uncertain.
+          app.sessions.invalidate(request.verifiedSessionId);
+        }
+        return sendRpcError(app, request, reply, rpcError);
+      }
+    },
+  );
+
+  app.post(
+    "/patchbay.ControlService/LoadSecuritySnapshot",
+    { preHandler: requireOperatorSession(app.sessions, { ...guardOptions, requireCsrf: false }) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          LoadSecuritySnapshotRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        const output = await app.coreClient.loadSecuritySnapshot(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        return sendUnary(reply, toBinary(LoadSecuritySnapshotResponseSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
+  app.post(
     "/patchbay.ControlService/LoadSnapshot",
     { preHandler: requireOperatorSession(app.sessions, { ...guardOptions, requireCsrf: false }) },
     async (request, reply) => {
@@ -145,6 +202,22 @@ function registerRevocationRoutes(
   coreSecret: string,
   guardOptions: GuardOptions,
 ): void {
+  app.post(
+    "/patchbay.ControlService/RevokeGrant",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(RevokeGrantRequestSchema, decodeRequestFrame(request.body));
+        const output = await app.coreClient.revokeGrant(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        return sendUnary(reply, toBinary(RevokeGrantResultSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
   app.post(
     "/patchbay.ControlService/RevokeAllOperatorSessions",
     { preHandler: requireOperatorSession(app.sessions, guardOptions) },
