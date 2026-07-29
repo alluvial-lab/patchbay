@@ -22,15 +22,13 @@
     .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
     .rail-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     .rail-footer { margin-top: auto; display: none; }
-    .destination { justify-content: center; width: 100%; position: relative; }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination:hover, .destination:focus-visible { background: var(--color-bg-secondary); border-radius: 0; }
     .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     .destination[aria-current="page"], .destination[aria-current="page"].btn-secondary {
       background: transparent; color: var(--color-text-primary); border-color: transparent; box-shadow: none;
     }
-    .destination[aria-current="page"]::before {
-      content: ""; position: absolute; left: calc(-1 * var(--space-2)); top: 15%; bottom: 15%;
-      width: 3px; border-radius: 0 2px 2px 0; background: var(--color-accent);
-    }
+    .destination[aria-current="page"] { box-shadow: inset 3px 0 0 var(--color-accent); }
     .destination-list { display: grid; gap: var(--space-1); }
     .workspace { min-width: 0; min-height: 0; overflow: auto; }
     .view { min-height: 100%; }
@@ -54,7 +52,9 @@
     .list-heading, .detail { padding: var(--space-4); }
     .detail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; }
     .transcript { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--space-3); overflow: auto; }
-    .message { max-width: 72ch; } .message--operator { justify-self: end; } .message p { margin: var(--space-2) 0 0; }
+    .message { max-width: 72ch; background: var(--color-bg-secondary); }
+    .message--operator { justify-self: end; background: var(--color-accent-muted); border-color: var(--color-accent); }
+    .message p { margin: var(--space-2) 0 0; }
     .identity { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
     .lock-reason { margin: 0; }
     .back-to-list { display: none; }
@@ -68,7 +68,7 @@
     /* Stale remains the cockpit row, only desaturated and dimmed—never a light card. */
     .session-row--stale { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); filter: grayscale(1); opacity: .65; /* TODO: add stale-surface/opacity tokens */ }
     .session-row--stale:hover { background: var(--color-bg-tertiary); }
-    .composer__input { resize: none; height: 3.2em; }
+    .composer__input { resize: none; min-height: 4.5em; max-height: 10em; }
     .composer__input:disabled { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); cursor: not-allowed; }
     .session-row:focus-visible, .tabs__tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
     .security-view { padding: var(--space-6); max-width: 960px; width: 100%; margin: 0 auto; }
@@ -101,7 +101,9 @@
       .security-view { padding: var(--space-4); }
       .bottom-tabs { position: fixed; inset: auto 0 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
       .bottom-tabs .tabs { display: contents; }
-      .bottom-tabs .tabs__tab { padding: var(--space-3) var(--space-2); }
+      .bottom-tabs { display: flex; }
+      .bottom-tabs .tabs__tab { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-1); font-size: var(--font-size-xs); }
+      .bottom-tabs .tabs__tab[aria-current] { box-shadow: inset 0 2px 0 var(--color-accent); }
       .mock-meta { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto; transition-duration: .01ms !important; } /* TODO: add motion-duration token */ }
@@ -127,7 +129,7 @@
       <aside class="rail" id="rail">
         <div class="rail-head"><span class="nav-bar__brand rail-brand">PATCHBAY</span></div>
         <nav class="destination-list" aria-label="Cockpit destinations">
-          <button class="btn btn-secondary destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" title="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" title="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
           <button class="btn btn-ghost destination" type="button" data-destination="security" aria-label="Security" title="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span class="destination__label">Security</span></button>
           <button class="btn btn-ghost destination" type="button" data-destination="diagnostics" aria-label="Diagnostics" title="Diagnostics"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg><span class="destination__label">Diagnostics</span></button>
           <button class="btn btn-ghost destination" type="button" data-destination="files" aria-label="Files" title="Files"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h6l2 2h8v12H4z"></path></svg><span class="destination__label">Files</span></button>
@@ -170,9 +172,9 @@
 
     <nav class="bottom-tabs" aria-label="Cockpit destinations">
       <div class="tabs">
-        <button class="tabs__tab" type="button" data-destination="sessions" aria-current="page">Sessions</button>
-        <button class="tabs__tab" type="button" data-destination="security">Security</button>
-        <button class="tabs__tab" id="moreBtn" type="button" aria-expanded="false" aria-controls="overflowMenu" aria-label="More destinations"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <button class="tabs__tab" type="button" data-destination="sessions" aria-current="page"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span>Sessions</span></button>
+        <button class="tabs__tab" type="button" data-destination="security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span>Security</span></button>
+        <button class="tabs__tab" id="moreBtn" type="button" aria-expanded="false" aria-controls="overflowMenu" aria-label="More destinations"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>More</span></button>
       </div>
     </nav>
     <nav class="overflow-menu" id="overflowMenu" aria-label="More cockpit destinations" hidden>
@@ -255,6 +257,9 @@
     word.addEventListener('input', () => { enter.disabled = word.value !== 'LOCKDOWN'; });
     enter.addEventListener('click', () => setLockdown(true));
     preview.addEventListener('click', () => setLockdown(preview.getAttribute('aria-pressed') !== 'true'));
+    const composerInput = document.querySelector('#instruction');
+    const grow = () => { composerInput.style.height = 'auto'; composerInput.style.height = Math.min(composerInput.scrollHeight, 10 * parseFloat(getComputedStyle(composerInput).fontSize) * 1.5) + 'px'; };
+    composerInput.addEventListener('input', grow);
     document.querySelector('#previewHero').addEventListener('click', () => setLockdown(true));
     document.querySelectorAll('[data-revoke]').forEach(button => button.addEventListener('click', () => {
       const status = document.querySelector('#revokeStatus');
