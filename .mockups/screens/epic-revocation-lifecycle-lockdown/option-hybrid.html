@@ -23,8 +23,16 @@
     .rail-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     .rail-footer { margin-top: auto; display: none; }
     .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
-    .destination:hover, .destination:focus-visible { background: var(--color-bg-secondary); border-radius: 0; }
+    .destination .attention-badge { position: absolute; top: 2px; right: 4px; }
+    .destination:hover, .destination:focus-visible { color: var(--color-accent); background: transparent; }
     .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after {
+      content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%);
+      padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary);
+      white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3;
+    }
+    .destination:hover::after, .destination:focus-visible::after { opacity: 1; }
     .destination[aria-current="page"], .destination[aria-current="page"].btn-secondary {
       background: transparent; color: var(--color-text-primary); border-color: transparent; box-shadow: none;
     }
@@ -77,7 +85,8 @@
     .security-list, .security-row { display: grid; gap: var(--space-2); }
     .hero-actions, .dialog-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
     .hero-actions { margin-top: var(--space-4); }
-    .composer { margin-top: auto; }
+    .composer { margin-top: auto; display: flex; align-items: flex-end; gap: var(--space-2); }
+    .composer .composer__input { flex: 1 1 auto; width: auto; }
     .planned-view { display: grid; place-items: center; padding: var(--space-6); }
     .planned-view .empty-state { max-width: 42rem; border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
     dialog.card { max-width: min(560px, calc(100% - var(--space-8))); }
@@ -129,12 +138,12 @@
       <aside class="rail" id="rail">
         <div class="rail-head"><span class="nav-bar__brand rail-brand">PATCHBAY</span></div>
         <nav class="destination-list" aria-label="Cockpit destinations">
-          <button class="btn btn-ghost destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" title="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
-          <button class="btn btn-ghost destination" type="button" data-destination="security" aria-label="Security" title="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span class="destination__label">Security</span></button>
-          <button class="btn btn-ghost destination" type="button" data-destination="diagnostics" aria-label="Diagnostics" title="Diagnostics"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg><span class="destination__label">Diagnostics</span></button>
-          <button class="btn btn-ghost destination" type="button" data-destination="files" aria-label="Files" title="Files"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h6l2 2h8v12H4z"></path></svg><span class="destination__label">Files</span></button>
-          <button class="btn btn-ghost destination" type="button" data-destination="git" aria-label="Git" title="Git"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle><path d="M8 6h4a4 4 0 0 1 4 4v6"></path></svg><span class="destination__label">Git</span></button>
-          <button class="btn btn-ghost destination" type="button" data-destination="settings" aria-label="Settings" title="Settings"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.1 2.1-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-3v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.1-2.1.06-.06A1.7 1.7 0 0 0 7.12 15a1.7 1.7 0 0 0-1.55-1H5.5v-3h.07a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.1-2.1.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4h3v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.1 2.1-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1h.05v3h-.05a1.7 1.7 0 0 0-1.55 2Z"></path></svg><span class="destination__label">Settings</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="sessions" aria-current="page" aria-label="Sessions" data-tip="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge" aria-label="1 pending elicitation"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="security" aria-label="Security" data-tip="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path><path d="M9 12l2 2 4-4"></path></svg><span class="destination__label">Security</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="diagnostics" aria-label="Diagnostics" data-tip="Diagnostics"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg><span class="destination__label">Diagnostics</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="files" aria-label="Files" data-tip="Files"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h6l2 2h8v12H4z"></path></svg><span class="destination__label">Files</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="git" aria-label="Git" data-tip="Git"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle><path d="M8 6h4a4 4 0 0 1 4 4v6"></path></svg><span class="destination__label">Git</span></button>
+          <button class="btn btn-ghost destination" type="button" data-destination="settings" aria-label="Settings" data-tip="Settings"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.1 2.1-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-3v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.1-2.1.06-.06A1.7 1.7 0 0 0 7.12 15a1.7 1.7 0 0 0-1.55-1H5.5v-3h.07a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.1-2.1.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4h3v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.1 2.1-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1h.05v3h-.05a1.7 1.7 0 0 0-1.55 2Z"></path></svg><span class="destination__label">Settings</span></button>
         </nav>
         <div class="rail-footer"><span class="identity">operator · domain default</span><span class="identity">adapter pi · gen 1</span></div>
       </aside>
@@ -150,7 +159,7 @@
             <div class="detail-heading"><button class="btn btn-ghost btn--icon-only back-to-list" id="backToList" type="button" aria-label="Back to sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><div><h1 id="detailTitle">patchbay-main</h1><p class="identity">adapter pi · deployment local · runtime patchbay-main · generation 1</p></div><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></div>
             <p class="alert alert--warning lock-reason" id="sessionLockReason" role="status" hidden><span><strong>Read-only during lockdown.</strong> New Operations are rejected until trusted bootstrap exit.</span></p>
             <div class="transcript" aria-label="Session transcript"><article class="card message"><div class="message-head"><strong>Pi</strong><span class="delivery-line">Observation · source authenticated</span></div><p>Checked protocol presentation bindings. Reviewing the active worktree now.</p></article><article class="card message message--operator"><div class="message-head"><strong>operator</strong><span class="delivery-line">Command delivered</span></div><p>Continue with the cockpit mockup.</p></article></div>
-            <footer class="composer"><div><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" placeholder="Send an instruction to patchbay-main"></textarea><div class="composer__idempotency">New command · idempotency key generated on submit</div></div><div class="composer__actions"><button class="btn btn-secondary" id="interrupt" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Interrupt</button><button class="btn btn-primary" id="send" type="button" data-lockable title="Disabled during lockdown: new Operations are rejected.">Send</button></div></footer>
+            <footer class="composer"><button class="btn btn-secondary btn--icon-only" id="attach" type="button" data-lockable aria-label="Attach file or image" data-tip="Attach file or image" title="Disabled during lockdown: new Operations are rejected."><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button><label class="visually-hidden" for="instruction">Instruction</label><textarea class="composer__input" id="instruction" rows="1" placeholder="Instruct or enter a slash-command…"></textarea><button class="btn btn-primary btn--icon-only" id="send" type="button" data-lockable aria-label="Send instruction" data-tip="Send (Enter)" title="Disabled during lockdown: new Operations are rejected."><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></footer>
           </section>
         </section>
 
@@ -260,6 +269,10 @@
     const composerInput = document.querySelector('#instruction');
     const grow = () => { composerInput.style.height = 'auto'; composerInput.style.height = Math.min(composerInput.scrollHeight, 10 * parseFloat(getComputedStyle(composerInput).fontSize) * 1.5) + 'px'; };
     composerInput.addEventListener('input', grow);
+    // Live-composer parity: Enter sends, Shift+Enter inserts a newline.
+    composerInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); composerInput.value = ''; grow(); }
+    });
     document.querySelector('#previewHero').addEventListener('click', () => setLockdown(true));
     document.querySelectorAll('[data-revoke]').forEach(button => button.addEventListener('click', () => {
       const status = document.querySelector('#revokeStatus');
