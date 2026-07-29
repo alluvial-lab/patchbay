@@ -668,3 +668,14 @@ button { font: inherit; cursor: pointer; }
   font: var(--font-weight-bold) 10px/16px var(--font-mono);
   text-align: center;
 }
+
+/* ---- Lockdown / stale state extensions ---- */
+.session-row--stale {
+  background: var(--color-stale-surface);
+  color: var(--color-text-tertiary);
+  filter: grayscale(1);
+  opacity: var(--opacity-stale);
+}
+.session-row--stale:hover { background: var(--color-stale-surface); }
+.lockdown-banner { border-left: 3px solid var(--color-danger); }
+.security-dialog { border: 1px solid var(--color-danger); box-shadow: var(--shadow-raised); }

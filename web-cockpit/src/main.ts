@@ -2,6 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import {
   ActorEndpointRefSchema,
   AuthorityDomainIdSchema,
+  EnterSecurityLockdownRequestSchema,
   CommandIdSchema,
   LocalSubmissionState,
   OperationKind,
@@ -128,6 +129,7 @@ function composeCockpit(
   let diagnosticRequestSequence = 0;
 
   async function queryAdapterStatus(session: SessionView | undefined, reason: string): Promise<void> {
+    if (projection.model.lockdown.active) return;
     const adapterId = session?.identity.adapterId;
     if (!adapterId) return;
     const key = `${adapterId}:${reason}`;
@@ -156,6 +158,14 @@ function composeCockpit(
   }
 
   async function submit(operation: Operation): Promise<void> {
+    if (projection.model.lockdown.active) {
+      submission = {
+        state: LocalSubmissionState.SUBMIT_FAILED,
+        error: "Read-only during lockdown. New Operations are rejected until trusted bootstrap exit.",
+      };
+      shell.update(projection.model);
+      return;
+    }
     submission = { state: LocalSubmissionState.SUBMITTING };
     shell.update(projection.model);
     try {
@@ -184,8 +194,52 @@ function composeCockpit(
     return { commandId: `command-${suffix}`, idempotencyKey: `idempotency-${suffix}` };
   };
   const mobileSheet = createMobileElicitationSheet(document, { isMobile: options.isMobile });
+  const securityActions = {
+    async enterLockdown(reasonCode: string): Promise<void> {
+      // The local posture changes before transport/session expiry so the UI
+      // cannot issue another Operation during the expected self-lockout.
+      projection.model = {
+        ...projection.model,
+        lockdown: { active: true, reasonCode, enteredAt: new Date() },
+      };
+      shell.update(projection.model);
+      await protocol.client.enterSecurityLockdown(
+        create(EnterSecurityLockdownRequestSchema, {
+          authorityDomainId,
+          reasonCode,
+        }),
+      );
+    },
+    async revokeAllSessions(): Promise<void> {
+      await protocol.client.revokeAllOperatorSessions({ reasonCode: "operator_security_action" });
+    },
+    async revokePrincipal(principalId: string): Promise<void> {
+      await protocol.client.revokeControlSurfacePrincipal({ principalId, reasonCode: "operator_security_action" });
+    },
+    async revokeEndpoint(endpointId: string): Promise<void> {
+      await protocol.client.revokeControlSurfaceEndpoint({
+        target: { case: "endpointId", value: { value: endpointId } },
+        reasonCode: "operator_security_action",
+      });
+    },
+    async revokeDevice(deviceId: string): Promise<void> {
+      await protocol.client.revokeControlSurfaceEndpoint({
+        target: { case: "deviceId", value: { value: deviceId } },
+        reasonCode: "operator_security_action",
+      });
+    },
+    async revokeGrant(grantId: string): Promise<void> {
+      await protocol.client.revokeGrant({
+        authorityDomainId,
+        grantId: { value: grantId },
+        reason: "operator_security_action",
+      });
+    },
+  };
   shell = createCockpitShell(document, projection.model, {
     markdown: createMarkdownRenderer(document.defaultView as unknown as Window),
+    authorityDomainId,
+    securityActions,
     isMobile: options.isMobile,
     submission: () => submission,
     onSelectionChange(session, reason) {

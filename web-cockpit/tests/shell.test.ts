@@ -114,6 +114,47 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(shell.element.querySelectorAll(".session-detail").length, 1);
 });
 
+test("destination rail uses the signed-off punch-out shell and persists panel collapse", () => {
+  const dom = new JSDOM();
+  const model = withSessions(session("session-1"));
+  let saved = false;
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+    preferenceStore: {
+      load: () => ({ sessionsPanelCollapsed: false }),
+      save: (_domain, value) => { saved = value.sessionsPanelCollapsed; },
+    },
+  });
+  dom.window.document.body.append(shell.element);
+  const rail = shell.element.querySelector(".rail")!;
+  assert.deepEqual(
+    [...rail.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
+    ["Sessions", "Security", "Diagnostics", "Files", "Git", "Settings"],
+  );
+  rail.querySelector<HTMLButtonElement>('[data-destination="security"]')!.click();
+  assert.equal(shell.element.dataset.destination, "security");
+  assert.equal(shell.element.querySelector<HTMLElement>(".security-view")!.hidden, false);
+  assert.equal([...shell.element.querySelectorAll("button")].some((button) => /exit/i.test(button.textContent ?? "")), false);
+  rail.querySelector<HTMLButtonElement>('[data-destination="sessions"]')!.click();
+  rail.querySelector<HTMLButtonElement>('[data-destination="sessions"]')!.click();
+  assert.equal(saved, true);
+  assert.equal(shell.element.classList.contains("cockpit--panel-collapsed"), true);
+});
+
+test("mobile uses equal-width bottom tabs and More destinations", () => {
+  const dom = new JSDOM();
+  const shell = createCockpitShell(dom.window.document, withSessions(session("session-1")), {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => true,
+  });
+  dom.window.document.body.append(shell.element);
+  assert.equal(shell.element.querySelectorAll(".bottom-tabs .tabs__tab").length, 3);
+  assert.equal(shell.element.querySelector<HTMLElement>(".bottom-tabs")!.getAttribute("aria-label"), "Cockpit destinations");
+  shell.element.querySelector<HTMLButtonElement>('[data-destination="security"]')!.click();
+  assert.equal(shell.element.dataset.destination, "security");
+});
+
 test("session rows render unavailable models honestly", () => {
   const dom = new JSDOM();
   const row = renderSessionRow(dom.window.document, session("session-unknown"), false, () => undefined);

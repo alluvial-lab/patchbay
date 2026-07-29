@@ -44,6 +44,7 @@ export interface ElicitationRenderOptions {
   submit(operation: Operation): void | Promise<void>;
   reportError?(error: unknown): void;
   mobileSheet?: MobileElicitationSheet;
+  lockdownActive?: boolean;
 }
 
 export interface MobileElicitationSheet {
@@ -299,7 +300,7 @@ function renderApprovalControls(
   actions.className = "elicitation-card__actions";
   const deny = actionButton(document, "Deny", "btn btn-danger btn--sm", `${elicitation.id}:deny`);
   const approve = actionButton(document, "Approve", "btn btn-primary btn--sm", `${elicitation.id}:approve`);
-  const disabled = isTerminalElicitation(elicitation.state);
+  const disabled = isTerminalElicitation(elicitation.state) || Boolean(options.lockdownActive);
   deny.disabled = disabled;
   approve.disabled = disabled;
   deny.addEventListener("click", () => submitApproval(elicitation, ApprovalDecision.DENIED, options));
@@ -319,7 +320,7 @@ function renderQuestionControls(
   form.className = "elicitation-card__options";
   form.dataset.controlShape = "select-one";
   form.dataset.uiHints = elicitation.contract.uiHints.join(",");
-  const terminal = isTerminalElicitation(elicitation.state);
+  const terminal = isTerminalElicitation(elicitation.state) || Boolean(options.lockdownActive);
   const radioName = `elicitation-${elicitation.id}`;
 
   for (const option of contract.options) {

@@ -50,6 +50,7 @@ export interface SessionDetailOptions {
   elicitation?: ElicitationRenderOptions;
   submission?: SubmissionFeedback;
   onBack?(): void;
+  lockdownActive?: boolean;
 }
 
 export interface SessionDetailComponent {
@@ -81,6 +82,7 @@ export function renderSessionDetail(
     session,
     options.actions,
     options.submission,
+    options.lockdownActive,
   );
   detail.append(header, timeline, composer);
 
@@ -204,16 +206,22 @@ function renderTimeline(
     } else if (entry.type === "observation") {
       timeline.append(renderObservation(document, entry.observation, entry.command, options));
     } else if (entry.type === "command") {
-      timeline.append(renderCommandMessage(document, entry.command, options.actions));
+      timeline.append(renderCommandMessage(document, entry.command, options.actions, options.lockdownActive));
     } else if (entry.type === "elicitation") {
       if (!options.elicitation) continue;
-      const card = renderElicitation(document, entry.elicitation, options.elicitation);
-      if (!stableTarget(session)) disableSubmission(card, document);
+      const card = renderElicitation(document, entry.elicitation, {
+        ...options.elicitation,
+        lockdownActive: options.lockdownActive,
+      });
+      if (!stableTarget(session) || options.lockdownActive) disableSubmission(card, document, options.lockdownActive);
       timeline.append(card);
     } else {
       if (!options.elicitation) continue;
-      const card = renderElicitationGroup(document, entry.elicitations, options.elicitation);
-      if (!stableTarget(session)) disableSubmission(card, document);
+      const card = renderElicitationGroup(document, entry.elicitations, {
+        ...options.elicitation,
+        lockdownActive: options.lockdownActive,
+      });
+      if (!stableTarget(session) || options.lockdownActive) disableSubmission(card, document, options.lockdownActive);
       timeline.append(card);
     }
   }
@@ -286,7 +294,7 @@ function renderObservation(
     body.append(detail);
   }
   message.append(textElement(document, "div", "msg__footer", `${observation.role} · ${observation.kind}`));
-  if (command) message.append(renderDelivery(document, command, options.actions));
+  if (command) message.append(renderDelivery(document, command, options.actions, options.lockdownActive));
   return message;
 }
 
@@ -294,13 +302,14 @@ function renderCommandMessage(
   document: Document,
   command: CommandView,
   actions: SessionDetailActions | undefined,
+  lockdownActive = false,
 ): HTMLElement {
   const message = document.createElement("article");
   message.className = "msg msg--operator msg--action";
   message.dataset.commandId = command.id;
   const bodyText = operationText(command) || operationKindName(command.operation.kind);
   if (bodyText) message.append(textElement(document, "div", "msg__body", bodyText));
-  message.append(renderDelivery(document, command, actions));
+  message.append(renderDelivery(document, command, actions, lockdownActive));
   return message;
 }
 
@@ -308,6 +317,7 @@ function renderDelivery(
   document: Document,
   command: CommandView,
   actions: SessionDetailActions | undefined,
+  lockdownActive = false,
 ): HTMLElement {
   const wrapper = document.createElement("div");
   wrapper.className = "delivery-line";
@@ -337,8 +347,8 @@ function renderDelivery(
   if (command.state === OperationState.RUNNING && (actions?.cancel || actions?.interrupt)) {
     const contextual = document.createElement("div");
     contextual.className = "btn-group";
-    if (actions.cancel) contextual.append(contextButton(document, "x", "Cancel running operation", () => actions.cancel!(command)));
-    if (actions.interrupt) contextual.append(contextButton(document, "square", "Interrupt running operation", () => actions.interrupt!(command), true));
+    if (actions.cancel) contextual.append(contextButton(document, "x", "Cancel running operation", () => actions.cancel!(command), false, lockdownActive));
+    if (actions.interrupt) contextual.append(contextButton(document, "square", "Interrupt running operation", () => actions.interrupt!(command), true, lockdownActive));
     wrapper.append(contextual);
   }
   return wrapper;
@@ -349,10 +359,11 @@ function renderComposer(
   session: SessionView | undefined,
   actions: SessionDetailActions | undefined,
   submission: SubmissionFeedback | undefined,
+  lockdownActive = false,
 ): { composer: HTMLElement; input: HTMLTextAreaElement; send: HTMLButtonElement } {
   const composer = document.createElement("form");
   composer.className = "composer";
-  const targetStable = stableTarget(session);
+  const targetStable = stableTarget(session) && !lockdownActive;
 
   const attach = iconButton(document, "paperclip", "Attach file or image", "btn btn-secondary");
   attach.disabled = !targetStable || !actions?.attach;
@@ -499,8 +510,11 @@ function contextButton(
   label: string,
   action: () => void | Promise<void>,
   danger = false,
+  lockdownActive = false,
 ): HTMLButtonElement {
   const button = iconButton(document, icon, label, `btn ${danger ? "btn-danger" : "btn-secondary"} btn--sm`);
+  button.disabled = lockdownActive;
+  if (lockdownActive) button.title = "Disabled during lockdown: new Operations are rejected.";
   button.addEventListener("click", () => void action());
   return button;
 }
@@ -521,12 +535,19 @@ function iconButton(
   return button;
 }
 
-function disableSubmission(card: HTMLElement, document: Document): void {
+function disableSubmission(card: HTMLElement, document: Document, lockdownActive = false): void {
   for (const control of card.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>(
     "input, textarea, button",
   )) control.disabled = true;
   card.append(
-    textElement(document, "p", "field__error", "Target identity is stale or superseded; reconcile before responding."),
+    textElement(
+      document,
+      "p",
+      "field__error",
+      lockdownActive
+        ? "Read-only during lockdown. Responses are rejected until trusted bootstrap exit."
+        : "Target identity is stale or superseded; reconcile before responding.",
+    ),
   );
 }
 

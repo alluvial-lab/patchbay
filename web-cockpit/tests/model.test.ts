@@ -35,6 +35,7 @@ import {
   SessionRegisteredSchema,
   SessionSnapshotSchema,
   SessionStateEventSchema,
+  SecurityLockdownEventSchema,
   SessionStateSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
@@ -78,6 +79,45 @@ test("fold is pure and registration exposes the stable identity tuple", () => {
   });
   assert.equal(rendersLive(session), true);
   assert.equal(session.model, "provider/model-1");
+});
+
+test("lockdown folds to an inline read-only posture and stale-dominant sessions", () => {
+  let model = fold(emptyPresentationModel(), registration(1n, 1n));
+  model = fold(model, stored(
+    2n,
+    StoredEventKind.SECURITY_LOCKDOWN,
+    SecurityLockdownEventSchema,
+    create(SecurityLockdownEventSchema, {
+      authorityDomainId: DOMAIN,
+      transition: {
+        case: "entered",
+        value: {
+          reasonCode: "suspected_endpoint_compromise",
+          occurredAt: { seconds: 1n, nanos: 0 },
+          invalidatedThroughOperatorSessionGeneration: { value: 3n },
+          affectedRuntimeSessionCount: 1,
+        },
+      },
+    }),
+  ));
+  assert.equal(model.lockdown.active, true);
+  assert.equal(model.lockdown.reasonCode, "suspected_endpoint_compromise");
+  const locked = [...model.sessions.values()][0]!;
+  assert.equal(locked.connectivity, SessionConnectivityState.STALE);
+  assert.equal(locked.lockdownActive, true);
+  assert.equal(rendersLive(locked), false);
+
+  model = fold(model, stored(
+    3n,
+    StoredEventKind.SECURITY_LOCKDOWN,
+    SecurityLockdownEventSchema,
+    create(SecurityLockdownEventSchema, {
+      authorityDomainId: DOMAIN,
+      transition: { case: "exited", value: { reasonCode: "bootstrap_exit", bootstrapChannel: 1 } },
+    }),
+  ));
+  assert.equal(model.lockdown.active, false);
+  assert.equal(rendersLive([...model.sessions.values()][0]!), false);
 });
 
 test("model deltas preserve session identity", () => {

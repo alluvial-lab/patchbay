@@ -1,14 +1,14 @@
 ---
 id: epic-revocation-lifecycle-lockdown-cockpit-shell-ui
 kind: story
-stage: implementing
+stage: done
 tags: [security, ux]
 parent: epic-revocation-lifecycle-lockdown
 depends_on: [epic-revocation-lifecycle-lockdown-trigger-exit-rpcs]
 release_binding: null
 gate_origin: null
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-07-30
 ---
 
 # Realize the signed-off cockpit shell and lockdown Security view
@@ -49,3 +49,25 @@ Do not re-mock or replace the production session-detail component.
 Consumes the stable trigger/security-snapshot bridge. Keep protocol-state CSS in
 the registry-derived design-system layer and topology CSS in `shell.css`; do not
 fork state names or hand-copy generated DTOs.
+
+## Implementation notes
+
+- Ported the signed-off hybrid into the production shell: icon-only desktop
+  rail with left-accent active state, Sessions panel punch-out, persisted
+  namespaced collapse preference, mobile bottom tabs/More, and list-to-detail
+  drill-in around the existing `session-detail` component.
+- Added `PresentationModel.lockdown` folding from snapshot/source events and the
+  persistent inline danger banner. Session and Elicitation controls become
+  explicitly read-only during lockdown; stale sessions cannot render live.
+- Added the Security destination and Arm → safe reason → exact `LOCKDOWN`
+  confirmation ritual. Browser code has no exit method or admin route; the
+  recovery instruction is presentation-only.
+- Promoted stale/overlay/motion values into the design-system token/component
+  sources and added CSRF interception for security mutations.
+
+## Verification
+
+- `cd web-cockpit && npm test` passed (72 tests).
+- Bundle verification passed after the final UI change: `npm run build`, then
+  the relevant lockdown/banner/CSRF/navigation strings were present in
+  `dist/assets/cockpit.js`.

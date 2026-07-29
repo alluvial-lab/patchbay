@@ -19,6 +19,66 @@ body {
   flex-direction: column;
 }
 
+.cockpit .rail {
+  display: flex;
+  flex: 0 0 56px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-2);
+  background: var(--color-bg-primary);
+  border-right: 1px solid var(--color-border);
+}
+.cockpit .rail .destination-list { display: grid; gap: var(--space-1); }
+.cockpit .destination {
+  position: relative;
+  justify-content: center;
+  width: 100%;
+  padding: var(--space-3) var(--space-2);
+  border-radius: 0;
+}
+.cockpit .destination::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 5;
+  left: calc(100% + var(--space-2));
+  top: 50%;
+  padding: var(--space-1) var(--space-2);
+  transform: translateY(-50%);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.cockpit .destination:hover::after,
+.cockpit .destination:focus-visible::after { opacity: 1; }
+.cockpit .destination[aria-current="page"] {
+  color: var(--color-text-primary);
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.cockpit--panel-collapsed .sidebar { display: none; }
+.cockpit .lockdown-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+}
+.cockpit .lockdown-banner .alert__title { margin: 0; }
+.cockpit .lockdown-banner .alert__body { margin-left: var(--space-2); }
+.cockpit .security-view { width: min(960px, 100%); margin: 0 auto; padding: var(--space-6); overflow-y: auto; }
+.cockpit .security-flow { display: grid; gap: var(--space-4); }
+.cockpit .security-dialog { display: grid; gap: var(--space-4); margin-top: var(--space-4); padding: var(--space-4); }
+.cockpit .security-dialog[hidden] { display: none; }
+.cockpit .dialog-form { display: grid; gap: var(--space-3); }
+.cockpit .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+.cockpit .bottom-tabs, .cockpit .overflow-menu { display: none; }
+
 body > [data-patchbay-cockpit] {
   display: flex;
   flex-direction: column;
@@ -308,6 +368,50 @@ body > [data-patchbay-cockpit] {
 }
 
 @media (max-width: 760px) {
+  .cockpit .rail { display: none; }
+  .cockpit .bottom-tabs {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    gap: 0;
+    padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom));
+    background: var(--color-bg-secondary);
+    border-top: 1px solid var(--color-border);
+  }
+  .cockpit .bottom-tabs .tabs__tab {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-1);
+    border: 0;
+    border-radius: 0;
+    font-size: var(--font-size-xs);
+  }
+  .cockpit .bottom-tabs .tabs__tab[aria-current="page"] { box-shadow: inset 0 2px 0 var(--color-accent); }
+  .cockpit .overflow-menu {
+    position: fixed;
+    z-index: 50;
+    right: var(--space-2);
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    display: grid;
+    width: min(240px, calc(100% - var(--space-4)));
+    gap: var(--space-1);
+    padding: var(--space-2);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+  .cockpit:not(.more-open) .overflow-menu { display: none; }
+  .cockpit .lockdown-banner { margin: 0; border-radius: 0; }
+  .cockpit .security-view { padding: var(--space-4); padding-bottom: 96px; }
+  /* Mobile ignores restored desktop panel state and uses list -> detail drill-in. */
+  .cockpit--panel-collapsed .sidebar { display: flex; }
+
   /* Mobile: restore page scroll (the desktop bounded body would clip it).
      The session list is the home; the detail drills in over it. */
   html,

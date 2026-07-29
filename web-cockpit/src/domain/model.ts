@@ -15,6 +15,7 @@ import {
   SessionActivityState,
   SessionConnectivityState,
   SessionStateEventSchema,
+  SecurityLockdownEventSchema,
   StoredEventKind,
   type Elicitation,
   type FailureCode,
@@ -27,6 +28,7 @@ import {
   type TargetScope,
   type AdapterStatus,
   type AdapterDiagnosticSeverity,
+  type SecurityLockdownState,
 } from "@patchbay/contracts";
 
 import type { ReconcileProjection } from "./reconcile.js";
@@ -51,6 +53,7 @@ export interface SessionView {
   lastUpdate?: Date;
   tombstoned: boolean;
   reconciled: boolean;
+  lockdownActive?: boolean;
 }
 
 export interface CommandHistoryEntry {
@@ -118,6 +121,13 @@ export interface AdapterDiagnosticView {
   observedAt?: Date;
 }
 
+export interface LockdownView {
+  active: boolean;
+  reasonCode?: string;
+  enteredAt?: Date;
+  enteredEventLsn?: bigint;
+}
+
 export interface AdapterView {
   adapterId: string;
   status?: AdapterStatus;
@@ -134,6 +144,7 @@ export interface PresentationModel {
   elicitations: Map<string, ElicitationView>;
   adapters: Map<string, AdapterView>;
   observations: ObservationView[];
+  lockdown: LockdownView;
 }
 
 export function emptyPresentationModel(): PresentationModel {
@@ -145,6 +156,7 @@ export function emptyPresentationModel(): PresentationModel {
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    lockdown: { active: false },
   };
 }
 
@@ -179,6 +191,9 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
       break;
     case StoredEventKind.SESSION_STATE:
       foldSessionState(next, fromBinary(SessionStateEventSchema, payload.payload), lsn);
+      break;
+    case StoredEventKind.SECURITY_LOCKDOWN:
+      foldSecurityLockdown(next, fromBinary(SecurityLockdownEventSchema, payload.payload), lsn);
       break;
     case StoredEventKind.GRANT:
     case StoredEventKind.DESCENDANT_GRANT:
@@ -218,6 +233,7 @@ export function replaceFromSnapshot(
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    lockdown: lockdownFromState(snapshot.lockdown),
   };
 
   let replayCursor = 0n;
@@ -322,7 +338,9 @@ export function stableTarget(session: SessionView | undefined): session is Sessi
 
 /** The view-binding dominance rule: only a reconciled, non-tombstoned LIVE axis is live. */
 export function rendersLive(session: SessionView): boolean {
-  return stableTarget(session) && session.connectivity === SessionConnectivityState.LIVE;
+  return stableTarget(session)
+    && !session.lockdownActive
+    && session.connectivity === SessionConnectivityState.LIVE;
 }
 
 function foldOperation(model: PresentationModel, operation: Operation, lsn: bigint): void {
@@ -420,6 +438,58 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
   foldTranscriptObservation(model, transcript, target, lsn);
 }
 
+function foldSecurityLockdown(
+  model: PresentationModel,
+  event: ReturnType<typeof decodeSecurityLockdown>,
+  lsn: bigint,
+): void {
+  switch (event.transition.case) {
+    case "entered": {
+      model.lockdown = {
+        active: true,
+        reasonCode: event.transition.value.reasonCode || undefined,
+        enteredAt: timestampDate(event.transition.value.occurredAt),
+        enteredEventLsn: lsn,
+      };
+      model.sessions = new Map(
+        [...model.sessions].map(([key, session]) => [key, {
+          ...session,
+          connectivity: SessionConnectivityState.STALE,
+          activity: SessionActivityState.UNKNOWN,
+          activityDetail: undefined,
+          lockdownActive: true,
+          lastLsn: lsn,
+          needsYou: false,
+        }]),
+      );
+      return;
+    }
+    case "exited":
+      // Exit clears only the posture. Existing sessions remain stale until a
+      // later authoritative adapter signal arrives.
+      model.lockdown = { active: false };
+      model.sessions = new Map(
+        [...model.sessions].map(([key, session]) => [key, { ...session, lockdownActive: false }]),
+      );
+      return;
+    case undefined:
+      throw new Error("security lockdown event is missing transition");
+  }
+}
+
+function decodeSecurityLockdown(payload: Uint8Array) {
+  return fromBinary(SecurityLockdownEventSchema, payload);
+}
+
+function lockdownFromState(state: SecurityLockdownState | undefined): LockdownView {
+  return {
+    active: state?.active ?? false,
+    reasonCode: state?.reasonCode || undefined,
+    enteredAt: timestampDate(state?.enteredAt),
+    enteredEventLsn: state?.enteredEventId?.lsn?.value,
+  };
+}
+
 function foldSessionState(model: PresentationModel, event: ReturnType<typeof decodeSessionState>, lsn: bigint): void {
   const mutation = event.mutation;
   switch (mutation.case) {
@@ -432,12 +502,17 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
         identity,
         label: labels(value),
         model: value.model || undefined,
-        connectivity: normalizeConnectivity(value.initialState?.connectivity),
-        activity: normalizeActivity(value.initialState?.activity),
+        connectivity: model.lockdown.active
+          ? SessionConnectivityState.STALE
+          : normalizeConnectivity(value.initialState?.connectivity),
+        activity: model.lockdown.active
+          ? SessionActivityState.UNKNOWN
+          : normalizeActivity(value.initialState?.activity),
         needsYou: false,
         lastLsn: lsn,
         tombstoned: false,
         reconciled: true,
+        lockdownActive: model.lockdown.active,
       });
       return;
     }
@@ -463,12 +538,17 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
         identity,
         label: labels(value),
         model: value.model || undefined,
-        connectivity: normalizeConnectivity(value.initialState?.connectivity),
-        activity: normalizeActivity(value.initialState?.activity),
+        connectivity: model.lockdown.active
+          ? SessionConnectivityState.STALE
+          : normalizeConnectivity(value.initialState?.connectivity),
+        activity: model.lockdown.active
+          ? SessionActivityState.UNKNOWN
+          : normalizeActivity(value.initialState?.activity),
         needsYou: false,
         lastLsn: lsn,
         tombstoned: false,
         reconciled: true,
+        lockdownActive: model.lockdown.active,
       });
       return;
     }
@@ -479,7 +559,10 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
       if (!current || current.tombstoned) return;
       model.sessions.set(key, {
         ...current,
-        connectivity: normalizeConnectivity(value.to),
+        connectivity: model.lockdown.active
+          ? SessionConnectivityState.STALE
+          : normalizeConnectivity(value.to),
+        lockdownActive: model.lockdown.active,
         reconciled: true,
         lastLsn: lsn,
       });
@@ -597,6 +680,7 @@ function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView
     lastUpdate: timestampDate(session.observedAt),
     tombstoned: session.tombstoned,
     reconciled: true,
+    lockdownActive: false,
   };
 }
 

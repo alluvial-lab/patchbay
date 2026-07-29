@@ -1,4 +1,5 @@
-import { SessionConnectivityState } from "@patchbay/contracts";
+import { create } from "@bufbuild/protobuf";
+import { AuthorityDomainIdSchema, SessionConnectivityState, type AuthorityDomainId } from "@patchbay/contracts";
 
 import {
   sessionKey,
@@ -15,8 +16,20 @@ import {
   type SubmissionFeedback,
 } from "./session-detail.js";
 import { renderSessionList, renderSessionStatus } from "./session-list.js";
+import { renderSecurityView, type SecurityViewActions } from "./security-view.js";
 import type { ElicitationRenderOptions } from "./elicitation.js";
 import type { MarkdownRenderer } from "./markdown.js";
+
+export type CockpitDestination = "sessions" | "security" | "diagnostics" | "files" | "git" | "settings";
+
+export interface CockpitShellPreferences {
+  sessionsPanelCollapsed: boolean;
+}
+
+export interface CockpitShellPreferenceStore {
+  load(authorityDomainId: string): CockpitShellPreferences;
+  save(authorityDomainId: string, value: CockpitShellPreferences): void;
+}
 
 export interface CockpitShellOptions {
   markdown: MarkdownRenderer;
@@ -25,6 +38,9 @@ export interface CockpitShellOptions {
   elicitation?: ElicitationRenderOptions;
   submission?: () => SubmissionFeedback | undefined;
   isMobile?: () => boolean;
+  authorityDomainId?: AuthorityDomainId;
+  securityActions?: SecurityViewActions;
+  preferenceStore?: CockpitShellPreferenceStore;
 }
 
 export interface CockpitShell {
@@ -35,6 +51,7 @@ export interface CockpitShell {
   back(): void;
   update(model: PresentationModel): void;
   refreshLayout(): void;
+  selectDestination(destination: CockpitDestination): void;
   destroy(): void;
 }
 
@@ -53,6 +70,11 @@ export function createCockpitShell(
   let selectedKey = preferredSessionKey(model);
   let mobileDetailOpen = false;
   let filter = "";
+  let destination: CockpitDestination = "sessions";
+  const authorityDomainId = options.authorityDomainId
+    ?? create(AuthorityDomainIdSchema, { value: model.authorityDomainId ?? "default" });
+  const preferenceStore = options.preferenceStore ?? browserPreferenceStore(document);
+  let panelCollapsed = preferenceStore.load(authorityDomainId.value).sessionsPanelCollapsed;
   let detail!: SessionDetailComponent;
   let observedSelectedKey: string | undefined;
   let observedConnectivity: SessionConnectivityState | undefined;
@@ -78,6 +100,7 @@ export function createCockpitShell(
     root.replaceChildren();
     const content = document.createElement("div");
     content.className = "cockpit__content";
+    const rail = renderRail(document, destination, (next) => selectDestination(next));
     const sidebar = renderSidebar(document, model, selectedKey, filter, {
       select(session) {
         selectedKey = sessionKey(session.identity);
@@ -96,16 +119,24 @@ export function createCockpitShell(
       actions: options.actions,
       elicitation: options.elicitation,
       submission: options.submission?.(),
+      lockdownActive: model.lockdown.active,
       onBack() {
         mobileDetailOpen = false;
         applyLayout();
       },
     });
-    main.append(detail.element);
-    content.append(sidebar, main);
-    const degraded = renderDegradedBanner(document, model, selectedSession());
+    const security = renderSecurityView(document, model, authorityDomainId, options.securityActions);
+    security.hidden = destination !== "security";
+    const planned = renderPlannedView(document, destination);
+    planned.hidden = !isPlannedDestination(destination);
+    detail.element.hidden = destination !== "sessions";
+    main.append(detail.element, security, planned);
+    content.append(rail, sidebar, main);
+    const degraded = destination === "sessions" ? renderDegradedBanner(document, model, selectedSession()) : undefined;
     if (degraded) root.append(degraded);
-    root.append(content);
+    if (model.lockdown.active) root.append(renderLockdownBanner(document, model));
+    root.append(content, renderBottomTabs(document, destination, (next) => selectDestination(next)));
+    root.append(renderOverflowMenu(document, destination, (next) => selectDestination(next)));
     if (options.elicitation?.mobileSheet) {
       root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
     }
@@ -143,10 +174,25 @@ export function createCockpitShell(
     if (!sidebar || !main || !detail) return;
     root.classList.toggle("cockpit--mobile", mobile);
     root.classList.toggle("cockpit--desktop", !mobile);
+    root.classList.toggle("cockpit--panel-collapsed", panelCollapsed && !mobile);
     root.dataset.layout = mobile ? "drill-in" : "two-pane";
-    sidebar.hidden = mobile && mobileDetailOpen;
-    main.hidden = mobile && !mobileDetailOpen;
+    root.dataset.destination = destination;
+    sidebar.hidden = destination !== "sessions" || (mobile && mobileDetailOpen) || (!mobile && panelCollapsed);
+    main.hidden = mobile && destination === "sessions" && !mobileDetailOpen;
     detail.setMobile(mobile);
+  }
+
+  function selectDestination(next: CockpitDestination): void {
+    const mobile = isMobile();
+    if (next === "sessions" && destination === "sessions" && !mobile) {
+      panelCollapsed = !panelCollapsed;
+      preferenceStore.save(authorityDomainId.value, { sessionsPanelCollapsed: panelCollapsed });
+    } else {
+      destination = next;
+      if (next === "sessions" && !mobile) panelCollapsed = false;
+    }
+    if (next !== "sessions") mobileDetailOpen = false;
+    render();
   }
 
   const shell: CockpitShell = {
@@ -156,6 +202,9 @@ export function createCockpitShell(
     },
     get detail() {
       return detail;
+    },
+    selectDestination(next) {
+      selectDestination(next);
     },
     select(nextKey) {
       if (!model.sessions.has(nextKey)) throw new Error(`unknown session ${nextKey}`);
@@ -181,6 +230,143 @@ export function createCockpitShell(
   };
   render();
   return shell;
+}
+
+const DESTINATION_ICONS: Record<CockpitDestination, IconName> = {
+  sessions: "chevron-right",
+  security: "square",
+  diagnostics: "chevron-down",
+  files: "folder",
+  git: "link",
+  settings: "plus",
+};
+
+function renderRail(
+  document: Document,
+  selected: CockpitDestination,
+  onSelect: (destination: CockpitDestination) => void,
+): HTMLElement {
+  const rail = document.createElement("aside");
+  rail.className = "rail";
+  rail.setAttribute("aria-label", "Cockpit navigation");
+  const nav = document.createElement("nav");
+  nav.className = "destination-list";
+  for (const destination of ["sessions", "security", "diagnostics", "files", "git", "settings"] as CockpitDestination[]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-ghost destination";
+    button.dataset.destination = destination;
+    button.setAttribute("aria-label", capitalize(destination));
+    button.dataset.tip = capitalize(destination);
+    if (selected === destination) button.setAttribute("aria-current", "page");
+    button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "destination__label", capitalize(destination)));
+    button.addEventListener("click", () => onSelect(destination));
+    nav.append(button);
+  }
+  rail.append(nav);
+  return rail;
+}
+
+function renderBottomTabs(
+  document: Document,
+  selected: CockpitDestination,
+  onSelect: (destination: CockpitDestination) => void,
+): HTMLElement {
+  const nav = document.createElement("nav");
+  nav.className = "bottom-tabs";
+  nav.setAttribute("aria-label", "Cockpit destinations");
+  for (const destination of ["sessions", "security"] as CockpitDestination[]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tabs__tab";
+    button.setAttribute("aria-label", capitalize(destination));
+    if (selected === destination) button.setAttribute("aria-current", "page");
+    button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "", capitalize(destination)));
+    button.addEventListener("click", () => onSelect(destination));
+    nav.append(button);
+  }
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "tabs__tab";
+  more.dataset.more = "true";
+  more.setAttribute("aria-label", "More destinations");
+  more.append(renderIcon(document, "chevron-down"), textElement(document, "span", "", "More"));
+  more.addEventListener("click", () => nav.parentElement?.classList.toggle("more-open"));
+  nav.append(more);
+  return nav;
+}
+
+function renderOverflowMenu(
+  document: Document,
+  selected: CockpitDestination,
+  onSelect: (destination: CockpitDestination) => void,
+): HTMLElement {
+  const menu = document.createElement("nav");
+  menu.className = "overflow-menu";
+  menu.setAttribute("aria-label", "More cockpit destinations");
+  for (const destination of ["diagnostics", "files", "git", "settings"] as CockpitDestination[]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-ghost destination";
+    button.dataset.destination = destination;
+    button.setAttribute("aria-current", selected === destination ? "page" : "false");
+    button.textContent = capitalize(destination);
+    button.addEventListener("click", () => onSelect(destination));
+    menu.append(button);
+  }
+  return menu;
+}
+
+function renderPlannedView(document: Document, destination: CockpitDestination): HTMLElement {
+  const view = document.createElement("section");
+  view.className = "view planned-view";
+  const card = document.createElement("div");
+  card.className = "empty-state";
+  card.append(textElement(document, "p", "identity", "PLANNED DESTINATION"));
+  card.append(textElement(document, "h1", "empty-state__title", capitalize(destination)));
+  card.append(textElement(document, "p", "empty-state__body", `${capitalize(destination)} is planned for a future Patchbay release. Sessions and Security remain available now.`));
+  view.append(card);
+  return view;
+}
+
+function renderLockdownBanner(document: Document, model: PresentationModel): HTMLElement {
+  const banner = document.createElement("section");
+  banner.className = "alert alert--danger lockdown-banner";
+  banner.setAttribute("role", "alert");
+  banner.setAttribute("aria-live", "assertive");
+  const reason = model.lockdown.reasonCode?.replaceAll("_", " ") ?? "security incident";
+  const entered = model.lockdown.enteredAt?.toISOString() ?? "unknown time";
+  banner.append(
+    textElement(document, "strong", "alert__title", "Security lockdown active"),
+    textElement(document, "span", "alert__body", `Reason: ${reason} · entered ${entered} · authority domain ${model.authorityDomainId ?? "default"}`),
+    textElement(document, "code", "lockdown-exit-instruction", "patchbay-cli lockdown-exit"),
+  );
+  return banner;
+}
+
+function isPlannedDestination(destination: CockpitDestination): boolean {
+  return destination !== "sessions" && destination !== "security";
+}
+
+function browserPreferenceStore(document: Document): CockpitShellPreferenceStore {
+  const key = (domain: string) => `patchbay.cockpit.${domain}.shell`;
+  return {
+    load(domain) {
+      try {
+        const value = document.defaultView?.localStorage.getItem(key(domain));
+        return value ? JSON.parse(value) as CockpitShellPreferences : { sessionsPanelCollapsed: false };
+      } catch {
+        return { sessionsPanelCollapsed: false };
+      }
+    },
+    save(domain, value) {
+      try { document.defaultView?.localStorage.setItem(key(domain), JSON.stringify(value)); } catch { /* storage is optional */ }
+    },
+  };
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 interface SidebarActions {

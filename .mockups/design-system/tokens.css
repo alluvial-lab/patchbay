@@ -118,6 +118,15 @@
 }
 
 /* Dark mode: system-follow (applies dark when system is dark AND user hasn't forced light) */
+:root {
+  /* Lockdown presentation tokens: safety overlays and stale dominance. */
+  --color-overlay-scrim: rgb(0 0 0 / 0.6);
+  --color-stale-surface: var(--color-bg-tertiary);
+  --opacity-stale: 0.65;
+  --motion-duration-instant: 1ms;
+  --motion-duration-ambient: 120ms;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --color-bg-primary: #0e0d0b;
