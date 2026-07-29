@@ -124,6 +124,12 @@ export class Reconciler {
     }
   }
 
+  /** Force one authoritative snapshot/security reconciliation after an
+   * operation whose transport outcome is unknown. */
+  async reconcileNow(authorityDomainId: AuthorityDomainId): Promise<void> {
+    await this.reconcile(authorityDomainId);
+  }
+
   private async reconcile(authorityDomainId: AuthorityDomainId): Promise<void> {
     const response = await this.client.loadSnapshot(
       create(LoadSnapshotRequestSchema, { authorityDomainId }),

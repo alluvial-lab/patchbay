@@ -87,6 +87,18 @@ impl GrantRecord {
     pub fn is_expired(&self) -> bool {
         self.is_expired_at(&SystemClock.now())
     }
+
+    /// An authority-domain grant carrying session-management authority is the
+    /// recovery floor for the v0.1.0 operator. Revoking the last such live
+    /// grant would leave the deployment without a routine recovery-capable
+    /// authority.
+    #[must_use]
+    pub fn is_recovery_capable_authority_domain(&self) -> bool {
+        self.target_scope.kind == TargetScopeKind::AuthorityDomain as i32
+            && self
+                .allowed_operation_kinds
+                .contains(&OperationKind::SessionManagement)
+    }
 }
 
 fn timestamp_key(timestamp: &prost_types::Timestamp) -> (i64, i32) {

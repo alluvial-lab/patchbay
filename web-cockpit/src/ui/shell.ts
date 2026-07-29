@@ -119,7 +119,7 @@ export function createCockpitShell(
       actions: options.actions,
       elicitation: options.elicitation,
       submission: options.submission?.(),
-      lockdownActive: model.lockdown.active,
+      lockdownActive: model.lockdown.active || Boolean(model.lockdown.submitting),
       onBack() {
         mobileDetailOpen = false;
         applyLayout();

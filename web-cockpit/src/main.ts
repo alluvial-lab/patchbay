@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   ActorEndpointRefSchema,
   AuthorityDomainIdSchema,
@@ -19,7 +20,12 @@ import {
   type Operation,
 } from "@patchbay/contracts";
 
-import { PresentationProjection, type SessionIdentity, type SessionView } from "./domain/model.js";
+import {
+  lockdownViewFromState,
+  PresentationProjection,
+  type SessionIdentity,
+  type SessionView,
+} from "./domain/model.js";
 import {
   createProtocolClient,
   CsrfTokenRequestError,
@@ -89,6 +95,11 @@ export async function startCockpit(options: StartCockpitOptions = {}): Promise<C
     idFactory: options.idFactory,
     startSubscription: options.startSubscription,
     isMobile: options.isMobile,
+    fetcher,
+    refreshCsrfToken: async () => {
+      csrfToken = await fetchCsrfToken(fetcher);
+      return csrfToken;
+    },
   });
 }
 
@@ -96,6 +107,8 @@ interface ComposeOptions {
   idFactory?: () => string;
   startSubscription?: boolean;
   isMobile?: () => boolean;
+  fetcher: typeof globalThis.fetch;
+  refreshCsrfToken: () => Promise<string>;
   /** Frame scheduler for render coalescing; defaults to requestAnimationFrame. */
   scheduleFrame?: (callback: () => void) => void;
 }
@@ -130,7 +143,7 @@ function composeCockpit(
   let diagnosticRequestSequence = 0;
 
   async function queryAdapterStatus(session: SessionView | undefined, reason: string): Promise<void> {
-    if (projection.model.lockdown.active) return;
+    if (projection.model.lockdown.active || projection.model.lockdown.submitting) return;
     const adapterId = session?.identity.adapterId;
     if (!adapterId) return;
     const key = `${adapterId}:${reason}`;
@@ -159,10 +172,12 @@ function composeCockpit(
   }
 
   async function submit(operation: Operation): Promise<void> {
-    if (projection.model.lockdown.active) {
+    if (projection.model.lockdown.active || projection.model.lockdown.submitting) {
       submission = {
         state: LocalSubmissionState.SUBMIT_FAILED,
-        error: "Read-only during lockdown. New Operations are rejected until trusted bootstrap exit.",
+        error: projection.model.lockdown.active
+          ? "Read-only during lockdown. New Operations are rejected until trusted bootstrap exit."
+          : "Lockdown decision pending. Operations are disabled until the core confirms or denies entry.",
       };
       shell.update(projection.model);
       return;
@@ -197,19 +212,57 @@ function composeCockpit(
   const mobileSheet = createMobileElicitationSheet(document, { isMobile: options.isMobile });
   const securityActions = {
     async enterLockdown(reasonCode: string): Promise<void> {
-      // The local posture changes before transport/session expiry so the UI
-      // cannot issue another Operation during the expected self-lockout.
+      // This is deliberately a local, non-authoritative presentation state.
+      // Controls are disabled while the RPC is pending, but the cockpit must
+      // not claim containment until the core confirms it.
+      const priorLockdown = projection.model.lockdown;
       projection.model = {
         ...projection.model,
-        lockdown: { active: true, reasonCode, enteredAt: new Date() },
+        lockdown: { ...priorLockdown, submitting: true },
       };
       shell.update(projection.model);
-      await protocol.client.enterSecurityLockdown(
-        create(EnterSecurityLockdownRequestSchema, {
-          authorityDomainId,
-          reasonCode,
-        }),
-      );
+      try {
+        const result = await protocol.client.enterSecurityLockdown(
+          create(EnterSecurityLockdownRequestSchema, {
+            authorityDomainId,
+            reasonCode,
+          }),
+        );
+        if (!result.lockdown) throw new Error("lockdown confirmation is missing");
+        projection.model = {
+          ...projection.model,
+          lockdown: lockdownViewFromState(result.lockdown),
+        };
+        shell.update(projection.model);
+      } catch (error) {
+        const denied = error instanceof ConnectError
+          && (error.code === Code.PermissionDenied || error.code === Code.FailedPrecondition);
+        // A confirmed denial restores the posture that was visible before the
+        // attempt. An unknown transport outcome also restores that posture,
+        // then forces a fresh login/reconciliation rather than claiming entry.
+        projection.model = {
+          ...projection.model,
+          lockdown: { ...priorLockdown, submitting: false },
+        };
+        shell.update(projection.model);
+        if (denied) return;
+
+        projection.markUnreconciled();
+        shell.update(projection.model);
+        try {
+          await reconciler.reconcileNow(authorityDomainId);
+          shell.update(projection.model);
+        } catch {
+          // If the session itself expired, force the pre-protocol login path.
+          // The shell is reattached after login; until then no lockdown claim
+          // is rendered and the projection remains unreconciled.
+          await waitForOperatorLogin(document, mount, { fetch: options.fetcher });
+          await options.refreshCsrfToken();
+          mount.replaceChildren(shell.element);
+          await reconciler.reconcileNow(authorityDomainId);
+          shell.update(projection.model);
+        }
+      }
     },
     async revokeCurrentSession(): Promise<void> {
       await protocol.client.revokeOperatorSession({});

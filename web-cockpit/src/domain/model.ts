@@ -123,6 +123,8 @@ export interface AdapterDiagnosticView {
 }
 
 export interface LockdownView {
+  /** Local presentation state only; never an authoritative posture claim. */
+  submitting?: boolean;
   active: boolean;
   reasonCode?: string;
   enteredAt?: Date;
@@ -193,7 +195,7 @@ export function emptyPresentationModel(): PresentationModel {
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
-    lockdown: { active: false },
+    lockdown: { active: false, submitting: false },
     security: emptySecurityInventory(),
   };
 }
@@ -280,7 +282,7 @@ export function replaceFromSnapshot(
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
-    lockdown: lockdownFromState(snapshot.lockdown),
+    lockdown: lockdownViewFromState(snapshot.lockdown),
     security: emptySecurityInventory(),
   };
 
@@ -367,7 +369,7 @@ export function replaceSecuritySnapshot(
       revocationPolicy: summary.revocationPolicy,
     })),
   };
-  next.lockdown = lockdownFromState(snapshot.lockdown);
+  next.lockdown = lockdownViewFromState(snapshot.lockdown);
   if (next.lockdown.active) {
     next.sessions = new Map(
       [...next.sessions].map(([key, session]) => [key, {
@@ -563,6 +565,7 @@ function foldSecurityLockdown(
     case "entered": {
       model.lockdown = {
         active: true,
+        submitting: false,
         reasonCode: event.transition.value.reasonCode || undefined,
         enteredAt: timestampDate(event.transition.value.occurredAt),
         enteredEventLsn: lsn,
@@ -583,7 +586,7 @@ function foldSecurityLockdown(
     case "exited":
       // Exit clears only the posture. Existing sessions remain stale until a
       // later authoritative adapter signal arrives.
-      model.lockdown = { active: false };
+      model.lockdown = { active: false, submitting: false };
       model.sessions = new Map(
         [...model.sessions].map(([key, session]) => [key, { ...session, lockdownActive: false }]),
       );
@@ -597,9 +600,10 @@ function decodeSecurityLockdown(payload: Uint8Array) {
   return fromBinary(SecurityLockdownEventSchema, payload);
 }
 
-function lockdownFromState(state: SecurityLockdownState | undefined): LockdownView {
+export function lockdownViewFromState(state: SecurityLockdownState | undefined): LockdownView {
   return {
     active: state?.active ?? false,
+    submitting: false,
     reasonCode: state?.reasonCode || undefined,
     enteredAt: timestampDate(state?.enteredAt),
     enteredEventLsn: state?.enteredEventId?.lsn?.value,

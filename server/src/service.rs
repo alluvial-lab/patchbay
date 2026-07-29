@@ -361,6 +361,18 @@ where
                 Some(future) => future.await,
                 None => return Err(Status::internal("verified lockdown issuer has no actor")),
             };
+            let actor = issuer
+                .verified_actor()
+                .cloned()
+                .ok_or_else(|| Status::internal("verified lockdown issuer has no actor"))?;
+            let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::LockdownEntered);
+            audit.actor_id = Some(actor);
+            audit.endpoint_id = issuer.verified_endpoint().cloned();
+            audit.device_id = issuer.verified_device().cloned();
+            audit.grant_id = Some(grant.clone());
+            audit.target_scope = Some(authority_domain_scope());
+            audit.reason_code = "security_lockdown_already_active".to_owned();
+            self.record_audit(audit).await?;
             return Ok(Response::new(EnterSecurityLockdownResult {
                 lockdown: Some(current),
                 lockdown_event_id: entered_event_id,
@@ -434,7 +446,8 @@ where
             .issuer_from_request(&request, requested_domain.clone())
             .await?;
         let scope = authority_domain_scope();
-        let grant = self
+        let evaluated_at = self.clock.now();
+        let grant = match self
             .state
             .grant_check()
             .check_at(
@@ -442,17 +455,37 @@ where
                 &issuer,
                 patchbay_contracts::patchbay::OperationKind::Query,
                 &scope,
-                &self.clock.now(),
+                &evaluated_at,
             )
             .await
-            .map_err(|_| Status::permission_denied("security snapshot is not authorized"))?
-            .grant_id
+        {
+            Ok(authorized) => authorized.grant_id,
+            Err(_) => {
+                let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+                audit.actor_id = issuer.verified_actor().cloned();
+                audit.endpoint_id = issuer.verified_endpoint().cloned();
+                audit.device_id = issuer.verified_device().cloned();
+                audit.target_scope = Some(scope.clone());
+                audit.failure_code = Some(FailureCode::AuthorizationDenied);
+                audit.reason_code = "security_snapshot_authorization_denied".to_owned();
+                self.record_audit(audit).await?;
+                return Err(Status::permission_denied("security snapshot is not authorized"));
+            }
+        };
+        let grant = grant
             .ok_or_else(|| Status::internal("security snapshot authorization omitted grant provenance"))?;
         let snapshot = self
             .state
             .materialize_security_snapshot(requested_domain)
             .await;
-        let _ = grant;
+        let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
+        audit.actor_id = issuer.verified_actor().cloned();
+        audit.endpoint_id = issuer.verified_endpoint().cloned();
+        audit.device_id = issuer.verified_device().cloned();
+        audit.grant_id = Some(grant);
+        audit.target_scope = Some(scope);
+        audit.reason_code = "security_snapshot_loaded".to_owned();
+        self.record_audit(audit).await?;
         Ok(Response::new(LoadSecuritySnapshotResponse {
             snapshot: Some(snapshot),
         }))
@@ -467,7 +500,6 @@ where
         let _ = self
             .issuer_from_request(&request, requested_domain.clone())
             .await?;
-        self.require_operations_open().await?;
         let grant_id = request
             .get_ref()
             .grant_id
@@ -483,6 +515,7 @@ where
         let issuer = self
             .issuer_from_request(&request, requested_domain.clone())
             .await?;
+        self.require_operations_open(&issuer).await?;
         let request = request.into_inner();
         let Some(grant) = self.state.grant(&grant_id).await else {
             self.audit_revocation_denied(&issuer).await?;
@@ -497,7 +530,8 @@ where
             endpoint: issuer.verified_endpoint(),
             authority_domain_id: &requested_domain,
         };
-        match authorize_self_revocation_at(&grant, &issuer_ref, &self.clock.now()) {
+        let evaluated_at = self.clock.now();
+        match authorize_self_revocation_at(&grant, &issuer_ref, &evaluated_at) {
             Ok(()) => {}
             Err(GrantAdministrationDenied::Expired { grant_id }) => {
                 let mut audit = AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantExpired);
@@ -516,7 +550,7 @@ where
             }
         }
         if grant.is_revoked() {
-            let mut audit = AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantRevoked);
+            let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::GrantRevoked);
             audit.actor_id = issuer.verified_actor().cloned();
             audit.endpoint_id = issuer.verified_endpoint().cloned();
             audit.device_id = issuer.verified_device().cloned();
@@ -531,6 +565,27 @@ where
                 applied_policy: grant.revocation_policy as i32,
                 command_effects: Vec::new(),
             }));
+        }
+
+        if grant.is_recovery_capable_authority_domain()
+            && self
+                .state
+                .recovery_capable_authority_domain_grant_count(&evaluated_at)
+                .await
+                <= 1
+        {
+            let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+            audit.actor_id = Some(actor.clone());
+            audit.endpoint_id = issuer.verified_endpoint().cloned();
+            audit.device_id = issuer.verified_device().cloned();
+            audit.grant_id = Some(grant_id.clone());
+            audit.target_scope = Some(grant.target_scope.clone());
+            audit.failure_code = Some(FailureCode::AuthorizationDenied);
+            audit.reason_code = "last_recovery_authority_grant".to_owned();
+            self.record_audit(audit).await?;
+            return Err(Status::failed_precondition(
+                "authorization_denied/last_recovery_authority_grant",
+            ));
         }
 
         let mut records = self.state.commands_for_grant(&grant_id).await;
@@ -573,10 +628,6 @@ where
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
         let cursor = request.get_ref().cursor.unwrap_or(Lsn { value: 0 });
-        let current_lsn = self.state.current_lsn().await;
-        if cursor.value > current_lsn {
-            return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
-        }
         let _ = self
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
@@ -586,6 +637,14 @@ where
         let issuer = self
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
+        // Compare the cursor only after catch-up and issuer re-verification.
+        // Adapter-originated events may already be durable while the control
+        // projection is still warming its LSN, so an earlier comparison can
+        // reject a valid reconnect cursor.
+        let current_lsn = self.state.current_lsn().await;
+        if cursor.value > current_lsn {
+            return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
+        }
         let evaluated_at = self.clock.now();
         let decision = self.state.grant_check().check_at(
             &authority_domain_id,
@@ -884,11 +943,14 @@ where
             .verified_actor()
             .cloned()
             .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
-        let revoked = self
+        // Verify first, then make the required audit append before the local
+        // session mutation. If durable audit fails, the session remains active
+        // and there is no unaudited successful revocation.
+        if !self
             .state
-            .revoke_operator_session(issuer.operator_session_id(), &issuer.binding())
-            .await;
-        if !revoked {
+            .verify_operator_session(issuer.operator_session_id(), &issuer.binding())
+            .await
+        {
             return Err(Status::failed_precondition(
                 "operator session is no longer active",
             ));
@@ -903,6 +965,15 @@ where
         session_audit.operator_session_hash = hash_principal_credential(&issuer.operator_session_id().value);
         session_audit.reason_code = "operator_session_revoked".to_owned();
         self.record_audit(session_audit).await?;
+        let revoked = self
+            .state
+            .revoke_operator_session(issuer.operator_session_id(), &issuer.binding())
+            .await;
+        if !revoked {
+            return Err(Status::failed_precondition(
+                "operator session is no longer active",
+            ));
+        }
         Ok(Response::new(RevokeOperatorSessionResult { revoked }))
     }
 
@@ -913,7 +984,6 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
-        self.require_operations_open().await?;
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
@@ -923,6 +993,7 @@ where
         let issuer = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open(&issuer).await?;
         let request = request.into_inner();
         let actor_id = issuer
             .verified_actor()
@@ -960,7 +1031,6 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
-        self.require_operations_open().await?;
         let principal_id = request.get_ref().principal_id.clone();
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         if principal_id.is_empty() {
@@ -974,6 +1044,7 @@ where
         let issuer = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open(&issuer).await?;
         let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(
             principal_id.clone(),
         );
@@ -1032,7 +1103,6 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
-        self.require_operations_open().await?;
         validate_control_surface_reason(&request.get_ref().reason_code)?;
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
@@ -1042,6 +1112,7 @@ where
         let issuer = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open(&issuer).await?;
         let target = match request.get_ref().target.clone() {
             Some(patchbay_contracts::patchbay::revoke_control_surface_endpoint_request::Target::EndpointId(endpoint_id)) => {
                 let target = patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(endpoint_id.clone());
@@ -1120,7 +1191,6 @@ where
         let _ = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
-        self.require_operations_open().await?;
         let enrollment = request
             .get_ref()
             .principal
@@ -1134,6 +1204,7 @@ where
         let issuer = self
             .issuer_from_request(&request, self.authority_domain_id.clone())
             .await?;
+        self.require_operations_open(&issuer).await?;
         let actor_id = issuer
             .verified_actor()
             .cloned()
@@ -1520,10 +1591,24 @@ where
         }
     }
 
-    async fn require_operations_open(&self) -> Result<(), Status> {
+    async fn require_operations_open(
+        &self,
+        issuer: &dyn IssuerContext,
+    ) -> Result<(), Status> {
         if self.state.lockdown_state().await.active {
+            let mut audit = AuditRecordDraft::new(
+                crate::identity::now_timestamp()?,
+                AuditEventKind::AuthorizationFailed,
+            );
+            audit.actor_id = issuer.verified_actor().cloned();
+            audit.endpoint_id = issuer.verified_endpoint().cloned();
+            audit.device_id = issuer.verified_device().cloned();
+            audit.target_scope = Some(authority_domain_scope());
+            audit.failure_code = Some(FailureCode::AuthorizationDenied);
+            audit.reason_code = "security_lockdown_active".to_owned();
+            self.record_audit(audit).await?;
             return Err(Status::failed_precondition(
-                "security lockdown is active; operation and security mutations are read-only",
+                "authorization_denied/security_lockdown_active",
             ));
         }
         Ok(())

@@ -194,3 +194,48 @@ Verdict: blockers-found. Receiver-confirmed blockers (fix before `done`):
    while awaiting; "active" only from confirmed result or reconciled
    snapshot; on denial restore prior posture; on unknown outcome force
    reconcile without claiming success.
+
+## Epic review resolution
+
+Resolved all five receiver-confirmed blockers from standard pass 1:
+
+1. **Stale adapter token race:** `server/src/adapter_service.rs` now orders
+   attach registration/token replacement, observation ingestion, diagnostic
+   reporting, and delivery-stream establishment through the shared
+   `CoreDecisionGate`; adapter authentication and current-attachment reads
+   occur under that gate, and replacement fences prior delivery streams.
+   Evidence: `cargo test --workspace` and adapter service tests pass.
+2. **Last-grant bricking:** `core/src/authority/state.rs` and
+   `server/src/service.rs` classify live authority-domain grants with
+   session-management authority as recovery-capable, refuse revocation of
+   the last one with `FailedPrecondition` plus the existing
+   `authorization_denied` vocabulary, and audit the refusal. CLI grant
+   revocation preflights the redacted inventory and requires
+   `--confirm REVOKE_AUTHORITY` for broad grants; cockpit broad-grant actions
+   require a high-impact confirmation. Evidence: `cli npm test`, cockpit
+   security-view confirmation tests, and workspace Rust tests pass.
+3. **Subscribe cursor ordering:** `server/src/service.rs` compares resume
+   cursors only after gate-held projection catch-up and issuer
+   re-verification, so adapter-originated durable events cannot be rejected
+   while the projection lags. Evidence: workspace Rust tests pass.
+4. **Audit gaps:** `server/src/service.rs` records
+   `AuthorizationFailed/security_lockdown_active` for lockdown-blocked
+   mutations, audits repeated lockdown entry and security-snapshot allow/deny
+   decisions, and `server/src/admin_service.rs` audits repeated lockdown
+   exit. Current-session revocation now writes its audit before mutation;
+   audit failure therefore leaves the session active. Evidence: workspace
+   Rust tests, diagnostics/audit checks, and web-server tests pass.
+5. **Cockpit optimistic lockdown:** `web-cockpit/src/domain/model.ts`,
+   `main.ts`, `ui/shell.ts`, and `ui/security-view.ts` use local pending
+   presentation state with all controls disabled; active is derived only from
+   the confirmed RPC or reconciliation/event projection, denial restores the
+   prior posture, and unknown outcomes mark the projection unreconciled and
+   force reconciliation/login. Evidence: 75 web-cockpit tests pass and
+   `web-cockpit/dist/assets/cockpit.js` contains the pending, confirmation,
+   and reconciliation paths.
+
+Verification evidence: `cargo build --workspace --all-targets`,
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
+warnings`, contracts build/vector/model/drift/presentation checks,
+`cd web-server && npm test`, `cd web-cockpit && npm test`, `cd cli && npm
+ test`, `cd pi-adapter && npm test`, and `cd e2e && npm test` all passed.

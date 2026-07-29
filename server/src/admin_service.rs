@@ -259,6 +259,21 @@ where
             .map_err(map_storage_error_to_status)?;
         let current = self.control.state.lockdown_state().await;
         if !current.active {
+            let reason_code = if request.reason_code.is_empty() {
+                "bootstrap_exit_already_inactive".to_owned()
+            } else {
+                request.reason_code.clone()
+            };
+            let mut audit = patchbay_core::storage::AuditRecordDraft::new(
+                now_timestamp()?,
+                patchbay_contracts::patchbay::AuditEventKind::LockdownExited,
+            );
+            audit.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
+                kind: patchbay_contracts::patchbay::TargetScopeKind::AuthorityDomain as i32,
+                ..patchbay_contracts::patchbay::TargetScope::default()
+            });
+            audit.reason_code = reason_code;
+            self.control.record_audit(audit).await?;
             return Ok(Response::new(
                 patchbay_contracts::patchbay::ExitSecurityLockdownResult {
                     lockdown: Some(current),

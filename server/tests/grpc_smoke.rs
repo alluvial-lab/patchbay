@@ -1367,6 +1367,46 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
 }
 
 #[tokio::test]
+async fn last_recovery_authority_grant_refusal_is_typed_and_audited() {
+    let mut server = start_server().await;
+    let error = server
+        .client
+        .revoke_grant(authenticated_request(
+            RevokeGrantRequest {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
+                reason: "test_last_recovery_grant".to_owned(),
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect_err("the last recovery-capable authority grant must be retained");
+    assert_eq!(error.code(), Code::FailedPrecondition);
+    assert!(error.message().contains("last_recovery_authority_grant"));
+
+    let audits = server
+        .storage
+        .query_audit(&domain(), AuditPageSpec {
+            kinds: vec![AuditEventKind::AuthorizationFailed],
+            actor_id: None,
+            endpoint_id: None,
+            command_id: None,
+            grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
+            target: None,
+            failure_codes: vec![FailureCode::AuthorizationDenied],
+            reason_codes: vec!["last_recovery_authority_grant".to_owned()],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 10,
+        })
+        .await
+        .expect("last-grant refusal must be queryable");
+    assert_eq!(audits.records.len(), 1);
+}
+
+#[tokio::test]
 async fn grant_expiry_is_enforced_at_rpc_boundary_and_audited() {
     let storage = RusqliteStorage::open_in_memory().expect("test storage must open");
     seed_authority_and_session(&storage).await;

@@ -3,7 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { create } from "@bufbuild/protobuf";
-import { AuthorityDomainIdSchema } from "@patchbay/contracts";
+import { AuthorityDomainIdSchema, TargetScopeKind, TargetScopeSchema } from "@patchbay/contracts";
 import { renderSecurityView } from "../src/ui/security-view.js";
 import { emptyPresentationModel } from "../src/domain/model.js";
 
@@ -94,6 +94,51 @@ test("security view renders reconciled operator, endpoint, device, and grant inv
   view.querySelector<HTMLButtonElement>('button[title="Revoke device workstation-01"]')!.click();
   view.querySelector<HTMLButtonElement>('button[title="Revoke grant grant-session-main"]')!.click();
   assert.deepEqual(calls, ["endpoint:web-local-01", "device:workstation-01", "grant:grant-session-main"]);
+});
+
+test("lockdown submission is visibly pending without claiming active posture", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const model = emptyPresentationModel();
+  model.lockdown = { active: false, submitting: true };
+  const view = renderSecurityView(dom.window.document, model, domain, {
+    async enterLockdown() {},
+    async revokeAllSessions() {},
+    async revokePrincipal() {},
+    async revokeEndpoint() {},
+    async revokeDevice() {},
+    async revokeGrant() {},
+  });
+  assert.match(view.textContent ?? "", /Lockdown pending/);
+  assert.doesNotMatch(view.textContent ?? "", /Lockdown active/);
+  assert.equal([...view.querySelectorAll<HTMLButtonElement>("button")].every((button) => button.disabled), true);
+});
+
+test("broad grant revocation requires a high-impact confirmation", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  Object.defineProperty(dom.window, "confirm", { value: () => false, configurable: true });
+  const model = emptyPresentationModel();
+  model.security.grants = [{
+    grantId: "grant-authority",
+    subjectActorId: "operator",
+    targetScope: create(TargetScopeSchema, { kind: TargetScopeKind.AUTHORITY_DOMAIN }),
+    allowedOperationKinds: [],
+    revoked: false,
+    revocationPolicy: 1,
+  }];
+  let calls = 0;
+  const view = renderSecurityView(dom.window.document, model, domain, {
+    async enterLockdown() {},
+    async revokeAllSessions() {},
+    async revokePrincipal() {},
+    async revokeEndpoint() {},
+    async revokeDevice() {},
+    async revokeGrant() { calls += 1; },
+  });
+  view.querySelector<HTMLButtonElement>('button[title*="confirmation required"]')!.click();
+  assert.equal(calls, 0);
+  Object.defineProperty(dom.window, "confirm", { value: () => true, configurable: true });
+  view.querySelector<HTMLButtonElement>('button[title*="confirmation required"]')!.click();
+  assert.equal(calls, 1);
 });
 
 test("active posture has inline read-only explanation and no exit affordance", () => {

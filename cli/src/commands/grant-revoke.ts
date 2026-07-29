@@ -6,7 +6,9 @@ import {
   FailureCode,
   GrantRevocationPolicy,
   OperationState,
+  LoadSecuritySnapshotRequestSchema,
   RevokeGrantRequestSchema,
+  TargetScopeKind,
   type RevokeGrantResult,
 } from "@patchbay/contracts";
 import type { ControlClient } from "../core-client.js";
@@ -16,11 +18,12 @@ import { enumLabel, eventIdView } from "../output.js";
 export interface GrantRevokeOptions {
   grantId: string;
   reason?: string;
+  confirm?: string;
   json: boolean;
 }
 
 export async function grantRevokeCommand(
-  client: Pick<ControlClient, "revokeGrant">,
+  client: Pick<ControlClient, "revokeGrant"> & Partial<Pick<ControlClient, "loadSecuritySnapshot">>,
   authorityDomainId: string,
   options: GrantRevokeOptions,
   output: CliOutput,
@@ -32,6 +35,21 @@ export async function grantRevokeCommand(
     throw new Error("reason must be 1..128 safe ASCII characters");
   }
 
+  // The CLI does not trust a grant id's spelling to infer its scope. Read the
+  // redacted authority inventory first, then require an explicit high-impact
+  // confirmation for authority-domain/fleet recovery grants.
+  if (client.loadSecuritySnapshot) {
+    const snapshot = await client.loadSecuritySnapshot(create(LoadSecuritySnapshotRequestSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: authorityDomainId }),
+    }));
+    const grant = snapshot.snapshot?.grants.find((candidate) => candidate.grantId?.value === options.grantId);
+    const broad = grant?.targetScope?.kind === TargetScopeKind.AUTHORITY_DOMAIN
+      || grant?.targetScope?.kind === TargetScopeKind.FLEET_SUPERVISOR;
+    if (broad && options.confirm !== "REVOKE_AUTHORITY") {
+      throw new Error("revoking a broad authority grant requires --confirm REVOKE_AUTHORITY");
+    }
+  }
+
   let result: RevokeGrantResult;
   try {
     result = await client.revokeGrant(create(RevokeGrantRequestSchema, {
@@ -40,8 +58,10 @@ export async function grantRevokeCommand(
       reason,
     }));
   } catch (error) {
-    if (error instanceof ConnectError && error.code === Code.PermissionDenied) {
-      output.stderr("grant revocation denied; no grant change was made");
+    if (error instanceof ConnectError && (error.code === Code.PermissionDenied || error.code === Code.FailedPrecondition)) {
+      output.stderr(error.code === Code.FailedPrecondition
+        ? "grant revocation refused; recovery authority must remain; no grant change was made"
+        : "grant revocation denied; no grant change was made");
       return 2;
     }
     throw error;

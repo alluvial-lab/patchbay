@@ -605,6 +605,21 @@ impl ProjectionState {
             .cloned()
     }
 
+    pub async fn recovery_capable_authority_domain_grant_count(
+        &self,
+        now: &prost_types::Timestamp,
+    ) -> usize {
+        self.grant_check
+            .inner
+            .lock()
+            .await
+            .grants()
+            .filter(|grant| {
+                grant.is_live_at(now) && grant.is_recovery_capable_authority_domain()
+            })
+            .count()
+    }
+
     pub async fn ingest_grant<S: Storage>(
         &self,
         storage: &S,

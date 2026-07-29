@@ -471,6 +471,44 @@ async fn newer_attachment_fences_stale_adapter_process() {
 }
 
 #[tokio::test]
+async fn stale_attachment_is_rejected_before_observation_or_diagnostic_decision() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage,
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let stale_token = attach_generation(&service, domain.clone(), 1).await;
+    let _current_token = attach_generation(&service, domain.clone(), 2).await;
+
+    let observation = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &stale_token,
+        ))
+        .await
+        .expect_err("stale observation attachment must be rejected");
+    assert_eq!(observation.code(), tonic::Code::Unauthenticated);
+
+    let diagnostics = service
+        .report_diagnostics(authenticated_with_attachment_token(
+            AdapterDiagnosticReport::default(),
+            &stale_token,
+        ))
+        .await
+        .expect_err("stale diagnostic attachment must be rejected");
+    assert_eq!(diagnostics.code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
 async fn post_attach_rpc_without_attachment_token_is_rejected() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {

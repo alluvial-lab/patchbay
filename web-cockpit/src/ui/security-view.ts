@@ -9,7 +9,7 @@ export interface SecurityViewActions {
   revokePrincipal(principalId: string): Promise<void>;
   revokeEndpoint(endpointId: string): Promise<void>;
   revokeDevice(deviceId: string): Promise<void>;
-  revokeGrant(grantId: string): Promise<void>;
+  revokeGrant(grantId: string, highImpact?: boolean): Promise<void>;
 }
 
 export function renderSecurityView(
@@ -75,22 +75,32 @@ function lockdownHero(
 
   const controls = document.createElement("div");
   controls.className = "hero-actions";
-  const arm = button(document, model.lockdown.active ? "Lockdown active" : "Arm lockdown", "btn btn-danger btn--lg");
-  arm.disabled = model.lockdown.active || !actions;
+  const submitting = Boolean(model.lockdown.submitting);
+  const arm = button(
+    document,
+    model.lockdown.active ? "Lockdown active" : submitting ? "Lockdown pending" : "Arm lockdown",
+    "btn btn-danger btn--lg",
+  );
+  arm.disabled = model.lockdown.active || submitting || !actions;
   arm.title = model.lockdown.active
     ? "Disabled during lockdown: the posture is already active."
-    : "Opens a deliberate two-step lockdown ritual.";
+    : submitting
+      ? "Waiting for the core to confirm or deny lockdown."
+      : "Opens a deliberate two-step lockdown ritual.";
   controls.append(arm);
   card.append(controls);
 
   const armDialog = dialog(document, "Arm security lockdown", "Step 1 of 2: arm this action. No change is made yet.");
   const reason = input(document, "Reason code", "suspected_endpoint_compromise");
   reason.field.pattern = "[a-z0-9_]{1,64}";
+  reason.field.disabled = submitting;
   reason.field.id = "lockdown-reason-code";
   reason.label.htmlFor = reason.field.id;
   armDialog.body.append(reason.label, reason.field);
   const continueButton = button(document, "Continue to confirmation", "btn btn-danger");
   const cancelArm = button(document, "Cancel", "btn btn-secondary");
+  cancelArm.disabled = submitting;
+  continueButton.disabled = submitting;
   armDialog.actions.append(cancelArm, continueButton);
 
   const confirmDialog = dialog(
@@ -100,6 +110,7 @@ function lockdownHero(
   );
   const confirmation = input(document, "Type LOCKDOWN", "");
   confirmation.field.id = "lockdown-confirmation";
+  confirmation.field.disabled = submitting;
   confirmation.field.autocomplete = "off";
   confirmation.label.htmlFor = confirmation.field.id;
   confirmation.field.setAttribute("aria-describedby", "lockdown-confirmation-help");
@@ -108,6 +119,7 @@ function lockdownHero(
   confirmDialog.body.lastElementChild!.id = "lockdown-confirmation-help";
   const cancelConfirm = button(document, "Cancel", "btn btn-secondary");
   const enter = button(document, "Enter lockdown", "btn btn-danger");
+  cancelConfirm.disabled = submitting;
   enter.disabled = true;
   confirmDialog.actions.append(cancelConfirm, enter);
   card.append(armDialog.element, confirmDialog.element);
@@ -144,15 +156,15 @@ function lockdownHero(
 function operatorSessions(document: Document, model: PresentationModel, actions?: SecurityViewActions): HTMLElement {
   const card = inventoryCard(document, "Operator sessions");
   const revoke = button(document, "Revoke all sessions", "btn btn-danger btn--sm");
-  revoke.disabled = model.lockdown.active || !actions;
-  revoke.title = mutationTitle(model.lockdown.active, "Revoke all operator sessions");
+  revoke.disabled = model.lockdown.active || Boolean(model.lockdown.submitting) || !actions;
+  revoke.title = mutationTitle(model.lockdown.active || Boolean(model.lockdown.submitting), "Revoke all operator sessions");
   revoke.addEventListener("click", () => void actions?.revokeAllSessions());
   const heading = card.querySelector<HTMLElement>(".section-heading")!;
   heading.append(revoke);
   if (actions?.revokeCurrentSession) {
     const current = button(document, "Revoke current session", "btn btn-secondary btn--sm");
-    current.disabled = model.lockdown.active;
-    current.title = mutationTitle(model.lockdown.active, "Revoke current browser session");
+    current.disabled = model.lockdown.active || Boolean(model.lockdown.submitting);
+    current.title = mutationTitle(model.lockdown.active || Boolean(model.lockdown.submitting), "Revoke current browser session");
     current.addEventListener("click", () => void actions.revokeCurrentSession?.());
     heading.append(current);
   }
@@ -196,12 +208,12 @@ function controlSurfaceInventory(document: Document, model: PresentationModel, a
     const actionsRow = document.createElement("div");
     actionsRow.className = "row-actions";
     const endpoint = button(document, "Revoke endpoint", "btn btn-secondary btn--sm");
-    endpoint.disabled = model.lockdown.active || !actions;
-    endpoint.title = mutationTitle(model.lockdown.active, `Revoke endpoint ${summary.endpointId}`);
+    endpoint.disabled = model.lockdown.active || Boolean(model.lockdown.submitting) || !actions;
+    endpoint.title = mutationTitle(model.lockdown.active || Boolean(model.lockdown.submitting), `Revoke endpoint ${summary.endpointId}`);
     endpoint.addEventListener("click", () => void actions?.revokeEndpoint(summary.endpointId));
     const device = button(document, "Revoke device", "btn btn-secondary btn--sm");
-    device.disabled = model.lockdown.active || !actions;
-    device.title = mutationTitle(model.lockdown.active, `Revoke device ${summary.deviceId}`);
+    device.disabled = model.lockdown.active || Boolean(model.lockdown.submitting) || !actions;
+    device.title = mutationTitle(model.lockdown.active || Boolean(model.lockdown.submitting), `Revoke device ${summary.deviceId}`);
     device.addEventListener("click", () => void actions?.revokeDevice(summary.deviceId));
     actionsRow.append(endpoint, device);
     row.append(actionsRow);
@@ -228,10 +240,16 @@ function grantInventory(document: Document, model: PresentationModel, actions?: 
       textElement(document, "span", "identity", `${summary.subjectActorId} · ${scopeLabel(summary.targetScope)} · ${summary.allowedOperationKinds.map(operationKindLabel).join(", ") || "no Operations"}`),
       textElement(document, "span", "identity", summary.revoked ? "revoked" : summary.expiresAt ? `expires ${summary.expiresAt.toISOString()}` : "active"),
     );
-    const revoke = button(document, "Revoke grant", "btn btn-secondary btn--sm");
-    revoke.disabled = model.lockdown.active || !actions;
-    revoke.title = mutationTitle(model.lockdown.active, `Revoke grant ${summary.grantId}`);
-    revoke.addEventListener("click", () => void actions?.revokeGrant(summary.grantId));
+    const broad = isHighImpactGrant(summary.targetScope);
+    const revoke = button(document, broad ? "Revoke broad grant" : "Revoke grant", "btn btn-secondary btn--sm");
+    revoke.disabled = model.lockdown.active || Boolean(model.lockdown.submitting) || !actions;
+    revoke.title = mutationTitle(model.lockdown.active || Boolean(model.lockdown.submitting), broad
+      ? `Revoke broad grant ${summary.grantId} (confirmation required)`
+      : `Revoke grant ${summary.grantId}`);
+    revoke.addEventListener("click", () => {
+      if (broad && !confirmHighImpact(document, summary.grantId)) return;
+      void actions?.revokeGrant(summary.grantId, broad);
+    });
     row.append(revoke);
     list.append(row);
     if (index < model.security.grants.length - 1) list.append(document.createElement("hr"));
@@ -271,7 +289,21 @@ function scopeLabel(scope: { kind: number; adapterId?: { value: string }; runtim
 }
 
 function mutationTitle(active: boolean, action: string): string {
-  return active ? "Disabled during lockdown: revocations are unavailable." : action;
+  return active ? "Disabled during lockdown or while a lockdown decision is pending." : action;
+}
+
+function isHighImpactGrant(scope: { kind: number } | undefined): boolean {
+  return scope?.kind === TargetScopeKind.AUTHORITY_DOMAIN
+    || scope?.kind === TargetScopeKind.FLEET_SUPERVISOR;
+}
+
+function confirmHighImpact(document: Document, grantId: string): boolean {
+  const confirm = document.defaultView?.confirm;
+  if (!confirm) return false;
+  return confirm.call(
+    document.defaultView,
+    `Grant ${grantId} has broad authority. Confirm revocation?`,
+  );
 }
 
 function alert(document: Document, title: string, body: string, tone: "warning" | "danger"): HTMLElement {

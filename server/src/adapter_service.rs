@@ -533,6 +533,11 @@ where
             .ok_or_else(|| Status::invalid_argument("registration is missing adapter_id"))?;
         let attachment_token = random_token();
         let attachment_token_hash = hash_principal_credential(&attachment_token);
+        // Registration, token replacement, and every adapter decision are
+        // ordered by the composition-root gate. A request that authenticated
+        // against the old token before this point must not establish a
+        // decision after this replacement commits.
+        let _decision_guard = self.decision_gate.acquire().await;
         let mut adapters = self.adapters.lock().await;
         let event_id = match adapter::ingest_registration(&self.storage, &mut adapters, registration)
             .await
@@ -560,7 +565,16 @@ where
         self.attachment_tokens
             .lock()
             .await
-            .insert(adapter_id, attachment_token_hash);
+            .insert(adapter_id.clone(), attachment_token_hash);
+        // Replacing an attachment also fences delivery streams established by
+        // the previous process, even when that process never disconnects
+        // cleanly.
+        let mut epochs = self.delivery_stream_epochs.lock().await;
+        let epoch = epochs.entry(adapter_id.clone()).or_default();
+        *epoch = epoch
+            .checked_add(1)
+            .ok_or_else(|| Status::internal("delivery stream epoch overflow"))?;
+        drop(epochs);
         drop(adapters);
 
         let mut response = Response::new(AttachResult {
@@ -581,6 +595,10 @@ where
         &self,
         request: Request<AdapterDiagnosticReport>,
     ) -> Result<Response<AdapterDiagnosticReportResult>, Status> {
+        // Authenticate only after acquiring the shared gate. Attachment
+        // replacement can otherwise commit between token verification and
+        // diagnostic append.
+        let _decision_guard = self.decision_gate.acquire().await;
         let authenticated_adapter = self.authenticate_request(&request).await?;
         let report = request.into_inner();
         let registration = {
@@ -625,6 +643,10 @@ where
         &self,
         request: Request<ObservationRequest>,
     ) -> Result<Response<ObservationResult>, Status> {
+        // Re-authentication is deliberately inside the shared gate: a stale
+        // adapter token that was valid before an attach replacement must not
+        // establish an observation decision afterwards.
+        let _decision_guard = self.decision_gate.acquire().await;
         let authenticated_adapter = self.authenticate_request(&request).await?;
         let request = request.into_inner();
         let domain = request
@@ -636,7 +658,6 @@ where
         // Every adapter transition shares the composition-root gate with
         // Submit/RevokeGrant. This keeps revocation's catch-up/effect plan
         // adjacent to the append that establishes its LSN boundary.
-        let _decision_guard = self.decision_gate.acquire().await;
         let event_id = match request.observation {
             Some(observation_request::Observation::SessionReport(report)) => {
                 require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
@@ -761,6 +782,10 @@ where
         &self,
         request: Request<ReceiveRequest>,
     ) -> Result<Response<Self::ReceiveDeliveriesStream>, Status> {
+        // Stream establishment is a decision too. Authenticate and re-read
+        // the current attachment while holding the shared gate, before
+        // taking the projection prefix used by the stream.
+        let _decision_guard = self.decision_gate.acquire().await;
         let authenticated_adapter = self.authenticate_request(&request).await?;
         let request = request.into_inner();
         require_same_adapter(request.adapter_id.as_ref(), &authenticated_adapter)?;
@@ -884,6 +909,7 @@ where
             }
         });
 
+        drop(_decision_guard);
         let subscription = delivery_subscription(
             DeliverySubscriptionContext {
                 storage: self.storage.clone(),
