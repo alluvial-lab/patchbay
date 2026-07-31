@@ -62,3 +62,24 @@ Epic design must mock the cross-feature cockpit composition for sessions plus re
 - **Committed post-v0.1.0 direction:** first-class operational resources; personal one-operator control; adapter-shaped projections above the conformance floor.
 - **Reserved seams:** dynamically loaded third-party surface plugins, multi-human shared authority, resource-to-resource coordination, and a broad external adapter ecosystem.
 - **Explicitly rejected for this arc:** representing resource health as session connectivity/activity, turning Patchbay into generic monitoring, or making adapter-specific state part of the core protocol registry without a promotion ceremony.
+
+## Interaction with parked ideas
+
+- **`idea-third-adapter-kind-foreign-data-source`** — pressure-test input for the
+  presentation-extension-mechanics design. This epic owns "exact wire registries
+  and presentation extension mechanics" and reserves "dynamically loaded
+  third-party surface plugins." The parked finding argues a git-backed Markdown
+  work ledger is neither a runtime session nor an operational resource under
+  SPEC's admission rule, so if the cockpit ever renders an external work
+  ledger, the design must decide whether it fits the resource-adapter kind or
+  needs a *third* projection-source kind. The epic's presentation-mechanics
+  design should engage this question rather than discovering it later.
+- **`idea-correlation-grounding-validation-leak`** — pressure-test input for
+  the presentation/validation path. If any cockpit projection here proposes
+  convention-based correlation (e.g. a work item id carried in an opaque
+  payload) plus attention-flag validation, the parked finding records that
+  `schema_ref` is an uninterpreted string and `AttentionRequired` is a
+  signaling record, not a validation engine. A partial validator that
+  validates only the cheap half manufactures the durable false confidence it
+  was built to prevent. The design must not reach for that pattern without a
+  real validation contract.
