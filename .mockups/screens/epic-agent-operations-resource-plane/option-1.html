@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — Option 1 (refined): Resources surfaces pooled + direct-provider windows</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .shell { display: grid; grid-template-columns: auto minmax(0,1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); position: relative; }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination .attention-badge { position: absolute; top: 2px; right: 4px; }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .resources-view { display: grid; grid-template-columns: minmax(280px, 34%) minmax(0,1fr); height: 100%; }
+    .resource-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .resource-list .list-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .source-section { padding: var(--space-2) var(--space-4) var(--space-1); font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); background: var(--color-bg-secondary); display: flex; align-items: center; gap: var(--space-2); }
+    .source-tag { display: inline-flex; align-items: center; padding: 1px var(--space-2); border-radius: var(--radius-full); font: var(--font-weight-medium) var(--font-size-xs)/1.4 var(--font-mono); }
+    .source-tag--pooled { background: var(--color-accent); color: var(--color-text-inverse); }
+    .source-tag--direct { background: var(--color-info); color: var(--color-text-inverse); }
+    .resource-row { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); cursor: pointer; border-left: 3px solid transparent; }
+    .resource-row:hover { background: var(--color-bg-secondary); }
+    .resource-row--active { background: var(--color-accent-muted); border-left-color: var(--color-accent); }
+    .resource-row--attention { border-left-color: var(--color-warning); }
+    .resource-row__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+    .resource-row__label { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); color: var(--color-text-primary); }
+    .resource-row__identity { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+    .resource-row__meter { display: flex; align-items: center; gap: var(--space-2); }
+    .meter-bar { width: 60px; height: 5px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; }
+    .meter-fill { height: 100%; background: var(--color-accent); }
+    .meter-fill--warning { background: var(--color-warning); }
+    .meter-fill--danger { background: var(--color-danger); }
+    .meter-label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); white-space: nowrap; }
+    .health-indicator { display: inline-flex; align-items: center; gap: var(--space-1); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); }
+    .health-indicator__dot { width: 8px; height: 8px; border-radius: 50%; }
+    .health-indicator--fresh .health-indicator__dot { background: var(--color-success); }
+    .health-indicator--fresh { color: var(--color-success); }
+    .health-indicator--exhausted .health-indicator__dot { background: var(--color-warning); }
+    .health-indicator--exhausted { color: var(--color-warning); }
+    .resource-detail { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+    .resource-detail .view-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    .resource-detail .body { padding: var(--space-6); max-width: 860px; margin: 0 auto; width: 100%; display: grid; gap: var(--space-4); }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); font: var(--font-size-sm)/1.5 var(--font-mono); }
+    .kv dt { color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--font-size-xs); }
+    .kv dd { margin: 0; color: var(--color-text-primary); }
+    .big-meter { display: grid; gap: var(--space-2); }
+    .big-meter__bar { height: 10px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; }
+    .big-meter__fill { height: 100%; background: var(--color-danger); border-radius: var(--radius-full); }
+    .big-meter__fill--warning { background: var(--color-warning); }
+    .gleaned-note { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--color-bg-tertiary); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }
+    .gleaned-note svg { flex-shrink: 0; margin-top: 1px; color: var(--color-text-tertiary); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 1 (refined) — Resources surfaces pooled + direct-provider windows</strong><span>The Resources destination surfaces both token-commune pools (adminable) AND direct-provider usage windows gleaned from provider APIs (read-only). Same admission rule: anything that materially governs agent availability is a resource.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav style="display:grid;gap:var(--space-1)">
+          <button class="btn btn-ghost destination" data-tip="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge"><span class="attention-badge__dot"></span></span></button>
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span><span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></button>
+          <button class="btn btn-ghost destination" data-tip="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+          <button class="btn btn-ghost destination" data-tip="Diagnostics"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg><span class="destination__label">Diagnostics</span></button>
+        </nav>
+      </aside>
+      <div class="workspace">
+        <section class="resources-view">
+          <aside class="resource-list">
+            <div class="list-heading"><strong>Resources</strong><span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span></div>
+            <div class="source-section">Pooled <span class="source-tag source-tag--pooled">token-commune</span></div>
+            <div class="resource-row">
+              <div class="resource-row__top"><span class="resource-row__label">anthropic-pool</span><span class="health-indicator health-indicator--fresh"><span class="health-indicator__dot"></span>fresh</span></div>
+              <span class="resource-row__identity">3 contributions · serving</span>
+              <div class="resource-row__meter"><div class="meter-bar"><div class="meter-fill" style="width:42%"></div></div><span class="meter-label">42% · resets 2h 14m</span></div>
+            </div>
+            <div class="resource-row resource-row--attention">
+              <div class="resource-row__top"><span class="resource-row__label">openai-codex-pool</span><span class="health-indicator health-indicator--exhausted"><span class="health-indicator__dot"></span>exhausted</span></div>
+              <span class="resource-row__identity">2 contributions · paused</span>
+              <div class="resource-row__meter"><div class="meter-bar"><div class="meter-fill meter-fill--danger" style="width:4%"></div></div><span class="meter-label">4% · resets Sat</span></div>
+            </div>
+            <div class="source-section">Direct providers <span class="source-tag source-tag--direct">your subscriptions</span></div>
+            <div class="resource-row resource-row--active">
+              <div class="resource-row__top"><span class="resource-row__label">Claude Code</span><span class="health-indicator health-indicator--exhausted"><span class="health-indicator__dot"></span>low</span></div>
+              <span class="resource-row__identity">anthropic · operator account</span>
+              <div class="resource-row__meter"><div class="meter-bar"><div class="meter-fill meter-fill--warning" style="width:8%"></div></div><span class="meter-label">8% · resets 1h 02m</span></div>
+            </div>
+            <div class="resource-row">
+              <div class="resource-row__top"><span class="resource-row__label">Codex</span><span class="health-indicator health-indicator--fresh"><span class="health-indicator__dot"></span>ok</span></div>
+              <span class="resource-row__identity">openai · operator account</span>
+              <div class="resource-row__meter"><div class="meter-bar"><div class="meter-fill" style="width:64%"></div></div><span class="meter-label">64% · resets Sat</span></div>
+            </div>
+            <div class="resource-row">
+              <div class="resource-row__top"><span class="resource-row__label">GLM</span><span class="health-indicator health-indicator--fresh"><span class="health-indicator__dot"></span>ok</span></div>
+              <span class="resource-row__identity">z.ai · operator account</span>
+              <div class="resource-row__meter"><div class="meter-bar"><div class="meter-fill" style="width:71%"></div></div><span class="meter-label">71% · quota period</span></div>
+            </div>
+          </aside>
+          <section class="resource-detail">
+            <header class="view-header">
+              <div>
+                <div style="display:flex;align-items:center;gap:var(--space-2)"><span class="source-tag source-tag--direct">direct</span><h1 style="margin:0;font:var(--font-size-lg)/1 var(--font-mono)">Claude Code</h1></div>
+                <span class="resource-row__identity">anthropic · operator account</span>
+              </div>
+              <span class="health-indicator health-indicator--exhausted"><span class="health-indicator__dot"></span>low · 8%</span>
+            </header>
+            <div class="body">
+              <div class="card">
+                <h2 style="margin:0 0 var(--space-3);font-size:var(--font-size-base)">5-hour usage window</h2>
+                <div class="big-meter">
+                  <div class="big-meter__bar"><div class="big-meter__fill big-meter__fill--warning" style="width:8%"></div></div>
+                  <span style="font:var(--font-size-sm)/1 var(--font-mono);color:var(--color-text-secondary)">8% remaining · resets in 1h 02m · ~ 14 messages at current burn</span>
+                </div>
+              </div>
+              <div class="card">
+                <h2 style="margin:0 0 var(--space-3);font-size:var(--font-size-base)">Details</h2>
+                <dl class="kv">
+                  <dt>provider</dt><dd>anthropic (direct subscription)</dd>
+                  <dt>plan</dt><dd>Claude Pro · operator account</dd>
+                  <dt>window</dt><dd>5h rolling · last reset 03:58 UTC</dd>
+                  <dt>burn rate</dt><dd>~1.6% / message (last 20)</dd>
+                  <dt>active sessions</dt><dd>2 drawing from this provider</dd>
+                </dl>
+              </div>
+              <div class="gleaned-note">
+                <svg class="icon icon--sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+                <span><strong>Read-only.</strong> Patchbay observes this window; it cannot reconfigure your Anthropic subscription. When this window exhausts, sessions drawing from this provider surface as <em>attention</em> — switch their provider to token-commune or another direct provider.</span>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

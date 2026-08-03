@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — Option 4: Unified operations list, split by kind</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .shell { display: grid; grid-template-columns: auto minmax(0,1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination .attention-badge { position: absolute; top: 2px; right: 4px; }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .ops-view { display: grid; grid-template-columns: minmax(280px, 34%) minmax(0,1fr); height: 100%; }
+    .ops-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .ops-list .list-heading { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+    /* THE 4 MOMENT: one list, two kinds, distinguished by section header + kind badge */
+    .kind-section { padding: var(--space-2) var(--space-4) var(--space-1); font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); background: var(--color-bg-secondary); }
+    .kind-badge { display: inline-flex; align-items: center; padding: 1px var(--space-2); border-radius: var(--radius-full); font: var(--font-weight-medium) var(--font-size-xs)/1.4 var(--font-mono); }
+    .kind-badge--session { background: var(--color-info); color: var(--color-text-inverse); }
+    .kind-badge--resource { background: var(--color-accent); color: var(--color-text-inverse); }
+    .ops-row { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); cursor: pointer; border-left: 3px solid transparent; }
+    .ops-row:hover { background: var(--color-bg-secondary); }
+    .ops-row--active { background: var(--color-accent-muted); border-left-color: var(--color-accent); }
+    .ops-row__main { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+    .ops-row__label { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); color: var(--color-text-primary); }
+    .ops-row__identity { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+    .ops-row__status { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+    .health-indicator { display: inline-flex; align-items: center; gap: var(--space-1); font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); }
+    .health-indicator__dot { width: 8px; height: 8px; border-radius: 50%; }
+    .health-indicator--fresh .health-indicator__dot { background: var(--color-success); }
+    .health-indicator--fresh { color: var(--color-success); }
+    .health-indicator--exhausted .health-indicator__dot { background: var(--color-warning); }
+    .health-indicator--exhausted { color: var(--color-warning); }
+    .ops-detail { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+    .ops-detail .view-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    .ops-detail .body { padding: var(--space-6); max-width: 860px; margin: 0 auto; width: 100%; display: grid; gap: var(--space-4); }
+    .capacity-meter__bar { height: 8px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; }
+    .capacity-meter__fill { height: 100%; background: var(--color-accent); }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); font: var(--font-size-sm)/1.5 var(--font-mono); }
+    .kv dt { color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--font-size-xs); }
+    .kv dd { margin: 0; }
+    .filter-bar { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .filter-bar .input { max-width: 220px; }
+    .kind-filter { display: inline-flex; gap: var(--space-1); }
+    .kind-filter button { padding: var(--space-1) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: transparent; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); cursor: pointer; }
+    .kind-filter button[aria-pressed="true"] { background: var(--color-bg-tertiary); color: var(--color-text-primary); border-color: var(--color-border-strong); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 4 — Unified operations list, split by kind</strong><span>One "Operations" destination. Sessions and resources live in a single list, distinguished by kind badges + section headers. Detail pane adapts to the selected target's kind. Peers in one list, not separate destinations.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav style="display:grid;gap:var(--space-1)">
+          <!-- single Operations destination, not two -->
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Operations">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1"></rect><rect x="14" y="4" width="7" height="7" rx="1"></rect><rect x="3" y="13" width="7" height="7" rx="1"></rect><rect x="14" y="13" width="7" height="7" rx="1"></rect></svg>
+            <span class="destination__label">Operations</span>
+            <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span>
+          </button>
+          <button class="btn btn-ghost destination" data-tip="Security">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg>
+            <span class="destination__label">Security</span>
+          </button>
+        </nav>
+      </aside>
+      <div class="workspace">
+        <section class="ops-view">
+          <aside class="ops-list">
+            <div class="list-heading"><strong>Operations</strong>
+              <span class="attention-badge"><span class="attention-badge__dot"></span><span class="attention-badge__count">1</span></span>
+            </div>
+            <div class="filter-bar">
+              <input class="input" placeholder="Filter…">
+              <div class="kind-filter">
+                <button aria-pressed="true">all</button>
+                <button aria-pressed="false">sessions</button>
+                <button aria-pressed="false">resources</button>
+              </div>
+            </div>
+            <div class="kind-section">Sessions</div>
+            <div class="ops-row">
+              <span class="kind-badge kind-badge--session">session</span>
+              <div class="ops-row__main">
+                <span class="ops-row__label">patchbay-main</span>
+                <span class="ops-row__identity">pi · local · gen 1</span>
+                <span class="ops-row__status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+              </div>
+            </div>
+            <div class="ops-row">
+              <span class="kind-badge kind-badge--session">session</span>
+              <div class="ops-row__main">
+                <span class="ops-row__label">release-check</span>
+                <span class="ops-row__identity">pi · local · gen 1</span>
+                <span class="ops-row__status"><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></span>
+              </div>
+            </div>
+            <div class="kind-section">Resources</div>
+            <div class="ops-row ops-row--active">
+              <span class="kind-badge kind-badge--resource">resource</span>
+              <div class="ops-row__main">
+                <span class="ops-row__label">anthropic-pool</span>
+                <span class="ops-row__identity">token-commune / anthropic</span>
+                <span class="ops-row__status"><span class="health-indicator health-indicator--fresh"><span class="health-indicator__dot"></span>fresh</span></span>
+              </div>
+            </div>
+            <div class="ops-row">
+              <span class="kind-badge kind-badge--resource">resource</span>
+              <div class="ops-row__main">
+                <span class="ops-row__label">openai-codex-pool</span>
+                <span class="ops-row__identity">token-commune / openai-codex</span>
+                <span class="ops-row__status"><span class="health-indicator health-indicator--exhausted"><span class="health-indicator__dot"></span>exhausted</span></span>
+              </div>
+            </div>
+          </aside>
+          <section class="ops-detail">
+            <header class="view-header">
+              <div>
+                <div style="display:flex;align-items:center;gap:var(--space-2)"><span class="kind-badge kind-badge--resource">resource</span><h1 style="margin:0;font:var(--font-size-lg)/1 var(--font-mono)">anthropic-pool</h1></div>
+                <span class="ops-row__identity">token-commune / anthropic · adapter gen 1</span>
+              </div>
+              <span class="health-indicator health-indicator--fresh"><span class="health-indicator__dot"></span>fresh</span>
+            </header>
+            <div class="body">
+              <div class="card">
+                <h2 style="margin:0 0 var(--space-3);font-size:var(--font-size-base)">Claude Sonnet window</h2>
+                <div class="capacity-meter__bar"><div class="capacity-meter__fill" style="width:42%"></div></div>
+                <span style="font:var(--font-size-xs)/1 var(--font-mono);color:var(--color-text-secondary);display:block;margin-top:var(--space-2)">42% remaining · resets 2h 14m · your draw 18%</span>
+              </div>
+              <div class="card">
+                <h2 style="margin:0 0 var(--space-3);font-size:var(--font-size-base)">Contributions</h2>
+                <dl class="kv">
+                  <dt>alice</dt><dd>fresh · 50% declared</dd>
+                  <dt>nklisch</dt><dd>fresh · 30% declared</dd>
+                  <dt>operator</dt><dd>fresh · 40% declared</dd>
+                </dl>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

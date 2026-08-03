@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — cockpit composition (iterated)</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <style>
+    body { margin: 0; background: #0e0d0b; color: #f0e6d2; font-family: var(--font-sans); }
+    .header { padding: var(--space-6) var(--space-8) var(--space-4); border-bottom: 1px solid #3a3429; }
+    .header h1 { margin: 0; font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold); }
+    .header p { margin: var(--space-2) 0 0; color: #b8a98a; max-width: 72ch; font-size: var(--font-size-sm); line-height: 1.5; }
+    .header .pick { margin-top: var(--space-3); padding: var(--space-2) var(--space-4); background: #1a1714; border-left: 3px solid #ffb454; border-radius: 4px; font-size: var(--font-size-sm); color: #f0e6d2; max-width: 72ch; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #3a3429; padding: 2px; height: calc(100vh - 200px); min-height: 760px; grid-template-rows: 1fr 1fr; }
+    .cell { background: #1a1714; position: relative; overflow: hidden; }
+    .cell__label { position: absolute; top: 0; left: 0; right: 0; z-index: 2; padding: var(--space-2) var(--space-4); background: rgba(14,13,11,0.92); border-bottom: 1px solid #3a3429; font-size: var(--font-size-xs); }
+    .cell__label strong { color: #ffb454; font-family: var(--font-mono); }
+    .cell__label span { color: #b8a98a; }
+    .cell__label .new { color: #5b9a6e; font-weight: 700; }
+    .cell iframe { width: 100%; height: 100%; border: 0; transform: scale(0.6); transform-origin: top left; width: 167%; height: 167%; pointer-events: none; }
+    .legend { padding: var(--space-4) var(--space-8); border-top: 1px solid #3a3429; font-size: var(--font-size-xs); color: #b8a98a; max-width: 90ch; line-height: 1.6; }
+    .legend .tip { margin-top: var(--space-2); color: #5b9a6e; }
+    .legend strong { color: #f0e6d2; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1>Resource plane — cockpit composition (iterated)</h1>
+    <p>Converging direction: <strong>Resources as its own destination</strong> (pooled token-commune pools + direct-provider usage windows), and every <strong>session gets a runtime-context strip</strong> (provider · model · context-remaining · usage-window) whose usage cell links to a resource only when the provider is token-commune. Two surfaces below make each concrete.</p>
+    <div class="pick"><strong>Option 2 (composed into session) and Option 3 (peer + chip) are now superseded</strong> — the runtime-context strip replaces the "fuel chip," and direct-provider windows mean resources need their own home regardless. Option 4 (unified list) remains the alternative if you prefer one destination. These two iterated mocks are the live comparison.</div>
+  </header>
+  <div class="grid">
+    <div class="cell">
+      <div class="cell__label"><strong>Resources destination</strong> <span>· pooled (token-commune) + direct-provider windows gleaned from provider APIs. Read-only for direct; adminable for pooled.</span></div>
+      <iframe src="option-1.html" title="Resources destination"></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell__label"><span class="new">NEW · INTERACTABLE</span> <strong>Session runtime-context strip</strong> <span>· provider &amp; model cells are clickable pickers (try them in the full view). Usage links to a resource only when provider = token-commune. Selecting issues a <code>reconfigure</code> Operation.</span></div>
+      <iframe src="session-context.html" title="Session context strip"></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell__label"><span class="new">MOBILE</span> <strong>Runtime context — tappable pills + bottom sheet</strong> <span>· the strip collapses to pill-buttons; pickers open a bottom sheet (lockdown mock pattern). Open full-size and tap provider/model.</span></div>
+      <iframe src="session-context-mobile.html" title="Session context mobile"></iframe>
+    </div>
+  </div>
+  <div class="legend">
+    <strong>The model-vs-provider split, made visible:</strong> a session runs a <em>model</em> through a <em>provider</em>. token-commune is one provider (pooled); ZAI/Kimi/OpenAI direct are others. The session strip always shows provider+model+context; the usage-window cell's link target depends on which provider — a token-commune pool resource, or a direct-provider window resource. Both resource kinds live in the Resources destination because both materially govern agent availability (the resource plane's admission rule).
+    <div class="tip"><strong>Tip:</strong> open the session-context mock full-size and click the provider / model cells — the pickers are live and show each option's current usage window before you commit.</div>
+  </div>
+</body>
+</html>

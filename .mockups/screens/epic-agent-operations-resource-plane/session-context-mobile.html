@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — Session runtime-context (mobile)</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: #e3d6ba; color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; align-items: center; }
+    /* phone frame */
+    .phone { width: 390px; height: 780px; background: var(--color-bg-primary); border: 1px solid var(--color-border-strong); border-radius: 28px; overflow: hidden; margin: var(--space-6); box-shadow: 0 8px 32px rgb(0 0 0 / 0.2); display: flex; flex-direction: column; position: relative; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .session-detail { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .session-detail__identity { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    /* THE MOBILE AFFORDANCE: strip collapses to tappable pill-buttons */
+    .ctx-mobile { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); }
+    .ctx-mobile__buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .ctx-pill { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-full); font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
+    .ctx-pill:hover, .ctx-pill:active { border-color: var(--color-accent); }
+    .ctx-pill::after { content: "▾"; color: var(--color-text-tertiary); font-size: 10px; }
+    .provider-tag { display: inline-flex; align-items: center; padding: 1px var(--space-2); border-radius: var(--radius-full); font: var(--font-weight-medium) var(--font-size-xs)/1.4 var(--font-mono); }
+    .provider-tag--commune { background: var(--color-accent); color: var(--color-text-inverse); }
+    .provider-tag--direct { background: var(--color-info); color: var(--color-text-inverse); }
+    .ctx-mobile__stats { display: flex; gap: var(--space-4); font: var(--font-size-xs)/1.3 var(--font-mono); color: var(--color-text-secondary); }
+    .ctx-mobile__stat { display: flex; flex-direction: column; gap: 2px; }
+    .ctx-mobile__stat-label { color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; }
+    .ctx-mobile__stat-value { color: var(--color-text-primary); font-weight: var(--font-weight-semibold); display: inline-flex; align-items: center; gap: var(--space-1); }
+    .ctx-link { color: var(--color-text-link); text-decoration: none; border-bottom: 1px dotted var(--color-text-link); }
+    .ctx-mini-meter { width: 36px; height: 4px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; display: inline-block; vertical-align: middle; }
+    .ctx-mini-fill { height: 100%; background: var(--color-accent); }
+    .timeline { flex: 1; overflow-y: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+    .msg { display: flex; flex-direction: column; gap: var(--space-1); max-width: 85%; }
+    .msg--operator { align-self: flex-end; align-items: flex-end; }
+    .msg__body { padding: var(--space-2) var(--space-3); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: var(--font-size-sm); line-height: 1.4; }
+    .msg--operator .msg__body { background: var(--color-accent-muted); }
+    .msg__footer { font: 10px/1.4 var(--font-mono); color: var(--color-text-tertiary); }
+    .composer { display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-2) var(--space-3) max(var(--space-2), env(safe-area-inset-bottom)); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
+    .composer__input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); }
+    /* bottom sheet picker (matches lockdown mock pattern) */
+    .sheet-scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 0.5); z-index: 9; opacity: 0; pointer-events: none; transition: opacity 160ms; }
+    .sheet-scrim--open { opacity: 1; pointer-events: auto; }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--color-bg-primary); border-top-left-radius: var(--radius-lg); border-top-right-radius: var(--radius-lg); box-shadow: 0 -4px 16px rgb(0 0 0 / 0.15); padding: var(--space-4); padding-bottom: max(var(--space-4), env(safe-area-inset-bottom)); transform: translateY(100%); transition: transform 200ms; max-height: 70%; overflow-y: auto; }
+    .sheet--open { transform: translateY(0); }
+    .sheet__handle { width: 36px; height: 4px; background: var(--color-border-strong); border-radius: var(--radius-full); margin: 0 auto var(--space-3); }
+    .sheet__title { font: var(--font-weight-semibold) var(--font-size-base)/1 var(--font-sans); margin: 0 0 var(--space-1); }
+    .sheet__hint { font-size: var(--font-size-xs); color: var(--color-text-secondary); margin: 0 0 var(--space-3); }
+    .opt { display: grid; grid-template-columns: 1fr auto; gap: var(--space-3); align-items: center; padding: var(--space-3); border-radius: var(--radius-sm); cursor: pointer; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; }
+    .opt:hover, .opt:active { background: var(--color-bg-secondary); }
+    .opt--current { background: var(--color-accent-muted); border-color: var(--color-accent); }
+    .opt__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .opt__label { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); color: var(--color-text-primary); display: flex; align-items: center; gap: var(--space-2); }
+    .opt__sub { font: var(--font-size-xs)/1.3 var(--font-mono); color: var(--color-text-secondary); }
+    .opt__meter { display: flex; align-items: center; gap: var(--space-2); }
+    .opt__check { color: var(--color-accent); font-weight: bold; }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Session runtime-context — mobile</strong><span>The strip collapses to tappable pill-buttons; pickers open a bottom sheet (matching the lockdown mock's established mobile pattern). Try tapping <em>provider</em>.</span></header>
+  <div class="phone">
+    <header class="app-header">
+      <button class="btn btn-ghost btn--sm" aria-label="Back">←</button>
+      <span class="nav-bar__brand">PATCHBAY</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span></span>
+    </header>
+    <div class="session-detail">
+      <div class="session-detail__identity">
+        <span style="font:var(--font-size-xs)/1.2 var(--font-mono);color:var(--color-text-secondary)">pi · patchbay-main · gen 1</span>
+        <span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+      </div>
+      <!-- MOBILE RUNTIME CONTEXT: tappable pills -->
+      <div class="ctx-mobile">
+        <div class="ctx-mobile__buttons">
+          <button class="ctx-pill" id="providerPill"><span class="provider-tag provider-tag--commune" id="providerTag">token-commune</span></button>
+          <button class="ctx-pill" id="modelPill"><span id="modelLabel">claude-sonnet-4</span></button>
+        </div>
+        <div class="ctx-mobile__stats">
+          <div class="ctx-mobile__stat">
+            <span class="ctx-mobile__stat-label">context</span>
+            <span class="ctx-mobile__stat-value">68% <span class="ctx-mini-meter"><span class="ctx-mini-fill" style="width:68%"></span></span></span>
+          </div>
+          <div class="ctx-mobile__stat">
+            <span class="ctx-mobile__stat-label">usage</span>
+            <span class="ctx-mobile__stat-value"><span class="ctx-mini-meter"><span class="ctx-mini-fill" id="usageFill" style="width:42%"></span></span> <span id="usagePct">42%</span></span>
+          </div>
+          <div class="ctx-mobile__stat">
+            <span class="ctx-mobile__stat-label">pool</span>
+            <span class="ctx-mobile__stat-value"><a class="ctx-link" id="usageLink">anthropic →</a></span>
+          </div>
+        </div>
+      </div>
+      <div class="timeline">
+        <article class="msg msg--operator"><div class="msg__body">Implement the resource identity resolver.</div><div class="msg__footer">operator · instruct</div></article>
+        <article class="msg"><div class="msg__body">Tap provider or model above to switch. The picker slides up as a bottom sheet showing each option's usage window.</div><div class="msg__footer">agent · text</div></article>
+      </div>
+      <form class="composer" onsubmit="event.preventDefault()"><input class="composer__input" placeholder="Instruct…"><button class="btn btn-primary btn--sm" type="submit">↑</button></form>
+    </div>
+    <!-- bottom sheet -->
+    <div class="sheet-scrim" id="scrim"></div>
+    <div class="sheet" id="sheet">
+      <div class="sheet__handle"></div>
+      <h2 class="sheet__title" id="sheetTitle">Switch provider</h2>
+      <p class="sheet__hint" id="sheetHint">Changes the fuel source. Each shows its current window.</p>
+      <div id="sheetOpts"></div>
+    </div>
+  </div>
+
+  <script>
+    const PROVIDERS = {
+      commune: { label: 'token-commune', kind: 'commune', sub: 'pooled · anthropic-pool', usagePct: 42, low: false, usageLink: 'anthropic →', models: [
+        { id: 'sonnet', label: 'claude-sonnet-4', sub: '200k · anthropic' },
+        { id: 'opus', label: 'claude-opus-4', sub: '200k · anthropic' },
+        { id: 'gpt56', label: 'gpt-5.6', sub: '272k · openai' },
+      ]},
+      claudecode: { label: 'claude-code', kind: 'direct', sub: 'direct · anthropic', usagePct: 8, low: true, usageLink: 'Claude Code →', models: [
+        { id: 'sonnet', label: 'claude-sonnet-4', sub: '200k · anthropic' },
+      ]},
+      codex: { label: 'codex', kind: 'direct', sub: 'direct · openai', usagePct: 64, low: false, usageLink: 'Codex →', models: [
+        { id: 'gpt56', label: 'gpt-5.6', sub: '272k · openai' },
+      ]},
+      glm: { label: 'glm', kind: 'direct', sub: 'direct · zai', usagePct: 71, low: false, usageLink: 'GLM →', models: [
+        { id: 'glm52', label: 'glm-5.2', sub: '1M · zai' },
+      ]},
+    };
+    let state = { provider: 'commune', model: 'sonnet' };
+    function render() {
+      const p = PROVIDERS[state.provider];
+      const m = p.models.find(x => x.id === state.model) || p.models[0];
+      document.getElementById('providerTag').textContent = p.label;
+      document.getElementById('providerTag').className = 'provider-tag provider-tag--' + (p.kind === 'commune' ? 'commune' : 'direct');
+      document.getElementById('modelLabel').textContent = m.label;
+      document.getElementById('usagePct').textContent = p.usagePct + '%';
+      const f = document.getElementById('usageFill'); f.style.width = p.usagePct + '%';
+      f.className = 'ctx-mini-fill' + (p.low ? ' ctx-mini-fill--warning' : '');
+      document.getElementById('usageLink').textContent = p.usageLink;
+    }
+    function closeSheet() {
+      document.getElementById('sheet').classList.remove('sheet--open');
+      document.getElementById('scrim').classList.remove('sheet-scrim--open');
+    }
+    function openSheet(kind) {
+      const p = PROVIDERS[state.provider];
+      const opts = document.getElementById('sheetOpts'); opts.innerHTML = '';
+      if (kind === 'provider') {
+        document.getElementById('sheetTitle').textContent = 'Switch provider';
+        document.getElementById('sheetHint').textContent = 'Changes the fuel source. Each shows its current window.';
+        Object.entries(PROVIDERS).forEach(([id, pr]) => {
+          const b = document.createElement('button'); b.className = 'opt' + (id === state.provider ? ' opt--current' : '');
+          b.innerHTML = `<span class="opt__main"><span class="opt__label"><span class="provider-tag provider-tag--${pr.kind==='commune'?'commune':'direct'}">${pr.label}</span>${id===state.provider?'<span class="opt__check">✓</span>':''}</span><span class="opt__sub">${pr.sub} · ${pr.models.length} model${pr.models.length>1?'s':''}</span></span><span class="opt__meter"><span class="ctx-mini-meter"><span class="ctx-mini-fill ${pr.low?'ctx-mini-fill--warning':''}" style="width:${pr.usagePct}%"></span></span><span style="font:var(--font-size-xs)/1 var(--font-mono);color:var(--color-text-tertiary)">${pr.usagePct}%</span></span>`;
+          b.onclick = () => { state.provider = id; state.model = pr.models[0].id; render(); closeSheet(); };
+          opts.appendChild(b);
+        });
+      } else {
+        document.getElementById('sheetTitle').textContent = 'Switch model';
+        document.getElementById('sheetHint').textContent = `Models available via ${p.label}. model_set reconfigures within this provider.`;
+        p.models.forEach(mo => {
+          const b = document.createElement('button'); b.className = 'opt' + (mo.id === state.model ? ' opt--current' : '');
+          b.innerHTML = `<span class="opt__main"><span class="opt__label">${mo.label}${mo.id===state.model?'<span class="opt__check">✓</span>':''}</span><span class="opt__sub">${mo.sub}</span></span>`;
+          b.onclick = () => { state.model = mo.id; render(); closeSheet(); };
+          opts.appendChild(b);
+        });
+      }
+      document.getElementById('sheet').classList.add('sheet--open');
+      document.getElementById('scrim').classList.add('sheet-scrim--open');
+    }
+    document.getElementById('providerPill').onclick = () => openSheet('provider');
+    document.getElementById('modelPill').onclick = () => openSheet('model');
+    document.getElementById('scrim').onclick = closeSheet;
+    render();
+  </script>
+</body>
+</html>

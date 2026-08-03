@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — Option 2: Resource composed into the session</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .shell { display: grid; grid-template-columns: auto minmax(0,1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination .attention-badge { position: absolute; top: 2px; right: 4px; }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .sessions-view { display: grid; grid-template-columns: minmax(240px, 28%) minmax(0,1fr); height: 100%; }
+    .session-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .session-list .list-heading { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .session-detail { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; min-height: 0; }
+    .session-detail__header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    /* THE 1b MOMENT: the resource panel lives INSIDE the session detail */
+    .fuel-panel { margin: var(--space-4); padding: var(--space-4); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-left: 3px solid var(--color-success); border-radius: var(--radius-sm); }
+    .fuel-panel__title { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin: 0 0 var(--space-2); font: var(--font-weight-semibold) var(--font-size-sm)/1 var(--font-sans); }
+    .fuel-panel__src { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .fuel-panel__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
+    .fuel-stat { display: grid; gap: var(--space-1); }
+    .fuel-stat__label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+    .fuel-stat__value { font: var(--font-weight-semibold) var(--font-size-base)/1.2 var(--font-mono); color: var(--color-text-primary); }
+    .capacity-meter__bar { height: 6px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; margin-top: var(--space-1); }
+    .capacity-meter__fill { height: 100%; background: var(--color-accent); }
+    .timeline { overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); max-width: 760px; margin: 0 auto; width: 100%; }
+    .msg { display: flex; flex-direction: column; gap: var(--space-2); max-width: 78%; }
+    .msg--operator { align-self: flex-end; align-items: flex-end; }
+    .msg__body { padding: var(--space-3) var(--space-4); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+    .msg--operator .msg__body { background: var(--color-accent-muted); }
+    .msg__footer { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-tertiary); }
+    .composer { display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-3); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
+    .composer__input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); }
+    .no-home-note { margin: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--color-bg-tertiary); border-radius: var(--radius-sm); border-left: 3px solid var(--color-warning); font: var(--font-size-sm)/1.5 var(--font-sans); color: var(--color-text-secondary); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 2 — Composed into the session (pure 1b)</strong><span>No new destination. The pool the session draws from renders inline in that session's detail. A pool no session is currently drawing from has no home.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav style="display:grid;gap:var(--space-1)">
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Sessions">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg>
+            <span class="destination__label">Sessions</span>
+            <span class="attention-badge"><span class="attention-badge__dot"></span></span>
+          </button>
+          <button class="btn btn-ghost destination" data-tip="Security">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg>
+            <span class="destination__label">Security</span>
+          </button>
+          <button class="btn btn-ghost destination" data-tip="Diagnostics">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"></path><path d="m7 15 3-3 3 2 5-6"></path></svg>
+            <span class="destination__label">Diagnostics</span>
+          </button>
+        </nav>
+      </aside>
+      <div class="workspace">
+        <section class="sessions-view">
+          <aside class="session-list">
+            <div class="list-heading"><strong>Sessions</strong></div>
+            <div class="session-row session-row--active">
+              <span class="session-row__label">patchbay-main</span>
+              <span class="session-row__identity">pi · local · patchbay-main · gen 1</span>
+              <span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+            </div>
+            <div class="session-row session-row--stale">
+              <span class="session-row__label">release-check</span>
+              <span class="session-row__identity">pi · local · release-check · gen 1</span>
+              <span class="session-status session-status--stale"><span class="connectivity-indicator connectivity-indicator--stale"><span class="connectivity-indicator__dot"></span>stale</span></span>
+            </div>
+          </aside>
+          <section class="session-detail">
+            <header class="session-detail__header">
+              <span class="session-row__identity">pi · local · patchbay-main · gen 1</span>
+              <span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+            </header>
+            <div>
+              <!-- THE 1b MOMENT: resource state lives inside the session detail that consumes it -->
+              <div class="fuel-panel">
+                <div class="fuel-panel__title">Fuel <span class="fuel-panel__src">drawing from: token-commune / anthropic-pool</span></div>
+                <div class="fuel-panel__grid">
+                  <div class="fuel-stat">
+                    <span class="fuel-stat__label">Sonnet window</span>
+                    <span class="fuel-stat__value">42%</span>
+                    <div class="capacity-meter__bar"><div class="capacity-meter__fill" style="width:42%"></div></div>
+                    <span style="font:var(--font-size-xs)/1 var(--font-mono);color:var(--color-text-tertiary)">resets 2h 14m</span>
+                  </div>
+                  <div class="fuel-stat">
+                    <span class="fuel-stat__label">Your draw</span>
+                    <span class="fuel-stat__value">18%</span>
+                  </div>
+                  <div class="fuel-stat">
+                    <span class="fuel-stat__label">Pool health</span>
+                    <span class="fuel-stat__value" style="color:var(--color-success)">fresh</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="timeline">
+              <article class="msg msg--operator"><div class="msg__body">Implement the resource identity resolver and verify against the proto.</div><div class="msg__footer">operator · instruct</div></article>
+              <article class="msg"><div class="msg__body">I'm adding a ResourceId wrapper and a resource branch in TargetResolver.</div><div class="msg__footer">agent · text</div></article>
+              <article class="msg"><div class="msg__body">Running <strong>bash</strong></div><div class="msg__footer">tool · tool_call</div></article>
+            </div>
+            <form class="composer">
+              <input class="composer__input" placeholder="Instruct or enter a slash-command…">
+              <button class="btn btn-primary btn--sm" type="submit">Send</button>
+            </form>
+          </section>
+        </section>
+        <div class="no-home-note"><strong>The 1b trade-off:</strong> a pool no session is currently drawing from (e.g. the exhausted <code>openai-codex-pool</code>, or <code>zai-pool</code>) has nowhere to surface here — it only becomes visible when a session consumes it.</div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

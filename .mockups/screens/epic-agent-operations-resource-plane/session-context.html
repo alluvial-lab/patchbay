@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>resource-plane — Session runtime-context strip (interactable)</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .shell { display: grid; grid-template-columns: auto minmax(0,1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination .attention-badge { position: absolute; top: 2px; right: 4px; }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .sessions-view { display: grid; grid-template-columns: minmax(260px, 30%) minmax(0,1fr); height: 100%; }
+    .session-list { border-right: 1px solid var(--color-border); overflow: auto; }
+    .session-list .list-heading { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .session-detail { display: grid; grid-template-rows: auto auto auto minmax(0,1fr) auto; min-height: 0; }
+    .session-detail__identity { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    .ctx-strip { display: flex; flex-wrap: wrap; gap: 0; padding: var(--space-2) var(--space-4); background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); align-items: stretch; position: relative; }
+    .ctx-cell { display: flex; flex-direction: column; gap: 2px; padding: var(--space-1) var(--space-4); border-right: 1px solid var(--color-border); min-width: 0; position: relative; }
+    .ctx-cell:last-child { border-right: 0; }
+    .ctx-cell__label { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: var(--space-1); }
+    .ctx-cell__value { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); color: var(--color-text-primary); display: inline-flex; align-items: center; gap: var(--space-1); }
+    .ctx-cell__sub { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+    /* interactable cells become buttons */
+    .ctx-cell--control { cursor: pointer; border-radius: var(--radius-sm); }
+    .ctx-cell--control:hover { background: var(--color-bg-tertiary); }
+    .ctx-cell--control .ctx-cell__value::after { content: "▾"; color: var(--color-text-tertiary); font-size: var(--font-size-xs); margin-left: 2px; }
+    .ctx-cell--open { background: var(--color-bg-tertiary); box-shadow: inset 0 -2px 0 var(--color-accent); }
+    .provider-tag { display: inline-flex; align-items: center; padding: 1px var(--space-2); border-radius: var(--radius-full); font: var(--font-weight-medium) var(--font-size-xs)/1.4 var(--font-mono); }
+    .provider-tag--commune { background: var(--color-accent); color: var(--color-text-inverse); }
+    .provider-tag--direct { background: var(--color-info); color: var(--color-text-inverse); }
+    .ctx-link { color: var(--color-text-link); text-decoration: none; border-bottom: 1px dotted var(--color-text-link); cursor: pointer; }
+    .ctx-link:hover { color: var(--color-text-link-hover); }
+    .ctx-mini-meter { width: 48px; height: 5px; background: var(--color-bg-tertiary); border-radius: var(--radius-full); overflow: hidden; display: inline-block; vertical-align: middle; }
+    .ctx-mini-fill { height: 100%; background: var(--color-accent); }
+    .ctx-mini-fill--warning { background: var(--color-warning); }
+    .ctx-mini-fill--danger { background: var(--color-danger); }
+    /* popover */
+    .popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 280px; background: var(--color-bg-primary); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-raised); padding: var(--space-2); }
+    .popover__hint { padding: var(--space-1) var(--space-2) var(--space-2); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-1); }
+    .opt { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); align-items: center; padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer; width: 100%; text-align: left; background: transparent; border: 0; }
+    .opt:hover { background: var(--color-bg-secondary); }
+    .opt--current { background: var(--color-accent-muted); }
+    .opt__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .opt__label { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); color: var(--color-text-primary); display: flex; align-items: center; gap: var(--space-2); }
+    .opt__sub { font: var(--font-size-xs)/1.3 var(--font-mono); color: var(--color-text-secondary); }
+    .opt__meter { display: flex; align-items: center; gap: var(--space-2); }
+    .opt__check { color: var(--color-accent); font-weight: bold; }
+    .timeline { overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); max-width: 760px; margin: 0 auto; width: 100%; }
+    .msg { display: flex; flex-direction: column; gap: var(--space-2); max-width: 78%; }
+    .msg--operator { align-self: flex-end; align-items: flex-end; }
+    .msg__body { padding: var(--space-3) var(--space-4); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+    .msg--operator .msg__body { background: var(--color-accent-muted); }
+    .msg__footer { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-tertiary); }
+    .composer { display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-3); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); }
+    .composer__input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); font: var(--font-size-sm)/1.4 var(--font-sans); }
+    .reconfigure-banner { margin: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--color-accent-muted); border: 1px solid var(--color-border); border-left: 3px solid var(--color-accent); border-radius: var(--radius-sm); font: var(--font-size-sm)/1.5 var(--font-sans); color: var(--color-text-primary); display: flex; gap: var(--space-3); align-items: center; }
+    .reconfigure-banner code { background: var(--color-bg-tertiary); padding: 1px var(--space-2); border-radius: var(--radius-sm); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Session runtime-context strip — interactable</strong><span>Provider and model cells are now controls. Clicking opens a picker showing available options <em>and their usage consequence</em>. Selecting issues a durable <code>reconfigure</code> Operation (model_set / provider switch).</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav style="display:grid;gap:var(--space-1)">
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span><span class="attention-badge"><span class="attention-badge__dot"></span></span></button>
+          <button class="btn btn-ghost destination" data-tip="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span></button>
+          <button class="btn btn-ghost destination" data-tip="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+        </nav>
+      </aside>
+      <div class="workspace">
+        <section class="sessions-view">
+          <aside class="session-list">
+            <div class="list-heading"><strong>Sessions</strong></div>
+            <div class="session-row session-row--active">
+              <span class="session-row__label">patchbay-main</span>
+              <span class="session-row__identity">pi · local · patchbay-main · gen 1</span>
+              <span style="display:flex;gap:var(--space-2);align-items:center"><span class="provider-tag provider-tag--commune">token-commune</span><span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span></span>
+            </div>
+          </aside>
+          <section class="session-detail">
+            <header class="session-detail__identity">
+              <span class="session-row__identity">pi · local · patchbay-main · gen 1</span>
+              <span class="session-status"><span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>live</span><span class="activity-indicator activity-indicator--working"><span class="activity-indicator__icon"></span>working</span></span>
+            </header>
+            <div class="ctx-strip">
+              <!-- PROVIDER — interactable -->
+              <div class="ctx-cell ctx-cell--control" id="providerCell">
+                <span class="ctx-cell__label">provider ▾</span>
+                <span class="ctx-cell__value"><span class="provider-tag provider-tag--commune" id="providerTag">token-commune</span></span>
+                <span class="ctx-cell__sub" id="providerSub">pooled · anthropic-pool</span>
+              </div>
+              <!-- MODEL — interactable -->
+              <div class="ctx-cell ctx-cell--control" id="modelCell">
+                <span class="ctx-cell__label">model ▾</span>
+                <span class="ctx-cell__value" id="modelValue">claude-sonnet-4</span>
+                <span class="ctx-cell__sub" id="modelSub">200k context</span>
+              </div>
+              <!-- CONTEXT — read-only -->
+              <div class="ctx-cell">
+                <span class="ctx-cell__label">context remaining</span>
+                <span class="ctx-cell__value">68% <span class="ctx-mini-meter"><span class="ctx-mini-fill" style="width:68%"></span></span></span>
+                <span class="ctx-cell__sub">136k / 200k tokens</span>
+              </div>
+              <!-- USAGE — read-only, links conditionally -->
+              <div class="ctx-cell">
+                <span class="ctx-cell__label">usage window</span>
+                <span class="ctx-cell__value"><span class="ctx-mini-meter"><span class="ctx-mini-fill" id="usageFill" style="width:42%"></span></span> <span id="usagePct">42%</span></span>
+                <span class="ctx-cell__sub"><a class="ctx-link" id="usageLink">anthropic-pool · resets 2h 14m →</a></span>
+              </div>
+            </div>
+            <div class="timeline">
+              <article class="msg msg--operator"><div class="msg__body">Implement the resource identity resolver and verify against the proto.</div><div class="msg__footer">operator · instruct</div></article>
+              <article class="msg"><div class="msg__body">Click <strong>provider</strong> or <strong>model</strong> in the strip above to switch. The picker shows each option's current usage so you can see the consequence before committing.</div><div class="msg__footer">agent · text</div></article>
+            </div>
+            <form class="composer"><input class="composer__input" placeholder="Instruct or enter a slash-command…"><button class="btn btn-primary btn--sm" type="submit">Send</button></form>
+          </section>
+        </section>
+        <div class="reconfigure-banner">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" style="color:var(--color-accent)"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+          <span>Selecting a provider or model issues a durable <code>reconfigure</code> Operation — it appears in the command timeline with its delivery state, just like an <code>instruct</code>. <strong>model_set</strong> switches within a provider; a <strong>provider switch</strong> reconfigures the session's endpoint/fuel source. Both are grant-gated and audited.</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // provider options: id, label, kind, models, usage state
+    const PROVIDERS = {
+      commune: { label: 'token-commune', kind: 'commune', sub: 'pooled · anthropic-pool', usagePct: 42, usageFill: '', usageLink: 'anthropic-pool · resets 2h 14m', models: [
+        { id: 'sonnet', label: 'claude-sonnet-4', sub: '200k context · anthropic' },
+        { id: 'opus', label: 'claude-opus-4', sub: '200k context · anthropic' },
+        { id: 'gpt56', label: 'gpt-5.6', sub: '272k context · openai' },
+        { id: 'glm52', label: 'glm-5.2', sub: '1M context · zai' },
+      ]},
+      claudecode: { label: 'claude-code', kind: 'direct', sub: 'direct · anthropic', usagePct: 8, usageFill: '--warning', usageLink: 'Claude Code · resets 1h 02m', models: [
+        { id: 'sonnet', label: 'claude-sonnet-4', sub: '200k context · anthropic' },
+        { id: 'opus', label: 'claude-opus-4', sub: '200k context · anthropic' },
+      ]},
+      codex: { label: 'codex', kind: 'direct', sub: 'direct · openai', usagePct: 64, usageFill: '', usageLink: 'Codex · resets Sat', models: [
+        { id: 'gpt56', label: 'gpt-5.6', sub: '272k context · openai' },
+      ]},
+      glm: { label: 'glm', kind: 'direct', sub: 'direct · zai', usagePct: 71, usageFill: '', usageLink: 'GLM · quota period', models: [
+        { id: 'glm52', label: 'glm-5.2', sub: '1M context · zai' },
+      ]},
+      kimi: { label: 'kimi', kind: 'direct', sub: 'direct · kimi', usagePct: 55, usageFill: '', usageLink: 'Kimi K3 · quota period', models: [
+        { id: 'k3', label: 'kimi-k3', sub: '1M context · kimi' },
+      ]},
+    };
+
+    let state = { provider: 'commune', model: 'sonnet' };
+    let openMenu = null;
+
+    function closeMenu() {
+      if (openMenu) { openMenu.remove(); openMenu = null; }
+      document.querySelectorAll('.ctx-cell--open').forEach(c => c.classList.remove('ctx-cell--open'));
+    }
+
+    function renderStrip() {
+      const p = PROVIDERS[state.provider];
+      const m = p.models.find(x => x.id === state.model) || p.models[0];
+      const tag = document.getElementById('providerTag');
+      tag.textContent = p.label;
+      tag.className = 'provider-tag provider-tag--' + (p.kind === 'commune' ? 'commune' : 'direct');
+      document.getElementById('providerSub').textContent = p.sub;
+      document.getElementById('modelValue').textContent = m.label;
+      document.getElementById('modelSub').textContent = m.sub;
+      document.getElementById('usagePct').textContent = p.usagePct + '%';
+      const fill = document.getElementById('usageFill');
+      fill.style.width = p.usagePct + '%';
+      fill.className = 'ctx-mini-fill' + (p.usageFill || '');
+      document.getElementById('usageLink').textContent = p.usageLink + ' →';
+    }
+
+    function openProviderMenu(cell) {
+      closeMenu();
+      cell.classList.add('ctx-cell--open');
+      const pop = document.createElement('div');
+      pop.className = 'popover';
+      pop.innerHTML = '<div class="popover__hint">Switching provider changes the fuel source. Each shows its current window.</div>';
+      Object.entries(PROVIDERS).forEach(([id, p]) => {
+        const btn = document.createElement('button');
+        btn.className = 'opt' + (id === state.provider ? ' opt--current' : '');
+        const lowClass = p.usagePct < 15 ? 'ctx-mini-fill--warning' : '';
+        btn.innerHTML = `<span class="opt__main"><span class="opt__label"><span class="provider-tag provider-tag--${p.kind==='commune'?'commune':'direct'}">${p.label}</span>${id===state.provider?'<span class="opt__check">✓</span>':''}</span><span class="opt__sub">${p.sub} · ${p.models.length} model${p.models.length>1?'s':''}</span></span><span class="opt__meter"><span class="ctx-mini-meter"><span class="ctx-mini-fill ${lowClass}" style="width:${p.usagePct}%"></span></span><span style="font:var(--font-size-xs)/1 var(--font-mono);color:var(--color-text-tertiary)">${p.usagePct}%</span></span>`;
+        btn.onclick = () => { state.provider = id; state.model = p.models[0].id; renderStrip(); closeMenu(); };
+        pop.appendChild(btn);
+      });
+      cell.appendChild(pop);
+      openMenu = pop;
+    }
+
+    function openModelMenu(cell) {
+      closeMenu();
+      cell.classList.add('ctx-cell--open');
+      const p = PROVIDERS[state.provider];
+      const pop = document.createElement('div');
+      pop.className = 'popover';
+      pop.innerHTML = `<div class="popover__hint">Models available via <strong>${p.label}</strong>. model_set reconfigures within this provider.</div>`;
+      p.models.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'opt' + (m.id === state.model ? ' opt--current' : '');
+        btn.innerHTML = `<span class="opt__main"><span class="opt__label">${m.label}${m.id===state.model?'<span class="opt__check">✓</span>':''}</span><span class="opt__sub">${m.sub}</span></span>`;
+        btn.onclick = () => { state.model = m.id; renderStrip(); closeMenu(); };
+        pop.appendChild(btn);
+      });
+      cell.appendChild(pop);
+      openMenu = pop;
+    }
+
+    document.getElementById('providerCell').addEventListener('click', e => {
+      if (e.target.closest('.popover')) return;
+      openProviderMenu(e.currentTarget);
+    });
+    document.getElementById('modelCell').addEventListener('click', e => {
+      if (e.target.closest('.popover')) return;
+      openModelMenu(e.currentTarget);
+    });
+    document.addEventListener('click', e => {
+      if (openMenu && !e.target.closest('.ctx-cell--control')) closeMenu();
+    });
+    renderStrip();
+  </script>
+</body>
+</html>
