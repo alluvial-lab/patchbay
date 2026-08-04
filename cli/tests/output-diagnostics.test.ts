@@ -31,11 +31,11 @@ import {
 } from "@patchbay/contracts";
 import { adapterStatusCommand } from "../src/commands/adapter-status.js";
 import { auditQueryCommand } from "../src/commands/audit-query.js";
-import { auditPageView, adapterStatusPageView } from "../src/commands/diagnostics.js";
+import { auditPageView, adapterStatusPageView, parseAuditTarget } from "../src/commands/diagnostics.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
 import { CredentialStore } from "../src/credentials.js";
 import { parseArguments, run, usage } from "../src/main.js";
-import { exitCodeForSubmission, printSubmissionResult } from "../src/output.js";
+import { exitCodeForSubmission, printSubmissionResult, targetScopeView } from "../src/output.js";
 import { captureOutput, credentials, diagnosticsResponse, DOMAIN, session, snapshotResponse } from "./helpers.js";
 
 async function credentialStore(): Promise<CredentialStore> {
@@ -44,6 +44,40 @@ async function credentialStore(): Promise<CredentialStore> {
   await store.write(credentials());
   return store;
 }
+
+test("audit target parsing separates legacy audit ids from canonical operational resources", () => {
+  const legacy = parseAuditTarget("resource=principal%2Fone", DOMAIN)!;
+  assert.equal(legacy.legacyAuditResourceId, "principal/one");
+  assert.equal(legacy.resource, undefined);
+
+  const operational = parseAuditTarget(
+    "adapter=token%2Fcommune;resource-kind=provider%20pool;resource=shared%2Fone",
+    DOMAIN,
+  )!;
+  assert.equal(operational.legacyAuditResourceId, "");
+  assert.equal(operational.resource?.adapterId?.value, "token/commune");
+  assert.equal(operational.resource?.resourceKind?.value, "provider pool");
+  assert.equal(operational.resource?.resourceId?.value, "shared/one");
+  assert.deepEqual(targetScopeView(operational), {
+    kind: "resource",
+    actorId: null,
+    adapterId: null,
+    runtimeSessionId: null,
+    sessionGeneration: null,
+    deploymentScope: null,
+    projectOrGroup: null,
+    legacyAuditResourceId: null,
+    resource: {
+      adapterId: "token/commune",
+      resourceKind: "provider pool",
+      resourceId: "shared/one",
+    },
+  });
+  assert.throws(
+    () => parseAuditTarget("adapter=a;resource-kind=pool", DOMAIN),
+    /requires adapter, resource-kind, and resource/,
+  );
+});
 
 test("SubmissionOutcome has stable script-facing exit codes", () => {
   assert.equal(exitCodeForSubmission(SubmissionOutcome.ACCEPTED), 0);

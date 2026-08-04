@@ -132,6 +132,11 @@ export function targetScopeView(value: TargetScope | undefined): unknown {
     sessionGeneration: value.sessionGeneration?.value.toString() ?? null,
     deploymentScope: value.deploymentScope || null,
     projectOrGroup: value.projectOrGroup || null,
-    resourceId: value.resourceId || null,
+    legacyAuditResourceId: value.legacyAuditResourceId || null,
+    resource: value.resource ? {
+      adapterId: value.resource.adapterId?.value || null,
+      resourceKind: value.resource.resourceKind?.value || null,
+      resourceId: value.resource.resourceId?.value || null,
+    } : null,
   };
 }

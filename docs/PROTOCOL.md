@@ -38,6 +38,18 @@ Generation rules:
 - The tombstone fact ("generation N existed, superseded at LSN X") is an audit record retained indefinitely. Per-generation detail (full command/event/reply state) is bounded and reclaimable by log compaction. After compaction, an operator querying an aged-out generation gets the tombstone plus any not-yet-compacted detail, with a note that older detail was compacted.
 - Late replies or events must bind to the session generation they describe. A reply for an old generation cannot mutate a new generation.
 
+## Operational-resource identity and resolution
+
+An operational resource has the routable identity tuple **`(adapter_id, resource_kind, resource_id)`**. `ResourceId` is adapter-local; `ResourceKind` is an open adapter-owned identifier whose admitted set belongs to the adapter capability manifest. The core does not enumerate adapter resource kinds. A resource carries no runtime-session id, deployment scope, or generation; replacement, revision, and tombstone semantics belong to the resource-state contract.
+
+Operational resource Operations and Grants encode this tuple in `TargetScope.resource`. Protobuf tag 8 remains `legacy_audit_resource_id` solely for durable principal/endpoint/device audit targets; it is not an operational identity and is rejected at Operation, Grant, and resolution boundaries. Mixed flattened/nested target shapes fail validation rather than being normalized.
+
+Ordinary target resolution dispatches by `TargetScopeKind`: runtime sessions retain generation/tombstone resolution, while resources resolve only when their exact typed identity is registered in the authority-domain resource projection. Unknown or malformed resources return `target_not_found`; the core never fabricates runtime-session identity for them. Adapter delivery uses the adapter inside the validated resource tuple. The core-local diagnostics resolver remains a separate authority-domain binding and is not available to ordinary Submit.
+
+A resource-scope Grant contains only the exact adapter/kind/local-id tuple and only a requested `RESOURCE` target. An adapter Grant explicitly contains canonical resources owned by that adapter; fleet and authority-domain Grants retain their existing wider authority-domain-bounded containment. No implicit resource-kind or local-id wildcard exists.
+
+These post-v0.1 semantics are implementation-checked by Rust boundary, resolver, delivery-routing, replay-validation, and property tests. Promoted resource-plane conformance vectors and formal assurance remain owned by the resource-plane conformance feature; this implementation evidence does not promote the claim to checked-normative.
+
 ## Operations, Observations, Elicitations, payloads, and correlation
 
 Patchbay uses an actor-neutral vocabulary of three primitives — Operation, Observation, and Elicitation — with Payload as content carried inside any of them, not a standalone authority primitive. Every primitive carries `{sender, recipient}` actor fields. v0.1.0 Operations are operator-originated; the actor-neutral sender vocabulary is a reserved seam for non-operator senders (agent→agent, adapter→operator service Operations). v0.1.0 does not mediate non-operator-originated authority-bearing Operations.
@@ -609,6 +621,8 @@ Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does
 | principals / authority domains | single operator + single authority domain | C | `feature-v0-walking-skeleton`; SECURITY §"v0.1.0 authority domain" |
 | principals / authority domains | multi-operator / federated authority domains, shared authority administration, handoffs | R | SECURITY; GLOSSARY "authority domain"; `idea-multi-human-coordination` |
 | adapters | Pi as the first workflow-migration adapter | C | SPEC "Adapter posture" |
+| operational resources | typed identity `(adapter_id, resource_kind, resource_id)`, exact resource-grant containment, and target-kind-polymorphic ordinary resolution | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-resource-identity`; PROTOCOL "Operational-resource identity and resolution" |
+| operational resources | resource revision/replacement/tombstones, manifest-admitted resource kinds, and resource-kind-wide grants | R | resource-plane sibling features; PROTOCOL "Operational-resource identity and resolution" |
 | adapters | other harnesses, shell jobs, CI jobs, project tools, notification systems, human approval surfaces | R | SPEC "Adapter posture" |
 | adapter capabilities | 3-tier snapshot model; capability manifest fields (`supported_operation_kinds`, snapshot tier, `streaming`, `cancellation`, `session_replacement`, `idempotency_strength`, `attachment_method`, `known_failure_modes`) | C | `feature-session-identity-adapter-contract`; PROTOCOL "Adapter capabilities" |
 | adapter capabilities | adapter-declared typed diagnostic reports, bounded recent adapter-status evidence, and existing-view cockpit composition | C | `epic-observability-dogfooding-cockpit-diagnostics`; PROTOCOL Payload and failure vocabulary |

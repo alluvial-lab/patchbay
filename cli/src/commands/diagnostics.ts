@@ -18,6 +18,9 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   PayloadContentType as PayloadContentTypeRegistry,
+  ResourceIdSchema,
+  ResourceIdentitySchema,
+  ResourceKindSchema,
   TargetScopeKind,
   TargetScopeSchema,
   type AdapterStatusPage,
@@ -200,11 +203,15 @@ export function parseRfc3339(raw: string | undefined, option: string): Timestamp
 export function parseAuditTarget(raw: string | undefined, authorityDomainId: string): TargetScope | undefined {
   if (raw === undefined) return undefined;
   if (!raw) throw new Error("--target must not be empty");
-  if (raw.includes(";")) return parseCanonicalSessionTarget(raw);
+  if (raw.includes(";")) {
+    return raw.split(";").some((part) => part.startsWith("resource-kind="))
+      ? parseCanonicalResourceTarget(raw)
+      : parseCanonicalSessionTarget(raw);
+  }
   if (raw === "authority-domain") return authorityDomainTarget(authorityDomainId);
   if (raw === "fleet") return create(TargetScopeSchema, { kind: TargetScopeKind.FLEET_SUPERVISOR });
   const separator = raw.indexOf("=");
-  if (separator <= 0 || separator !== raw.lastIndexOf("=")) throw new Error("--target must be authority-domain, fleet, actor=, adapter=, group=, resource=, or a canonical runtime identity");
+  if (separator <= 0 || separator !== raw.lastIndexOf("=")) throw new Error("--target must be authority-domain, fleet, actor=, adapter=, group=, resource=, or a canonical runtime/resource identity");
   const key = raw.slice(0, separator);
   let value: string;
   try { value = decodeURIComponent(raw.slice(separator + 1)); } catch { throw new Error("--target contains invalid percent-encoding"); }
@@ -213,9 +220,38 @@ export function parseAuditTarget(raw: string | undefined, authorityDomainId: str
     case "actor": return create(TargetScopeSchema, { kind: TargetScopeKind.ACTOR, actorId: { value } });
     case "adapter": return create(TargetScopeSchema, { kind: TargetScopeKind.ADAPTER, adapterId: { value } });
     case "group": return create(TargetScopeSchema, { kind: TargetScopeKind.PROJECT_SESSION_GROUP, projectOrGroup: value });
-    case "resource": return create(TargetScopeSchema, { kind: TargetScopeKind.RESOURCE, resourceId: value });
+    case "resource": return create(TargetScopeSchema, { kind: TargetScopeKind.RESOURCE, legacyAuditResourceId: value });
     default: throw new Error(`invalid --target kind: ${key}`);
   }
+}
+
+function parseCanonicalResourceTarget(raw: string): TargetScope {
+  const values = new Map<string, string>();
+  for (const part of raw.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0 || separator !== part.lastIndexOf("=")) {
+      throw new Error("canonical resource target must use key=value components");
+    }
+    const key = part.slice(0, separator);
+    if (!new Set(["adapter", "resource-kind", "resource"]).has(key) || values.has(key)) {
+      throw new Error(`canonical resource target has an unknown or duplicate component: ${key}`);
+    }
+    let value: string;
+    try { value = decodeURIComponent(part.slice(separator + 1)); } catch { throw new Error("--target contains invalid percent-encoding"); }
+    if (!value) throw new Error(`canonical resource target ${key} must not be empty`);
+    values.set(key, value);
+  }
+  if (values.size !== 3) {
+    throw new Error("canonical resource target requires adapter, resource-kind, and resource");
+  }
+  return create(TargetScopeSchema, {
+    kind: TargetScopeKind.RESOURCE,
+    resource: create(ResourceIdentitySchema, {
+      adapterId: { value: values.get("adapter")! },
+      resourceKind: create(ResourceKindSchema, { value: values.get("resource-kind")! }),
+      resourceId: create(ResourceIdSchema, { value: values.get("resource")! }),
+    }),
+  });
 }
 
 export interface AuditRecordView {
@@ -486,7 +522,12 @@ function formatTarget(value: unknown): string {
   const target = value as Record<string, unknown>;
   const kind = String(target.kind ?? "unknown");
   if (kind === "runtime_session") return `adapter=${target.adapterId};scope=${target.deploymentScope};runtime=${target.runtimeSessionId};generation=${target.sessionGeneration}`;
-  if (kind === "actor" || kind === "adapter" || kind === "resource") return `${kind}=${target.actorId ?? target.adapterId ?? target.resourceId}`;
+  if (kind === "resource" && target.resource && typeof target.resource === "object") {
+    const resource = target.resource as Record<string, unknown>;
+    return `adapter=${resource.adapterId};resource-kind=${resource.resourceKind};resource=${resource.resourceId}`;
+  }
+  if (kind === "actor" || kind === "adapter") return `${kind}=${target.actorId ?? target.adapterId}`;
+  if (kind === "resource") return `resource=${target.legacyAuditResourceId}`;
   if (kind === "project_session_group") return `group=${target.projectOrGroup}`;
   return kind;
 }

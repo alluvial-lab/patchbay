@@ -148,8 +148,9 @@ The diagnostic commands are:
 | `session-health [session-id]` | `--json` | Session connectivity × activity axes — the full canonical registries — for one or all sessions. |
 
 `audit-query` accepts targets `authority-domain`, `fleet`, `actor=ID`,
-`adapter=ID`, `group=VALUE`, `resource=ID`, or the canonical runtime identity
-`adapter=...;scope=...;runtime=...;generation=...`. Enum filters are generated
+`adapter=ID`, `group=VALUE`, audit-only `resource=ID`, the canonical runtime identity
+`adapter=...;scope=...;runtime=...;generation=...`, or the canonical operational-resource identity
+`adapter=...;resource-kind=...;resource=...`. Enum filters are generated
 names in comma-separated lists; duplicate values and unknown values are
 rejected before the network call. `--since` is inclusive; `--until`,
 `--before-event`, and `--audit-before-event` are exclusive. Adapter cursors

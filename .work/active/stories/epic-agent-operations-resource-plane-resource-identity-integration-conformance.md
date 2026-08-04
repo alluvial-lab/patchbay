@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity-integration-conformance
 kind: story
-stage: implementing
+stage: done
 tags: [foundation, protocol, security, testing]
 parent: epic-agent-operations-resource-plane-resource-identity
 depends_on: [epic-agent-operations-resource-plane-resource-identity-polymorphic-target-resolution, epic-agent-operations-resource-plane-resource-identity-resource-authority-containment]
 release_binding: null
 gate_origin: null
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Close resource identity acceptance and compatibility evidence
@@ -46,3 +46,19 @@ Consumes both polymorphic resolution and authority containment. This checkpoint
 closes their shared acceptance/delivery boundary; it must not absorb resource
 snapshots/revisions, capability manifest fields, adapter projection schemas, or
 cockpit rendering.
+
+## Implementation notes
+
+- Acceptance now validates canonical resource shape before issuer posture, grant, resolver, dedup, or append work. Nested identity on a non-resource target and any operational use of the legacy audit scalar fail with `validation_failed`.
+- Added integrated evidence for exact authorized+registered acceptance without session fields, authorized-but-unknown `target_not_found`, malformed-before-port ordering, exact grant collision denial, and full-tuple target-key separation.
+- Preserved control-surface audit compatibility: existing producers and stored tag-8 bytes use `legacy_audit_resource_id`; CLI JSON exposes that audit-only value separately from nested operational resource identity. Audit filtering keeps `resource=ID` audit-only and adds canonical `adapter=...;resource-kind=...;resource=...` parsing with percent encoding.
+- Rolled PROTOCOL, SECURITY, VERIFICATION, UX, and GLOSSARY assertions forward. Verification explicitly labels this implementation-checked and leaves promoted vectors/formal assurance to the epic's closing conformance feature.
+- No resource snapshots, revisions, manifests, projection schemas, report ingress, or cockpit rendering entered this checkpoint.
+
+## Verification
+
+- `cargo test --workspace` — all Rust core/server/unit/integration/doc tests passed, including 4 new resource-acceptance tests and existing runtime-session/diagnostics/audit regressions.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd cli && npm test` — 37 passed.
+- `cd contracts/ts && npm run build && npm run check:drift` — passed.
+- `node contracts/scripts/check-vectors.mjs`, `check-models.mjs`, and `check-presentation.mjs` — passed; no resource evidence was falsely promoted.

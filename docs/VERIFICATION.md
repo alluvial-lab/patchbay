@@ -284,6 +284,12 @@ Properties:
 
 Formal models do not prove browser cookie mechanics or cryptographic token strength; they model the server-side effects of valid, missing, expired, and revoked session/CSRF evidence.
 
+### Operational-resource identity evidence (implementation-checked)
+
+The post-v0.1 resource-identity foundation is implementation-checked, not formally promoted. Rust interface and property tests exercise canonical parsing before authority/stateful work; exact grant containment across independently varied adapter/kind/local-id dimensions; exact registered-resource resolution; nested-adapter delivery routing; legacy tag-8 audit decoding without operational promotion; and full-tuple idempotency-key scoping. Cross-language generated-contract builds and drift checks cover the Protobuf shape.
+
+No resource-identity property is currently checked-model or checked-normative. Promoted resource authority/durability/stale-state vectors and any mutation-survivable formal property remain with the resource-plane conformance feature. Green implementation/property tests must not be described as promoted conformance or formal assurance.
+
 ### Audit integrity
 
 Properties:

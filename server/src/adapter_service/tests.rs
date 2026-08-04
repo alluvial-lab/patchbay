@@ -207,8 +207,8 @@ fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
 
     let adapter_a = AdapterId { value: "adapter-a".into() };
     let adapter_b = AdapterId { value: "adapter-b".into() };
-    assert_eq!(deliveries_for_events(&[event.clone()], &commands, &adapter_a, 0).len(), 1);
-    assert!(deliveries_for_events(&[event.clone()], &commands, &adapter_b, 0).is_empty());
+    assert_eq!(deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_a, 0).len(), 1);
+    assert!(deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_b, 0).is_empty());
 
     let mut malformed = operation;
     malformed.target_scope.as_mut().unwrap().resource.as_mut().unwrap().resource_kind = None;

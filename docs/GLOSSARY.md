@@ -119,6 +119,18 @@ A registry-owned kind of Operation: `spawn`, `attach`, `instruct`, `cancel`, `in
 
 An adapter-reported non-session target whose state materially governs agent availability, capability, or safe control, or requires human action to keep agent work operating. Provider-capacity pools, contribution/credential health, and model availability are examples. Resource identity and domain health are distinct from runtime-session identity and connectivity/activity; an exhausted resource is not an offline session. Patchbay owns durable Operations, authority, correlation, reconciliation, and attention around the target while the adapter owns its domain schema and policy.
 
+## ResourceId
+
+An adapter-local typed scalar naming one resource inside an adapter-owned resource kind. It is not globally routable by itself.
+
+## ResourceKind
+
+A non-empty open identifier for an adapter-owned resource collection or type. The adapter capability manifest owns the admitted set; ResourceKind is not a core enum.
+
+## ResourceIdentity
+
+The full routable operational-resource tuple `(adapter_id, resource_kind, resource_id)`. Equality, resolution, grant containment, delivery routing, and idempotency scoping use the complete tuple. It carries no runtime-session generation. Protobuf tag 8's `legacy_audit_resource_id` is an audit-only control-surface target and is not a ResourceIdentity.
+
 ## Operator session
 
 An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an actor, endpoint, device, endpoint generation, and core-assigned operator-session generation. Opaque session ids are process-local bearer references and are not restored after restart. It is the continuity mechanism for a control surface, not a substitute for command grants.

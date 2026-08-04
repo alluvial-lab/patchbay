@@ -12,7 +12,8 @@ v0.1.0 security must ensure:
 
 - only authenticated operator endpoints can submit control actions;
 - every Operation is authorized before durable acceptance;
-- accepted Operations bind to the intended target session and generation;
+- accepted Operations bind to the intended runtime-session generation or exact operational-resource `(adapter_id, resource_kind, resource_id)` tuple;
+- resource-id collisions across adapters or adapter-owned kinds cannot widen a resource grant or route to the wrong adapter;
 - retries cannot double-apply intent at the Patchbay boundary;
 - browser sessions can be revoked promptly;
 - stale or late events cannot mutate newer session state;
@@ -127,7 +128,7 @@ An Operation is accepted only after Patchbay validates:
 
 1. payload shape and `OperationKind` (the kind must be a known Patchbay OperationKind; an unknown or reserved-but-not-validatable kind like `agent-send` or `adapter-utility-exec` is `validation_failed` at submission, before a grant is evaluated);
 2. authenticated issuer session or endpoint;
-3. target actor/session identity and generation, or fleet/supervisor scope for spawn Operations whose target does not yet exist;
+3. target actor/runtime-session identity and generation, exact typed operational-resource identity, or fleet/supervisor scope for spawn Operations whose target does not yet exist;
 4. idempotency key or command id;
 5. Operation expiration window;
 6. a live, unrevoked grant permitting that issuer to perform that OperationKind on that target scope.
@@ -157,7 +158,7 @@ A v0.1.0 grant has at least:
 - revocation generation or revoked time;
 - revocation policy for already accepted commands.
 
-Delegation is a reserved future direction, not a v0.1.0 field; a `parent grant id / delegated-by` field is intentionally absent from v0.1.0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time.
+Delegation is a reserved future direction, not a v0.1.0 field; a `parent grant id / delegated-by` field is intentionally absent from v0.1.0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time. Operational-resource identity is the exact `(adapter_id, resource_kind, resource_id)` tuple: a resource Grant matches only that tuple and a requested resource target. A local id collision under another adapter or kind is denied; adapter, fleet, and authority-domain Grants are the explicit wider scopes. The legacy Protobuf tag-8 audit target cannot satisfy an operational resource Grant.
 
 ### Spawn authority
 

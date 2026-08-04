@@ -11,6 +11,7 @@ use prost_types::Timestamp;
 
 use crate::{
     authority::IssuerContext,
+    resource::ResourceIdentity,
     storage::{DedupOutcome, Storage, StorageError, TargetKey},
 };
 
@@ -454,6 +455,23 @@ fn validate_operation<'a>(
         return Err(ValidationRejection::validation_failed(
             "operation target_scope kind is unspecified",
         ));
+    }
+    match target_scope_kind {
+        TargetScopeKind::Resource => {
+            ResourceIdentity::try_from_scope(target_scope)
+                .map_err(|error| ValidationRejection::validation_failed(error.to_string()))?;
+        }
+        _ if target_scope.resource.is_some() => {
+            return Err(ValidationRejection::validation_failed(
+                "non-resource target carries resource identity",
+            ));
+        }
+        _ if !target_scope.legacy_audit_resource_id.is_empty() => {
+            return Err(ValidationRejection::validation_failed(
+                "legacy audit resource id is not valid on an operation target",
+            ));
+        }
+        _ => {}
     }
 
     if operation.idempotency_key.is_empty() {
