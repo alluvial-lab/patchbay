@@ -158,7 +158,7 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
         authority_domain_id: Some(domain.clone()),
         adapter_generation: Some(Generation { value: 3 }),
         capability: Some(AdapterCapability {
-            snapshot_support: AdapterSnapshotSupport::Authoritative as i32,
+            session_snapshot_support: AdapterSnapshotSupport::Authoritative as i32,
             attachment_method: Some(patchbay_contracts::patchbay::AttachmentMethod {
                 kind: "local".to_owned(),
                 descriptor: b"sentinel-secret".to_vec(),

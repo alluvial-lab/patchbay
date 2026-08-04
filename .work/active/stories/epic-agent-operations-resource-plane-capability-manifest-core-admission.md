@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-capability-manifest-core-admission
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, adapter]
 parent: epic-agent-operations-resource-plane-capability-manifest
 depends_on: [epic-agent-operations-resource-plane-capability-manifest-contract-registry]
@@ -56,3 +56,22 @@ or a delivery gate.
 Depends on generated contract types. Resource-report ingress is sibling
 `resource-state` scope; this checkpoint supplies the exact admission/schema
 binding API that sibling must call without inventing report or snapshot state.
+
+## Implementation notes
+
+- Added a generated-contract-derived validated capability projection with a
+  committed target-category allowlist, exact per-kind resource declarations,
+  bounded schema descriptors, and attach/replay validation contexts.
+- Fresh attach now requires explicit internally consistent categories. Replay
+  alone normalizes a category-less, resource-empty legacy registration to
+  session-only; resource-bearing or otherwise malformed records still abort
+  replay.
+- Stored the validated projection beside each adapter registration and exposed
+  exact `ResourceIdentity` lookup plus payload/projection descriptor matching.
+  These APIs neither register a resource nor consult grants or delivery support.
+- Added focused tests for session-only/resource-only/mixed declarations,
+  two-kind lookup, cross-adapter denial, schema mismatch, reserved OKF/category
+  rejection, invalid enum/tier/descriptor relations, no-append fresh rejection,
+  and replay compatibility/corruption.
+- Verified the focused capability suite, full Rust workspace tests, and
+  `cargo clippy --workspace --all-targets -- -D warnings`.

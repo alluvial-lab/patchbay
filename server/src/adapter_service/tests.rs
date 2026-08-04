@@ -6,7 +6,7 @@ use std::sync::{
 use patchbay_contracts::patchbay::{
     observation_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
-    AdapterSnapshotSupport, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
     PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
@@ -1247,9 +1247,10 @@ fn registration(domain: AuthorityDomainId) -> AdapterRegistration {
         capability: Some(AdapterCapability {
             supported_operation_kinds: vec![OperationKind::Instruct as i32],
             streaming_support: true,
-            snapshot_support: AdapterSnapshotSupport::Partial as i32,
+            session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
             cancellation_support: true,
             session_replacement_support: true,
+            target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
             ..Default::default()
         }),
         ..Default::default()

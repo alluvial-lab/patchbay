@@ -7,6 +7,13 @@
 
 use std::collections::HashMap;
 
+pub mod capability;
+
+pub use capability::{
+    CapabilityValidationContext, CapabilityValidationError, ValidatedAdapterCapability,
+    ValidatedProjectionContract, ValidatedResourceCapability, ValidatedSchemaDescriptor,
+};
+
 use patchbay_contracts::patchbay::{
     typed_correlation, AdapterId, AdapterRegistration, AuthorityDomainId, CommandId,
     CommandTransition, EventId, FailureCode, Observation, ObservationKind, OperationState,
@@ -17,6 +24,7 @@ use prost::Message;
 
 use crate::{
     acceptance::{Clock, CommandIndex},
+    resource::ResourceIdentity,
     storage::{RecordedEvent, Storage},
     target::target_adapter_id,
 };
@@ -27,6 +35,7 @@ pub const DELIVERY_ACKNOWLEDGEMENT_SCHEMA: &str = "patchbay.adapter.DeliveryAckn
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterRecord {
     pub registration: AdapterRegistration,
+    pub validated_capability: ValidatedAdapterCapability,
     pub attach_event_id: EventId,
 }
 
@@ -47,7 +56,7 @@ impl AdapterRegistry {
     }
 
     pub fn preflight(&self, registration: &AdapterRegistration) -> Result<(), AdapterError> {
-        validate_registration(registration)?;
+        validate_registration(registration, CapabilityValidationContext::Attach)?;
         let adapter_id = registration
             .adapter_id
             .as_ref()
@@ -93,7 +102,8 @@ impl AdapterRegistry {
             AdapterRegistration::decode(payload.payload.as_slice()).map_err(|error| {
                 AdapterError::CorruptRecord(format!("cannot decode adapter registration: {error}"))
             })?;
-        validate_registration(&registration)?;
+        let validated_capability =
+            validate_registration(&registration, CapabilityValidationContext::Replay)?;
         let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
             AdapterError::CorruptRecord("attach event has no authority domain".into())
         })?;
@@ -138,10 +148,35 @@ impl AdapterRegistry {
             adapter_id,
             AdapterRecord {
                 registration,
+                validated_capability,
                 attach_event_id: event.event_id.clone(),
             },
         );
         Ok(())
+    }
+
+    #[must_use]
+    pub fn resource_capability(
+        &self,
+        identity: &ResourceIdentity,
+    ) -> Option<&ValidatedResourceCapability> {
+        self.records
+            .get(identity.adapter_id())?
+            .validated_capability
+            .resource(identity.resource_kind())
+    }
+
+    pub fn validate_resource_projection<'a>(
+        &'a self,
+        identity: &ResourceIdentity,
+        payload: &PayloadEnvelope,
+        projection: &PayloadEnvelope,
+    ) -> Result<&'a ValidatedResourceCapability, CapabilityValidationError> {
+        let capability = self
+            .resource_capability(identity)
+            .ok_or(CapabilityValidationError::UndeclaredResource)?;
+        capability::validate_projection_envelopes(capability, payload, projection)?;
+        Ok(capability)
     }
 }
 
@@ -206,7 +241,9 @@ pub async fn ingest_registration<S: Storage>(
         crate::acceptance::SystemClock.now(),
         patchbay_contracts::patchbay::AuditEventKind::AdapterAttached,
     );
-    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId { value: adapter_id.value.clone() });
+    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId {
+        value: adapter_id.value.clone(),
+    });
     audit.endpoint_id = redacted.endpoint_id.clone();
     audit.target_scope = Some(TargetScope {
         kind: TargetScopeKind::Adapter as i32,
@@ -214,7 +251,9 @@ pub async fn ingest_registration<S: Storage>(
         ..Default::default()
     });
     audit.reason_code = "adapter_attached".to_owned();
-    let event_id = storage.append_decision(&authority_domain_id, payload, audit).await?;
+    let event_id = storage
+        .append_decision(&authority_domain_id, payload, audit)
+        .await?;
     registry.observe(&RecordedEvent {
         event_id: event_id.clone(),
         payload: StoredEventPayload {
@@ -438,7 +477,10 @@ fn redact_registration(mut registration: AdapterRegistration) -> AdapterRegistra
     registration
 }
 
-fn validate_registration(registration: &AdapterRegistration) -> Result<(), AdapterError> {
+fn validate_registration(
+    registration: &AdapterRegistration,
+    context: CapabilityValidationContext,
+) -> Result<ValidatedAdapterCapability, AdapterError> {
     if registration
         .adapter_id
         .as_ref()
@@ -471,9 +513,12 @@ fn validate_registration(registration: &AdapterRegistration) -> Result<(), Adapt
             "missing adapter_generation".into(),
         ));
     }
-    let capability = registration.capability.as_ref().ok_or_else(|| {
-        AdapterError::InvalidRegistration("missing capability".into())
-    })?;
+    let capability = registration
+        .capability
+        .as_ref()
+        .ok_or_else(|| AdapterError::InvalidRegistration("missing capability".into()))?;
+    let validated_capability = ValidatedAdapterCapability::try_from_wire(capability, context)
+        .map_err(|error| AdapterError::InvalidRegistration(error.to_string()))?;
     if let Some(reporting) = capability.diagnostic_reporting.as_ref() {
         if reporting.diagnostic_codes.len() > 128
             || reporting.diagnostic_codes.iter().any(|code| {
@@ -489,7 +534,7 @@ fn validate_registration(registration: &AdapterRegistration) -> Result<(), Adapt
             ));
         }
     }
-    Ok(())
+    Ok(validated_capability)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -508,7 +553,9 @@ pub enum AdapterError {
 
 #[cfg(test)]
 mod tests {
-    use patchbay_contracts::patchbay::{AdapterCapability, EndpointId, Generation};
+    use patchbay_contracts::patchbay::{
+        AdapterCapability, AdapterSnapshotSupport, AdapterTargetCategory, EndpointId, Generation,
+    };
 
     use super::*;
     use crate::storage::RusqliteStorage;
@@ -562,7 +609,11 @@ mod tests {
             }),
             authority_domain_id: Some(domain.clone()),
             adapter_generation: Some(Generation { value: generation }),
-            capability: Some(AdapterCapability::default()),
+            capability: Some(AdapterCapability {
+                session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                ..AdapterCapability::default()
+            }),
             ..Default::default()
         }
     }

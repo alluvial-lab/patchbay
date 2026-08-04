@@ -400,7 +400,7 @@ impl DiagnosticsProjection {
                 supported_operation_kinds: capability.supported_operation_kinds.clone(),
                 supported_target_spec_shapes: capability.supported_target_spec_shapes.clone(),
                 streaming_support: capability.streaming_support,
-                snapshot_support: capability.snapshot_support,
+                snapshot_support: capability.session_snapshot_support,
                 cancellation_support: capability.cancellation_support,
                 session_replacement_support: capability.session_replacement_support,
                 idempotency_strength: capability.idempotency_strength,
