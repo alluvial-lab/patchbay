@@ -1,11 +1,12 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use patchbay_contracts::patchbay::{
-    resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
+    resource_report_mutation, resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
     AuthorityDomainId, CommandId, DeviceId, EndpointId, Generation, Grant, GrantId,
     GrantProvenance, GrantRevocationPolicy, Observation, ObservationKind, Operation,
     OperationKind, OperationState, PayloadContentType, PayloadEnvelope, ResourceId,
-    ResourceKind, ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert,
+    ResourceFreshnessState, ResourceKind, ResourceReportMutation, ResourceStateEvent,
+    ResourceStateMutation, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
     ResourceViewStateUpdate, StoredEventKind, SubmissionOutcome, TimeWindow,
 };
 use patchbay_core::{
@@ -14,7 +15,10 @@ use patchbay_core::{
         CommandSnapshot, CommandStateLookup, ElicitationContractLookup,
     },
     authority::{ingest_grant, target_scope_matches, AuthorityRegistry, IssuerContext},
-    resource::{events, rebuild_from_log, ResourceIdentity, ResourceRegistry},
+    resource::{
+        events, ingest_resource_report, rebuild_from_log, ResourceIdentity, ResourceRegistry,
+        ResourceReportMode, ValidatedResourceReport,
+    },
     session::SessionRegistry,
     storage::{event_id, RecordedEvent, RusqliteStorage, Storage},
     target::TargetRegistry,
@@ -308,6 +312,161 @@ async fn resource_operation(vector: &ConformanceVector, with_grant: bool) -> Res
     Ok(())
 }
 
+fn report_mutation(identity: &ResourceIdentity, cached: bool) -> ResourceReportMutation {
+    ResourceReportMutation {
+        identity: Some(identity.to_scope().resource.expect("resource identity")),
+        mutation: Some(if cached {
+            resource_report_mutation::Mutation::Upsert(ResourceStateUpsert {
+                resource_payload: Some(envelope("resource.schema", vec![1])),
+                projection_payload: Some(envelope("projection.schema", vec![2])),
+            })
+        } else {
+            resource_report_mutation::Mutation::Unknown(ResourceStateUnknown {})
+        }),
+    }
+}
+
+fn validated_report(
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    resource_kind: &ResourceKind,
+    generation: u64,
+    mode: ResourceReportMode,
+    tier: AdapterSnapshotSupport,
+    mutations: Vec<ResourceReportMutation>,
+) -> ValidatedResourceReport {
+    ValidatedResourceReport {
+        authority_domain_id: authority_domain_id.clone(),
+        adapter_id: adapter_id.clone(),
+        adapter_generation: Generation { value: generation },
+        mode,
+        views: vec![ResourceViewReport {
+            resource_kind: Some(resource_kind.clone()),
+            completeness: tier as i32,
+            mutations,
+        }],
+        observed_at: Timestamp { seconds: 100, nanos: 0 },
+    }
+}
+
+async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
+    let authority_domain_id = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
+    let adapter_id = AdapterId { value: string(&vector.input, "/adapter_id")?.to_owned() };
+    let resource_kind = ResourceKind { value: string(&vector.input, "/resource_kind")?.to_owned() };
+    let generation = vector.input.pointer("/adapter_generation").and_then(Value::as_u64).ok_or("missing adapter generation")?;
+    let cached = tuple(&vector.input, "/baseline/cached_identity")?;
+    let unknown = tuple(&vector.input, "/baseline/unknown_identity")?;
+    let cases = vector.input.pointer("/cases").and_then(Value::as_array).ok_or("missing completeness cases")?;
+
+    for case in cases {
+        let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+        let mut registry = ResourceRegistry::new();
+        ingest_resource_report(
+            &storage,
+            &mut registry,
+            validated_report(
+                &authority_domain_id,
+                &adapter_id,
+                &resource_kind,
+                generation,
+                ResourceReportMode::Delta,
+                AdapterSnapshotSupport::Partial,
+                vec![report_mutation(&cached, true), report_mutation(&unknown, false)],
+            ),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let before_cached = registry.get(&cached).cloned().ok_or("cached baseline missing")?;
+        let before_unknown = registry.get(&unknown).cloned().ok_or("unknown baseline missing")?;
+        let mode_name = string(case, "/mode")?;
+        let mode = match mode_name {
+            "snapshot" => ResourceReportMode::Snapshot,
+            "delta" => ResourceReportMode::Delta,
+            _ => return Err(format!("unknown report mode {mode_name}")),
+        };
+        let tier_name = string(case, "/tier")?;
+        let tier = match tier_name {
+            "authoritative" => AdapterSnapshotSupport::Authoritative,
+            "partial" => AdapterSnapshotSupport::Partial,
+            "none" => AdapterSnapshotSupport::None,
+            _ => return Err(format!("unknown snapshot tier {tier_name}")),
+        };
+        if case.pointer("/listed").and_then(Value::as_array).is_none_or(|listed| !listed.is_empty()) {
+            return Err("deterministic omission cases must list no identities".to_owned());
+        }
+        ingest_resource_report(
+            &storage,
+            &mut registry,
+            validated_report(
+                &authority_domain_id,
+                &adapter_id,
+                &resource_kind,
+                generation,
+                mode,
+                tier,
+                Vec::new(),
+            ),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let cached_record = registry.get(&cached).ok_or("cached record disappeared")?;
+        let unknown_record = registry.get(&unknown).ok_or("unknown record disappeared")?;
+        match string(case, "/name")? {
+            "authoritative-omission" => {
+                if string(&vector.expected_outcome, "/authoritative_omission")? != "tombstoned"
+                    || !cached_record.tombstoned() || !unknown_record.tombstoned()
+                {
+                    return Err("authoritative omission did not tombstone baseline identities".to_owned());
+                }
+            }
+            "partial-omission" => {
+                if string(&vector.expected_outcome, "/partial_cached_omission")? != "stale"
+                    || cached_record.freshness != ResourceFreshnessState::Stale
+                    || unknown_record.freshness != ResourceFreshnessState::Unknown
+                    || cached_record.tombstoned()
+                    || unknown_record.tombstoned()
+                {
+                    return Err("partial omission was dishonest".to_owned());
+                }
+            }
+            "none-omission" => {
+                if string(&vector.expected_outcome, "/none_cached_omission")? != "stale"
+                    || cached_record.freshness != ResourceFreshnessState::Stale
+                    || unknown_record.freshness != ResourceFreshnessState::Unknown
+                    || cached_record.tombstoned()
+                    || unknown_record.tombstoned()
+                {
+                    return Err("none-tier omission was dishonest".to_owned());
+                }
+            }
+            "delta-omission" => {
+                if string(&vector.expected_outcome, "/delta_omission")? != "unchanged"
+                    || cached_record != &before_cached
+                    || unknown_record != &before_unknown
+                {
+                    return Err("delta omission mutated resource records".to_owned());
+                }
+            }
+            name => return Err(format!("unknown completeness case {name}")),
+        }
+        if string(&vector.expected_outcome, "/no_payload_omission")? != "unknown" && !unknown_record.tombstoned() {
+            return Err("no-payload omission expectation is not unknown".to_owned());
+        }
+        let replayed = rebuild_from_log(&storage, &authority_domain_id).await.map_err(|error| error.to_string())?;
+        if boolean(&vector.expected_outcome, "/hot_equals_replay")? && replayed != registry {
+            return Err("hot resource registry diverges from durable replay".to_owned());
+        }
+        let events = storage.read_after(&authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
+        if events.iter().filter(|event| event.payload.kind == StoredEventKind::ResourceState as i32).count() != 2
+            || vector.expected_outcome.pointer("/accepted_report_append_count").and_then(Value::as_u64) != Some(1)
+            || !boolean(&vector.expected_outcome, "/record_and_view_revisions_equal_committed_lsn")?
+        {
+            return Err("accepted report did not produce exactly one durable resource event".to_owned());
+        }
+    }
+    Ok(())
+}
+
 fn collision(vector: &ConformanceVector) -> Result<(), String> {
     let grant = tuple(&vector.input, "/grant_identity")?;
     let cases = [
@@ -389,6 +548,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
     match case {
         "resource_operation_durable_acceptance" => resource_operation(vector, true).await,
         "resource_operation_missing_grant" => resource_operation(vector, false).await,
+        "resource_snapshot_completeness_truth_table" => completeness(vector).await,
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),

@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance-durability-reconnect-honesty
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-vector-execution-bridge]
@@ -61,3 +61,15 @@ resurrecting a tombstone fails the oracle.
 Depends on the shared execution bridge. Keep the authority-domain log,
 `ResourceRegistry`, and `LoadSnapshot` as the existing machinery; do not add a
 resource event store or checkpoint namespace.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` at high reasoning, explicit caller selection for durability/reconnect verification.
+- Review weight: `thorough`, explicit caller override; left at `review` for the project deep lane.
+- Files changed: `snapshot-reconciliation.json`, new `resource-snapshot-completeness-honesty.json`, core/server conformance runners, `core/tests/resource_reconciliation.rs`, and generated conformance traceability.
+- Tests added: explicit RESOURCE snapshot discriminator/materialization execution; deterministic authoritative/partial/none/delta truth-table vector; a 100-case bounded arbitrary report-trace property over cached and no-payload identities with a raw mode/tier/listing oracle; hot/replay/replay-twice convergence; failed-append-before-fold property; omission mutant oracles.
+- Mutation evidence: (1) changed authoritative omission to stale; both vector and generated trace property failed. (2) changed partial/none omission to tombstone; the first vector oracle was found insufficient, strengthened to assert non-tombstoned weak-tier records, then the mutation failed. (3) treated delta omission as snapshot omission; vector failed. (4) folded a normalized resource event before an injected failed append; failed-append property failed. (5) disabled the source-generation rollback fence; the generation regression failed. (6) disabled terminal upsert resurrection rejection; the replacement regression failed. (7) forced materialized ResourceSnapshot LSN to zero; snapshot-reconciliation vector failed. All production mutations were reverted.
+- Verification: both focused implementation checks reported exact ids; arbitrary trace and focused regressions passed; `cargo test --workspace`, clippy with warnings denied, contracts build/vector/drift/presentation/model checks, and 103 web-cockpit tests passed.
+- Simplification: reused `ResourceRegistry`, one authority-domain log, normal replay, and `ProjectionState` materialization; no resource event store, checkpoint namespace, or production conformance abstraction was added.
+- Discrepancies from design: generated traces deliberately keep authoritative omission as the optional terminal step so later generated steps do not become invalid resurrection attempts; deterministic rejection regressions cover rollback/resurrection. The vectors remain draft until final promotion.
+- Adjacent issues parked: none.

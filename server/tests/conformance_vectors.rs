@@ -8,14 +8,19 @@ use patchbay_contracts::patchbay::{
     ResourceKind, ResourceProjectionContract, SchemaDescriptor, StoredEventKind, TargetScope,
     TargetScopeKind,
 };
-use patchbay_core::storage::{RusqliteStorage, Storage};
+use patchbay_core::{
+    resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    storage::{RusqliteStorage, Storage},
+};
 use patchbay_core_server::{
     adapter_service::{
         AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
         ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
     },
     rpc::adapter_control_service_server::AdapterControlService,
+    state::ProjectionState,
 };
+use prost_types::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
 use tonic::{Code, Request, Response};
@@ -147,6 +152,95 @@ fn observation(vector: &ConformanceVector, domain: &AuthorityDomainId, identity:
     })
 }
 
+async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
+    let request_kind = string(&vector.input, "/resource_case/request/view_kind")?;
+    let expected_request_kind = string(&vector.expected_outcome, "/resource_case/requested_view_kind")?;
+    let expected_return_kind = string(&vector.expected_outcome, "/resource_case/returned_view_kind")?;
+    if request_kind != "SNAPSHOT_VIEW_KIND_RESOURCE"
+        || request_kind != expected_request_kind
+        || request_kind != expected_return_kind
+    {
+        return Err("resource snapshot request/response discriminator disagrees".to_owned());
+    }
+    let cached_lsn = vector.input.pointer("/resource_case/cached_snapshot/snapshot_lsn/value").and_then(Value::as_u64).ok_or("missing cached snapshot LSN")?;
+    let report = vector.input.pointer("/resource_case/current_report").ok_or("missing current resource report")?;
+    let identity = tuple(report, "/identity")?;
+    let authority_domain_id = AuthorityDomainId {
+        value: string(&vector.input, "/resource_case/cached_snapshot/authority_domain_id/value")?.to_owned(),
+    };
+    let adapter_id = identity.adapter_id.clone().ok_or("identity missing adapter")?;
+    let resource_kind = identity.resource_kind.clone().ok_or("identity missing kind")?;
+    let generation = report.pointer("/source_adapter_generation").and_then(Value::as_u64).ok_or("missing source generation")?;
+    if string(report, "/mode")? != "snapshot"
+        || string(report, "/completeness")? != "ADAPTER_SNAPSHOT_SUPPORT_AUTHORITATIVE"
+    {
+        return Err("snapshot witness must be authoritative".to_owned());
+    }
+    let resource_payload = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        string(report, "/resource_payload")?,
+    ).map_err(|error| error.to_string())?;
+    let projection_payload = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        string(report, "/projection_payload")?,
+    ).map_err(|error| error.to_string())?;
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut resources = ResourceRegistry::new();
+    ingest_resource_report(
+        &storage,
+        &mut resources,
+        ValidatedResourceReport {
+            authority_domain_id: authority_domain_id.clone(),
+            adapter_id,
+            adapter_generation: Generation { value: generation },
+            mode: ResourceReportMode::Snapshot,
+            views: vec![patchbay_contracts::patchbay::ResourceViewReport {
+                resource_kind: Some(resource_kind),
+                completeness: AdapterSnapshotSupport::Authoritative as i32,
+                mutations: vec![patchbay_contracts::patchbay::ResourceReportMutation {
+                    identity: Some(identity.clone()),
+                    mutation: Some(patchbay_contracts::patchbay::resource_report_mutation::Mutation::Upsert(
+                        patchbay_contracts::patchbay::ResourceStateUpsert {
+                            resource_payload: Some(PayloadEnvelope {
+                                payload: resource_payload,
+                                content_type: PayloadContentType::Protobuf as i32,
+                                schema_ref: "provider_pool.payload.v1".to_owned(),
+                            }),
+                            projection_payload: Some(PayloadEnvelope {
+                                payload: projection_payload,
+                                content_type: PayloadContentType::Json as i32,
+                                schema_ref: "provider_pool.projection.v1".to_owned(),
+                            }),
+                        },
+                    )),
+                }],
+            }],
+            observed_at: Timestamp { seconds: 100, nanos: 0 },
+        },
+    ).await.map_err(|error| error.to_string())?;
+    let state = ProjectionState::rebuild(&storage, &authority_domain_id).await?;
+    let snapshot = state.materialize_resource_snapshot(
+        authority_domain_id.clone(),
+        Timestamp { seconds: 101, nanos: 0 },
+    ).await;
+    let current_lsn = snapshot.snapshot_lsn.as_ref().ok_or("materialized snapshot missing LSN")?.value;
+    let resource = snapshot.resources.first().ok_or("materialized snapshot missing resource")?;
+    if cached_lsn >= current_lsn
+        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/accepted").and_then(Value::as_bool) != Some(false)
+        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/replacement_required_from_lsn/value").and_then(Value::as_u64) != Some(current_lsn)
+        || vector.expected_outcome.pointer("/resource_case/replacement/resource_count").and_then(Value::as_u64) != Some(snapshot.resources.len() as u64)
+        || tuple(&vector.expected_outcome, "/resource_case/replacement/identity")? != identity
+        || string(&vector.expected_outcome, "/resource_case/replacement/freshness")? != "RESOURCE_FRESHNESS_STATE_CURRENT"
+        || resource.freshness != patchbay_contracts::patchbay::ResourceFreshnessState::Current as i32
+        || vector.expected_outcome.pointer("/resource_case/replacement/record_revision_equals_snapshot_lsn").and_then(Value::as_bool) != Some(resource.revision_lsn.as_ref().is_some_and(|revision| revision.value == current_lsn))
+        || string(&vector.expected_outcome, "/resource_case/replacement/authority_domain_id")? != authority_domain_id.value
+        || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
+    {
+        return Err("current resource materialization did not replace the stale cached view".to_owned());
+    }
+    Ok(())
+}
+
 async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     let domain = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
     let adapter_id = AdapterId { value: string(&vector.input, "/authenticated_adapter_id")?.to_owned() };
@@ -210,6 +304,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
+        "resource_snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "resource_observation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
     }

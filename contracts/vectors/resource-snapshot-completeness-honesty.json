@@ -1,0 +1,46 @@
+{
+  "vector_id": "resource-snapshot-completeness-honesty",
+  "property_id": "ResourceSnapshotCompletenessHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "resource_snapshot_completeness_truth_table" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ResourceReport.snapshot",
+    "patchbay.ResourceReport.delta",
+    "patchbay.ResourceViewReport.completeness",
+    "patchbay.ResourceViewReport.mutations",
+    "patchbay.ResourceFreshnessState",
+    "patchbay.Resource.tombstoned",
+    "patchbay.Resource.revision_lsn",
+    "patchbay.ResourceViewRevision.revision_lsn"
+  ],
+  "description": "Authoritative, partial, none, and delta reports apply distinct omission semantics over the same cached and no-payload identities, and hot/replayed projections converge.",
+  "input": {
+    "authority_domain_id": "auth-main",
+    "adapter_id": "token-commune",
+    "resource_kind": "provider_pool",
+    "adapter_generation": 2,
+    "baseline": {
+      "cached_identity": ["token-commune", "provider_pool", "cached"],
+      "unknown_identity": ["token-commune", "provider_pool", "unknown"]
+    },
+    "cases": [
+      { "name": "authoritative-omission", "mode": "snapshot", "tier": "authoritative", "listed": [] },
+      { "name": "partial-omission", "mode": "snapshot", "tier": "partial", "listed": [] },
+      { "name": "none-omission", "mode": "snapshot", "tier": "none", "listed": [] },
+      { "name": "delta-omission", "mode": "delta", "tier": "authoritative", "listed": [] }
+    ]
+  },
+  "expected_outcome": {
+    "authoritative_omission": "tombstoned",
+    "partial_cached_omission": "stale",
+    "none_cached_omission": "stale",
+    "no_payload_omission": "unknown",
+    "delta_omission": "unchanged",
+    "accepted_report_append_count": 1,
+    "record_and_view_revisions_equal_committed_lsn": true,
+    "hot_equals_replay": true
+  },
+  "invariant_check": "ResourceSnapshotCompletenessHonesty: omission has terminal meaning only for authoritative snapshots; weaker snapshots degrade cached evidence honestly, preserve no-payload unknown, and deltas make omission inert."
+}

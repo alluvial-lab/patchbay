@@ -501,7 +501,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stat
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 43 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 44 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -546,7 +546,7 @@ Summary: 43 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `ResourceCoreStateInjectionRejected` | stated-normative | [resource-core-state-injection-rejected](../contracts/vectors/resource-core-state-injection-rejected.json) (draft) | patchbay.Observation.kind<br>patchbay.Observation.payload<br>patchbay.ResourceStateEvent.authority_domain_id<br>patchbay.ResourceStateEvent.mutations<br>patchbay.ResourceStateEvent.source_adapter_id<br>patchbay.StoredEventPayload.kind |
 | `ResourceIdentityCollisionFenced` | stated-normative | [resource-identity-collision-fenced](../contracts/vectors/resource-identity-collision-fenced.json) (draft) | patchbay.Grant.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.TargetScope.resource |
 | `ResourceObservationSourceAuthenticated` | stated-normative | [resource-observation-source-authenticated](../contracts/vectors/resource-observation-source-authenticated.json) (draft) | patchbay.Observation.sender<br>patchbay.Observation.target_scope<br>patchbay.ObservationRequest.authority_domain_id<br>patchbay.ObservationRequest.event<br>patchbay.StoredEventPayload.kind<br>patchbay.TargetScope.resource |
-| `ResourceSnapshotCompletenessHonesty` | stated-normative | — | — |
+| `ResourceSnapshotCompletenessHonesty` | stated-normative | [resource-snapshot-completeness-honesty](../contracts/vectors/resource-snapshot-completeness-honesty.json) (draft) | patchbay.Resource.revision_lsn<br>patchbay.Resource.tombstoned<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceReport.delta<br>patchbay.ResourceReport.snapshot<br>patchbay.ResourceViewReport.completeness<br>patchbay.ResourceViewReport.mutations<br>patchbay.ResourceViewRevision.revision_lsn |
 | `ResourceStaleNeverLive` | stated-normative | — | — |
 | `RetryAfterTerminalReturnsExisting` | stated-normative | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
 | `RetryReusesIdAndKey` | stated-normative | — | — |
@@ -557,7 +557,7 @@ Summary: 43 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SessionIdentityTuple` | stated-normative | — | — |
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
-| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.SessionSnapshot.authority_domain_id<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.snapshot_lsn |
+| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResult.resource_snapshot<br>patchbay.LoadSnapshotResult.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
 | `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |
