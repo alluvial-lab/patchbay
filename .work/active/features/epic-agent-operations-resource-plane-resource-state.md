@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-state
 kind: feature
-stage: review
+stage: done
 tags: [foundation, protocol, storage]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity]
