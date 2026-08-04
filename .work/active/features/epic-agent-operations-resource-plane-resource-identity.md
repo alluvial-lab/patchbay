@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: review
+stage: implementing
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
@@ -405,3 +405,18 @@ One coherent feature owner carried the cross-cutting contract refactor because t
 - Test-integrity check: no test was deleted, skipped, weakened, or rewritten to accept production output; new tests independently vary adapter/kind/id and assert ordering before stateful ports.
 
 The feature is review-ready. Effective review weight is `thorough` from the explicit autopilot caller override; convergence requires a clean fresh-context pass after any receiver-confirmed material fix.
+
+## Review findings — pass 1 (2026-08-04)
+
+**Reviewer path**: same-harness fresh-context `openai-codex/gpt-5.6-sol` at xhigh; read-only Pi endpoint, not cross-model.
+
+**Receiver-confirmed blockers**:
+
+1. Resource status/result Observations authenticated only the adapter and did not compare their target tuple with the correlated accepted Operation. A same-adapter cross-kind/id Observation could terminalize the wrong resource command. Fix requires exact canonical target binding before append/transition plus authenticated-ingress regressions.
+2. Tag-8 compatibility evidence decoded the old scope bytes and queried new producer records, but did not prove an old-wire durable audit record remained indexed/filterable or that nested resource filters hit stored audit data. This is explicit acceptance evidence and must land now.
+
+**Rejected for this cycle**:
+
+- Adding authority-domain state to `ResourceRegistry`/`TargetRegistry`. Production constructs one projection per validated authority-domain log, v0.1 has one configured domain, the designed registry signature is identity-only, and the same latent trait-argument issue already exists for sessions in `.work/backlog/backlog-sessions-authority-domain-isolation.md`. This feature neither creates nor should partially solve that cross-cutting seam.
+
+**Closure policy**: `thorough`; after fixes and integrated verification, return to `review` for another fresh-context pass. No lower-risk finding required a new backlog item.
