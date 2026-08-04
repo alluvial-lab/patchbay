@@ -1,11 +1,14 @@
 use patchbay_contracts::patchbay::{
     resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, Generation,
-    PayloadContentType, PayloadEnvelope, ResourceId, ResourceIdentity, ResourceKind,
-    ResourceReportMutation, ResourceStateTombstone,
-    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
+    PayloadContentType, PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceIdentity,
+    ResourceKind, ResourceReportMutation, ResourceStateTombstone, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport,
 };
 use patchbay_core::{
-    resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    resource::{
+        adapter_stale_event, ingest_resource_report, rebuild_from_log, ResourceRegistry,
+        ResourceReportMode, ValidatedResourceReport,
+    },
     storage::RusqliteStorage,
 };
 use prost_types::Timestamp;
@@ -73,6 +76,96 @@ async fn snapshot_tiers_reconcile_omissions_without_fabricating_current_state() 
     .unwrap();
     assert!(!registry.contains(&domain_identity("two")));
     assert!(registry.get(&domain_identity("two")).unwrap().tombstoned());
+}
+
+#[tokio::test]
+async fn unknown_survives_omission_generation_disconnect_tombstone_and_replay() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = ResourceRegistry::new();
+    ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            1,
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Partial,
+            vec![unknown("mystery")],
+        ),
+    )
+    .await
+    .unwrap();
+    let identity = domain_identity("mystery");
+    let initial_revision = registry.get(&identity).unwrap().revision_lsn;
+
+    for tier in [AdapterSnapshotSupport::Partial, AdapterSnapshotSupport::None] {
+        ingest_resource_report(
+            &storage,
+            &mut registry,
+            report(1, ResourceReportMode::Snapshot, tier, Vec::new()),
+        )
+        .await
+        .unwrap();
+        let omitted = registry.get(&identity).unwrap();
+        assert_eq!(omitted.freshness, ResourceFreshnessState::Unknown);
+        assert_eq!(omitted.revision_lsn, initial_revision);
+        assert!(omitted.resource_payload.is_none());
+        assert!(omitted.projection_payload.is_none());
+    }
+
+    ingest_resource_report(
+        &storage,
+        &mut registry,
+        report_for_kind(
+            2,
+            "usage_window",
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![ResourceReportMutation {
+                identity: Some(wire_identity_for_kind("usage_window", "window")),
+                mutation: Some(resource_report_mutation::Mutation::Unknown(
+                    ResourceStateUnknown {},
+                )),
+            }],
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        registry.get(&identity).unwrap().freshness,
+        ResourceFreshnessState::Unknown,
+        "new adapter generation must not invent a stale cache"
+    );
+    assert!(adapter_stale_event(
+        &registry,
+        &domain(),
+        &AdapterId { value: "adapter-a".into() },
+        Generation { value: 2 },
+        Timestamp { seconds: 200, nanos: 0 },
+    )
+    .unwrap()
+    .is_none());
+
+    ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            2,
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Authoritative,
+            Vec::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    let retired = registry.get(&identity).unwrap();
+    assert!(retired.tombstoned());
+    assert_eq!(retired.freshness, ResourceFreshnessState::Unknown);
+    assert!(retired.resource_payload.is_none());
+    assert!(retired.projection_payload.is_none());
+
+    let replayed = rebuild_from_log(&storage, &domain()).await.unwrap();
+    assert_eq!(replayed, registry);
+    assert_eq!(replayed.get(&identity).unwrap().freshness, ResourceFreshnessState::Unknown);
 }
 
 #[tokio::test]
@@ -249,6 +342,15 @@ fn report_for_kind(
             mutations,
         }],
         observed_at: Timestamp { seconds: 100 + generation as i64, nanos: 0 },
+    }
+}
+
+fn unknown(id: &str) -> ResourceReportMutation {
+    ResourceReportMutation {
+        identity: Some(wire_identity(id)),
+        mutation: Some(resource_report_mutation::Mutation::Unknown(
+            ResourceStateUnknown {},
+        )),
     }
 }
 

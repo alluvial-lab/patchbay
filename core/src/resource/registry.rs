@@ -430,11 +430,23 @@ fn apply_tombstone(
     if prior.tombstoned() {
         return Err(ResourceError::TerminalTombstone(identity));
     }
+    let freshness = match (
+        prior.resource_payload.as_ref(),
+        prior.projection_payload.as_ref(),
+    ) {
+        (Some(_), Some(_)) => ResourceFreshnessState::Stale,
+        (None, None) => ResourceFreshnessState::Unknown,
+        _ => {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource tombstone at LSN {event_lsn} has only one cached envelope"
+            )))
+        }
+    };
     Ok(ResourceRecord {
         identity,
         resource_payload: prior.resource_payload,
         projection_payload: prior.projection_payload,
-        freshness: ResourceFreshnessState::Stale,
+        freshness,
         source_adapter_generation: generation,
         revision_lsn: event_lsn,
         observed_at,
@@ -479,11 +491,11 @@ fn apply_freshness_change(
             prior.resource_payload = None;
             prior.projection_payload = None;
         }
-        ResourceFreshnessState::Current
+        ResourceFreshnessState::Current | ResourceFreshnessState::Stale
             if prior.resource_payload.is_none() || prior.projection_payload.is_none() =>
         {
             return Err(ResourceError::CorruptLog(format!(
-                "resource freshness change at LSN {event_lsn} would mark an empty payload current"
+                "resource freshness change at LSN {event_lsn} would mark an empty payload {to:?}"
             )));
         }
         ResourceFreshnessState::Current | ResourceFreshnessState::Stale => {}

@@ -79,7 +79,7 @@ fn durable_fold_preserves_exact_identity_revisions_and_terminal_replacement() {
 }
 
 #[test]
-fn unknown_and_stale_are_reconciliation_freshness_not_payload_health() {
+fn active_stale_requires_cached_payload_envelopes() {
     let domain = domain();
     let id = identity("adapter-a", "provider_pool", "pool-1");
     let mut registry = ResourceRegistry::new();
@@ -103,7 +103,8 @@ fn unknown_and_stale_are_reconciliation_freshness_not_payload_health() {
     assert!(record.resource_payload.is_none());
     assert!(record.projection_payload.is_none());
 
-    registry.observe(&recorded(
+    let before = registry.clone();
+    let error = registry.observe(&recorded(
         &domain,
         2,
         state_event(
@@ -122,8 +123,50 @@ fn unknown_and_stale_are_reconciliation_freshness_not_payload_health() {
                 )),
             }],
         ),
+    )).unwrap_err();
+    assert!(matches!(error, ResourceError::CorruptLog(_)));
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn tombstoning_unknown_preserves_no_payload_freshness() {
+    let domain = domain();
+    let id = identity("adapter-a", "provider_pool", "pool-1");
+    let mut registry = ResourceRegistry::new();
+    registry.observe(&recorded(
+        &domain,
+        1,
+        state_event(
+            &domain,
+            "adapter-a",
+            1,
+            vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+            vec![ResourceStateMutation {
+                identity: Some(id.to_scope().resource.unwrap()),
+                from_revision_lsn: None,
+                mutation: Some(resource_state_mutation::Mutation::Unknown(
+                    ResourceStateUnknown {},
+                )),
+            }],
+        ),
     )).unwrap();
-    assert_eq!(registry.get(&id).unwrap().freshness, ResourceFreshnessState::Stale);
+    registry.observe(&recorded(
+        &domain,
+        2,
+        state_event(
+            &domain,
+            "adapter-a",
+            1,
+            vec![view("provider_pool", AdapterSnapshotSupport::Authoritative)],
+            vec![tombstone(&id, 1, None)],
+        ),
+    )).unwrap();
+
+    let retired = registry.get(&id).unwrap();
+    assert!(retired.tombstoned());
+    assert_eq!(retired.freshness, ResourceFreshnessState::Unknown);
+    assert!(retired.resource_payload.is_none());
+    assert!(retired.projection_payload.is_none());
 }
 
 #[test]

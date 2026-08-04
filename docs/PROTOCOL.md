@@ -484,9 +484,11 @@ modes:
   external collection: listed resources are installed as current and omitted
   active identities are terminally tombstoned. An adapter whose external view
   may omit live members must not claim this tier.
-- A `partial` snapshot updates listed identities and marks omitted cached
-  identities stale. A `none` snapshot carries no reconstructed mutations and
-  marks cached identities stale.
+- A `partial` snapshot updates listed identities and marks omitted identities
+  stale only when both cached envelopes exist. A `none` snapshot carries no
+  reconstructed mutations and applies the same cached-payload degradation.
+  An `unknown` no-payload identity remains `unknown`; omission cannot invent a
+  cache that does not exist.
 - A live **delta** changes only explicitly named identities regardless of tier;
   omission has no meaning.
 
@@ -499,16 +501,19 @@ mutation occurs before durable append; restart and live catch-up fold the same
 normalized event.
 
 An authenticated adapter id and current adapter generation fence report
-source. The first report from a newer adapter generation stales prior active
-records before applying the new evidence; abnormal stream loss durably stales
-all active resources owned by that adapter. An old attachment token or stream
-epoch is inert.
+source. A newer adapter generation fences prior cached records: records with both
+cached envelopes move from `current` to `stale`, while no-payload `unknown`
+records remain `unknown`. Abnormal stream loss applies the same degradation to
+resources owned by that adapter. An old attachment token or stream epoch is
+inert.
 
 A tombstone is terminal for one exact resource identity. A permanent
 replacement uses a distinct same-adapter `ResourceIdentity`; the old record
 retains `replaced_by`, and the matching replacement upsert commits in the same
-durable event. Late evidence cannot resurrect the retired tuple. Cross-adapter
-replacement and reusing a tombstoned identity are invalid.
+durable event. Tombstoning preserves cache honesty: a record with both cached
+envelopes becomes `stale`, while a no-payload record remains `unknown`. Late
+evidence cannot resurrect the retired tuple. Cross-adapter replacement and
+reusing a tombstoned identity are invalid.
 
 `LoadSnapshot` requires and echoes `SnapshotViewKind`. `session` returns only a
 validated `SessionSnapshot`; `resource` returns only a `ResourceSnapshot`

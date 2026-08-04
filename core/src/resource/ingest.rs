@@ -10,7 +10,10 @@ use prost_types::Timestamp;
 
 use crate::storage::{RecordedEvent, Storage};
 
-use super::{events, replay, ResourceError, ResourceIdentity, ResourceRegistry, ResourceViewKey};
+use super::{
+    events, replay, ResourceError, ResourceIdentity, ResourceRecord, ResourceRegistry,
+    ResourceViewKey,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceReportMode {
@@ -99,26 +102,19 @@ pub fn adapter_stale_event(
     });
     let mut records: Vec<_> = registry
         .resources()
-        .filter(|record| {
-            record.identity.adapter_id() == adapter_id
-                && !record.tombstoned()
-                && record.freshness != ResourceFreshnessState::Stale
-        })
+        .filter(|record| record.identity.adapter_id() == adapter_id && !record.tombstoned())
         .collect();
     records.sort_by(resource_record_order);
     let mutations = records
         .into_iter()
-        .map(|record| ResourceStateMutation {
-            identity: Some(record.identity.to_scope().resource.expect("canonical resource")),
-            from_revision_lsn: Some(Lsn {
-                value: record.revision_lsn,
-            }),
-            mutation: Some(resource_state_mutation::Mutation::FreshnessChanged(
-                ResourceFreshnessChanged {
-                    from: record.freshness as i32,
-                    to: ResourceFreshnessState::Stale as i32,
-                },
-            )),
+        .filter_map(|record| {
+            stale_change(record).map(|mutation| ResourceStateMutation {
+                identity: Some(record.identity.to_scope().resource.expect("canonical resource")),
+                from_revision_lsn: Some(Lsn {
+                    value: record.revision_lsn,
+                }),
+                mutation: Some(mutation),
+            })
         })
         .collect::<Vec<_>>();
     if mutations.is_empty() {
@@ -233,17 +229,17 @@ fn normalize_report(
                         }),
                     ),
                     AdapterSnapshotSupport::Partial | AdapterSnapshotSupport::None => {
-                        stale_change(record.freshness)
+                        stale_change(record)
                     }
                     AdapterSnapshotSupport::Unspecified => unreachable!(),
                 }
             } else if newer_generation {
-                stale_change(record.freshness)
+                stale_change(record)
             } else {
                 None
             }
         } else if newer_generation {
-            stale_change(record.freshness)
+            stale_change(record)
         } else {
             None
         };
@@ -431,15 +427,16 @@ fn validate_replacements(
     Ok(())
 }
 
-fn stale_change(
-    from: ResourceFreshnessState,
-) -> Option<resource_state_mutation::Mutation> {
-    (from != ResourceFreshnessState::Stale).then_some(
-        resource_state_mutation::Mutation::FreshnessChanged(ResourceFreshnessChanged {
-            from: from as i32,
+fn stale_change(record: &ResourceRecord) -> Option<resource_state_mutation::Mutation> {
+    (record.freshness == ResourceFreshnessState::Current
+        && record.resource_payload.is_some()
+        && record.projection_payload.is_some())
+    .then_some(resource_state_mutation::Mutation::FreshnessChanged(
+        ResourceFreshnessChanged {
+            from: ResourceFreshnessState::Current as i32,
             to: ResourceFreshnessState::Stale as i32,
-        }),
-    )
+        },
+    ))
 }
 
 fn validate_observed_at(timestamp: &Timestamp) -> Result<(), ResourceError> {

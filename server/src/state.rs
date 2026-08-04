@@ -1088,6 +1088,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resource_snapshot_preserves_unknown_tombstone_without_payload() {
+        use patchbay_contracts::patchbay::{
+            resource_state_mutation, AdapterId, AdapterSnapshotSupport, Generation, Lsn,
+            ResourceFreshnessState, ResourceId, ResourceIdentity as WireResourceIdentity,
+            ResourceKind, ResourceStateEvent, ResourceStateMutation, ResourceStateTombstone,
+            ResourceStateUnknown, ResourceViewStateUpdate,
+        };
+        use prost_types::Timestamp;
+
+        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let identity = WireResourceIdentity {
+            adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            resource_kind: Some(ResourceKind { value: "pool".into() }),
+            resource_id: Some(ResourceId { value: "unknown-pool".into() }),
+        };
+        let event = |mutation| ResourceStateEvent {
+            authority_domain_id: Some(domain.clone()),
+            source_adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            source_adapter_generation: Some(Generation { value: 1 }),
+            views: vec![ResourceViewStateUpdate {
+                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                completeness: AdapterSnapshotSupport::Authoritative as i32,
+            }],
+            mutations: vec![mutation],
+            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        };
+        storage
+            .append(
+                &domain,
+                patchbay_core::resource::events::encode(&event(ResourceStateMutation {
+                    identity: Some(identity.clone()),
+                    from_revision_lsn: None,
+                    mutation: Some(resource_state_mutation::Mutation::Unknown(
+                        ResourceStateUnknown {},
+                    )),
+                })),
+            )
+            .await
+            .unwrap();
+        storage
+            .append(
+                &domain,
+                patchbay_core::resource::events::encode(&event(ResourceStateMutation {
+                    identity: Some(identity),
+                    from_revision_lsn: Some(Lsn { value: 1 }),
+                    mutation: Some(resource_state_mutation::Mutation::Tombstone(
+                        ResourceStateTombstone { replaced_by: None },
+                    )),
+                })),
+            )
+            .await
+            .unwrap();
+
+        let state = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        let snapshot = state
+            .materialize_resource_snapshot(
+                domain,
+                Timestamp { seconds: 200, nanos: 0 },
+            )
+            .await;
+        let resource = snapshot.resources.first().expect("unknown resource snapshot");
+        assert!(resource.tombstoned);
+        assert_eq!(resource.freshness, ResourceFreshnessState::Unknown as i32);
+        assert!(resource.resource_payload.is_none());
+        assert!(resource.projection_payload.is_none());
+    }
+
+    #[tokio::test]
     async fn fold_lag_invariant_exposes_contract_only_after_storage_catch_up() {
         let authority_domain_id = AuthorityDomainId {
             value: "authority-main".to_owned(),
