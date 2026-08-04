@@ -323,7 +323,7 @@ the executable conformance evidence below.
 ### Operational-resource conformance evidence (implementation-checked)
 
 The resource-plane corpus promotes eight executable examples through the single
-`contracts/vectors/` registry. The umbrella checker runs nine exact package
+`contracts/vectors/` registry. The umbrella checker runs eleven exact package
 checks across Rust core, Rust server, and web cockpit and rejects any promoted
 example whose expected outcome, runner registration, or reported execution id
 does not match. The shared session-shaped vectors retain their existing property

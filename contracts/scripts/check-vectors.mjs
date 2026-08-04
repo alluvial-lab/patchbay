@@ -514,6 +514,75 @@ function exactRegistryErrors(label, expectedValues, actualValues) {
   return errors;
 }
 
+const COUNT_WORDS = Object.freeze({
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+});
+
+function validateAssertedCount(markdown, { label, pattern, derived, source }) {
+  const match = markdown.match(pattern);
+  if (match === null) {
+    return [`${rel(verificationPath)}: ${label} assertion is missing or malformed; derived ${derived} from ${source}`];
+  }
+  const token = match[1].toLowerCase();
+  const asserted = /^\d+$/.test(token) ? Number(token) : COUNT_WORDS[token];
+  if (asserted === undefined) {
+    return [`${rel(verificationPath)}: ${label} assertion is not a supported count: asserted ${JSON.stringify(match[1])}, derived ${derived} from ${source}`];
+  }
+  if (asserted !== derived) {
+    return [`${rel(verificationPath)}: ${label} mismatch: asserted ${asserted}, derived ${derived} from ${source}`];
+  }
+  return [];
+}
+
+function validateResourceEvidenceCounts(markdown, vectors, implementationExecuted) {
+  const promotedCount = vectors.filter((vector) => vector.promotion_status === 'promoted').length;
+  const resourcePropertyCount = STATED_NORMATIVE_PROPERTIES.filter((id) => id.startsWith('Resource')).length;
+
+  // Standing resource-plane counts are guarded below. Other concrete corpus
+  // counts in VERIFICATION.md and historical conformance notes must be kept in
+  // sync with check:vectors/check:models output when their source artifacts move.
+  return [
+    ...validateAssertedCount(markdown, {
+      label: 'promoted-vector count',
+      pattern: /The resource-plane corpus promotes\s+([a-z]+|\d+)\s+executable examples\b/i,
+      derived: promotedCount,
+      source: 'promoted vectors',
+    }),
+    ...validateAssertedCount(markdown, {
+      label: 'implementation-check count',
+      pattern: /The umbrella checker runs\s+([a-z]+|\d+)\s+exact\s+package\s+checks\b/i,
+      derived: implementationExecuted.length,
+      source: 'executed package checks',
+    }),
+    ...validateAssertedCount(markdown, {
+      label: 'resource-property count',
+      pattern: /None of the\s+([a-z]+|\d+)\s+new\s+resource\s+properties has a promoted formal model\b/i,
+      derived: resourcePropertyCount,
+      source: 'registered Resource* properties',
+    }),
+  ];
+}
+
 function validateVerificationPropertyRegistry(markdown) {
   const errors = [];
   const modelBegin = markdown.indexOf(MODEL_GENERATED_BEGIN);
@@ -732,7 +801,7 @@ async function updateVerificationMarkdown(vectors) {
   if (next !== current) await writeFile(verificationPath, next);
 }
 
-function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted }) {
+function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted, evidenceErrors }) {
   const promotedVectors = vectors.filter((vector) => vector.promotion_status === 'promoted');
   const checkedModelWithoutPromoted = CHECKED_MODEL_PROPERTIES.filter(
     (propertyId) => !vectors.some((vector) => vector.property_id === propertyId && vector.promotion_status === 'promoted'),
@@ -750,7 +819,7 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, pr
   console.log(`- checked-model properties without promoted vectors (informational, not failing until checked-normative): ${checkedModelWithoutPromoted.length}`);
   console.log(`- traceability table target: ${rel(verificationPath)}`);
 
-  const allErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors];
+  const allErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors, ...evidenceErrors];
   if (allErrors.length > 0) {
     console.error('\nFailures:');
     for (const error of allErrors) console.error(`- ${error}`);
@@ -774,8 +843,11 @@ async function main() {
   const { errors: implementationErrors, executed: implementationExecuted } = staticErrors.length === 0
     ? runImplementationChecks(vectors)
     : { errors: [], executed: [] };
+  const evidenceErrors = staticErrors.length === 0 && implementationErrors.length === 0
+    ? validateResourceEvidenceCounts(verificationMarkdown, vectors, implementationExecuted)
+    : [];
 
-  if (staticErrors.length === 0 && implementationErrors.length === 0) {
+  if (staticErrors.length === 0 && implementationErrors.length === 0 && evidenceErrors.length === 0) {
     await updateVerificationMarkdown(vectors);
   }
 
@@ -791,9 +863,10 @@ async function main() {
     invariantChecked,
     implementationErrors,
     implementationExecuted,
+    evidenceErrors,
   });
 
-  if ([...staticErrors, ...implementationErrors].length > 0) process.exitCode = 1;
+  if ([...staticErrors, ...implementationErrors, ...evidenceErrors].length > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {
