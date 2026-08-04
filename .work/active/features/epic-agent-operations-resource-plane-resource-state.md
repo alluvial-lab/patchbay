@@ -547,3 +547,59 @@ warnings-denied clippy, web cockpit tests (76), contract drift, model/vector
 metadata, and presentation checks are green after those fixes. This inline work
 is not represented as fresh-context review and cannot satisfy `thorough`
 closure. No lower-risk finding remained to park.
+
+## Thorough cross-model review remediation (2026-08-04)
+
+The parent orchestrator's thorough cross-model pass returned `NEEDS-REVISION`
+with three material current-cycle stale/completeness blockers. All three are
+fixed, but this feature deliberately remains at `stage: review` for the next
+fresh-context convergence pass.
+
+### Material fixes
+
+1. **No-payload `unknown` can no longer become `stale`** (`4195014`). Partial/
+   none omission, adapter-generation fencing, disconnect degradation, and
+   manifest redeclaration emit `current → stale` only for records carrying both
+   cached envelopes. The fold rejects active stale/current records without both
+   envelopes, and tombstoning a no-payload record preserves `unknown`.
+2. **Authoritative snapshots cannot list surviving unknown resources**
+   (`dea8c18`). Both server ingress and core normalization reject
+   `snapshot + authoritative + unknown` before resource append or projection
+   mutation; surviving authoritative members must be schema-admitted upserts.
+3. **Manifest redeclaration degrades resource state before attachment
+   publication** (`3eeefc2`). Same-generation removed, down-tiered, and
+   schema-incompatible declarations produce a durable degradation event;
+   newer-generation attachments fence every prior resource view even without a
+   follow-up report. Required degradation and the redacted registration append
+   in one audited storage transaction, and the replacement token is installed
+   only after successful fold.
+
+### Regression evidence
+
+- UNKNOWN-start tests cover partial/none omission, report-generation fencing,
+  disconnect, authoritative-omission tombstone, deterministic replay, and
+  resource snapshot materialization; the registry corruption test rejects
+  `unknown → stale` without payload.
+- Authoritative-unknown tests at core and authenticated server boundaries assert
+  unchanged projection state and no durable resource append.
+- Same-generation redeclaration covers removal, tier downgrade, and schema
+  replacement in one atomic registration; newer-generation attachment proves
+  cached state/view degradation with no subsequent resource report.
+
+### Parked lower-risk findings
+
+- `.work/backlog/backlog-resource-generation-obsolete-event-no-op.md` — resolve
+  the generation guard versus obsolete-event no-op observer contract with the
+  resource conformance work.
+- `.work/backlog/backlog-resource-reconciliation-arbitrary-sequences.md` — grow
+  the two-report branch sampler into arbitrary report/generation/replacement/
+  terminal-attempt traces in the conformance feature.
+
+### Verification after remediation
+
+- `cargo test --workspace` — passed.
+- `cargo clippy --all-targets -- -D warnings` — passed.
+- `buf build proto`, TypeScript contract build, and generated drift — passed.
+- Model metadata, conformance-vector, and presentation checks — passed.
+- CLI — 37 passed; web cockpit — 76 passed; web server — 31 passed; Pi adapter
+  — 24 passed, including the real core/adapter/Pi E2E.
