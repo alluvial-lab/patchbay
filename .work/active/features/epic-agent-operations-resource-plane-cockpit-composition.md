@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-cockpit-composition
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, ux, protocol]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity, epic-agent-operations-resource-plane-resource-state, epic-agent-operations-resource-plane-capability-manifest]
@@ -442,3 +442,17 @@ One feature owner should normally carry all four checkpoints: `model.ts`, reconc
 - Parked: none from this design pass; provider/model/session-runtime behavior is already an explicit sibling seam in the parent and this item.
 - Rejected: on-open polling, server-translated cockpit DTOs, direct-provider session links, and dynamic adapter renderers.
 - Skipped/degraded: this delegated worker exposes no independent subagent/peer dispatch mechanism, so design-time advisory review could not run. Direct source verification and the pre-mortem above were completed. Effective implementation review weight is `thorough`, explicitly supplied by the autopilot caller, and is not degraded.
+
+## Implementation summary
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, explicitly selected by the autopilot caller for the multi-view reconciliation, untrusted decoder, target-union, and foundation UI risk.
+- Review weight: `thorough`, explicitly supplied by the caller. This implementation worker stops at `review`; the autopilot orchestrator owns the independent convergence review.
+- Completed checkpoints:
+  - resource projection domain and closed local v1 decoder registry — `c536264`;
+  - normalized resource folding and atomic max-horizon session/resource snapshot reconciliation — `4735c90`;
+  - polymorphic Operation targets and shared delivery/failure rendering — `8e65947`;
+  - responsive Resources destination, canonical wrapper, grant labels, conformance binding, and session pool linkage — `98571c7`.
+- As-built reconciliation: the temporary `RESOURCE_STATE` decode-and-ignore branch and session-only snapshot replacement seam were removed rather than retained as compatibility paths. `PresentationModel` remains the one projection and cursor authority.
+- Design deviations: the durable `CommandView.target` and shared delivery API use the designed target union, while the pre-existing session-only cancel/interrupt callback receives a raw `SessionIdentity` through a thin session-detail adapter so its submission builder remains unchanged. No resource-specific state or authority path was added.
+- Verification: `cd web-cockpit && npm test` passed 99/99 after the integrated feature landed. `cd contracts/ts && npm run check:drift && npm run check:presentation && npm run check:models` passed; presentation checked 5 registries including `ResourceFreshnessState`, with axe-core passing, and model-promotion metadata remained clean.
+- Deferred or parked work: none. Provider/model projection and reconfigure behavior remain the already-declared sibling session-runtime seam, not a newly parked defect.
