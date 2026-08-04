@@ -252,6 +252,7 @@ impl OperatorRegistry {
             | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
             | StoredEventKind::SessionState
+            | StoredEventKind::ResourceState
             | StoredEventKind::CommandTransition
             | StoredEventKind::SecurityLockdown
             | StoredEventKind::AuditRecord

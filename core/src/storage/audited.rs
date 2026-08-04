@@ -250,7 +250,9 @@ pub fn audit_draft_for_source(
                 None => return Err(StorageError::CorruptRecord("security lockdown has no transition".to_owned())),
             }
         }
-        StoredEventKind::SessionState | StoredEventKind::Elicitation => {
+        StoredEventKind::SessionState
+        | StoredEventKind::ResourceState
+        | StoredEventKind::Elicitation => {
             return Err(StorageError::UnsupportedOperation);
         }
         StoredEventKind::AuditRecord | StoredEventKind::Unspecified => {

@@ -1,8 +1,27 @@
-//! Operational-resource identity and identity-only target registration.
+//! Operational-resource identity, durable state, and target registration.
 
+pub mod events;
 pub mod identity;
 pub mod registry;
+pub mod replay;
 pub(crate) mod resolver;
+pub mod state;
 
 pub use identity::{ResourceIdentity, ResourceIdentityError};
 pub use registry::ResourceRegistry;
+pub use replay::rebuild_from_log;
+pub use state::{ResourceRecord, ResourceViewKey, ResourceViewRecord};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResourceError {
+    #[error("corrupt resource record: {0}")]
+    CorruptRecord(String),
+    #[error("corrupt resource log: {0}")]
+    CorruptLog(String),
+    #[error("resource identity is terminally tombstoned: {0:?}")]
+    TerminalTombstone(ResourceIdentity),
+    #[error(transparent)]
+    Identity(#[from] ResourceIdentityError),
+    #[error(transparent)]
+    Storage(#[from] crate::storage::StorageError),
+}

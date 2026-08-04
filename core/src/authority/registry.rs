@@ -56,6 +56,7 @@ impl AuthorityRegistry {
             | StoredEventKind::Observation
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
+            | StoredEventKind::ResourceState
             | StoredEventKind::CommandTransition
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal

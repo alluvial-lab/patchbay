@@ -6,12 +6,12 @@ use patchbay_contracts::patchbay::{
 
 use crate::{
     acceptance::{TargetBinding, TargetNotFound, TargetResolver},
-    resource::{resolver::resolve_resource, ResourceIdentity, ResourceRegistry},
+    resource::{resolver::resolve_resource, ResourceError, ResourceIdentity, ResourceRegistry},
     session::{SessionError, SessionRegistry},
     storage::RecordedEvent,
 };
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TargetRegistry {
     sessions: SessionRegistry,
     resources: ResourceRegistry,
@@ -44,9 +44,19 @@ impl TargetRegistry {
         &mut self.resources
     }
 
-    pub fn observe_session_event(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
-        self.sessions.observe(event)
+    pub fn observe_event(&mut self, event: &RecordedEvent) -> Result<(), TargetRegistryError> {
+        self.sessions.observe(event)?;
+        self.resources.observe(event)?;
+        Ok(())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TargetRegistryError {
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    #[error(transparent)]
+    Resource(#[from] ResourceError),
 }
 
 impl TargetResolver for TargetRegistry {

@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-state-projection-replay
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, storage]
 parent: epic-agent-operations-resource-plane-resource-state
 depends_on: [epic-agent-operations-resource-plane-resource-state-contract]
 release_binding: null
 gate_origin: null
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Fold and replay durable resource state
@@ -36,3 +36,26 @@ resolution is populated only by durable resource facts.
 
 Consumes the generated resource-state contract. The report writer and server
 composition must use this fold rather than a second membership cache.
+
+## Implementation notes
+
+Replaced identity-only membership with the canonical `ResourceRegistry`
+projection over durable `RESOURCE_STATE` events. The fold validates event/domain
+identity, exact adapter/kind tuples, view completeness, envelopes, prior
+revisions, replacement upserts, freshness values, and timestamps before an
+atomic clone-and-install. Resource/view revisions come only from the enclosing
+committed LSN; tombstones remain auditable but are excluded from ordinary
+resolution and cannot be resurrected. Added full-log replay with strict domain
+and monotonic-LSN validation, and made the composite `TargetRegistry` fold both
+session and resource events. The server rebuild path now restores resource
+membership from durable facts rather than constructing an empty cache.
+
+Existing resource resolver/acceptance fixtures were migrated from direct
+identity insertion to real durable resource events. New projection and replay
+tests cover exact tuple collisions, current/stale/unknown state, replacement,
+terminal resurrection rejection, atomic failure, deterministic replay, sibling
+event ignoring, cross-domain input, and non-increasing prefixes.
+
+Checkpoint verification: `cargo test -p patchbay-core --tests`,
+`cargo check --workspace`, and
+`cargo clippy -p patchbay-core --all-targets -- -D warnings` passed.

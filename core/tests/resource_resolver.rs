@@ -1,13 +1,18 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, ResourceId, ResourceKind, TargetScope, TargetScopeKind,
+    resource_state_mutation, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, Generation,
+    PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind, ResourceStateEvent,
+    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
     diagnostics::AuthorityDomainTargetResolver,
     resource::{ResourceIdentity, ResourceRegistry},
     session::SessionRegistry,
+    storage::{event_id, RecordedEvent},
     target::{target_adapter_id, TargetRegistry},
 };
+use prost_types::Timestamp;
 
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId { value: "authority-main".to_owned() }
@@ -22,12 +27,49 @@ fn identity(adapter: &str, kind: &str, id: &str) -> ResourceIdentity {
     .unwrap()
 }
 
+fn registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
+    let mut registry = ResourceRegistry::new();
+    for (index, identity) in identities.iter().enumerate() {
+        let state = ResourceStateEvent {
+            authority_domain_id: Some(domain()),
+            source_adapter_id: Some(identity.adapter_id().clone()),
+            source_adapter_generation: Some(Generation { value: 1 }),
+            views: vec![ResourceViewStateUpdate {
+                resource_kind: Some(identity.resource_kind().clone()),
+                completeness: AdapterSnapshotSupport::Partial as i32,
+            }],
+            mutations: vec![ResourceStateMutation {
+                identity: Some(identity.to_scope().resource.unwrap()),
+                from_revision_lsn: None,
+                mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
+                    resource_payload: Some(PayloadEnvelope {
+                        payload: vec![1],
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: "resource.schema".into(),
+                    }),
+                    projection_payload: Some(PayloadEnvelope {
+                        payload: vec![2],
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: "projection.schema".into(),
+                    }),
+                })),
+            }],
+            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+        };
+        registry
+            .observe(&RecordedEvent {
+                event_id: event_id(domain(), index as u64 + 1),
+                payload: patchbay_core::resource::events::encode(&state),
+            })
+            .unwrap();
+    }
+    registry
+}
+
 #[tokio::test]
 async fn registered_resource_resolves_by_the_exact_tuple() {
     let registered = identity("adapter-a", "pool", "shared");
-    let mut resources = ResourceRegistry::new();
-    assert!(resources.register(registered.clone()));
-    assert!(!resources.register(registered.clone()));
+    let resources = registry(std::slice::from_ref(&registered));
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     assert_eq!(
@@ -50,8 +92,7 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
 
 #[tokio::test]
 async fn malformed_legacy_and_nonordinary_resource_targets_fail_closed() {
-    let mut resources = ResourceRegistry::new();
-    resources.register(identity("adapter-a", "pool", "shared"));
+    let resources = registry(&[identity("adapter-a", "pool", "shared")]);
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     let legacy = TargetScope {

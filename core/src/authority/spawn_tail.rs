@@ -97,6 +97,7 @@ impl SpawnDescendantTail {
                 self.observe_session_state(event, &event_domain, event_lsn)
             }
             StoredEventKind::Observation
+            | StoredEventKind::ResourceState
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant

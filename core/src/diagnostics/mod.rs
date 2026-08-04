@@ -206,6 +206,7 @@ impl DiagnosticsProjection {
                     .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
             }
             StoredEventKind::Elicitation
+            | StoredEventKind::ResourceState
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::OperatorRecord

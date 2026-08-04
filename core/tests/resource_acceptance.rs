@@ -2,9 +2,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Operation, OperationKind,
-    PayloadEnvelope, ResourceId, ResourceKind, StoredEventKind, SubmissionOutcome, TargetScope,
-    TargetScopeKind, TimeWindow,
+    resource_state_mutation, AdapterSnapshotSupport, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, Operation, OperationKind, PayloadContentType, PayloadEnvelope,
+    ResourceId, ResourceKind, ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert,
+    ResourceViewStateUpdate, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
+    TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
@@ -14,7 +16,7 @@ use patchbay_core::{
     authority::{ingest_grant, AuthorityRegistry, IssuerContext},
     resource::{ResourceIdentity, ResourceRegistry},
     session::SessionRegistry,
-    storage::{RusqliteStorage, Storage},
+    storage::{event_id, RecordedEvent, RusqliteStorage, Storage},
     target::TargetRegistry,
     time::TestClock,
 };
@@ -31,6 +33,45 @@ fn identity(adapter: &str, kind: &str, id: &str) -> ResourceIdentity {
         ResourceId { value: id.to_owned() },
     )
     .unwrap()
+}
+
+fn resource_registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
+    let mut registry = ResourceRegistry::new();
+    for (index, identity) in identities.iter().enumerate() {
+        let state = ResourceStateEvent {
+            authority_domain_id: Some(domain()),
+            source_adapter_id: Some(identity.adapter_id().clone()),
+            source_adapter_generation: Some(Generation { value: 1 }),
+            views: vec![ResourceViewStateUpdate {
+                resource_kind: Some(identity.resource_kind().clone()),
+                completeness: AdapterSnapshotSupport::Partial as i32,
+            }],
+            mutations: vec![ResourceStateMutation {
+                identity: Some(identity.to_scope().resource.unwrap()),
+                from_revision_lsn: None,
+                mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
+                    resource_payload: Some(PayloadEnvelope {
+                        payload: vec![1],
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: "resource.schema".into(),
+                    }),
+                    projection_payload: Some(PayloadEnvelope {
+                        payload: vec![2],
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: "projection.schema".into(),
+                    }),
+                })),
+            }],
+            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+        };
+        registry
+            .observe(&RecordedEvent {
+                event_id: event_id(domain(), index as u64 + 1),
+                payload: patchbay_core::resource::events::encode(&state),
+            })
+            .unwrap();
+    }
+    registry
 }
 
 fn operation(command: &str, key: &str, target: TargetScope) -> Operation {
@@ -122,8 +163,7 @@ async fn exact_authorized_registered_resource_accepts_without_session_identity()
     ingest_grant(&storage, &mut authority, &domain(), grant("resource-grant", exact.to_scope()))
         .await
         .unwrap();
-    let mut resources = ResourceRegistry::new();
-    resources.register(exact.clone());
+    let resources = resource_registry(std::slice::from_ref(&exact));
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     let result = submit_with_clock(
@@ -151,10 +191,11 @@ async fn exact_grant_fences_cross_adapter_and_kind_before_append() {
     ingest_grant(&storage, &mut authority, &domain(), grant("resource-grant", exact.to_scope()))
         .await
         .unwrap();
-    let mut resources = ResourceRegistry::new();
-    resources.register(exact.clone());
-    resources.register(identity("adapter-b", "pool", "shared"));
-    resources.register(identity("adapter-a", "window", "shared"));
+    let resources = resource_registry(&[
+        exact.clone(),
+        identity("adapter-b", "pool", "shared"),
+        identity("adapter-a", "window", "shared"),
+    ]);
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     for (index, collision) in [
@@ -202,9 +243,7 @@ async fn adapter_grant_reaches_resolution_and_target_key_scopes_the_full_tuple()
     .unwrap();
     let first = identity("adapter-a", "pool", "shared");
     let second = identity("adapter-a", "window", "shared");
-    let mut resources = ResourceRegistry::new();
-    resources.register(first.clone());
-    resources.register(second.clone());
+    let resources = resource_registry(&[first.clone(), second.clone()]);
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     let unknown = identity("adapter-a", "pool", "unknown");

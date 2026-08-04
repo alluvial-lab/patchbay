@@ -41,6 +41,27 @@ impl ResourceIdentity {
         })
     }
 
+    pub fn try_from_wire(
+        resource: &WireResourceIdentity,
+    ) -> Result<Self, ResourceIdentityError> {
+        Self::new(
+            resource
+                .adapter_id
+                .clone()
+                .ok_or(ResourceIdentityError::Missing { field: "adapter_id" })?,
+            resource
+                .resource_kind
+                .clone()
+                .ok_or(ResourceIdentityError::Missing {
+                    field: "resource_kind",
+                })?,
+            resource
+                .resource_id
+                .clone()
+                .ok_or(ResourceIdentityError::Missing { field: "resource_id" })?,
+        )
+    }
+
     pub fn try_from_scope(scope: &TargetScope) -> Result<Self, ResourceIdentityError> {
         if TargetScopeKind::try_from(scope.kind).ok() != Some(TargetScopeKind::Resource) {
             return Err(ResourceIdentityError::WrongTargetKind);
@@ -61,22 +82,7 @@ impl ResourceIdentity {
         let resource = scope.resource.as_ref().ok_or(ResourceIdentityError::Missing {
             field: "resource",
         })?;
-        Self::new(
-            resource
-                .adapter_id
-                .clone()
-                .ok_or(ResourceIdentityError::Missing { field: "adapter_id" })?,
-            resource
-                .resource_kind
-                .clone()
-                .ok_or(ResourceIdentityError::Missing {
-                    field: "resource_kind",
-                })?,
-            resource
-                .resource_id
-                .clone()
-                .ok_or(ResourceIdentityError::Missing { field: "resource_id" })?,
-        )
+        Self::try_from_wire(resource)
     }
 
     #[must_use]

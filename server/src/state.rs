@@ -25,7 +25,7 @@ use patchbay_core::{
     resource::ResourceRegistry,
     session::SessionRegistry,
     storage::{RecordedEvent, Storage, StorageError},
-    target::TargetRegistry,
+    target::{TargetRegistry, TargetRegistryError},
 };
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -94,6 +94,7 @@ impl ProjectionState {
 
         let mut authority = AuthorityRegistry::new();
         let mut sessions = SessionRegistry::new();
+        let mut resources = ResourceRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
         let mut diagnostics = DiagnosticsProjection::new();
@@ -107,6 +108,7 @@ impl ProjectionState {
                 .observe(event)
                 .map_err(|error| error.to_string())?;
             sessions.observe(event).map_err(|error| error.to_string())?;
+            resources.observe(event).map_err(|error| error.to_string())?;
             commands.apply(event).map_err(|error| error.to_string())?;
             elicitation_slots
                 .observe(event)
@@ -129,10 +131,7 @@ impl ProjectionState {
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
-            target_resolver: LockedTargetResolver::new(TargetRegistry::new(
-                sessions,
-                ResourceRegistry::new(),
-            )),
+            target_resolver: LockedTargetResolver::new(TargetRegistry::new(sessions, resources)),
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
@@ -806,8 +805,8 @@ impl LockedTargetResolver {
     async fn observe(
         &self,
         event: &RecordedEvent,
-    ) -> Result<(), patchbay_core::session::SessionError> {
-        self.inner.lock().await.observe_session_event(event)
+    ) -> Result<(), TargetRegistryError> {
+        self.inner.lock().await.observe_event(event)
     }
 }
 
