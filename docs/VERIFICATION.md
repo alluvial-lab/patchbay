@@ -578,7 +578,7 @@ Summary: 45 vector(s), 8 promoted vector(s), 0 checked-normative properties requ
 | `SessionIdentityTuple` | stated-normative | — | — |
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
-| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResult.resource_snapshot<br>patchbay.LoadSnapshotResult.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
+| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
 | `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |

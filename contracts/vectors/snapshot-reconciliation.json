@@ -10,8 +10,8 @@
   ],
   "proto_fields_constrained": [
     "patchbay.LoadSnapshotRequest.view_kind",
-    "patchbay.LoadSnapshotResult.view_kind",
-    "patchbay.LoadSnapshotResult.resource_snapshot",
+    "patchbay.LoadSnapshotResponse.view_kind",
+    "patchbay.LoadSnapshotResponse.snapshot_payload",
     "patchbay.ResourceSnapshot.authority_domain_id",
     "patchbay.ResourceSnapshot.snapshot_lsn",
     "patchbay.ResourceSnapshot.resources",
