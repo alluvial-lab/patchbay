@@ -315,6 +315,8 @@ pub enum StoredEventKind {
     ControlSurfaceRevocation = 13,
     /// Durable security lockdown posture transition (security.proto).
     SecurityLockdown = 14,
+    /// Durable normalized operational-resource projection update (resources.proto).
+    ResourceState = 15,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -338,6 +340,7 @@ impl StoredEventKind {
             Self::OperatorSessionRevocation => "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION",
             Self::ControlSurfaceRevocation => "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION",
             Self::SecurityLockdown => "STORED_EVENT_KIND_SECURITY_LOCKDOWN",
+            Self::ResourceState => "STORED_EVENT_KIND_RESOURCE_STATE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -358,6 +361,7 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_OPERATOR_SESSION_REVOCATION" => Some(Self::OperatorSessionRevocation),
             "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION" => Some(Self::ControlSurfaceRevocation),
             "STORED_EVENT_KIND_SECURITY_LOCKDOWN" => Some(Self::SecurityLockdown),
+            "STORED_EVENT_KIND_RESOURCE_STATE" => Some(Self::ResourceState),
             _ => None,
         }
     }
@@ -1676,6 +1680,226 @@ impl AttentionRequiredState {
         }
     }
 }
+/// One durable operational-resource record. Resource payloads remain
+/// adapter-owned, schema-bound metadata; Patchbay owns identity, freshness,
+/// revision, and terminal replacement semantics.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Resource {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub identity: ::core::option::Option<ResourceIdentity>,
+    #[prost(message, optional, tag = "3")]
+    pub resource_payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(message, optional, tag = "4")]
+    pub projection_payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(enumeration = "ResourceFreshnessState", tag = "5")]
+    pub freshness: i32,
+    #[prost(message, optional, tag = "6")]
+    pub source_adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "7")]
+    pub revision_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag = "8")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(bool, tag = "9")]
+    pub tombstoned: bool,
+    #[prost(message, optional, tag = "10")]
+    pub tombstoned_at_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag = "11")]
+    pub replaced_by: ::core::option::Option<ResourceIdentity>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceViewRevision {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub resource_kind: ::core::option::Option<ResourceKind>,
+    #[prost(enumeration = "AdapterSnapshotSupport", tag = "3")]
+    pub completeness: i32,
+    #[prost(message, optional, tag = "4")]
+    pub source_adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "5")]
+    pub revision_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag = "6")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceSnapshot {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub snapshot_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag = "3")]
+    pub core_generation: ::core::option::Option<Generation>,
+    #[prost(message, repeated, tag = "4")]
+    pub resources: ::prost::alloc::vec::Vec<Resource>,
+    #[prost(message, repeated, tag = "5")]
+    pub view_revisions: ::prost::alloc::vec::Vec<ResourceViewRevision>,
+    #[prost(message, optional, tag = "6")]
+    pub materialized_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Authenticated adapter evidence. Snapshot reports reconcile complete or
+/// incomplete collection views; delta reports mutate only named resources.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceReport {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "5")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(oneof = "resource_report::Report", tags = "3, 4")]
+    pub report: ::core::option::Option<resource_report::Report>,
+}
+/// Nested message and enum types in `ResourceReport`.
+pub mod resource_report {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Report {
+        #[prost(message, tag = "3")]
+        Snapshot(super::ResourceSnapshotReport),
+        #[prost(message, tag = "4")]
+        Delta(super::ResourceDeltaReport),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceSnapshotReport {
+    #[prost(message, repeated, tag = "1")]
+    pub views: ::prost::alloc::vec::Vec<ResourceViewReport>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceDeltaReport {
+    #[prost(message, repeated, tag = "1")]
+    pub views: ::prost::alloc::vec::Vec<ResourceViewReport>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceViewReport {
+    #[prost(message, optional, tag = "1")]
+    pub resource_kind: ::core::option::Option<ResourceKind>,
+    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    pub completeness: i32,
+    #[prost(message, repeated, tag = "3")]
+    pub mutations: ::prost::alloc::vec::Vec<ResourceReportMutation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceReportMutation {
+    #[prost(message, optional, tag = "1")]
+    pub identity: ::core::option::Option<ResourceIdentity>,
+    #[prost(oneof = "resource_report_mutation::Mutation", tags = "2, 3, 4")]
+    pub mutation: ::core::option::Option<resource_report_mutation::Mutation>,
+}
+/// Nested message and enum types in `ResourceReportMutation`.
+pub mod resource_report_mutation {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Mutation {
+        #[prost(message, tag = "2")]
+        Upsert(super::ResourceStateUpsert),
+        #[prost(message, tag = "3")]
+        Unknown(super::ResourceStateUnknown),
+        #[prost(message, tag = "4")]
+        Tombstone(super::ResourceStateTombstone),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceStateUpsert {
+    #[prost(message, optional, tag = "1")]
+    pub resource_payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(message, optional, tag = "2")]
+    pub projection_payload: ::core::option::Option<PayloadEnvelope>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceStateUnknown {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceStateTombstone {
+    #[prost(message, optional, tag = "1")]
+    pub replaced_by: ::core::option::Option<ResourceIdentity>,
+}
+/// Normalized durable payload for StoredEventKind::RESOURCE_STATE. The core
+/// assigns revisions from the enclosing durable event's LSN.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceStateEvent {
+    #[prost(message, optional, tag = "1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag = "2")]
+    pub source_adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "3")]
+    pub source_adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, repeated, tag = "4")]
+    pub views: ::prost::alloc::vec::Vec<ResourceViewStateUpdate>,
+    #[prost(message, repeated, tag = "5")]
+    pub mutations: ::prost::alloc::vec::Vec<ResourceStateMutation>,
+    #[prost(message, optional, tag = "6")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceViewStateUpdate {
+    #[prost(message, optional, tag = "1")]
+    pub resource_kind: ::core::option::Option<ResourceKind>,
+    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    pub completeness: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceStateMutation {
+    #[prost(message, optional, tag = "1")]
+    pub identity: ::core::option::Option<ResourceIdentity>,
+    #[prost(message, optional, tag = "2")]
+    pub from_revision_lsn: ::core::option::Option<Lsn>,
+    #[prost(oneof = "resource_state_mutation::Mutation", tags = "3, 4, 5, 6")]
+    pub mutation: ::core::option::Option<resource_state_mutation::Mutation>,
+}
+/// Nested message and enum types in `ResourceStateMutation`.
+pub mod resource_state_mutation {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Mutation {
+        #[prost(message, tag = "3")]
+        Upsert(super::ResourceStateUpsert),
+        #[prost(message, tag = "4")]
+        Unknown(super::ResourceStateUnknown),
+        #[prost(message, tag = "5")]
+        Tombstone(super::ResourceStateTombstone),
+        #[prost(message, tag = "6")]
+        FreshnessChanged(super::ResourceFreshnessChanged),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceFreshnessChanged {
+    #[prost(enumeration = "ResourceFreshnessState", tag = "1")]
+    pub from: i32,
+    #[prost(enumeration = "ResourceFreshnessState", tag = "2")]
+    pub to: i32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ResourceFreshnessState {
+    Unspecified = 0,
+    Current = 1,
+    Stale = 2,
+    Unknown = 3,
+}
+impl ResourceFreshnessState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RESOURCE_FRESHNESS_STATE_UNSPECIFIED",
+            Self::Current => "RESOURCE_FRESHNESS_STATE_CURRENT",
+            Self::Stale => "RESOURCE_FRESHNESS_STATE_STALE",
+            Self::Unknown => "RESOURCE_FRESHNESS_STATE_UNKNOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RESOURCE_FRESHNESS_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "RESOURCE_FRESHNESS_STATE_CURRENT" => Some(Self::Current),
+            "RESOURCE_FRESHNESS_STATE_STALE" => Some(Self::Stale),
+            "RESOURCE_FRESHNESS_STATE_UNKNOWN" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AttachRequest {
     #[prost(message, optional, tag = "1")]
@@ -1722,7 +1946,7 @@ pub struct SessionReport {
 pub struct ObservationRequest {
     #[prost(message, optional, tag = "1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "observation_request::Observation", tags = "2, 3")]
+    #[prost(oneof = "observation_request::Observation", tags = "2, 3, 4")]
     pub observation: ::core::option::Option<observation_request::Observation>,
 }
 /// Nested message and enum types in `ObservationRequest`.
@@ -1734,6 +1958,8 @@ pub mod observation_request {
         SessionReport(super::SessionReport),
         #[prost(message, tag = "3")]
         Event(super::Observation),
+        #[prost(message, tag = "4")]
+        ResourceReport(super::ResourceReport),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2482,6 +2708,8 @@ pub struct LoadSnapshotRequest {
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
     #[prost(message, optional, tag = "2")]
     pub at_or_before: ::core::option::Option<Lsn>,
+    #[prost(enumeration = "SnapshotViewKind", tag = "3")]
+    pub view_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadSnapshotResponse {
@@ -2491,6 +2719,8 @@ pub struct LoadSnapshotResponse {
     pub event_id: ::core::option::Option<EventId>,
     #[prost(bytes = "vec", tag = "3")]
     pub snapshot_payload: ::prost::alloc::vec::Vec<u8>,
+    #[prost(enumeration = "SnapshotViewKind", tag = "4")]
+    pub view_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VerifyOperatorPasswordRequest {
@@ -2640,6 +2870,35 @@ pub struct RecordControlSurfaceAuditRequest {
 pub struct RecordControlSurfaceAuditResponse {
     #[prost(message, optional, tag = "1")]
     pub audit_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SnapshotViewKind {
+    Unspecified = 0,
+    Session = 1,
+    Resource = 2,
+}
+impl SnapshotViewKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SNAPSHOT_VIEW_KIND_UNSPECIFIED",
+            Self::Session => "SNAPSHOT_VIEW_KIND_SESSION",
+            Self::Resource => "SNAPSHOT_VIEW_KIND_RESOURCE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SNAPSHOT_VIEW_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "SNAPSHOT_VIEW_KIND_SESSION" => Some(Self::Session),
+            "SNAPSHOT_VIEW_KIND_RESOURCE" => Some(Self::Resource),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Elicitation {

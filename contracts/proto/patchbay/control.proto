@@ -51,15 +51,23 @@ message SubscribeEvent {
   patchbay.StoredEventPayload payload = 2;
 }
 
+enum SnapshotViewKind {
+  SNAPSHOT_VIEW_KIND_UNSPECIFIED = 0;
+  SNAPSHOT_VIEW_KIND_SESSION = 1;
+  SNAPSHOT_VIEW_KIND_RESOURCE = 2;
+}
+
 message LoadSnapshotRequest {
   patchbay.AuthorityDomainId authority_domain_id = 1;
   optional patchbay.Lsn at_or_before = 2;
+  SnapshotViewKind view_kind = 3;
 }
 
 message LoadSnapshotResponse {
   bool present = 1;
   patchbay.EventId event_id = 2;
   bytes snapshot_payload = 3;
+  SnapshotViewKind view_kind = 4;
 }
 
 message VerifyOperatorPasswordRequest {

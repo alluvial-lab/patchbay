@@ -3,11 +3,11 @@ syntax = "proto3";
 package patchbay;
 
 import "google/protobuf/timestamp.proto";
-
 import "patchbay/adapter.proto";
 import "patchbay/common.proto";
 import "patchbay/observations.proto";
 import "patchbay/operations.proto";
+import "patchbay/resources.proto";
 import "patchbay/sessions.proto";
 
 // The adapter-facing service. Adapters are clients of the authoritative core
@@ -51,6 +51,7 @@ message ObservationRequest {
   oneof observation {
     SessionReport session_report = 2;
     Observation event = 3;
+    ResourceReport resource_report = 4;
   }
 }
 

@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package patchbay;
+
+import "google/protobuf/timestamp.proto";
+import "patchbay/adapter.proto";
+import "patchbay/common.proto";
+
+// One durable operational-resource record. Resource payloads remain
+// adapter-owned, schema-bound metadata; Patchbay owns identity, freshness,
+// revision, and terminal replacement semantics.
+message Resource {
+  AuthorityDomainId authority_domain_id = 1;
+  ResourceIdentity identity = 2;
+  PayloadEnvelope resource_payload = 3;
+  PayloadEnvelope projection_payload = 4;
+  ResourceFreshnessState freshness = 5;
+  Generation source_adapter_generation = 6;
+  Lsn revision_lsn = 7;
+  google.protobuf.Timestamp observed_at = 8;
+  bool tombstoned = 9;
+  Lsn tombstoned_at_lsn = 10;
+  ResourceIdentity replaced_by = 11;
+}
+
+enum ResourceFreshnessState {
+  RESOURCE_FRESHNESS_STATE_UNSPECIFIED = 0;
+  RESOURCE_FRESHNESS_STATE_CURRENT = 1;
+  RESOURCE_FRESHNESS_STATE_STALE = 2;
+  RESOURCE_FRESHNESS_STATE_UNKNOWN = 3;
+}
+
+message ResourceViewRevision {
+  AdapterId adapter_id = 1;
+  ResourceKind resource_kind = 2;
+  AdapterSnapshotSupport completeness = 3;
+  Generation source_adapter_generation = 4;
+  Lsn revision_lsn = 5;
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+message ResourceSnapshot {
+  AuthorityDomainId authority_domain_id = 1;
+  Lsn snapshot_lsn = 2;
+  Generation core_generation = 3;
+  repeated Resource resources = 4;
+  repeated ResourceViewRevision view_revisions = 5;
+  google.protobuf.Timestamp materialized_at = 6;
+}
+
+// Authenticated adapter evidence. Snapshot reports reconcile complete or
+// incomplete collection views; delta reports mutate only named resources.
+message ResourceReport {
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
+  oneof report {
+    ResourceSnapshotReport snapshot = 3;
+    ResourceDeltaReport delta = 4;
+  }
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message ResourceSnapshotReport {
+  repeated ResourceViewReport views = 1;
+}
+
+message ResourceDeltaReport {
+  repeated ResourceViewReport views = 1;
+}
+
+message ResourceViewReport {
+  ResourceKind resource_kind = 1;
+  AdapterSnapshotSupport completeness = 2;
+  repeated ResourceReportMutation mutations = 3;
+}
+
+message ResourceReportMutation {
+  ResourceIdentity identity = 1;
+  oneof mutation {
+    ResourceStateUpsert upsert = 2;
+    ResourceStateUnknown unknown = 3;
+    ResourceStateTombstone tombstone = 4;
+  }
+}
+
+message ResourceStateUpsert {
+  PayloadEnvelope resource_payload = 1;
+  PayloadEnvelope projection_payload = 2;
+}
+
+message ResourceStateUnknown {}
+
+message ResourceStateTombstone {
+  ResourceIdentity replaced_by = 1;
+}
+
+// Normalized durable payload for StoredEventKind::RESOURCE_STATE. The core
+// assigns revisions from the enclosing durable event's LSN.
+message ResourceStateEvent {
+  AuthorityDomainId authority_domain_id = 1;
+  AdapterId source_adapter_id = 2;
+  Generation source_adapter_generation = 3;
+  repeated ResourceViewStateUpdate views = 4;
+  repeated ResourceStateMutation mutations = 5;
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+message ResourceViewStateUpdate {
+  ResourceKind resource_kind = 1;
+  AdapterSnapshotSupport completeness = 2;
+}
+
+message ResourceStateMutation {
+  ResourceIdentity identity = 1;
+  Lsn from_revision_lsn = 2;
+  oneof mutation {
+    ResourceStateUpsert upsert = 3;
+    ResourceStateUnknown unknown = 4;
+    ResourceStateTombstone tombstone = 5;
+    ResourceFreshnessChanged freshness_changed = 6;
+  }
+}
+
+message ResourceFreshnessChanged {
+  ResourceFreshnessState from = 1;
+  ResourceFreshnessState to = 2;
+}

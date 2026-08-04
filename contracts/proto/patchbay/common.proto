@@ -186,6 +186,8 @@ enum StoredEventKind {
   STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION = 13;
   // Durable security lockdown posture transition (security.proto).
   STORED_EVENT_KIND_SECURITY_LOCKDOWN = 14;
+  // Durable normalized operational-resource projection update (resources.proto).
+  STORED_EVENT_KIND_RESOURCE_STATE = 15;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-state-contract
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, storage]
 parent: epic-agent-operations-resource-plane-resource-state
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Define the resource-state and snapshot contracts
@@ -38,3 +38,19 @@ and TypeScript artifacts; generated output is never hand-edited.
 
 This schema checkpoint must land before projection, replay, ingress, or snapshot
 materialization code consumes the new generated types.
+
+## Implementation notes
+
+Added `resources.proto` as the wire source for revisioned resource records,
+per-kind view revisions, snapshot/delta reports, normalized durable mutations,
+terminal replacement tombstones, and reconciliation freshness. Added
+`STORED_EVENT_KIND_RESOURCE_STATE`, typed `ResourceReport` adapter ingress, and
+the required/echoed `SnapshotViewKind` discriminator. Rust and TypeScript
+bindings were regenerated from the protos; no generated artifact was edited by
+hand.
+
+Checkpoint verification: `cargo test -p patchbay-contracts` and
+`npm --prefix contracts/ts run build` passed. `buf generate` completed. The
+repository-wide `buf lint` continues to report the pre-existing RPC
+request/response naming debt documented by the prior capability-manifest
+feature; no new resource proto lint finding was introduced.
