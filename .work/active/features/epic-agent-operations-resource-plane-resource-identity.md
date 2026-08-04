@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: review
+stage: done
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
@@ -448,3 +448,17 @@ The corrected feature returns to `review`. Thorough convergence requires pass 2 
 - Corrected snapshot verified with workspace tests, clippy `-D warnings`, 37 CLI tests, contract build/drift, and vector/model/presentation checks.
 
 The feature returns to `review` for thorough convergence pass 3.
+
+## Review (2026-08-04)
+
+**Verdict**: Approve
+
+**Blockers**: none remaining. Pass 1 fixed exact Observation-to-command resource target binding and durable legacy/nested audit-filter evidence. Pass 2 fixed resource running-command reconciliation on adapter disconnect. Pass 3 verified all three fixes and found no material current-cycle blocker.
+
+**Important**: none. The authority-domain registry proposal was rejected for this feature because production projection composition is already domain-log-scoped, v0.1 is single-domain, the identity-only registry shape is designed, and the cross-cutting trait issue is already tracked at `.work/backlog/backlog-sessions-authority-domain-isolation.md`.
+
+**Nits**: none.
+
+**Rejected**: adding authority-domain state to `ResourceRegistry`/`TargetRegistry` in this feature, for the bounded rationale above.
+
+**Notes**: Substrate feature review at explicit `thorough` weight. Three same-harness fresh-context passes used `openai-codex/gpt-5.6-sol` at xhigh through read-only ephemeral Pi endpoints; these were fresh-context but not cross-model because the host is also OpenAI lineage. Convergence sequence was review → receiver adjudication → fix → full verification → fresh review, repeated until pass 3 returned `ready` with no findings. Applicable correctness, security, generated-contract, compatibility, data/index, lifecycle, test-integrity, CLI, and foundation lenses were covered. Product UI/accessibility review was skipped because this feature has no UI surface; presentation conformance still passed.
