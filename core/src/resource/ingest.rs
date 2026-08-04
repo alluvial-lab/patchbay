@@ -361,6 +361,14 @@ fn validate_report_shape(report: &ValidatedResourceReport) -> Result<(), Resourc
             let mutation = mutation.mutation.as_ref().ok_or_else(|| {
                 ResourceError::InvalidReport("resource mutation has no variant".into())
             })?;
+            if report.mode == ResourceReportMode::Snapshot
+                && tier == AdapterSnapshotSupport::Authoritative
+                && matches!(mutation, resource_report_mutation::Mutation::Unknown(_))
+            {
+                return Err(ResourceError::InvalidReport(
+                    "authoritative snapshot cannot list an unknown resource".into(),
+                ));
+            }
             if let resource_report_mutation::Mutation::Upsert(upsert) = mutation {
                 // Projection schema admission is owned by AdapterRegistry at
                 // server ingress. Core still rejects structurally incomplete

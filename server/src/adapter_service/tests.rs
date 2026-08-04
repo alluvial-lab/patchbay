@@ -11,8 +11,8 @@ use patchbay_contracts::patchbay::{
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
     PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
     ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
-    SchemaDescriptor,
+    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
+    ResourceViewReport, SchemaDescriptor,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -378,6 +378,80 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
     })
     .await
     .expect("disconnect durably stales the resource");
+}
+
+#[tokio::test]
+async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut registration = registration(domain.clone());
+    registration.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Authoritative,
+        )],
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("resource adapter attaches");
+    let token = attachment_token(&attached);
+    let events_before = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let report = ResourceReport {
+        adapter_id: Some(adapter_id()),
+        adapter_generation: Some(Generation { value: 1 }),
+        report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+            views: vec![ResourceViewReport {
+                resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                completeness: AdapterSnapshotSupport::Authoritative as i32,
+                mutations: vec![ResourceReportMutation {
+                    identity: Some(ResourceIdentity {
+                        adapter_id: Some(adapter_id()),
+                        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                        resource_id: Some(ResourceId { value: "unknown-pool".into() }),
+                    }),
+                    mutation: Some(resource_report_mutation::Mutation::Unknown(
+                        ResourceStateUnknown {},
+                    )),
+                }],
+            }],
+        })),
+        observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+    };
+
+    let error = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(report)),
+            },
+            &token,
+        ))
+        .await
+        .expect_err("authoritative unknown must reject");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert_eq!(
+        storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len(),
+        events_before,
+        "rejection must happen before durable append"
+    );
+    assert_eq!(service.resources.lock().await.resources().count(), 0);
 }
 
 fn resource_declaration(kind: &str, tier: AdapterSnapshotSupport) -> ResourceCapability {

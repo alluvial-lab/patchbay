@@ -761,7 +761,12 @@ where
                             "resource report adapter generation is stale",
                         ));
                     }
-                    validate_resource_views(&adapters, &authenticated_adapter, &views)?;
+                    validate_resource_views(
+                        &adapters,
+                        &authenticated_adapter,
+                        mode,
+                        &views,
+                    )?;
                 }
                 let rebuilt = resource::rebuild_from_log(&self.storage, &domain)
                     .await
@@ -1048,6 +1053,7 @@ where
 fn validate_resource_views(
     adapters: &AdapterRegistry,
     authenticated_adapter: &AdapterId,
+    mode: ResourceReportMode,
     views: &[patchbay_contracts::patchbay::ResourceViewReport],
 ) -> Result<(), Status> {
     for view in views {
@@ -1079,9 +1085,18 @@ fn validate_resource_views(
                     "resource mutation identity does not match authenticated view",
                 ));
             }
-            if let Some(resource_report_mutation::Mutation::Upsert(upsert)) =
-                mutation.mutation.as_ref()
+            let mutation = mutation.mutation.as_ref().ok_or_else(|| {
+                Status::invalid_argument("resource mutation is missing mutation variant")
+            })?;
+            if mode == ResourceReportMode::Snapshot
+                && reported == AdapterSnapshotSupport::Authoritative
+                && matches!(mutation, resource_report_mutation::Mutation::Unknown(_))
             {
+                return Err(Status::invalid_argument(
+                    "authoritative snapshot cannot list an unknown resource",
+                ));
+            }
+            if let resource_report_mutation::Mutation::Upsert(upsert) = mutation {
                 let payload = upsert.resource_payload.as_ref().ok_or_else(|| {
                     Status::invalid_argument("resource upsert is missing resource payload")
                 })?;

@@ -9,7 +9,7 @@ use patchbay_core::{
         adapter_stale_event, ingest_resource_report, rebuild_from_log, ResourceRegistry,
         ResourceReportMode, ValidatedResourceReport,
     },
-    storage::RusqliteStorage,
+    storage::{RusqliteStorage, Storage},
 };
 use prost_types::Timestamp;
 
@@ -290,6 +290,33 @@ async fn none_tier_live_delta_can_mutate_an_explicit_identity() {
     .await
     .unwrap();
     assert!(registry.contains(&domain_identity("one")));
+}
+
+#[tokio::test]
+async fn authoritative_snapshot_unknown_rejects_before_append_or_projection() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = ResourceRegistry::new();
+    let before = registry.clone();
+
+    let error = ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            1,
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Authoritative,
+            vec![unknown("unclassified")],
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("authoritative snapshot cannot list"));
+    assert_eq!(registry, before);
+    assert!(storage
+        .read_after(&domain(), patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

@@ -481,9 +481,13 @@ than that kind's manifest declaration. Typed `ResourceReport` ingress has two
 modes:
 
 - A reconnect **snapshot** with `authoritative` completeness is a complete
-  external collection: listed resources are installed as current and omitted
-  active identities are terminally tombstoned. An adapter whose external view
-  may omit live members must not claim this tier.
+  external collection: every listed surviving identity must be an upsert with
+  both valid manifest-bound envelopes, listed explicit tombstones/replacements
+  may retire identities, and omitted active identities are terminally
+  tombstoned. An `unknown` listed identity is invalid because authoritative
+  completeness cannot install a surviving resource with no classifiable
+  payload. An adapter whose external view may omit live members must not claim
+  this tier.
 - A `partial` snapshot updates listed identities and marks omitted identities
   stale only when both cached envelopes exist. A `none` snapshot carries no
   reconstructed mutations and applies the same cached-payload degradation.
