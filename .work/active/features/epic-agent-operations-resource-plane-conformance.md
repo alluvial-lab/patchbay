@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, verification]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity, epic-agent-operations-resource-plane-resource-state, epic-agent-operations-resource-plane-capability-manifest, epic-agent-operations-resource-plane-cockpit-composition]
@@ -484,3 +484,28 @@ presentation conformance.
 - Integrated verification: final evidence is recorded in the promotion child story; no existing test/vector was weakened, skipped, or deleted.
 - Discrepancies from design: no formal model was added; the new properties remain implementation-evidence stated-normative. The arbitrary completeness trace constrains authoritative omission to an optional terminal step so subsequent generated actions cannot become invalid resurrection attempts; focused regressions cover rejection traces.
 - Adjacent issues parked: none.
+
+## Deep-lane review (2026-08-04)
+
+**Effective weight**: `thorough` deep lane (project CONVENTIONS.md override for `[verification]` stories). **Pass count**: 6. **Reviewer path**: cross-model fresh-context `openai-codex/gpt-5.6-sol` (substituting for the sunset umans reference), each pass a distinct fresh-context instance, adversarial mutation testing of every promoted vector/property/traceability claim. A promoted claim that passes but survives a mutation that should violate it is self-defining/vacuous = Blocker.
+
+**Verdict**: Approve — decisively converged at pass 6 (clean pass, no receiver-confirmed material current-cycle blocker).
+
+**Blockers found and fixed across the convergence** (each fix verified mutation-sensitive; each drift class now data-driven-guarded):
+
+1. `snapshot-reconciliation` bypassed the real `ControlService::load_snapshot` RPC (`a0743cb`) — runner now executes the real seam and asserts the returned discriminator.
+2. View-revision evidence was self-defining — read a boolean, not production `ResourceViewRecord.revision_lsn` (`2b24515`) — runner now compares actual record/view revisions against committed LSNs.
+3. Docs/checker property-registry drift passed (`be8dbb1`) — fail-closed bidirectional registry-equality check added.
+4. Promoted `proto_fields_constrained` references were unvalidated and two named nonexistent proto members (`ab72562`, `016f0d1`) — schema-derived validator resolves every reference; `LoadSnapshotResult`→`LoadSnapshotResponse`, `.resource_snapshot`→`.snapshot_payload` corrected.
+5. Checked-normative explanation was a false/stale assertion (`c8e1025`) — corrected to the accurate empty-intersection reason.
+6. That explanation was unguarded against false regression (`e68ca28`) — data-driven guard in `check-models.mjs` fails when promoted vectors exist but the reason claims none were promoted.
+7. Dual-case vectors executed only `resource_case`; the retained `session_case` was metadata-only — a coverage regression + false "complete scenario executes" claim (`58e0269`) — static checker and core/server runners now execute AND validate BOTH session and resource cases; implementation checks grew 9→11 honestly.
+8. Stale implementation-check count (9) in evidence records after the dual-case fix (`452de0b`) — corrected to 11 and guarded against drift (also guards promoted-vector and resource-property counts).
+
+**Coverage verdict (pass 6)**: all six coverage areas — (1) resource Operation grant/authority, (2) source-authenticated Observations, (3) snapshot/reconnect completeness honesty, (4) stale-never-live, (5) cross-adapter collision fencing, (6) opaque-payload cannot become core state — have genuine mutation-guarded checking vectors with no behavioral coverage regression vs the pre-feature state.
+
+**Feature-level deep review**: pass 6 was a holistic deep pass over the entire conformance corpus (all five children's vectors/properties/traceability together, not a per-story rollup), so it satisfies the CONVENTIONS.md feature-level deep-review intent in the same stride as the per-story convergence.
+
+**Important / Nits / Rejected**: none; none; metadata-only/traceability concerns were each either fixed or rejected with a concrete mutation-evidence reason.
+
+**Verification after remediation**: `cargo test --workspace` 341 passed; `cargo clippy --all-targets -- -D warnings` clean; `check:vectors` 8 promoted / 8 invariant / 11 implementation checks / 63 proto references; `check:drift`, `check:presentation`, `check:models` (8 checked-model, 0 checked-normative, 53 stated-normative) passed; web-cockpit 105 passed.
