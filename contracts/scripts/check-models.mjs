@@ -256,7 +256,7 @@ function parseVerificationGeneratedTable(markdown) {
   return classifications;
 }
 
-function validateVerificationMarkdown({ markdown, derivedTiers }) {
+function validateVerificationMarkdown({ markdown, derivedTiers, promotedByProperty }) {
   const errors = [];
   const classifications = parseVerificationGeneratedTable(markdown);
   if (classifications.size === 0) {
@@ -270,6 +270,29 @@ function validateVerificationMarkdown({ markdown, derivedTiers }) {
       errors.push(`${rel(verificationPath)}: generated conformance-vector table lacks ${propertyId}`);
     } else if (docTier !== derivedTier) {
       errors.push(`${rel(verificationPath)}: ${propertyId} is ${docTier} in generated conformance table but model-derived tier is ${derivedTier}`);
+    }
+  }
+
+  const checkedNormativeStart = markdown.indexOf('**checked-normative**');
+  const statedNormativeStart = markdown.indexOf('\n\n**stated-normative**', checkedNormativeStart);
+  if (checkedNormativeStart === -1 || statedNormativeStart === -1) {
+    errors.push(`${rel(verificationPath)}: checked-normative explanation is missing or malformed`);
+  } else {
+    const checkedNormativeExplanation = markdown.slice(checkedNormativeStart, statedNormativeStart);
+    const promotedVectorCount = [...promotedByProperty.values()]
+      .reduce((count, vectors) => count + vectors.length, 0);
+    const checkedNormativeCount = [...derivedTiers.values()]
+      .filter((tier) => tier === 'checked-normative').length;
+
+    // Invariant: when promoted vectors exist but their intersection with promoted
+    // models is empty, prose may explain the empty intersection but cannot claim
+    // vectors are unpromoted. Both counts come from artifacts, so the guard moves
+    // with promotion state instead of pinning today's correct sentence.
+    const claimsInsufficientPromotedVectors = /\b(?:no|zero|fewer)\s+(?:(?:promoted|conformance)\s+){0,2}vectors?\b/i;
+    if (promotedVectorCount > 0
+        && checkedNormativeCount === 0
+        && claimsInsufficientPromotedVectors.test(checkedNormativeExplanation)) {
+      errors.push(`${rel(verificationPath)}: inconsistent checked-normative explanation: ${promotedVectorCount} promoted vector(s) exist while ${checkedNormativeCount} properties are derived checked-normative; explain the empty model/vector property intersection instead of claiming no or fewer vectors were promoted`);
     }
   }
 
@@ -363,7 +386,11 @@ async function main() {
   const { errors: blockErrors, blockByProperty } = validateBlocks(blocks, new Set(propertyTiers.keys()), promotedByProperty);
   const { errors: tierErrors, derivedTiers } = validateDerivedTiers({ propertyTiers, blockByProperty, promotedByProperty });
   const verificationMarkdown = await readFile(verificationPath, 'utf8');
-  const verificationErrors = validateVerificationMarkdown({ markdown: verificationMarkdown, derivedTiers });
+  const verificationErrors = validateVerificationMarkdown({
+    markdown: verificationMarkdown,
+    derivedTiers,
+    promotedByProperty,
+  });
   const generated = buildTraceabilityMarkdown({ propertyTiers, blockByProperty, promotedByProperty, derivedTiers });
   const generatedChanged = await updateVerificationMarkdown(generated);
 
