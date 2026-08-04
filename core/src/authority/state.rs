@@ -4,7 +4,11 @@ use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
     GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
 };
-use crate::time::{Clock, SystemClock};
+use crate::{
+    resource::ResourceIdentity,
+    target::target_adapter_id,
+    time::{Clock, SystemClock},
+};
 
 /// The in-memory grant record derived from the durable authority log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +222,12 @@ pub fn grant_matches_request(
 pub fn target_scope_matches(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
     use TargetScopeKind as Kind;
 
+    if Kind::try_from(requested.kind).ok() == Some(Kind::Resource)
+        && ResourceIdentity::try_from_scope(requested).is_err()
+    {
+        return false;
+    }
+
     match Kind::try_from(grant_scope.kind) {
         Ok(Kind::FleetSupervisor | Kind::AuthorityDomain) => true,
         Ok(Kind::Adapter) => same_adapter(grant_scope, requested),
@@ -238,7 +248,7 @@ fn grant_endpoint_matches(grant: &GrantRecord, issuer: &IssuerRef<'_>) -> bool {
 
 fn same_adapter(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
     matches!(
-        (&grant_scope.adapter_id, &requested.adapter_id),
+        (grant_scope.adapter_id.as_ref(), target_adapter_id(requested)),
         (Some(grant_adapter), Some(requested_adapter)) if grant_adapter == requested_adapter
     )
 }
@@ -281,12 +291,8 @@ fn same_actor(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
 }
 
 fn same_resource(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
-    matches!(
-        (
-            grant_scope.resource.as_ref().and_then(|value| value.resource_id.as_ref()),
-            requested.resource.as_ref().and_then(|value| value.resource_id.as_ref()),
-        ),
-        (Some(grant_resource), Some(requested_resource))
-            if !grant_resource.value.is_empty() && grant_resource == requested_resource
-    )
+    ResourceIdentity::try_from_scope(grant_scope)
+        .ok()
+        .zip(ResourceIdentity::try_from_scope(requested).ok())
+        .is_some_and(|(grant, request)| grant == request)
 }

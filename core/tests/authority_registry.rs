@@ -413,6 +413,7 @@ fn grant_authorizes_only_when_every_matching_dimension_passes() {
 #[test]
 fn target_scope_matching_covers_the_full_containment_matrix() {
     let requested_session = TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
         actor_id: Some(actor("operator")),
         adapter_id: Some(adapter("pi")),
         runtime_session_id: Some(runtime("session-1")),
@@ -442,6 +443,14 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
     assert!(!target_scope_matches(
         &adapter_scope("other"),
         &requested_session
+    ));
+    assert!(target_scope_matches(
+        &adapter_scope("pi"),
+        &resource_scope("pi", "pool", "resource-1")
+    ));
+    assert!(!target_scope_matches(
+        &adapter_scope("pi"),
+        &resource_scope("other", "pool", "resource-1")
     ));
 
     let exact_session = runtime_scope("pi", "session-1", 7);
@@ -503,14 +512,13 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
     let resource = resource_scope("pi", "pool", "resource-1");
     assert!(target_scope_matches(&resource, &resource));
     assert!(!target_scope_matches(&resource, &requested_session));
-    assert!(target_scope_matches(
-        &resource,
-        &resource_scope("other", "window", "resource-1")
-    ));
-    assert!(!target_scope_matches(
-        &resource,
-        &resource_scope("pi", "pool", "resource-2")
-    ));
+    for non_matching in [
+        resource_scope("other", "pool", "resource-1"),
+        resource_scope("pi", "window", "resource-1"),
+        resource_scope("pi", "pool", "resource-2"),
+    ] {
+        assert!(!target_scope_matches(&resource, &non_matching));
+    }
 
     assert!(!target_scope_matches(
         &TargetScope::default(),
@@ -597,6 +605,40 @@ fn malformed_grants_and_cross_domain_records_are_rejected() {
     assert!(matches!(
         registry.observe(&recorded(3, StoredEventKind::Grant, &unknown_kind)),
         Err(AuthorityError::CorruptRecord(message)) if message.contains("unknown operation kind")
+    ));
+
+    let mut partial_resource = operator_grant();
+    partial_resource.target_scope = Some(resource_scope("pi", "pool", "resource-1"));
+    partial_resource
+        .target_scope
+        .as_mut()
+        .unwrap()
+        .resource
+        .as_mut()
+        .unwrap()
+        .resource_kind = None;
+    assert!(matches!(
+        registry.observe(&recorded(4, StoredEventKind::Grant, &partial_resource)),
+        Err(AuthorityError::InvalidGrant(message)) if message.contains("incomplete Resource")
+    ));
+
+    let mut legacy_resource = operator_grant();
+    legacy_resource.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Resource as i32,
+        legacy_audit_resource_id: "audit-only".to_owned(),
+        ..TargetScope::default()
+    });
+    assert!(matches!(
+        registry.observe(&recorded(5, StoredEventKind::Grant, &legacy_resource)),
+        Err(AuthorityError::InvalidGrant(message)) if message.contains("incomplete Resource")
+    ));
+
+    let mut mixed_resource = operator_grant();
+    mixed_resource.target_scope = Some(resource_scope("pi", "pool", "resource-1"));
+    mixed_resource.target_scope.as_mut().unwrap().adapter_id = Some(adapter("pi"));
+    assert!(matches!(
+        registry.observe(&recorded(6, StoredEventKind::Grant, &mixed_resource)),
+        Err(AuthorityError::InvalidGrant(message)) if message.contains("incomplete Resource")
     ));
 }
 

@@ -12,7 +12,7 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 
-use crate::storage::RecordedEvent;
+use crate::{resource::ResourceIdentity, storage::RecordedEvent};
 
 use super::{
     AuthorityError, GrantLiveness, GrantProvenanceKind, GrantRecord,
@@ -457,11 +457,7 @@ fn validate_target_scope(
         }
         TargetScopeKind::ProjectSessionGroup => !scope.project_or_group.is_empty(),
         TargetScopeKind::FleetSupervisor | TargetScopeKind::AuthorityDomain => true,
-        TargetScopeKind::Resource => scope
-            .resource
-            .as_ref()
-            .and_then(|identity| identity.resource_id.as_ref())
-            .is_some_and(|id| !id.value.is_empty()),
+        TargetScopeKind::Resource => ResourceIdentity::try_from_scope(scope).is_ok(),
     };
     if !valid {
         return Err(AuthorityError::InvalidGrant(format!(

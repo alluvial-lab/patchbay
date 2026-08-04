@@ -26,8 +26,9 @@ use patchbay_core::{
         TargetResolver,
     },
     authority::{
-        ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
-        AuthorityRegistry, GrantLookup, GrantProjection, GrantProvenanceKind, GrantRecord,
+        ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log,
+        target_scope_matches, AuthorityError, AuthorityRegistry, GrantLookup, GrantProjection,
+        GrantProvenanceKind, GrantRecord,
         IssuerContext, SpawnDescendantTail, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::{RecordedEvent, RusqliteStorage},
@@ -172,18 +173,26 @@ fn valid_target_scope(kind: TargetScopeKind, suffix: &str) -> TargetScope {
             kind: kind as i32,
             ..TargetScope::default()
         },
-        TargetScopeKind::Resource => TargetScope {
-            kind: kind as i32,
-            resource: Some(ResourceIdentity {
-                adapter_id: Some(adapter(&format!("adapter-{suffix}"))),
-                resource_id: Some(ResourceId { value: format!("resource-{suffix}") }),
-                resource_kind: Some(ResourceKind { value: format!("kind-{suffix}") }),
-            }),
-            ..TargetScope::default()
-        },
+        TargetScopeKind::Resource => resource_scope(
+            &format!("adapter-{suffix}"),
+            &format!("kind-{suffix}"),
+            &format!("resource-{suffix}"),
+        ),
         TargetScopeKind::Unspecified => {
             panic!("the target-scope strategy never generates Unspecified")
         }
+    }
+}
+
+fn resource_scope(adapter_id: &str, resource_kind: &str, resource_id: &str) -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Resource as i32,
+        resource: Some(ResourceIdentity {
+            adapter_id: Some(adapter(adapter_id)),
+            resource_id: Some(ResourceId { value: resource_id.to_owned() }),
+            resource_kind: Some(ResourceKind { value: resource_kind.to_owned() }),
+        }),
+        ..TargetScope::default()
     }
 }
 
@@ -992,6 +1001,40 @@ proptest! {
         cases: 100,
         ..ProptestConfig::default()
     })]
+
+    /// Resource containment is exact across independently varied tuple dimensions.
+    #[test]
+    fn resource_identity_containment_fences_every_dimension(
+        adapter_value in "[a-z0-9]{1,12}",
+        other_adapter in "[a-z0-9]{1,12}",
+        kind_value in "[a-z0-9]{1,12}",
+        other_kind in "[a-z0-9]{1,12}",
+        id_value in "[a-z0-9]{1,12}",
+        other_id in "[a-z0-9]{1,12}",
+    ) {
+        prop_assume!(adapter_value != other_adapter);
+        prop_assume!(kind_value != other_kind);
+        prop_assume!(id_value != other_id);
+
+        let grant = resource_scope(&adapter_value, &kind_value, &id_value);
+        prop_assert!(target_scope_matches(&grant, &grant));
+        prop_assert!(!target_scope_matches(
+            &grant,
+            &resource_scope(&other_adapter, &kind_value, &id_value),
+        ));
+        prop_assert!(!target_scope_matches(
+            &grant,
+            &resource_scope(&adapter_value, &other_kind, &id_value),
+        ));
+        prop_assert!(!target_scope_matches(
+            &grant,
+            &resource_scope(&adapter_value, &kind_value, &other_id),
+        ));
+
+        let mut wrong_kind = grant.clone();
+        wrong_kind.kind = TargetScopeKind::RuntimeSession as i32;
+        prop_assert!(!target_scope_matches(&grant, &wrong_kind));
+    }
 
     /// 1. NoCommandWithoutGrant: authority is deny-by-default.
     #[test]
