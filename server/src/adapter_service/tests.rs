@@ -8,7 +8,8 @@ use patchbay_contracts::patchbay::{
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
-    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind,
+    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, SchemaDescriptor,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -116,6 +117,111 @@ impl Storage for BlockingReadStorage {
         self.inner
             .load_latest_snapshot(authority_domain_id, at_or_before)
             .await
+    }
+}
+
+#[tokio::test]
+async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_append() {
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut valid = registration(domain.clone());
+    valid.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![
+            resource_declaration("provider_pool", AdapterSnapshotSupport::Authoritative),
+            resource_declaration("usage_window", AdapterSnapshotSupport::Partial),
+        ],
+        ..AdapterCapability::default()
+    });
+    service
+        .attach(Request::new(AttachRequest {
+            registration: Some(valid),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("two-kind resource manifest attaches");
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .expect("events read")
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::Observation as i32)
+            .count(),
+        1
+    );
+
+    let rejected_storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let rejected_service = AdapterControlServiceImpl::new(
+        rejected_storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut okf = registration(domain.clone());
+    let mut declaration = resource_declaration("knowledge_bundle", AdapterSnapshotSupport::Authoritative);
+    declaration.projection_contract.as_mut().expect("projection").target_category =
+        AdapterTargetCategory::KnowledgeBundle as i32;
+    declaration
+        .projection_contract
+        .as_mut()
+        .expect("projection")
+        .payload_schema
+        .as_mut()
+        .expect("schema")
+        .schema_ref = "okf.v0.2.bundle".into();
+    okf.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::KnowledgeBundle as i32],
+        resource_capabilities: vec![declaration],
+        ..AdapterCapability::default()
+    });
+    let error = rejected_service
+        .attach(Request::new(AttachRequest {
+            registration: Some(okf),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect_err("reserved knowledge bundle must reject");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    let rejected_events = rejected_storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read");
+    assert!(!rejected_events.is_empty(), "rejection remains audited");
+    assert!(rejected_events.iter().all(|event| {
+        if event.payload.kind != StoredEventKind::Observation as i32 {
+            return true;
+        }
+        Observation::decode(event.payload.payload.as_slice())
+            .ok()
+            .and_then(|observation| observation.payload)
+            .is_none_or(|payload| payload.schema_ref != "patchbay.AdapterRegistration")
+    }));
+}
+
+fn resource_declaration(kind: &str, tier: AdapterSnapshotSupport) -> ResourceCapability {
+    ResourceCapability {
+        resource_kind: Some(ResourceKind { value: kind.into() }),
+        snapshot_support: tier as i32,
+        projection_contract: Some(ResourceProjectionContract {
+            target_category: AdapterTargetCategory::OperationalResource as i32,
+            payload_schema: Some(SchemaDescriptor {
+                schema_ref: format!("{kind}.payload.v1"),
+                content_type: PayloadContentType::Protobuf as i32,
+            }),
+            projection_schema: Some(SchemaDescriptor {
+                schema_ref: format!("{kind}.projection.v1"),
+                content_type: PayloadContentType::Json as i32,
+            }),
+        }),
     }
 }
 

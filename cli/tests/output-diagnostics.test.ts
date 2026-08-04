@@ -10,7 +10,9 @@ import {
   AdapterDiagnosticReportingCapabilitySchema,
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
+  AdapterSnapshotSupport,
   AdapterStatusPageSchema,
+  AdapterTargetCategory,
   AdapterStatusSchema,
   DiagnosticsQuerySchema,
   AuditEventKind,
@@ -24,14 +26,19 @@ import {
   LsnSchema,
   OperationKind,
   OperationState,
+  PayloadContentType,
   QueryDiagnosticsResponseSchema,
+  ResourceCapabilitySchema,
+  ResourceKindSchema,
+  ResourceProjectionContractSchema,
+  SchemaDescriptorSchema,
   SessionSchema,
   SubmissionOutcome,
   SubmissionResultSchema,
 } from "@patchbay/contracts";
 import { adapterStatusCommand } from "../src/commands/adapter-status.js";
 import { auditQueryCommand } from "../src/commands/audit-query.js";
-import { auditPageView, adapterStatusPageView, parseAuditTarget } from "../src/commands/diagnostics.js";
+import { adapterTables, auditPageView, adapterStatusPageView, parseAuditTarget } from "../src/commands/diagnostics.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
 import { CredentialStore } from "../src/credentials.js";
 import { parseArguments, run, usage } from "../src/main.js";
@@ -330,16 +337,48 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
   const page = create(AdapterStatusPageSchema, {
     adapters: [create(AdapterStatusSchema, {
       capability: create(AdapterCapabilitySummarySchema, {
+        sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
         diagnosticReporting: create(AdapterDiagnosticReportingCapabilitySchema, {
           diagnosticCodes: ["heartbeat_lag"],
         }),
+        targetCategories: [AdapterTargetCategory.RUNTIME_SESSION, AdapterTargetCategory.OPERATIONAL_RESOURCE],
+        resourceCapabilities: [create(ResourceCapabilitySchema, {
+          resourceKind: create(ResourceKindSchema, { value: "provider_pool" }),
+          snapshotSupport: AdapterSnapshotSupport.AUTHORITATIVE,
+          projectionContract: create(ResourceProjectionContractSchema, {
+            targetCategory: AdapterTargetCategory.OPERATIONAL_RESOURCE,
+            payloadSchema: create(SchemaDescriptorSchema, {
+              schemaRef: "token-commune.pool.payload.v1",
+              contentType: PayloadContentType.PROTOBUF,
+            }),
+            projectionSchema: create(SchemaDescriptorSchema, {
+              schemaRef: "token-commune.pool.projection.v1",
+              contentType: PayloadContentType.JSON,
+            }),
+          }),
+        })],
       }),
       recentDiagnostics: [record],
     })],
   });
   const projected = adapterStatusPageView(page).adapters[0]!;
   assert.deepEqual(projected.capability?.diagnosticReporting, { diagnosticCodes: ["heartbeat_lag"] });
+  assert.equal(projected.capability?.sessionSnapshotSupport, "partial");
+  assert.deepEqual(projected.capability?.targetCategories, ["runtime_session", "operational_resource"]);
+  assert.deepEqual(projected.capability?.resourceCapabilities, [{
+    resourceKind: "provider_pool",
+    snapshotSupport: "authoritative",
+    projectionContract: {
+      targetCategory: "operational_resource",
+      payloadSchema: { schemaRef: "token-commune.pool.payload.v1", contentType: "protobuf" },
+      projectionSchema: { schemaRef: "token-commune.pool.projection.v1", contentType: "json" },
+    },
+  }]);
   assert.equal(projected.recentDiagnostics[0]?.adapterDiagnostic?.operationKind, "instruct");
+  const human = adapterTables(page).sections[0]!;
+  assert.ok(human.headers.includes("SESSION_SNAPSHOT"));
+  assert.ok(human.headers.includes("RESOURCE_SNAPSHOTS"));
+  assert.ok(human.rows[0]?.includes("provider_pool=authoritative"));
   assert.doesNotMatch(JSON.stringify(audit.records[0]), /prompt|attachment|descriptor|BEARER/);
 });
 

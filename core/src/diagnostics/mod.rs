@@ -400,7 +400,7 @@ impl DiagnosticsProjection {
                 supported_operation_kinds: capability.supported_operation_kinds.clone(),
                 supported_target_spec_shapes: capability.supported_target_spec_shapes.clone(),
                 streaming_support: capability.streaming_support,
-                snapshot_support: capability.session_snapshot_support,
+                session_snapshot_support: capability.session_snapshot_support,
                 cancellation_support: capability.cancellation_support,
                 session_replacement_support: capability.session_replacement_support,
                 idempotency_strength: capability.idempotency_strength,
@@ -408,6 +408,8 @@ impl DiagnosticsProjection {
                 attachment_descriptor_content_type: capability.attachment_method.as_ref().map_or(0, |method| method.descriptor_content_type),
                 known_failure_modes: capability.known_failure_modes.clone(),
                 diagnostic_reporting: capability.diagnostic_reporting.clone(),
+                target_categories: capability.target_categories.clone(),
+                resource_capabilities: capability.resource_capabilities.clone(),
             });
             let recent_diagnostics = if recent_limit == 0 {
                 Vec::new()

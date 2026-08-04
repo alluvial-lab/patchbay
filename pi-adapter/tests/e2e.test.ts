@@ -16,7 +16,9 @@ import {
   AdapterDiagnosticState,
   AdapterIdSchema,
   AdapterRegistrationSchema,
+  AdapterSnapshotSupport,
   AdapterStatusQuerySchema,
+  AdapterTargetCategory,
   AdminService,
   AuthorityDomainIdSchema,
   BootstrapRequestSchema,
@@ -174,6 +176,14 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       ),
       false,
     );
+    assert.deepEqual(registration.capability?.targetCategories, [
+      AdapterTargetCategory.RUNTIME_SESSION,
+    ]);
+    assert.equal(
+      registration.capability?.sessionSnapshotSupport,
+      AdapterSnapshotSupport.PARTIAL,
+    );
+    assert.deepEqual(registration.capability?.resourceCapabilities, []);
 
     const accepted = await control.submit(
       create(SubmitRequestSchema, {

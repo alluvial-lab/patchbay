@@ -1,10 +1,12 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterDiagnosticDetail, AdapterDiagnosticSeverity,
     AdapterDiagnosticState, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, EventId,
     FailureCode, Generation, Observation, ObservationKind, Operation, OperationKind,
-    OperationState, PayloadContentType, PayloadEnvelope, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind,
+    OperationState, PayloadContentType, PayloadEnvelope, ResourceCapability, ResourceKind,
+    ResourceProjectionContract, SchemaDescriptor, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::diagnostics::{DiagnosticsProjection, DIAGNOSTICS_SCHEMA};
 use patchbay_core::storage::RecordedEvent;
@@ -164,6 +166,25 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
                 descriptor: b"sentinel-secret".to_vec(),
                 descriptor_content_type: PayloadContentType::Binary as i32,
             }),
+            target_categories: vec![
+                AdapterTargetCategory::RuntimeSession as i32,
+                AdapterTargetCategory::OperationalResource as i32,
+            ],
+            resource_capabilities: vec![ResourceCapability {
+                resource_kind: Some(ResourceKind { value: "provider_pool".to_owned() }),
+                snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                projection_contract: Some(ResourceProjectionContract {
+                    target_category: AdapterTargetCategory::OperationalResource as i32,
+                    payload_schema: Some(SchemaDescriptor {
+                        schema_ref: "pool.payload.v1".to_owned(),
+                        content_type: PayloadContentType::Protobuf as i32,
+                    }),
+                    projection_schema: Some(SchemaDescriptor {
+                        schema_ref: "pool.projection.v1".to_owned(),
+                        content_type: PayloadContentType::Json as i32,
+                    }),
+                }),
+            }],
             ..AdapterCapability::default()
         }),
         ..AdapterRegistration::default()
@@ -184,7 +205,17 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
     let page = projection.adapter_page(&patchbay_contracts::patchbay::AdapterStatusQuery::default(), 1).unwrap();
     assert_eq!(page.adapters.len(), 1);
     assert_eq!(page.adapters[0].state, AdapterDiagnosticState::Attached as i32);
-    assert_eq!(page.adapters[0].capability.as_ref().unwrap().attachment_method_kind, "local");
+    let summary = page.adapters[0].capability.as_ref().unwrap();
+    assert_eq!(summary.attachment_method_kind, "local");
+    assert_eq!(summary.session_snapshot_support, AdapterSnapshotSupport::Authoritative as i32);
+    assert_eq!(summary.target_categories, [
+        AdapterTargetCategory::RuntimeSession as i32,
+        AdapterTargetCategory::OperationalResource as i32,
+    ]);
+    assert_eq!(summary.resource_capabilities.len(), 1);
+    assert_eq!(summary.resource_capabilities[0].resource_kind.as_ref().unwrap().value, "provider_pool");
+    assert_eq!(summary.resource_capabilities[0].snapshot_support, AdapterSnapshotSupport::Partial as i32);
+    assert_eq!(summary.resource_capabilities[0].projection_contract.as_ref().unwrap().projection_schema.as_ref().unwrap().schema_ref, "pool.projection.v1");
     projection.reset_adapter_liveness();
     let restarted = projection.adapter_page(&patchbay_contracts::patchbay::AdapterStatusQuery::default(), 1).unwrap();
     assert_eq!(restarted.adapters[0].state, AdapterDiagnosticState::Unknown as i32);

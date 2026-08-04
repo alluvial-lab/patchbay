@@ -564,18 +564,34 @@ v0.1.0 reserves leases as an extension seam. A future feature promoting leases i
 
 ## Adapter capabilities
 
-Adapters declare supported Operations and guarantees in a capability manifest:
+Adapters declare supported targets, Operations, and guarantees in one capability manifest:
 
+- target categories from the registry below;
 - supported `OperationKind`s (and, for `spawn`, supported `target_spec.shape` values);
 - streaming support (boolean);
-- snapshot support (authoritative / partial / none);
+- runtime-session snapshot support (authoritative / partial / none);
+- exact per-`ResourceKind` snapshot tier and payload/projection schema descriptors;
 - cancellation support (boolean);
 - session replacement support (boolean);
 - idempotency strength (`none` / `at-Patchbay-boundary` / `end-to-end`);
 - attachment method (adapter-specific descriptor);
 - known failure modes (advisory list mapping to the failure vocabulary).
 
-Each capability is shaped by where the core's behavior branches. Snapshot support is tiered because the core's reconciliation contract on reconnect depends on the tier. Idempotency strength is an enum because the core's retry behavior depends on it. Streaming, cancellation, and session replacement are boolean: the core does the same thing regardless of the value beyond display.
+`AdapterTargetCategory` is the closed generated category registry. `ResourceKind` remains an open adapter-owned identifier beneath the operational-resource category.
+
+| Target category | Disposition | Meaning |
+|---|---|---|
+| `runtime_session` | Committed | Runtime sessions with the canonical session identity and connectivity/activity contract. |
+| `operational_resource` | Committed post-v0.1 direction | Operational resources with exact adapter-owned kinds and resource projection contracts. |
+| `knowledge_bundle` | Reserved | Wire-present candidate for OKF v0.2 knowledge bundles. Registration rejects it until a separate report, authority, snapshot/reconciliation, presentation, and conformance contract is promoted. |
+
+Fresh attach requires at least one explicit, unique committed category. Unknown, unspecified, duplicate, or reserved categories reject before durable append. `runtime_session` requires a specified `session_snapshot_support` tier; without that category the session tier remains unspecified. `operational_resource` requires one or more unique declarations, and resource declarations are forbidden without that category. Each declaration binds one non-empty `ResourceKind`, its own specified snapshot tier, and a `ResourceProjectionContract` targeting `operational_resource` with complete payload and domain-projection `SchemaDescriptor`s. At most 128 resource kinds may be declared; schema refs are bounded non-empty identifiers with known content types.
+
+Durable pre-category registrations are the narrow compatibility exception: replay may normalize a category-less, resource-empty legacy manifest to session-only. Fresh attach never applies that normalization, and the legacy projection cannot admit a resource or knowledge bundle. Replay otherwise uses the same fail-closed validator as attach.
+
+A schema descriptor is an exact `(schema_ref, content_type)` format binding, not proof that opaque bytes semantically satisfy the named schema. Resource ingress must first select the exact authenticated `(adapter_id, resource_kind)` declaration and match both payload and projection descriptors. A local typed decoder remains responsible for rejecting malformed bytes before installing resource state or a domain projection. Adapter-supplied renderer code, HTML, CSS, and dynamic plugins are not loaded: surfaces nest locally decoded adapter domain data beneath canonical Patchbay identity, revision, staleness, authority, attention, and Operation presentation.
+
+Each capability is shaped by where the core's behavior branches. Snapshot support is tiered because the core's reconciliation contract on reconnect depends on the tier, and resource tiers are never inferred from the session tier. Idempotency strength is an enum because retry presentation depends on it. Streaming, cancellation, and session replacement are boolean: the core does the same thing regardless of the value beyond display.
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 
@@ -589,13 +605,15 @@ Attach, detach, failure, and capability redeclaration are audit events. Capabili
 
 A current v0.1.0 adapter attachment maintains one long-lived authenticated delivery subscription. The subscription incrementally follows the durable log and remains pending while idle; finite tails that complete between polls are not the liveness mechanism. Abnormal stream loss is connection-liveness evidence: the core marks that adapter's sessions `stale` and terminalizes its `running` commands as `failed` with `execution_outcome_unknown`. Commands still at `accepted` or `delivered` remain eligible for the existing bounded redelivery behavior because execution is not known to have started. Attachment-token and stream-epoch fences make a replaced attachment's late disconnect inert. This transport signal does not detect every network black hole; heartbeat/last-report-age policy, including its freshness deadline and adapter capability implications, remains a reserved seam.
 
-### Adapter snapshot capability tiers
+### Adapter session and resource snapshot capability tiers
 
-Adapter snapshot support is not boolean. v0.1.0 recognizes three tiers:
+Adapter snapshot support is not boolean. The registry recognizes three tiers, applied once to the runtime-session collection and independently to every declared resource kind:
 
 - **Authoritative snapshot** — the adapter can return a complete, authoritative view of the session at a session generation the core can reconcile. The core treats this as a valid snapshot source and may use it to repair missed events.
 - **Partial snapshot** — the adapter can return some state (e.g. command history or last-known status) but cannot fully reconstruct the session view. The core marks the unreconciled axes `unknown` or `stale` per `SessionConnectivityState`/`SessionActivityState` rather than synthesizing live state.
 - **No snapshot** — the adapter cannot snapshot. The core holds the last-known cached view marked `stale` (or `unknown` if no cached view exists) and does not present it as live. Reconnect after missed events cannot be repaired by a snapshot; the control surface must reconcile against command/event records it can still query, and present unreconciled session state honestly.
+
+For operational resources, a tier describes only the exact declared `ResourceKind`; it does not fall back to `session_snapshot_support` or another resource kind. An authoritative resource tier claims a complete collection view for that kind, partial claims an incomplete view whose unreconciled axes remain stale/unknown, and none claims no collection snapshot. Resource revision, replacement, and cached-state degradation are owned by the resource-state contract.
 
 Degraded behavior rules:
 
@@ -606,6 +624,7 @@ Degraded behavior rules:
 
 ## Extension pressure classification
 
+- **Committed post-v0.1 adapter direction:** the `AdapterTargetCategory` registry admits `runtime_session` and `operational_resource`; each operational resource kind has an exact snapshot tier and schema-bound payload/domain projection contract. `knowledge_bundle` is wire-present and registration-rejected with OKF v0.2 named as the candidate format. Schema matching is a format binding, not semantic payload validation, and capabilities remain advisory rather than authority.
 - **Committed v0.1.0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, opaque adapter-reported mutable session `model` metadata with durable `SessionModelChanged` deltas, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative formal obligations for finality, first valid answer, typed correlation, invalid-response rejection, stale-target inertness, withdrawal, and timeout/grant behavior), the `response_contract` registry (committed contract kinds: `approval`, `question`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, stale/unknown presentation honesty, and one long-lived authenticated delivery subscription per current adapter attachment whose abnormal loss marks sessions `stale` and resolves `running` commands to `failed(execution_outcome_unknown)`.
 - **Reserved extension seams:** richer structured session-model descriptors and a distinct model-history projection, heartbeat/last-report-age adapter liveness policy (timer, freshness deadline, restart policy, and any adapter-declared liveness capability), future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved richer `ApprovalDecision` values (`ALLOW_ONCE`, `ALWAYS`, `POLICY_AMEND`, `MODIFIED_INPUT` — named in the enum, rejected with `validation_failed` in v0.1.0), surface-reject (an operator surface signals it cannot handle an Elicitation; distinct from operator approve/decline and from machine command rejection), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0.1.0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation lineage, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
 - **Rejected direction:** finite clean-completing delivery tails as the v0.1.0 adapter-liveness mechanism, Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0.1.0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
@@ -622,7 +641,11 @@ Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does
 | principals / authority domains | multi-operator / federated authority domains, shared authority administration, handoffs | R | SECURITY; GLOSSARY "authority domain"; `idea-multi-human-coordination` |
 | adapters | Pi as the first workflow-migration adapter | C | SPEC "Adapter posture" |
 | operational resources | typed identity `(adapter_id, resource_kind, resource_id)`, exact resource-grant containment, and target-kind-polymorphic ordinary resolution | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-resource-identity`; PROTOCOL "Operational-resource identity and resolution" |
-| operational resources | resource revision/replacement/tombstones, manifest-admitted resource kinds, and resource-kind-wide grants | R | resource-plane sibling features; PROTOCOL "Operational-resource identity and resolution" |
+| operational resources | manifest-admitted exact resource kinds, per-kind snapshot tiers, and schema-bound adapter domain projections above the canonical presentation floor | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-capability-manifest`; PROTOCOL "Adapter capabilities" |
+| operational resources | resource revision/replacement/tombstones and resource-kind-wide grants | R | resource-plane sibling features; PROTOCOL "Operational-resource identity and resolution" |
+| adapter target categories | `runtime_session` and `operational_resource` admitted; `knowledge_bundle` wire-present but registration-rejected with OKF v0.2 as candidate format | C (shape/committed values) / R (knowledge-bundle value) | `epic-agent-operations-resource-plane-capability-manifest`; PROTOCOL "Adapter capabilities" |
+| adapter projections | locally decoded schema-bound domain projections nested beneath canonical authority/delivery/stale-state/attention presentation | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-capability-manifest`; UX "Adapter-shaped resource projections" |
+| adapter projections | dynamic loading of adapter-provided renderer/plugin code | X | `epic-agent-operations-resource-plane-capability-manifest` |
 | adapters | other harnesses, shell jobs, CI jobs, project tools, notification systems, human approval surfaces | R | SPEC "Adapter posture" |
 | adapter capabilities | 3-tier snapshot model; capability manifest fields (`supported_operation_kinds`, snapshot tier, `streaming`, `cancellation`, `session_replacement`, `idempotency_strength`, `attachment_method`, `known_failure_modes`) | C | `feature-session-identity-adapter-contract`; PROTOCOL "Adapter capabilities" |
 | adapter capabilities | adapter-declared typed diagnostic reports, bounded recent adapter-status evidence, and existing-view cockpit composition | C | `epic-observability-dogfooding-cockpit-diagnostics`; PROTOCOL Payload and failure vocabulary |

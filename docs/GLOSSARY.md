@@ -65,7 +65,19 @@ The lifecycle registry for an Elicitation. Initial state is `opened`; transition
 
 ## Adapter capability
 
-A declaration an adapter makes about the Operations and guarantees it supports: supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support (boolean); snapshot support (authoritative / partial / none); idempotency strength (none / at-Patchbay-boundary / end-to-end); attachment method; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; idempotency strength; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+
+## Adapter target category
+
+The closed generated registry that classifies the canonical Patchbay contract an adapter target uses. `runtime_session` and `operational_resource` are admitted. `knowledge_bundle` is wire-present but registration-rejected, with OKF v0.2 named as the candidate format for a future promotion. Adapter-owned provider, pool, and window names are `ResourceKind`s beneath `operational_resource`, not target categories.
+
+## Resource projection contract
+
+The per-resource declaration that binds one exact `ResourceKind` to the mandatory `operational_resource` composition target plus payload and domain-projection schema descriptors. A local known compositor may interpret the projection inside Patchbay's canonical identity/revision/staleness/authority/attention/Operation wrapper. The contract does not load adapter UI code or grant authority.
+
+## Schema descriptor
+
+A bounded non-empty schema reference plus a generated payload content type. Exact matching establishes that an envelope uses the format declared in the manifest; it does not prove opaque bytes semantically satisfy that schema. Typed decoders remain responsible for fail-closed semantic validation.
 
 ## Correlation context
 

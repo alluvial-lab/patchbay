@@ -4,6 +4,7 @@ import {
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
   AdapterSnapshotSupport,
+  AdapterTargetCategory,
   AuditEventKind,
   AuditPageSchema,
   AuthorityDomainIdSchema,
@@ -419,7 +420,7 @@ export function adapterStatusPageView(page: AdapterStatusPage) {
         supportedOperationKinds: adapter.capability.supportedOperationKinds.map((value) => enumLabel(OperationKind, value)),
         supportedTargetSpecShapes: [...adapter.capability.supportedTargetSpecShapes],
         streamingSupport: adapter.capability.streamingSupport,
-        snapshotSupport: enumLabel(AdapterSnapshotSupport, adapter.capability.snapshotSupport),
+        sessionSnapshotSupport: enumLabel(AdapterSnapshotSupport, adapter.capability.sessionSnapshotSupport),
         cancellationSupport: adapter.capability.cancellationSupport,
         sessionReplacementSupport: adapter.capability.sessionReplacementSupport,
         idempotencyStrength: enumLabel(IdempotencyStrength, adapter.capability.idempotencyStrength),
@@ -429,6 +430,24 @@ export function adapterStatusPageView(page: AdapterStatusPage) {
         diagnosticReporting: adapter.capability.diagnosticReporting ? {
           diagnosticCodes: [...adapter.capability.diagnosticReporting.diagnosticCodes],
         } : null,
+        targetCategories: adapter.capability.targetCategories.map((value) =>
+          enumLabel(AdapterTargetCategory, value)
+        ),
+        resourceCapabilities: adapter.capability.resourceCapabilities.map((resource) => ({
+          resourceKind: resource.resourceKind?.value || null,
+          snapshotSupport: enumLabel(AdapterSnapshotSupport, resource.snapshotSupport),
+          projectionContract: resource.projectionContract ? {
+            targetCategory: enumLabel(AdapterTargetCategory, resource.projectionContract.targetCategory),
+            payloadSchema: resource.projectionContract.payloadSchema ? {
+              schemaRef: resource.projectionContract.payloadSchema.schemaRef,
+              contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.payloadSchema.contentType),
+            } : null,
+            projectionSchema: resource.projectionContract.projectionSchema ? {
+              schemaRef: resource.projectionContract.projectionSchema.schemaRef,
+              contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.projectionSchema.contentType),
+            } : null,
+          } : null,
+        })),
       } : null,
       lastLifecycleRecord: adapter.lastLifecycleRecord ? auditRecordView(adapter.lastLifecycleRecord) : null,
       recentDiagnostics: adapter.recentDiagnostics.map(auditRecordView),
@@ -500,12 +519,14 @@ export function adapterTables(page: AdapterStatusPage): HumanDiagnosticsView {
   return {
     sections: [{
       title: "ADAPTERS",
-      headers: ["ADAPTER", "ENDPOINT", "GENERATION", "STATE", "LIVE", "STALE", "OFFLINE", "FAILED", "SNAPSHOT", "IDEMPOTENCY", "ATTACHED_AT"],
+      headers: ["ADAPTER", "ENDPOINT", "GENERATION", "STATE", "LIVE", "STALE", "OFFLINE", "FAILED", "TARGETS", "SESSION_SNAPSHOT", "RESOURCE_SNAPSHOTS", "IDEMPOTENCY", "ATTACHED_AT"],
       rows: page.adapters.map((adapter) => [
         adapter.adapterId?.value ?? "-", adapter.endpointId?.value ?? "-", adapter.adapterGeneration?.value.toString() ?? "-",
         enumLabel(AdapterDiagnosticState, adapter.state), String(adapter.liveSessionCount), String(adapter.staleSessionCount),
         String(adapter.offlineSessionCount), String(adapter.failedSessionCount),
-        adapter.capability ? enumLabel(AdapterSnapshotSupport, adapter.capability.snapshotSupport) : "-",
+        adapter.capability ? adapter.capability.targetCategories.map((value) => enumLabel(AdapterTargetCategory, value)).join(",") || "-" : "-",
+        adapter.capability ? enumLabel(AdapterSnapshotSupport, adapter.capability.sessionSnapshotSupport) : "-",
+        adapter.capability ? adapter.capability.resourceCapabilities.map((resource) => `${resource.resourceKind?.value || "?"}=${enumLabel(AdapterSnapshotSupport, resource.snapshotSupport)}`).join(",") || "-" : "-",
         adapter.capability ? enumLabel(IdempotencyStrength, adapter.capability.idempotencyStrength) : "-",
         timestampView(adapter.attachedAt) ?? "-",
       ]),

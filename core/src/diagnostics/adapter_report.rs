@@ -292,7 +292,8 @@ fn validate_timestamp(timestamp: &Timestamp) -> Result<(), String> {
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        AdapterCapability, Generation, PayloadContentType, TypedCorrelation,
+        AdapterCapability, AdapterSnapshotSupport, AdapterTargetCategory, Generation,
+        PayloadContentType, TypedCorrelation,
     };
 
     fn registration() -> AdapterRegistration {
@@ -301,7 +302,11 @@ mod tests {
             endpoint_id: Some(patchbay_contracts::patchbay::EndpointId { value: "pi-endpoint".into() }),
             authority_domain_id: Some(AuthorityDomainId { value: "main".into() }),
             adapter_generation: Some(Generation { value: 1 }),
-            capability: Some(AdapterCapability::default()),
+            capability: Some(AdapterCapability {
+                session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                ..AdapterCapability::default()
+            }),
             ..Default::default()
         }
     }

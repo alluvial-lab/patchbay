@@ -26,13 +26,17 @@ Spawn authority is fleet-level by default in v0.1.0: a spawn grant authorizes sp
 
 The operational resource plane contains non-session targets whose state materially governs what an operator's agents can do or requires human action to keep agent work operating: provider-capacity pools, contribution/credential health, model availability, and similar adapter-owned resources. Resources use stable resource identity, snapshots/revisions, Observations, queries, grants, and attention without inheriting runtime-session generation or connectivity/activity semantics.
 
-Resource domain health remains adapter-owned payload state. For example, an exhausted model contribution is not an offline runtime session. The coordination core owns durable Operations, authority, correlation, and reconciliation around a resource but does not interpret allocation policy, quota mathematics, or adapter-specific health variants.
+Resource domain health remains adapter-owned payload state. For example, an exhausted model contribution is not an offline runtime session. The coordination core owns durable Operations, authority, correlation, and reconciliation around a resource but does not interpret allocation policy, quota mathematics, or adapter-specific health variants. The adapter capability manifest binds each exact resource kind to its snapshot tier and payload/domain-projection schemas; a local compositor may interpret the domain projection only inside the canonical Patchbay wrapper.
 
 ### Adapter plane
 
 Adapters translate between Patchbay concepts and external systems. Pi is the first session adapter. token-commune is the second reference adapter and the first materially non-session resource adapter. Adapters declare capabilities and own external-system details.
 
 Adapters are not allowed to introduce core-only assumptions such as shared cwd semantics, harness-specific message formats, or project-specific workflow state into the Patchbay core.
+
+The capability manifest declares a generated target category (`runtime_session` or `operational_resource`) and, for resources, exact open `ResourceKind` declarations with per-kind snapshot tier and payload/domain-projection schema bindings. The reserved `knowledge_bundle` category is wire-present for an OKF-v0.2 candidate contract but is rejected at registration until promoted. Core registration validates and stores this projection once; exact `(adapter_id, resource_kind)` lookup is the admission boundary consumed by resource report ingress. Capability declarations remain advisory and never replace grants or adapter-authoritative delivery outcomes.
+
+Adapter-shaped domain projections compose above, not instead of, the canonical Patchbay wrapper. The core and shared presentation floor continue to own resource identity, authority domain, revision/staleness, attention, correlation, and Operation delivery/failure semantics. A surface uses a local known decoder/compositor for the manifest-bound projection schema and nests that data beneath the wrapper. Patchbay does not load adapter-provided renderer code, HTML, CSS, or policy plugins, and schema-reference matching does not claim semantic validation of opaque bytes.
 
 #### Adapter registration and lifecycle
 

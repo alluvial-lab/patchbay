@@ -59,6 +59,10 @@ Surface-neutrality is a behavioral floor, not a lowest-common-denominator layout
 - render a polled or partial snapshot as live without current authoritative evidence; or
 - require Patchbay to own the adapter's domain policy.
 
+The executable composition seam is the validated `ResourceProjectionContract` in the adapter manifest. Each exact adapter-owned `ResourceKind` declares its snapshot tier plus payload and domain-projection schema descriptors under the committed `operational_resource` target category. Resource ingress matches those descriptors exactly; a surface then uses a local known decoder/compositor and nests decoded domain data beneath canonical resource identity, source/revision/staleness, authority, attention, and Operation delivery/failure presentation. Descriptor matching binds a declared format but does not prove arbitrary bytes satisfy the schema, so decoder failure remains fail-closed.
+
+The reserved `knowledge_bundle` target category is wire-present with OKF v0.2 as its candidate format but registration-rejected until its own presentation and conformance contract is promoted. Adapter-provided renderer code, HTML, CSS, and dynamic UI plugins are not loaded; this preserves surface conformance and keeps adapter policy out of Patchbay.
+
 The first reference projection is the token-commune resource surface. It appears alongside, not inside, the Pi session/transcript view. token-commune's own CLI and embedded UI remain independent fallback surfaces.
 
 

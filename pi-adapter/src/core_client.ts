@@ -16,6 +16,7 @@ import {
   AdapterIdSchema,
   AdapterRegistrationSchema,
   AdapterSnapshotSupport,
+  AdapterTargetCategory,
   AttachmentMethodSchema,
   AttachRequestSchema,
   AuthorityDomainIdSchema,
@@ -422,7 +423,7 @@ function piCapabilityManifest() {
     ],
     supportedTargetSpecShapes: [],
     streamingSupport: true,
-    snapshotSupport: AdapterSnapshotSupport.PARTIAL,
+    sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
     cancellationSupport: true,
     sessionReplacementSupport: true,
     idempotencyStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
@@ -439,5 +440,7 @@ function piCapabilityManifest() {
     diagnosticReporting: create(AdapterDiagnosticReportingCapabilitySchema, {
       diagnosticCodes: Object.values(PI_FORWARDED_DIAGNOSTIC_CODES),
     }),
+    targetCategories: [AdapterTargetCategory.RUNTIME_SESSION],
+    resourceCapabilities: [],
   });
 }

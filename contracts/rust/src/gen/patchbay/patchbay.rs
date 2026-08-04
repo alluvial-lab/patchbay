@@ -2149,7 +2149,7 @@ pub struct AdapterStatusQuery {
     #[prost(uint32, optional, tag = "4")]
     pub recent_diagnostic_limit: ::core::option::Option<u32>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterCapabilitySummary {
     #[prost(enumeration = "OperationKind", repeated, tag = "1")]
     pub supported_operation_kinds: ::prost::alloc::vec::Vec<i32>,
@@ -2158,7 +2158,7 @@ pub struct AdapterCapabilitySummary {
     #[prost(bool, tag = "3")]
     pub streaming_support: bool,
     #[prost(enumeration = "AdapterSnapshotSupport", tag = "4")]
-    pub snapshot_support: i32,
+    pub session_snapshot_support: i32,
     #[prost(bool, tag = "5")]
     pub cancellation_support: bool,
     #[prost(bool, tag = "6")]
@@ -2173,6 +2173,10 @@ pub struct AdapterCapabilitySummary {
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, optional, tag = "11")]
     pub diagnostic_reporting: ::core::option::Option<AdapterDiagnosticReportingCapability>,
+    #[prost(enumeration = "AdapterTargetCategory", repeated, tag = "12")]
+    pub target_categories: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, repeated, tag = "13")]
+    pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {
