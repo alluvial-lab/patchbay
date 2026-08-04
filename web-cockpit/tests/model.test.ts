@@ -70,6 +70,7 @@ import {
   emptyPresentationModel,
   fold,
   markUnreconciled,
+  operationTargetFromScope,
   rendersLive,
   rendersResourceCurrent,
   replaceFromSnapshots,
@@ -214,6 +215,71 @@ test("Observation detail composes without changing durable activity", () => {
   assert.equal(session.activity, SessionActivityState.WORKING);
   assert.equal(session.activityDetail, "using bash");
   assert.equal(registered.sessions.values().next().value!.activityDetail, undefined);
+});
+
+test("Operation targets project exact runtime-session or operational-resource identities", () => {
+  const session = operationTargetFromScope(sessionTarget(1n));
+  assert.deepEqual(session, {
+    kind: "runtime-session",
+    identity: {
+      adapterId: "pi",
+      deploymentScope,
+      runtimeSessionId: "session-1",
+      generation: 1n,
+    },
+  });
+
+  const identity = resourceIdentity("pool-target");
+  const scope = create(TargetScopeSchema, {
+    kind: TargetScopeKind.RESOURCE,
+    resource: identity,
+  });
+  assert.deepEqual(operationTargetFromScope(scope), {
+    kind: "operational-resource",
+    identity: { adapterId: "pi", resourceKind: "provider_pool", resourceId: "pool-target" },
+  });
+  const operation = create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: "resource-command" }),
+    authorityDomainId: DOMAIN,
+    kind: OperationKind.QUERY,
+    targetScope: scope,
+    idempotencyKey: "resource-command-key",
+  });
+  const model = fold(emptyPresentationModel(), stored(
+    1n,
+    StoredEventKind.OPERATION,
+    OperationSchema,
+    operation,
+  ));
+  assert.deepEqual(model.commands.get("resource-command")!.target, operationTargetFromScope(scope));
+});
+
+test("partial, mixed, and legacy resource scopes never become command targets", () => {
+  const identity = resourceIdentity("pool-target");
+  const rejected = [
+    create(TargetScopeSchema, {
+      kind: TargetScopeKind.RESOURCE,
+      resource: create(ResourceIdentitySchema, { adapterId, resourceId: identity.resourceId }),
+    }),
+    create(TargetScopeSchema, {
+      kind: TargetScopeKind.RESOURCE,
+      resource: identity,
+      adapterId,
+    }),
+    create(TargetScopeSchema, {
+      kind: TargetScopeKind.RESOURCE,
+      legacyAuditResourceId: "pool-target",
+    }),
+    create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId,
+      deploymentScope,
+      runtimeSessionId,
+      sessionGeneration: create(GenerationSchema, { value: 1n }),
+      resource: identity,
+    }),
+  ];
+  for (const scope of rejected) assert.equal(operationTargetFromScope(scope), undefined);
 });
 
 test("first durable command terminal remains projected after a late terminal candidate", () => {

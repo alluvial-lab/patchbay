@@ -36,6 +36,7 @@ import {
   type AdapterDiagnosticSeverity,
   type SecurityLockdownState,
   type SecuritySnapshot,
+  TargetScopeKind,
 } from "@patchbay/contracts";
 
 import type { ReconcileProjection } from "./reconcile.js";
@@ -105,13 +106,17 @@ export interface CommandHistoryEntry {
   race?: string;
 }
 
+export type OperationTargetView =
+  | { kind: "runtime-session"; identity: SessionIdentity }
+  | { kind: "operational-resource"; identity: ResourceIdentityView };
+
 export interface CommandView {
   id: string;
   state: OperationState;
   lsn: bigint;
   failureCode?: FailureCode;
   race?: string;
-  target?: SessionIdentity;
+  target?: OperationTargetView;
   operation: Operation;
   history: CommandHistoryEntry[];
 }
@@ -600,7 +605,7 @@ export function rendersLive(session: SessionView): boolean {
 function foldOperation(model: PresentationModel, operation: Operation, lsn: bigint): void {
   const id = required(operation.commandId?.value, "operation command id");
   if (!model.commands.has(id)) {
-    const target = identityFromTarget(operation.targetScope);
+    const target = operationTargetFromScope(operation.targetScope);
     model.commands.set(id, {
       id,
       state: OperationState.ACCEPTED,
@@ -666,7 +671,7 @@ function foldElicitation(model: PresentationModel, elicitation: Elicitation, lsn
     state: elicitation.state,
     contract,
     prompt: elicitationPrompt(elicitation),
-    target: identityFromTarget(elicitation.targetContext),
+    target: runtimeSessionFromScope(elicitation.targetContext),
     groupingKey: elicitationGroupingKey(elicitation) ?? existing?.groupingKey,
     lsn,
     answer: existing?.answer,
@@ -678,7 +683,7 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
     foldAdapterDiagnosticObservation(model, observation, lsn);
     return;
   }
-  const target = identityFromTarget(observation.targetScope);
+  const target = runtimeSessionFromScope(observation.targetScope);
   const transcript = decodeTranscriptEvent(observation);
   if (!transcript) return;
 
@@ -1214,14 +1219,54 @@ function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView
   };
 }
 
-function identityFromTarget(target: TargetScope | undefined): SessionIdentity | undefined {
-  if (!target?.adapterId || !target.runtimeSessionId || !target.sessionGeneration) return undefined;
-  return {
-    adapterId: required(target.adapterId.value, "target adapter id"),
-    deploymentScope: required(target.deploymentScope, "target deployment scope"),
-    runtimeSessionId: required(target.runtimeSessionId.value, "target runtime session id"),
-    generation: requiredBigint(target.sessionGeneration.value, "target session generation"),
-  };
+export function operationTargetFromScope(scope: TargetScope | undefined): OperationTargetView | undefined {
+  const session = runtimeSessionFromScope(scope);
+  if (session) return { kind: "runtime-session", identity: session };
+  if (!scope || scope.kind !== TargetScopeKind.RESOURCE || hasNonResourceTargetFields(scope)) return undefined;
+  try {
+    return {
+      kind: "operational-resource",
+      identity: resourceIdentityFromWire(scope.resource, "operation target resource"),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function runtimeSessionFromScope(target: TargetScope | undefined): SessionIdentity | undefined {
+  if (
+    !target
+    || target.kind !== TargetScopeKind.RUNTIME_SESSION
+    || target.resource
+    || target.legacyAuditResourceId
+    || target.actorId
+    || target.projectOrGroup
+    || !target.adapterId
+    || !target.runtimeSessionId
+    || !target.sessionGeneration
+  ) return undefined;
+  try {
+    return {
+      adapterId: required(target.adapterId.value, "target adapter id"),
+      deploymentScope: required(target.deploymentScope, "target deployment scope"),
+      runtimeSessionId: required(target.runtimeSessionId.value, "target runtime session id"),
+      generation: requiredBigint(target.sessionGeneration.value, "target session generation"),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function hasNonResourceTargetFields(scope: TargetScope): boolean {
+  return Boolean(
+    scope.actorId
+    || scope.adapterId
+    || scope.runtimeSessionId
+    || scope.sessionGeneration
+    || scope.deploymentScope
+    || scope.projectOrGroup
+    || scope.legacyAuditResourceId,
+  );
 }
 
 function identityFromParts(value: {

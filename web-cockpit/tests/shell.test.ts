@@ -43,6 +43,11 @@ import {
 } from "../src/domain/model.js";
 import { renderIcon, type IconName } from "../src/ui/icons.js";
 import { createMarkdownRenderer } from "../src/ui/markdown.js";
+import {
+  operationKindLabel,
+  operationStateName,
+  renderOperationDelivery,
+} from "../src/ui/operation-delivery.js";
 import { renderSessionDetail } from "../src/ui/session-detail.js";
 import { renderSessionRow } from "../src/ui/session-list.js";
 import { createCockpitShell } from "../src/ui/shell.js";
@@ -65,6 +70,27 @@ test("typed icon factory renders Lucide outline geometry", () => {
   assert.equal(icon.classList.contains("icon"), true);
   assert.equal(icon.classList.contains("icon--lg"), true);
   assert.equal(icon.querySelector("path")?.getAttribute("d"), "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48");
+});
+
+test("shared Operation delivery renders lifecycle, failure, and contextual actions for any target", () => {
+  const dom = new JSDOM();
+  const command = runningCommand(session("session-1").identity);
+  command.target = {
+    kind: "operational-resource",
+    identity: { adapterId: "token-commune", resourceKind: "provider_pool", resourceId: "pool-1" },
+  };
+  let cancelled = "";
+  const delivery = renderOperationDelivery(dom.window.document, command, {
+    cancel: (selected) => { cancelled = selected.id; },
+  });
+  dom.window.document.body.append(delivery);
+
+  assert.equal(operationStateName(OperationState.RUNNING), "running");
+  assert.equal(operationKindLabel(OperationKind.QUERY), "Query");
+  assert.match(delivery.textContent!, /running/);
+  assert.match(delivery.textContent!, /Last transition: accepted → running/);
+  delivery.querySelector<HTMLButtonElement>('[aria-label="Cancel running operation"]')!.click();
+  assert.equal(cancelled, command.id);
 });
 
 test("shell stylesheet provides responsive layout without rebinding protocol states", async () => {
@@ -452,7 +478,7 @@ function runningCommand(identity: SessionIdentity): CommandView {
     id: "command-1",
     state: OperationState.RUNNING,
     lsn: 2n,
-    target: identity,
+    target: { kind: "runtime-session", identity },
     operation,
     history: [
       { state: OperationState.ACCEPTED, lsn: 1n },

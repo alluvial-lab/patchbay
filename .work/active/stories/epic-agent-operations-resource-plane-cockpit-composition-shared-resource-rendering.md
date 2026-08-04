@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-cockpit-composition-shared-resource-rendering
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: epic-agent-operations-resource-plane-cockpit-composition
 depends_on: [epic-agent-operations-resource-plane-cockpit-composition-resource-reconciliation]
@@ -48,3 +48,14 @@ another feature submits them.
 Depends on trustworthy resource reconciliation. The final destination/linkage
 checkpoint depends on this shared renderer so the canonical wrapper is complete
 before adapter-domain detail is exposed.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected highest tier for the command-target union and shared lifecycle renderer extraction.
+- Review weight: `thorough`, explicitly supplied by the autopilot caller; feature review is deferred to the orchestrator.
+- Files changed: `web-cockpit/src/domain/model.ts`, `web-cockpit/src/ui/operation-delivery.ts`, `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/tests/model.test.ts`, and `web-cockpit/tests/shell.test.ts`.
+- Tests added: exact session/resource target projection, rejection of partial/mixed/legacy scopes, resource-target command projection, and shared lifecycle/action rendering.
+- Simplification: one extracted Operation delivery module now owns state labels, kind labels, failure vocabulary, timeline transitions, and contextual cancel/interrupt controls; the session renderer contains no copy.
+- Discrepancies from design: the pre-existing session action callback continues to receive its raw `SessionIdentity` through a thin session-detail adapter so the session-only submission builder remains unchanged; the durable `CommandView.target` and shared delivery API use the designed discriminated union.
+- Adjacent issues parked: none.
+- Verification: `cd web-cockpit && npm test` passed 91/91; contracts generated drift, presentation conformance (4 registries), and model-promotion checks passed.
