@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-capability-manifest
 kind: feature
-stage: review
+stage: done
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity]
@@ -363,3 +363,27 @@ the autopilot caller.
   naming debt in unchanged services; repository-wide `cargo fmt --check` still
   reports pre-existing broad Rust formatting drift. Neither was rewritten or
   misreported as introduced by this feature.
+
+## Review (2026-08-04)
+
+**Verdict**: Approve
+
+**Blockers**: none unresolved. Pass 1 identified two receiver-confirmed material
+verification gaps: exact schema binding was not mutation-sensitive across both
+schema refs and content types, and durable attachment-descriptor redaction was
+not tested at the storage/replay boundary. Both were corrected and verified in
+`26705d1`.
+**Important**: none parked.
+**Nits**: pass 1's ambiguous “no durable append” wording was corrected to “no
+durable adapter-registration append,” preserving the required rejection audit.
+**Rejected**: none.
+
+**Notes**: Effective review weight was `thorough`, explicitly supplied by the
+autopilot caller. Two same-harness fresh-context passes ran with
+`openai-codex/gpt-5.6-sol` at xhigh effort. Pass 1 requested the evidence fixes
+above; after adjudication, correction, focused verification, and clippy, pass 2
+returned `ready` with no findings and confirmed every pass-1 disposition
+resolved. The corrected aggregate passed full Rust workspace tests, warnings-
+denied clippy, CLI tests (37), Pi tests including real-process e2e (24), contract
+build/drift and focused proto lint, model/vector checks, and presentation
+conformance. No lower-risk finding remained to park.
