@@ -690,6 +690,113 @@ test("unequal snapshot horizons replay each state axis only after its own baseli
   assert.equal([...model.resources.values()][0]!.reconciled, true);
 });
 
+test("reverse unequal snapshot horizons replay the resource axis after its own baseline", () => {
+  const identity = resourceIdentity("reverse-snapshot-pool");
+  const upsert = resourceMutation(identity, undefined, "upsert");
+  if (upsert.mutation.case !== "upsert") throw new Error("fixture bug");
+  const visiblePrefix = [
+    resourceEvent(1n, [upsert]),
+    resourceEvent(2n, [resourceMutation(identity, 1n, "freshness", ResourceFreshnessState.STALE)]),
+    registration(3n, 1n),
+  ];
+  const oracle = visiblePrefix.reduce(
+    (model, event) => fold(model, event),
+    emptyPresentationModel(),
+  );
+  const rebuilt = replaceFromSnapshots(
+    {
+      session: create(SessionSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 3n }),
+        sessions: [create(SessionSchema, {
+          authorityDomainId: DOMAIN,
+          adapterId,
+          deploymentScope,
+          runtimeSessionId,
+          sessionGeneration: create(GenerationSchema, { value: 1n }),
+          state: create(SessionStateSchema, {
+            connectivity: SessionConnectivityState.LIVE,
+            activity: SessionActivityState.WORKING,
+          }),
+          project: "patchbay",
+          cwd: "/projects/patchbay",
+          name: "core",
+          model: "provider/model-1",
+        })],
+      }),
+      resource: create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 1n }),
+        resources: [create(ResourceSchema, {
+          authorityDomainId: DOMAIN,
+          identity,
+          resourcePayload: upsert.mutation.value.resourcePayload,
+          projectionPayload: upsert.mutation.value.projectionPayload,
+          freshness: ResourceFreshnessState.CURRENT,
+          sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+          revisionLsn: create(LsnSchema, { value: 1n }),
+          observedAt: { seconds: 1n, nanos: 0 },
+        })],
+        viewRevisions: [create(ResourceViewRevisionSchema, {
+          adapterId,
+          resourceKind: identity.resourceKind,
+          completeness: AdapterSnapshotSupport.AUTHORITATIVE,
+          sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+          revisionLsn: create(LsnSchema, { value: 1n }),
+          observedAt: { seconds: 1n, nanos: 0 },
+        })],
+      }),
+    },
+    visiblePrefix,
+  );
+
+  const resource = rebuilt.resources.get(resourceKey({
+    adapterId: "pi",
+    resourceKind: "provider_pool",
+    resourceId: "reverse-snapshot-pool",
+  }))!;
+  const oracleResource = oracle.resources.get(resourceKey(resource.identity))!;
+  const resourceState = (value: typeof resource) => ({
+    identity: value.identity,
+    freshness: value.freshness,
+    sourceAdapterGeneration: value.sourceAdapterGeneration,
+    revisionLsn: value.revisionLsn,
+    observedAt: value.observedAt,
+    tombstoned: value.tombstoned,
+    replacedBy: value.replacedBy,
+    hasCachedPayload: value.hasCachedPayload,
+    reconciled: value.reconciled,
+    projection: value.projection,
+  });
+  assert.equal(rebuilt.cursor, 3n);
+  assert.equal(rebuilt.cursor, oracle.cursor);
+  assert.equal(resource.revisionLsn, 2n);
+  assert.equal(resource.freshness, ResourceFreshnessState.STALE);
+  assert.deepEqual(resourceState(resource), resourceState(oracleResource));
+  assert.deepEqual(rebuilt.resourceCollections, oracle.resourceCollections);
+  const session = [...rebuilt.sessions.values()][0]!;
+  const oracleSession = [...oracle.sessions.values()][0]!;
+  assert.deepEqual({
+    identity: session.identity,
+    label: session.label,
+    model: session.model,
+    connectivity: session.connectivity,
+    activity: session.activity,
+    lastLsn: session.lastLsn,
+    tombstoned: session.tombstoned,
+    reconciled: session.reconciled,
+  }, {
+    identity: oracleSession.identity,
+    label: oracleSession.label,
+    model: oracleSession.model,
+    connectivity: oracleSession.connectivity,
+    activity: oracleSession.activity,
+    lastLsn: oracleSession.lastLsn,
+    tombstoned: oracleSession.tombstoned,
+    reconciled: oracleSession.reconciled,
+  });
+});
+
 test("invalid replay never installs a partially rebuilt projection", () => {
   const projection = new PresentationProjection(fold(emptyPresentationModel(), operationEvent(1n, "existing")));
   const before = projection.model;
