@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-30
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Resource identity, resolution & authority
@@ -383,3 +383,25 @@ match TargetScopeKind::try_from(target_scope.kind) {
 - Parked: none from this pass.
 - Rejected: none.
 - Skipped/degraded: independent design-time advisory dispatch was unavailable in this worker tool surface; direct source verification, explicit alternatives, and the pre-mortem above were used. The caller-specified `thorough` implementation review remains mandatory and is not degraded.
+
+## Implementation summary
+
+All four child checkpoints completed directly to `done` in dependency order:
+
+1. typed generated resource identity and canonical domain parser;
+2. target-kind-polymorphic binding, identity-only resource registry, composite resolver, and canonical adapter routing;
+3. exact resource grant containment and fail-fast durable grant validation;
+4. integrated acceptance/audit/CLI compatibility evidence and rolling-foundation updates.
+
+One coherent feature owner carried the cross-cutting contract refactor because the generated schema, parser, resolver, authority, acceptance, adapter routing, and audit compatibility paths share one identity invariant and overlapping write set. Splitting by story would have increased integration risk. The direct host ran `openai-codex/gpt-5.6-sol` at high reasoning; nested implementation dispatch was unavailable in this delegated tool surface. No sibling resource-plane feature was touched.
+
+## Integrated verification
+
+- `cargo test --workspace` and a post-commit `cargo test --workspace --quiet` — all Rust tests and doc tests passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `cd cli && npm test` — 37 passed.
+- `cd contracts/ts && npm run build && npm run check:drift` — passed.
+- vector, model-metadata, and presentation conformance scripts — passed.
+- Test-integrity check: no test was deleted, skipped, weakened, or rewritten to accept production output; new tests independently vary adapter/kind/id and assert ordering before stateful ports.
+
+The feature is review-ready. Effective review weight is `thorough` from the explicit autopilot caller override; convergence requires a clean fresh-context pass after any receiver-confirmed material fix.
