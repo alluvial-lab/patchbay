@@ -349,6 +349,60 @@ fn validated_report(
     }
 }
 
+async fn assert_resource_revisions_match_committed_lsns(
+    storage: &RusqliteStorage,
+    authority_domain_id: &AuthorityDomainId,
+    registry: &ResourceRegistry,
+) -> Result<(), String> {
+    let mut expected_records = std::collections::HashMap::new();
+    let mut expected_views = std::collections::HashMap::new();
+    for event in storage
+        .read_after(authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        if event.payload.kind != StoredEventKind::ResourceState as i32 {
+            continue;
+        }
+        let committed_lsn = event
+            .event_id
+            .lsn
+            .as_ref()
+            .ok_or("committed resource event missing LSN")?
+            .value;
+        let state = ResourceStateEvent::decode(event.payload.payload.as_slice())
+            .map_err(|error| format!("committed resource event did not decode: {error}"))?;
+        let adapter_id = state.source_adapter_id.ok_or("committed resource event missing adapter")?;
+        for view in state.views {
+            let resource_kind = view.resource_kind.ok_or("committed resource view missing kind")?;
+            expected_views.insert((adapter_id.value.clone(), resource_kind.value), committed_lsn);
+        }
+        for mutation in state.mutations {
+            let identity = ResourceIdentity::try_from_wire(
+                mutation.identity.as_ref().ok_or("committed resource mutation missing identity")?,
+            )
+            .map_err(|error| error.to_string())?;
+            expected_records.insert(identity, committed_lsn);
+        }
+    }
+
+    if registry.resources().count() != expected_records.len()
+        || registry.views().count() != expected_views.len()
+        || registry.resources().any(|record| {
+            expected_records.get(&record.identity).copied() != Some(record.revision_lsn)
+        })
+        || registry.views().any(|view| {
+            expected_views
+                .get(&(view.key.adapter_id.value.clone(), view.key.resource_kind.value.clone()))
+                .copied()
+                != Some(view.revision_lsn)
+        })
+    {
+        return Err("production resource record/view revisions do not equal their committed event LSNs".to_owned());
+    }
+    Ok(())
+}
+
 async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
     let authority_domain_id = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
     let adapter_id = AdapterId { value: string(&vector.input, "/adapter_id")?.to_owned() };
@@ -376,6 +430,7 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
         )
         .await
         .map_err(|error| error.to_string())?;
+        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry).await?;
         let before_cached = registry.get(&cached).cloned().ok_or("cached baseline missing")?;
         let before_unknown = registry.get(&unknown).cloned().ok_or("unknown baseline missing")?;
         let mode_name = string(case, "/mode")?;
@@ -409,6 +464,7 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
         )
         .await
         .map_err(|error| error.to_string())?;
+        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry).await?;
         let cached_record = registry.get(&cached).ok_or("cached record disappeared")?;
         let unknown_record = registry.get(&unknown).ok_or("unknown record disappeared")?;
         match string(case, "/name")? {
