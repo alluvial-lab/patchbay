@@ -198,6 +198,8 @@ for (const id of STATED_NORMATIVE_PROPERTIES) {
 for (const id of CHECKED_NORMATIVE_PROPERTIES) PROPERTY_TIERS.set(id, 'checked-normative');
 
 const VALID_PROPERTY_IDS = new Set(PROPERTY_TIERS.keys());
+const MODEL_GENERATED_BEGIN = '<!-- BEGIN GENERATED MODEL-PROMOTION TRACEABILITY -->';
+const MODEL_GENERATED_END = '<!-- END GENERATED MODEL-PROMOTION TRACEABILITY -->';
 const GENERATED_BEGIN = '<!-- BEGIN GENERATED CONFORMANCE VECTOR TRACEABILITY -->';
 const GENERATED_END = '<!-- END GENERATED CONFORMANCE VECTOR TRACEABILITY -->';
 
@@ -366,6 +368,76 @@ function validatePropertyReferences(vectors) {
   return errors;
 }
 
+function exactRegistryErrors(label, expectedValues, actualValues) {
+  const expected = new Set(expectedValues);
+  const actual = new Set(actualValues);
+  const missing = [...expected].filter((id) => !actual.has(id)).sort();
+  const unexpected = [...actual].filter((id) => !expected.has(id)).sort();
+  const errors = [];
+  if (missing.length > 0) errors.push(`${label}: docs are missing ${missing.join(', ')}`);
+  if (unexpected.length > 0) errors.push(`${label}: docs declare unregistered ids ${unexpected.join(', ')}`);
+  if (actual.size !== actualValues.length) errors.push(`${label}: docs declare duplicate property ids`);
+  return errors;
+}
+
+function validateVerificationPropertyRegistry(markdown) {
+  const errors = [];
+  const modelBegin = markdown.indexOf(MODEL_GENERATED_BEGIN);
+  const modelEnd = markdown.indexOf(MODEL_GENERATED_END);
+  if (modelBegin === -1 || modelEnd === -1 || modelEnd <= modelBegin) {
+    return [`${rel(verificationPath)}: generated model-promotion property registry block is missing or malformed`];
+  }
+
+  const modelBlock = markdown.slice(modelBegin, modelEnd);
+  const modelRows = [...modelBlock.matchAll(/^\| `([^`]+)` \| [^|]* \| (checked-model|checked-normative|stated-normative) \|/gm)]
+    .map((match) => ({ id: match[1], tier: match[2] }));
+  errors.push(...exactRegistryErrors(
+    `${rel(verificationPath)} generated property registry`,
+    PROPERTY_TIERS.keys(),
+    modelRows.map((row) => row.id),
+  ));
+  for (const row of modelRows) {
+    const expectedTier = PROPERTY_TIERS.get(row.id);
+    if (expectedTier !== undefined && row.tier !== expectedTier) {
+      errors.push(`${rel(verificationPath)}: property ${row.id} is ${row.tier} in docs but ${expectedTier} in check-vectors.mjs`);
+    }
+  }
+
+  const checkedStart = markdown.indexOf('Current checked-model properties:');
+  const checkedEnd = markdown.indexOf('\n\nThe session/principal revocation model', checkedStart);
+  if (checkedStart === -1 || checkedEnd === -1) {
+    errors.push(`${rel(verificationPath)}: checked-model prose registry is missing`);
+  } else {
+    const checkedIds = [...markdown.slice(checkedStart, checkedEnd).matchAll(/`([^`]+)`/g)]
+      .map((match) => match[1])
+      .filter((id) => !id.endsWith('.qnt'));
+    errors.push(...exactRegistryErrors(
+      `${rel(verificationPath)} checked-model prose registry`,
+      CHECKED_MODEL_PROPERTIES,
+      checkedIds,
+    ));
+  }
+
+  const resourceLine = markdown.match(/^- Operational-resource adapter boundaries:.*$/m)?.[0];
+  if (resourceLine === undefined) {
+    errors.push(`${rel(verificationPath)}: operational-resource prose property registry is missing`);
+  } else {
+    const resourceIds = [...resourceLine.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    const registeredResourceIds = STATED_NORMATIVE_PROPERTIES.filter((id) => id.startsWith('Resource'));
+    errors.push(...exactRegistryErrors(
+      `${rel(verificationPath)} operational-resource prose property registry`,
+      registeredResourceIds,
+      resourceIds,
+    ));
+  }
+
+  if (CHECKED_NORMATIVE_PROPERTIES.length === 0
+      && !markdown.includes('No properties are currently checked-normative')) {
+    errors.push(`${rel(verificationPath)}: checked-normative prose registry must explicitly declare that it is empty`);
+  }
+  return errors;
+}
+
 function validatePromotedCoverage(vectors) {
   const errors = [];
   const promotedByProperty = new Map();
@@ -526,7 +598,7 @@ async function updateVerificationMarkdown(vectors) {
   if (next !== current) await writeFile(verificationPath, next);
 }
 
-function printSummary({ vectors, envelopeErrors, propertyErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted }) {
+function printSummary({ vectors, envelopeErrors, propertyErrors, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted }) {
   const promotedVectors = vectors.filter((vector) => vector.promotion_status === 'promoted');
   const checkedModelWithoutPromoted = CHECKED_MODEL_PROPERTIES.filter(
     (propertyId) => !vectors.some((vector) => vector.property_id === propertyId && vector.promotion_status === 'promoted'),
@@ -543,7 +615,7 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, coverageErrors,
   console.log(`- checked-model properties without promoted vectors (informational, not failing until checked-normative): ${checkedModelWithoutPromoted.length}`);
   console.log(`- traceability table target: ${rel(verificationPath)}`);
 
-  const allErrors = [...envelopeErrors, ...propertyErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors];
+  const allErrors = [...envelopeErrors, ...propertyErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors];
   if (allErrors.length > 0) {
     console.error('\nFailures:');
     for (const error of allErrors) console.error(`- ${error}`);
@@ -555,9 +627,11 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, coverageErrors,
 async function main() {
   const { vectors, errors: envelopeErrors } = await readVectors();
   const propertyErrors = validatePropertyReferences(vectors);
+  const verificationMarkdown = await readFile(verificationPath, 'utf8');
+  const registryErrors = validateVerificationPropertyRegistry(verificationMarkdown);
   const coverageErrors = validatePromotedCoverage(vectors);
   const { errors: invariantErrors, checked: invariantChecked } = validatePromotedInvariantExpectations(vectors);
-  const staticErrors = [...envelopeErrors, ...propertyErrors, ...coverageErrors, ...invariantErrors];
+  const staticErrors = [...envelopeErrors, ...propertyErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];
   const { errors: implementationErrors, executed: implementationExecuted } = staticErrors.length === 0
     ? runImplementationChecks(vectors)
     : { errors: [], executed: [] };
@@ -570,6 +644,7 @@ async function main() {
     vectors,
     envelopeErrors,
     propertyErrors,
+    registryErrors,
     coverageErrors,
     invariantErrors,
     invariantChecked,
