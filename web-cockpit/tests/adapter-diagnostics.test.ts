@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
+  AdapterDiagnosticDetailSchema,
   AdapterDiagnosticPayloadSchema,
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
   AdapterStatusPageSchema,
   AdapterStatusSchema,
+  AuditRecordSchema,
   AuthorityDomainIdSchema,
+  EventIdSchema,
+  GenerationSchema,
   OperationState,
   DiagnosticsQuerySchema,
   FailureCode,
@@ -104,6 +108,47 @@ test("mixed runtime-session diagnostic targets are rejected without attribution"
   }), 13n);
 
   assert.equal(model.adapters.get("pi"), undefined);
+});
+
+test("historical diagnostics reject mixed runtime-session targets without attribution", () => {
+  const mixed = create(AuditRecordSchema, {
+    sourceEventId: create(EventIdSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: "main" }),
+      lsn: create(LsnSchema, { value: 13n }),
+    }),
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId: { value: "pi" },
+      deploymentScope: "laptop",
+      runtimeSessionId: { value: "session-1" },
+      sessionGeneration: { value: 1n },
+      resource: {
+        adapterId: { value: "pi" },
+        resourceKind: { value: "provider_pool" },
+        resourceId: { value: "pool-1" },
+      },
+    }),
+    failureCode: FailureCode.EXECUTION_FAILED,
+    reasonCode: "pi_session_delivery_failed",
+    adapterDiagnostic: create(AdapterDiagnosticDetailSchema, {
+      adapterId: { value: "pi" },
+      adapterGeneration: create(GenerationSchema, { value: 1n }),
+      severity: AdapterDiagnosticSeverity.ERROR,
+      count: 1,
+    }),
+  });
+  const merged = mergeAdapterStatusResult(emptyPresentationModel(), create(QueryDiagnosticsResponseSchema, {
+    submission: { outcome: SubmissionOutcome.ACCEPTED, operationState: OperationState.COMPLETED },
+    asOfLsn: create(LsnSchema, { value: 13n }),
+    result: {
+      case: "adapters",
+      value: create(AdapterStatusPageSchema, {
+        adapters: [{ adapterId: { value: "pi" }, recentDiagnostics: [mixed] }],
+      }),
+    },
+  }), "pi");
+
+  assert.deepEqual(merged.adapters.get("pi")?.recentDiagnostics, []);
 });
 
 test("rejected and incomplete queries clear cached status instead of retaining stale attachment", () => {

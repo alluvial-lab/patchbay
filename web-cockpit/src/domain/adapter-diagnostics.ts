@@ -229,13 +229,8 @@ function diagnosticFromAudit(record: AuditRecord): AdapterDiagnosticView | undef
   if (detail.operationKind < OperationKind.UNSPECIFIED || detail.operationKind > OperationKind.SESSION_MANAGEMENT) return undefined;
   if (detail.count < 1 || detail.count > 1_000 || !record.reasonCode || !/^[a-z0-9_]{1,64}$/.test(record.reasonCode)) return undefined;
   const target = record.targetScope;
-  const targetSession = target?.kind === TargetScopeKind.RUNTIME_SESSION && target.runtimeSessionId && target.sessionGeneration
-    ? {
-        adapterId,
-        deploymentScope: target.deploymentScope,
-        runtimeSessionId: target.runtimeSessionId.value,
-        generation: target.sessionGeneration.value,
-      }
+  const targetSession = target?.kind === TargetScopeKind.RUNTIME_SESSION
+    ? runtimeSessionFromScope(target)
     : undefined;
   if (target?.kind === TargetScopeKind.RUNTIME_SESSION && !targetSession) return undefined;
   return {
