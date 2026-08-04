@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-cockpit-composition
 kind: feature
-stage: review
+stage: done
 tags: [foundation, ux, protocol]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity, epic-agent-operations-resource-plane-resource-state, epic-agent-operations-resource-plane-capability-manifest]
@@ -456,3 +456,23 @@ One feature owner should normally carry all four checkpoints: `model.ts`, reconc
 - Design deviations: the durable `CommandView.target` and shared delivery API use the designed target union, while the pre-existing session-only cancel/interrupt callback receives a raw `SessionIdentity` through a thin session-detail adapter so its submission builder remains unchanged. No resource-specific state or authority path was added.
 - Verification: `cd web-cockpit && npm test` passed 99/99 after the integrated feature landed. `cd contracts/ts && npm run check:drift && npm run check:presentation && npm run check:models` passed; presentation checked 5 registries including `ResourceFreshnessState`, with axe-core passing, and model-promotion metadata remained clean.
 - Deferred or parked work: none. Provider/model projection and reconfigure behavior remain the already-declared sibling session-runtime seam, not a newly parked defect.
+
+## Review (2026-08-04)
+
+**Effective weight**: `thorough` (explicit caller). **Pass count**: 3. **Reviewer path**: cross-model fresh-context `openai-codex/gpt-5.6-sol` passes (a different model class from the autopilot host orchestrator), each pass a distinct fresh-context instance with no shared implementer context.
+
+**Verdict**: Approve (clean convergence pass 3).
+
+**Blockers found and fixed during convergence**:
+
+1. **Mixed diagnostic targets bypassed the fail-closed target-union contract** (`781c8d8`). `foldAdapterDiagnosticObservation` parsed the runtime-session target inline, ignoring foreign fields, so a complete `RUNTIME_SESSION` scope also carrying a `resource` tuple was attributed to the session timeline. `runtimeSessionFromScope` was exported and the live fold path routed through it; a regression test asserts a mixed target yields no record.
+2. **Dual-snapshot per-axis replay was not mutation-resistant in the reverse direction** (`86a9b64`). The unequal-horizon test covered only session-older/resource-newer, so a bug skipping `RESOURCE_STATE` through the global max would pass. A reverse-horizon test with an independent folded-prefix oracle proves the resource axis skips only through its own snapshot LSN in both directions.
+3. **The historical diagnostic path had the same mixed-target gap** (`e280992`). `diagnosticFromAudit` constructed the `SessionIdentity` inline on the audit/query path, leaving the same contract hole the live fix did not reach. It now routes through `runtimeSessionFromScope` (top-level diagnostic `adapterId` stays detail-derived; only session identity uses the strict parser); a historical-query regression test asserts a mixed audit target is not attributed.
+
+**Call-site inventory (pass 3)**: all six runtime-session attribution sites (`model.ts` canonical/Observation/Elicitation, both adapter-diagnostics paths) use the strict parser; the seventh (`target-scope.ts`) is presentation-only formatting that independently rejects foreign fields before rendering. No vulnerable attribution path remains.
+
+**Important / Nits / Rejected**: none; none; the provider concept, direct-provider session linkage, and pool administration controls are explicit sibling/future seams, not gaps.
+
+**Parked lower-risk findings**: none.
+
+**Verification after remediation**: `cd web-cockpit && npm test` — 102/102 passed (99 baseline + 3 review-fix regressions). `cd contracts/ts && npm run check:drift && npm run check:presentation && npm run check:models` — all passed; presentation checked 5 registries including `ResourceFreshnessState` with axe-core passing; model-promotion metadata clean.
