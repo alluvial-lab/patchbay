@@ -4,11 +4,13 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
-    AuthorityDomainId, EndpointId, Generation, Observation, ObservationKind, ObservationRequest,
-    Lsn, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
-    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
-    SchemaDescriptor, StoredEventKind, TargetScope, TargetScopeKind,
+    AuthorityDomainId, DeviceId, EndpointId, Generation, LoadSnapshotRequest, Lsn, Observation,
+    ObservationKind, ObservationRequest, OperatorRecord, PayloadContentType, PayloadEnvelope,
+    PrincipalEnrollment, ReceiveRequest, ResourceCapability, ResourceId, ResourceIdentity,
+    ResourceKind, ResourceProjectionContract, ResourceReport, ResourceReportMutation,
+    ResourceSnapshot, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
+    SchemaDescriptor, SnapshotViewKind, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
@@ -19,9 +21,12 @@ use patchbay_core_server::{
         AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
         ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
     },
-    rpc::adapter_control_service_server::AdapterControlService,
+    issuer::{OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER},
+    rpc::{adapter_control_service_server::AdapterControlService, control_service_server::ControlService},
+    service::ControlServiceImpl,
     state::ProjectionState,
 };
+use prost::Message;
 use prost_types::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
@@ -29,6 +34,8 @@ use tonic::{Code, Request, Response};
 
 const RUNNER: &str = "rust-server";
 const EVIDENCE: &str = "conformance-adapter-evidence";
+const OPERATOR_ACTOR: &str = "conformance-operator";
+const OPERATOR_PASSWORD: &str = "correct-password";
 
 #[derive(Debug, Deserialize)]
 struct ConformanceVector {
@@ -125,6 +132,19 @@ fn authenticated<T>(message: T, adapter_id: &str, token: &str) -> Result<Request
     request.metadata_mut().insert(ADAPTER_ID_HEADER, adapter_id.parse().map_err(|error| format!("bad adapter metadata: {error}"))?);
     request.metadata_mut().insert(ADAPTER_EVIDENCE_HEADER, EVIDENCE.parse().map_err(|error| format!("bad evidence metadata: {error}"))?);
     request.metadata_mut().insert(ADAPTER_ATTACHMENT_TOKEN_HEADER, token.parse().map_err(|error| format!("bad token metadata: {error}"))?);
+    Ok(request)
+}
+
+fn authenticated_control<T>(message: T, session_id: &str, principal_id: &str, principal_secret: &str) -> Result<Request<T>, String> {
+    let mut request = Request::new(message);
+    for (header, value) in [
+        (OPERATOR_SESSION_HEADER, session_id),
+        (OPERATOR_ID_HEADER, OPERATOR_ACTOR),
+        (PRINCIPAL_ID_HEADER, principal_id),
+        (PRINCIPAL_SECRET_HEADER, principal_secret),
+    ] {
+        request.metadata_mut().insert(header, value.parse().map_err(|error| format!("bad control metadata {header}: {error}"))?);
+    }
     Ok(request)
 }
 
@@ -271,6 +291,31 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
         string(report, "/projection_payload")?,
     ).map_err(|error| error.to_string())?;
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    storage.append(
+        &authority_domain_id,
+        StoredEventPayload {
+            kind: StoredEventKind::OperatorRecord as i32,
+            payload: OperatorRecord {
+                actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                password_hash: "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g".to_owned(),
+                created_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+            }.encode_to_vec(),
+        },
+    ).await.map_err(|error| error.to_string())?;
+    let service = ControlServiceImpl::new(storage.clone(), authority_domain_id.clone()).await?;
+    let login = service.verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+        operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+        password: OPERATOR_PASSWORD.to_owned(),
+        principal: Some(PrincipalEnrollment {
+            endpoint_id: Some(EndpointId { value: "conformance-snapshot".to_owned() }),
+            device_id: Some(DeviceId { value: "conformance-host".to_owned() }),
+            endpoint_generation: Some(Generation { value: 1 }),
+        }),
+    })).await.map_err(|error| error.to_string())?.into_inner();
+    let session_id = login.operator_session_id.as_ref().ok_or("snapshot login omitted operator session")?.value.clone();
+    let principal = login.principal.ok_or("snapshot login omitted principal")?;
+
     let mut resources = ResourceRegistry::new();
     ingest_resource_report(
         &storage,
@@ -288,12 +333,12 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
                     mutation: Some(patchbay_contracts::patchbay::resource_report_mutation::Mutation::Upsert(
                         patchbay_contracts::patchbay::ResourceStateUpsert {
                             resource_payload: Some(PayloadEnvelope {
-                                payload: resource_payload,
+                                payload: resource_payload.clone(),
                                 content_type: PayloadContentType::Protobuf as i32,
                                 schema_ref: "provider_pool.payload.v1".to_owned(),
                             }),
                             projection_payload: Some(PayloadEnvelope {
-                                payload: projection_payload,
+                                payload: projection_payload.clone(),
                                 content_type: PayloadContentType::Json as i32,
                                 schema_ref: "provider_pool.projection.v1".to_owned(),
                             }),
@@ -304,25 +349,43 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
             observed_at: Timestamp { seconds: 100, nanos: 0 },
         },
     ).await.map_err(|error| error.to_string())?;
-    let state = ProjectionState::rebuild(&storage, &authority_domain_id).await?;
-    let snapshot = state.materialize_resource_snapshot(
-        authority_domain_id.clone(),
-        Timestamp { seconds: 101, nanos: 0 },
-    ).await;
-    let current_lsn = snapshot.snapshot_lsn.as_ref().ok_or("materialized snapshot missing LSN")?.value;
-    let resource = snapshot.resources.first().ok_or("materialized snapshot missing resource")?;
-    if cached_lsn >= current_lsn
+    let requested_view_kind = match request_kind {
+        "SNAPSHOT_VIEW_KIND_RESOURCE" => SnapshotViewKind::Resource,
+        _ => return Err(format!("unsupported snapshot request discriminator {request_kind}")),
+    };
+    let response = service.load_snapshot(authenticated_control(
+        LoadSnapshotRequest {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            at_or_before: Some(Lsn { value: cached_lsn }),
+            view_kind: requested_view_kind as i32,
+        },
+        &session_id,
+        &principal.principal_id,
+        &principal.secret,
+    )?).await.map_err(|error| error.to_string())?.into_inner();
+    let snapshot = ResourceSnapshot::decode(response.snapshot_payload.as_slice())
+        .map_err(|error| format!("load_snapshot returned a non-resource payload: {error}"))?;
+    let current_lsn = snapshot.snapshot_lsn.as_ref().ok_or("RPC snapshot missing LSN")?.value;
+    let resource = snapshot.resources.first().ok_or("RPC snapshot missing resource")?;
+    if response.view_kind != requested_view_kind as i32
+        || expected_return_kind != "SNAPSHOT_VIEW_KIND_RESOURCE"
+        || !response.present
+        || response.event_id.as_ref().and_then(|event| event.lsn.as_ref()).map(|lsn| lsn.value) != Some(current_lsn)
+        || cached_lsn >= current_lsn
         || vector.expected_outcome.pointer("/resource_case/snapshot_decision/accepted").and_then(Value::as_bool) != Some(false)
-        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/replacement_required_from_lsn/value").and_then(Value::as_u64) != Some(current_lsn)
+        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/replacement_required_from_lsn/value").and_then(Value::as_u64).is_none_or(|lsn| lsn <= cached_lsn)
         || vector.expected_outcome.pointer("/resource_case/replacement/resource_count").and_then(Value::as_u64) != Some(snapshot.resources.len() as u64)
         || tuple(&vector.expected_outcome, "/resource_case/replacement/identity")? != identity
+        || resource.identity.as_ref() != Some(&identity)
         || string(&vector.expected_outcome, "/resource_case/replacement/freshness")? != "RESOURCE_FRESHNESS_STATE_CURRENT"
         || resource.freshness != patchbay_contracts::patchbay::ResourceFreshnessState::Current as i32
+        || resource.resource_payload.as_ref().map(|payload| payload.payload.as_slice()) != Some(resource_payload.as_slice())
+        || resource.projection_payload.as_ref().map(|payload| payload.payload.as_slice()) != Some(projection_payload.as_slice())
         || vector.expected_outcome.pointer("/resource_case/replacement/record_revision_equals_snapshot_lsn").and_then(Value::as_bool) != Some(resource.revision_lsn.as_ref().is_some_and(|revision| revision.value == current_lsn))
         || string(&vector.expected_outcome, "/resource_case/replacement/authority_domain_id")? != authority_domain_id.value
         || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
     {
-        return Err("current resource materialization did not replace the stale cached view".to_owned());
+        return Err("load_snapshot RPC did not return the vector's current resource replacement".to_owned());
     }
     Ok(())
 }
