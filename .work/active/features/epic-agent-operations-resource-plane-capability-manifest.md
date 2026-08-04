@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-capability-manifest
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity]
@@ -328,3 +328,38 @@ function piCapabilityManifest(): AdapterCapability {
 - Parked: none from this pass.
 - Rejected: generic dynamic projection plugins and stringly target categories, for the reasons in the alternatives and pre-mortem above.
 - Skipped/degraded: this delegated worker exposes no independent subagent/peer dispatch tool, so design-time fresh-context advisory review could not run. Direct source/commit verification and the pre-mortem above were used; the caller-specified `thorough` implementation review remains mandatory.
+
+## Implementation summary
+
+All three dependency-ordered checkpoints are complete:
+
+1. The generated adapter contract now owns `AdapterTargetCategory`, schema
+   descriptors, per-resource snapshot/projection declarations, and the
+   tag-preserving `session_snapshot_support` rename in Rust and TypeScript.
+2. Core registration validates manifests on attach and replay, stores one
+   validated capability projection, preserves only the narrow legacy
+   session-only replay path, and exposes exact resource-kind admission/schema
+   binding without changing grants, resolution, delivery, or resource state.
+3. Redacted diagnostics, CLI output, Pi's session-only producer, server attach
+   evidence, and rolling foundation assertions now carry the resource-aware
+   contract end to end.
+
+Implementation used direct host ownership because this delegated harness exposed
+no generic worker dispatch adapter. That kept the one-feature write boundary
+coherent across the generated schema, Rust projection, TypeScript consumers, and
+foundation updates. The effective review weight is `thorough`, explicitly set by
+the autopilot caller.
+
+## Integrated verification
+
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- Contract Rust/TypeScript builds, `buf generate`, generated drift, and focused
+  lint of the modified adapter/diagnostics protos — passed.
+- CLI build/tests — 37 passed.
+- Pi adapter build/tests, including the real core/adapter e2e — 24 passed.
+- Model-promotion, conformance-vector, and presentation checks — passed.
+- Repository-wide `buf lint` still reports pre-existing RPC request/response
+  naming debt in unchanged services; repository-wide `cargo fmt --check` still
+  reports pre-existing broad Rust formatting drift. Neither was rewritten or
+  misreported as introduced by this feature.
