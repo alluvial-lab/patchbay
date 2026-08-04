@@ -2,7 +2,7 @@
 
 Patchbay is a high-authority control plane: a browser or CLI action can mutate remote/headless agent sessions. v0.1.0 therefore treats security as part of protocol semantics, not as a UI add-on.
 
-This document defines the v0.1.0 security posture for one human operator, one authoritative coordination core, a responsive web cockpit, a CLI, and the first Pi adapter. It should be read with `docs/PROTOCOL.md` for command/grant state and `docs/VERIFICATION.md` for model obligations.
+This document defines Patchbay's security posture. The committed **v0.1.0** posture is session-only: one human operator, one authoritative coordination core, a responsive web cockpit, a CLI, and the first Pi adapter. The **post-v0.1 agent-operations direction** (per `docs/SPEC.md`'s "Post-v0.1 agent-operations direction") extends the posture to operational-resource targets; resource objectives and the resource-report boundary below are labeled post-v0.1 and are **not** v0.1.0 release obligations. It should be read with `docs/PROTOCOL.md` for command/grant state and `docs/VERIFICATION.md` for model obligations.
 
 Research grounding: `.research/analysis/briefs/web-control-security.md`.
 
@@ -12,12 +12,16 @@ v0.1.0 security must ensure:
 
 - only authenticated operator endpoints can submit control actions;
 - every Operation is authorized before durable acceptance;
-- accepted Operations bind to the intended runtime-session generation or exact operational-resource `(adapter_id, resource_kind, resource_id)` tuple;
-- resource-id collisions across adapters or adapter-owned kinds cannot widen a resource grant or route to the wrong adapter;
+- accepted Operations bind to the intended runtime-session generation;
 - retries cannot double-apply intent at the Patchbay boundary;
 - browser sessions can be revoked promptly;
 - stale or late events cannot mutate newer session state;
 - audit records preserve security-relevant decisions without storing secrets.
+
+Post-v0.1 operational-resource security must additionally ensure:
+
+- accepted Operations bind to the exact operational-resource `(adapter_id, resource_kind, resource_id)` tuple;
+- resource-id collisions across adapters or adapter-owned kinds cannot widen a resource grant or route to the wrong adapter.
 
 Patchbay does not prove cryptographic primitives, operating-system isolation, browser correctness, network latency bounds, or third-party harness internals. Those are deployment and adapter assumptions.
 
@@ -139,7 +143,7 @@ Retries with the same idempotency key return the existing command record. A new 
 
 Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0.1.0 mediated behavior.
 
-### Operational-resource report boundary
+### Operational-resource report boundary (post-v0.1)
 
 A typed resource report is accepted only on the current authenticated adapter
 attachment. The core replaces source authority with the verified adapter id,
