@@ -58,6 +58,29 @@ pub struct RuntimeSessionId {
     #[prost(string, tag = "1")]
     pub value: ::prost::alloc::string::String,
 }
+/// Adapter-local resource identifier. Routable identity also includes the
+/// owning adapter and adapter-owned resource kind.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceId {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+}
+/// Open adapter-owned resource collection/type identifier. The adapter
+/// capability manifest owns the admitted set; the core does not enumerate it.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceKind {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceIdentity {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag = "2")]
+    pub resource_id: ::core::option::Option<ResourceId>,
+    #[prost(message, optional, tag = "3")]
+    pub resource_kind: ::core::option::Option<ResourceKind>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AuthorityDomainId {
     #[prost(string, tag = "1")]
@@ -110,8 +133,12 @@ pub struct TargetScope {
     pub deployment_scope: ::prost::alloc::string::String,
     #[prost(string, tag = "7")]
     pub project_or_group: ::prost::alloc::string::String,
+    /// Tag-preserved audit-only target for principal/endpoint/device records.
+    /// Operational resource Operations and Grants must use `resource`.
     #[prost(string, tag = "8")]
-    pub resource_id: ::prost::alloc::string::String,
+    pub legacy_audit_resource_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "9")]
+    pub resource: ::core::option::Option<ResourceIdentity>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TypedCorrelation {

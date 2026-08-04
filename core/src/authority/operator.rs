@@ -640,17 +640,17 @@ fn control_surface_revocation_audit(
     audit.target_scope = Some(match target {
         ControlSurfaceRevocationTarget::Principal(principal_id) => TargetScope {
             kind: TargetScopeKind::Resource as i32,
-            resource_id: principal_id.clone(),
+            legacy_audit_resource_id: principal_id.clone(),
             ..TargetScope::default()
         },
         ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => TargetScope {
             kind: TargetScopeKind::Resource as i32,
-            resource_id: endpoint_id.value.clone(),
+            legacy_audit_resource_id: endpoint_id.value.clone(),
             ..TargetScope::default()
         },
         ControlSurfaceRevocationTarget::Device(device_id) => TargetScope {
             kind: TargetScopeKind::Resource as i32,
-            resource_id: device_id.value.clone(),
+            legacy_audit_resource_id: device_id.value.clone(),
             ..TargetScope::default()
         },
     });

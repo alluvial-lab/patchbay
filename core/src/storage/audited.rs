@@ -206,7 +206,7 @@ pub fn audit_draft_for_source(
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(id)) => {
                     draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
                         kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
-                        resource_id: id.clone(),
+                        legacy_audit_resource_id: id.clone(),
                         ..Default::default()
                     });
                     AuditEventKind::ControlSurfacePrincipalRevoked
@@ -214,7 +214,7 @@ pub fn audit_draft_for_source(
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(id)) => {
                     draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
                         kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
-                        resource_id: id.value.clone(),
+                        legacy_audit_resource_id: id.value.clone(),
                         ..Default::default()
                     });
                     AuditEventKind::ControlSurfaceEndpointRevoked
@@ -222,7 +222,7 @@ pub fn audit_draft_for_source(
                 Some(patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(id)) => {
                     draft.target_scope = Some(patchbay_contracts::patchbay::TargetScope {
                         kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
-                        resource_id: id.value.clone(),
+                        legacy_audit_resource_id: id.value.clone(),
                         ..Default::default()
                     });
                     AuditEventKind::ControlSurfaceDeviceRevoked

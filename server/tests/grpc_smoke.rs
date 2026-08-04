@@ -457,7 +457,7 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
     assert_eq!(principal_audits.records.len(), 2);
     assert!(principal_audits.records.iter().all(|record| {
         record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("second-endpoint")
-            && record.target_scope.as_ref().map(|scope| scope.resource_id.as_str())
+            && record.target_scope.as_ref().map(|scope| scope.legacy_audit_resource_id.as_str())
                 == Some(first.principal_id.as_str())
     }));
 
@@ -485,7 +485,7 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
     assert_eq!(endpoint_audits.records.len(), 2);
     assert!(endpoint_audits.records.iter().all(|record| {
         record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("third-endpoint")
-            && record.target_scope.as_ref().map(|scope| scope.resource_id.as_str())
+            && record.target_scope.as_ref().map(|scope| scope.legacy_audit_resource_id.as_str())
                 == Some("second-endpoint")
     }));
 

@@ -12,6 +12,7 @@ pub mod audit;
 pub mod adapter;
 pub mod authority;
 pub mod diagnostics;
+pub mod resource;
 pub mod session;
 pub mod security;
 pub mod storage;

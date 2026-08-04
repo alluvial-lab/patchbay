@@ -281,5 +281,12 @@ fn same_actor(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
 }
 
 fn same_resource(grant_scope: &TargetScope, requested: &TargetScope) -> bool {
-    !grant_scope.resource_id.is_empty() && grant_scope.resource_id == requested.resource_id
+    matches!(
+        (
+            grant_scope.resource.as_ref().and_then(|value| value.resource_id.as_ref()),
+            requested.resource.as_ref().and_then(|value| value.resource_id.as_ref()),
+        ),
+        (Some(grant_resource), Some(requested_resource))
+            if !grant_resource.value.is_empty() && grant_resource == requested_resource
+    )
 }

@@ -14,8 +14,9 @@ use patchbay_contracts::patchbay::{
     session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, Revocation,
-    RuntimeSessionId, SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload,
+    GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, ResourceId,
+    ResourceIdentity, ResourceKind, Revocation, RuntimeSessionId, SessionRegistered,
+    SessionStateEvent, StoredEventKind, StoredEventPayload,
     SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::{
@@ -173,7 +174,11 @@ fn valid_target_scope(kind: TargetScopeKind, suffix: &str) -> TargetScope {
         },
         TargetScopeKind::Resource => TargetScope {
             kind: kind as i32,
-            resource_id: format!("resource-{suffix}"),
+            resource: Some(ResourceIdentity {
+                adapter_id: Some(adapter(&format!("adapter-{suffix}"))),
+                resource_id: Some(ResourceId { value: format!("resource-{suffix}") }),
+                resource_kind: Some(ResourceKind { value: format!("kind-{suffix}") }),
+            }),
             ..TargetScope::default()
         },
         TargetScopeKind::Unspecified => {

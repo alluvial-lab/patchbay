@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/common.proto.
  */
 export const file_patchbay_common: GenFile = /*@__PURE__*/
-  fileDesc("ChVwYXRjaGJheS9jb21tb24ucHJvdG8SCHBhdGNoYmF5IhoKCUNvbW1hbmRJZBINCgV2YWx1ZRgBIAEoCSIaCglNZXNzYWdlSWQSDQoFdmFsdWUYASABKAkiGAoHUmVwbHlJZBINCgV2YWx1ZRgBIAEoCSJfCgdFdmVudElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIaCgNsc24YAiABKAsyDS5wYXRjaGJheS5Mc24iHgoNRWxpY2l0YXRpb25JZBINCgV2YWx1ZRgBIAEoCSIUCgNMc24SDQoFdmFsdWUYASABKAQiGAoHQWN0b3JJZBINCgV2YWx1ZRgBIAEoCSIbCgpFbmRwb2ludElkEg0KBXZhbHVlGAEgASgJIhkKCERldmljZUlkEg0KBXZhbHVlGAEgASgJIhoKCUFkYXB0ZXJJZBINCgV2YWx1ZRgBIAEoCSIhChBSdW50aW1lU2Vzc2lvbklkEg0KBXZhbHVlGAEgASgJIiIKEUF1dGhvcml0eURvbWFpbklkEg0KBXZhbHVlGAEgASgJIhgKB0dyYW50SWQSDQoFdmFsdWUYASABKAkiIgoRT3BlcmF0b3JTZXNzaW9uSWQSDQoFdmFsdWUYASABKAkiHwoOU3Vic2NyaXB0aW9uSWQSDQoFdmFsdWUYASABKAkiGwoKR2VuZXJhdGlvbhINCgV2YWx1ZRgBIAEoBCK8AQoQQWN0b3JFbmRwb2ludFJlZhIjCghhY3Rvcl9pZBgBIAEoCzIRLnBhdGNoYmF5LkFjdG9ySWQSKQoLZW5kcG9pbnRfaWQYAiABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgDIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEjEKE2VuZHBvaW50X2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uIrcCCgtUYXJnZXRTY29wZRInCgRraW5kGAEgASgOMhkucGF0Y2hiYXkuVGFyZ2V0U2NvcGVLaW5kEiMKCGFjdG9yX2lkGAIgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBInCgphZGFwdGVyX2lkGAMgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgEIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAUgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIYChBkZXBsb3ltZW50X3Njb3BlGAYgASgJEhgKEHByb2plY3Rfb3JfZ3JvdXAYByABKAkSEwoLcmVzb3VyY2VfaWQYCCABKAki8AEKEFR5cGVkQ29ycmVsYXRpb24SKQoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZEgAEikKCm1lc3NhZ2VfaWQYAiABKAsyEy5wYXRjaGJheS5NZXNzYWdlSWRIABIlCghyZXBseV9pZBgDIAEoCzIRLnBhdGNoYmF5LlJlcGx5SWRIABIlCghldmVudF9pZBgEIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWRIABIxCg5lbGljaXRhdGlvbl9pZBgFIAEoCzIXLnBhdGNoYmF5LkVsaWNpdGF0aW9uSWRIAEIFCgNyZWYiagoPUGF5bG9hZEVudmVsb3BlEg8KB3BheWxvYWQYASABKAwSMgoMY29udGVudF90eXBlGAIgASgOMhwucGF0Y2hiYXkuUGF5bG9hZENvbnRlbnRUeXBlEhIKCnNjaGVtYV9yZWYYAyABKAkiawoKVGltZVdpbmRvdxItCglzdGFydHNfYXQYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KElN0b3JlZEV2ZW50UGF5bG9hZBInCgRraW5kGAEgASgOMhkucGF0Y2hiYXkuU3RvcmVkRXZlbnRLaW5kEg8KB3BheWxvYWQYAiABKAwiHwoOSWRlbXBvdGVuY3lLZXkSDQoFdmFsdWUYASABKAkqtAIKD1RhcmdldFNjb3BlS2luZBIhCh1UQVJHRVRfU0NPUEVfS0lORF9VTlNQRUNJRklFRBAAEhsKF1RBUkdFVF9TQ09QRV9LSU5EX0FDVE9SEAESHQoZVEFSR0VUX1NDT1BFX0tJTkRfQURBUFRFUhACEiUKIVRBUkdFVF9TQ09QRV9LSU5EX1JVTlRJTUVfU0VTU0lPThADEisKJ1RBUkdFVF9TQ09QRV9LSU5EX1BST0pFQ1RfU0VTU0lPTl9HUk9VUBAEEiYKIlRBUkdFVF9TQ09QRV9LSU5EX0ZMRUVUX1NVUEVSVklTT1IQBRIeChpUQVJHRVRfU0NPUEVfS0lORF9SRVNPVVJDRRAGEiYKIlRBUkdFVF9TQ09QRV9LSU5EX0FVVEhPUklUWV9ET01BSU4QByrBAQoSUGF5bG9hZENvbnRlbnRUeXBlEiQKIFBBWUxPQURfQ09OVEVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASHwobUEFZTE9BRF9DT05URU5UX1RZUEVfQklOQVJZEAESIgoeUEFZTE9BRF9DT05URU5UX1RZUEVfVEVYVF9VVEY4EAISHQoZUEFZTE9BRF9DT05URU5UX1RZUEVfSlNPThADEiEKHVBBWUxPQURfQ09OVEVOVF9UWVBFX1BST1RPQlVGEAQq2wQKD1N0b3JlZEV2ZW50S2luZBIhCh1TVE9SRURfRVZFTlRfS0lORF9VTlNQRUNJRklFRBAAEh8KG1NUT1JFRF9FVkVOVF9LSU5EX09QRVJBVElPThABEiEKHVNUT1JFRF9FVkVOVF9LSU5EX09CU0VSVkFUSU9OEAISIQodU1RPUkVEX0VWRU5UX0tJTkRfRUxJQ0lUQVRJT04QAxIbChdTVE9SRURfRVZFTlRfS0lORF9HUkFOVBAEEiYKIlNUT1JFRF9FVkVOVF9LSU5EX0RFU0NFTkRBTlRfR1JBTlQQBRIgChxTVE9SRURfRVZFTlRfS0lORF9SRVZPQ0FUSU9OEAYSIwofU1RPUkVEX0VWRU5UX0tJTkRfU0VTU0lPTl9TVEFURRAHEigKJFNUT1JFRF9FVkVOVF9LSU5EX0NPTU1BTkRfVFJBTlNJVElPThAIEiUKIVNUT1JFRF9FVkVOVF9LSU5EX09QRVJBVE9SX1JFQ09SRBAJEi8KK1NUT1JFRF9FVkVOVF9LSU5EX0NPTlRST0xfU1VSRkFDRV9QUklOQ0lQQUwQChIiCh5TVE9SRURfRVZFTlRfS0lORF9BVURJVF9SRUNPUkQQCxIxCi1TVE9SRURfRVZFTlRfS0lORF9PUEVSQVRPUl9TRVNTSU9OX1JFVk9DQVRJT04QDBIwCixTVE9SRURfRVZFTlRfS0lORF9DT05UUk9MX1NVUkZBQ0VfUkVWT0NBVElPThANEicKI1NUT1JFRF9FVkVOVF9LSU5EX1NFQ1VSSVRZX0xPQ0tET1dOEA5iBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("ChVwYXRjaGJheS9jb21tb24ucHJvdG8SCHBhdGNoYmF5IhoKCUNvbW1hbmRJZBINCgV2YWx1ZRgBIAEoCSIaCglNZXNzYWdlSWQSDQoFdmFsdWUYASABKAkiGAoHUmVwbHlJZBINCgV2YWx1ZRgBIAEoCSJfCgdFdmVudElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIaCgNsc24YAiABKAsyDS5wYXRjaGJheS5Mc24iHgoNRWxpY2l0YXRpb25JZBINCgV2YWx1ZRgBIAEoCSIUCgNMc24SDQoFdmFsdWUYASABKAQiGAoHQWN0b3JJZBINCgV2YWx1ZRgBIAEoCSIbCgpFbmRwb2ludElkEg0KBXZhbHVlGAEgASgJIhkKCERldmljZUlkEg0KBXZhbHVlGAEgASgJIhoKCUFkYXB0ZXJJZBINCgV2YWx1ZRgBIAEoCSIhChBSdW50aW1lU2Vzc2lvbklkEg0KBXZhbHVlGAEgASgJIhsKClJlc291cmNlSWQSDQoFdmFsdWUYASABKAkiHQoMUmVzb3VyY2VLaW5kEg0KBXZhbHVlGAEgASgJIpUBChBSZXNvdXJjZUlkZW50aXR5EicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSKQoLcmVzb3VyY2VfaWQYAiABKAsyFC5wYXRjaGJheS5SZXNvdXJjZUlkEi0KDXJlc291cmNlX2tpbmQYAyABKAsyFi5wYXRjaGJheS5SZXNvdXJjZUtpbmQiIgoRQXV0aG9yaXR5RG9tYWluSWQSDQoFdmFsdWUYASABKAkiGAoHR3JhbnRJZBINCgV2YWx1ZRgBIAEoCSIiChFPcGVyYXRvclNlc3Npb25JZBINCgV2YWx1ZRgBIAEoCSIfCg5TdWJzY3JpcHRpb25JZBINCgV2YWx1ZRgBIAEoCSIbCgpHZW5lcmF0aW9uEg0KBXZhbHVlGAEgASgEIrwBChBBY3RvckVuZHBvaW50UmVmEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIpCgtlbmRwb2ludF9pZBgCIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAMgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSMQoTZW5kcG9pbnRfZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24i8gIKC1RhcmdldFNjb3BlEicKBGtpbmQYASABKA4yGS5wYXRjaGJheS5UYXJnZXRTY29wZUtpbmQSIwoIYWN0b3JfaWQYAiABKAsyES5wYXRjaGJheS5BY3RvcklkEicKCmFkYXB0ZXJfaWQYAyABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSNgoScnVudGltZV9zZXNzaW9uX2lkGAQgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEhgKEGRlcGxveW1lbnRfc2NvcGUYBiABKAkSGAoQcHJvamVjdF9vcl9ncm91cBgHIAEoCRIgChhsZWdhY3lfYXVkaXRfcmVzb3VyY2VfaWQYCCABKAkSLAoIcmVzb3VyY2UYCSABKAsyGi5wYXRjaGJheS5SZXNvdXJjZUlkZW50aXR5IvABChBUeXBlZENvcnJlbGF0aW9uEikKCmNvbW1hbmRfaWQYASABKAsyEy5wYXRjaGJheS5Db21tYW5kSWRIABIpCgptZXNzYWdlX2lkGAIgASgLMhMucGF0Y2hiYXkuTWVzc2FnZUlkSAASJQoIcmVwbHlfaWQYAyABKAsyES5wYXRjaGJheS5SZXBseUlkSAASJQoIZXZlbnRfaWQYBCABKAsyES5wYXRjaGJheS5FdmVudElkSAASMQoOZWxpY2l0YXRpb25faWQYBSABKAsyFy5wYXRjaGJheS5FbGljaXRhdGlvbklkSABCBQoDcmVmImoKD1BheWxvYWRFbnZlbG9wZRIPCgdwYXlsb2FkGAEgASgMEjIKDGNvbnRlbnRfdHlwZRgCIAEoDjIcLnBhdGNoYmF5LlBheWxvYWRDb250ZW50VHlwZRISCgpzY2hlbWFfcmVmGAMgASgJImsKClRpbWVXaW5kb3cSLQoJc3RhcnRzX2F0GAEgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpleHBpcmVzX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJOChJTdG9yZWRFdmVudFBheWxvYWQSJwoEa2luZBgBIAEoDjIZLnBhdGNoYmF5LlN0b3JlZEV2ZW50S2luZBIPCgdwYXlsb2FkGAIgASgMIh8KDklkZW1wb3RlbmN5S2V5Eg0KBXZhbHVlGAEgASgJKrQCCg9UYXJnZXRTY29wZUtpbmQSIQodVEFSR0VUX1NDT1BFX0tJTkRfVU5TUEVDSUZJRUQQABIbChdUQVJHRVRfU0NPUEVfS0lORF9BQ1RPUhABEh0KGVRBUkdFVF9TQ09QRV9LSU5EX0FEQVBURVIQAhIlCiFUQVJHRVRfU0NPUEVfS0lORF9SVU5USU1FX1NFU1NJT04QAxIrCidUQVJHRVRfU0NPUEVfS0lORF9QUk9KRUNUX1NFU1NJT05fR1JPVVAQBBImCiJUQVJHRVRfU0NPUEVfS0lORF9GTEVFVF9TVVBFUlZJU09SEAUSHgoaVEFSR0VUX1NDT1BFX0tJTkRfUkVTT1VSQ0UQBhImCiJUQVJHRVRfU0NPUEVfS0lORF9BVVRIT1JJVFlfRE9NQUlOEAcqwQEKElBheWxvYWRDb250ZW50VHlwZRIkCiBQQVlMT0FEX0NPTlRFTlRfVFlQRV9VTlNQRUNJRklFRBAAEh8KG1BBWUxPQURfQ09OVEVOVF9UWVBFX0JJTkFSWRABEiIKHlBBWUxPQURfQ09OVEVOVF9UWVBFX1RFWFRfVVRGOBACEh0KGVBBWUxPQURfQ09OVEVOVF9UWVBFX0pTT04QAxIhCh1QQVlMT0FEX0NPTlRFTlRfVFlQRV9QUk9UT0JVRhAEKtsECg9TdG9yZWRFdmVudEtpbmQSIQodU1RPUkVEX0VWRU5UX0tJTkRfVU5TUEVDSUZJRUQQABIfChtTVE9SRURfRVZFTlRfS0lORF9PUEVSQVRJT04QARIhCh1TVE9SRURfRVZFTlRfS0lORF9PQlNFUlZBVElPThACEiEKHVNUT1JFRF9FVkVOVF9LSU5EX0VMSUNJVEFUSU9OEAMSGwoXU1RPUkVEX0VWRU5UX0tJTkRfR1JBTlQQBBImCiJTVE9SRURfRVZFTlRfS0lORF9ERVNDRU5EQU5UX0dSQU5UEAUSIAocU1RPUkVEX0VWRU5UX0tJTkRfUkVWT0NBVElPThAGEiMKH1NUT1JFRF9FVkVOVF9LSU5EX1NFU1NJT05fU1RBVEUQBxIoCiRTVE9SRURfRVZFTlRfS0lORF9DT01NQU5EX1RSQU5TSVRJT04QCBIlCiFTVE9SRURfRVZFTlRfS0lORF9PUEVSQVRPUl9SRUNPUkQQCRIvCitTVE9SRURfRVZFTlRfS0lORF9DT05UUk9MX1NVUkZBQ0VfUFJJTkNJUEFMEAoSIgoeU1RPUkVEX0VWRU5UX0tJTkRfQVVESVRfUkVDT1JEEAsSMQotU1RPUkVEX0VWRU5UX0tJTkRfT1BFUkFUT1JfU0VTU0lPTl9SRVZPQ0FUSU9OEAwSMAosU1RPUkVEX0VWRU5UX0tJTkRfQ09OVFJPTF9TVVJGQUNFX1JFVk9DQVRJT04QDRInCiNTVE9SRURfRVZFTlRfS0lORF9TRUNVUklUWV9MT0NLRE9XThAOYgZwcm90bzM", [file_google_protobuf_timestamp]);
 
 /**
  * Distinct protocol id spaces. These wrappers intentionally do not collapse to raw strings.
@@ -209,6 +209,73 @@ export const RuntimeSessionIdSchema: GenMessage<RuntimeSessionId> = /*@__PURE__*
   messageDesc(file_patchbay_common, 10);
 
 /**
+ * Adapter-local resource identifier. Routable identity also includes the
+ * owning adapter and adapter-owned resource kind.
+ *
+ * @generated from message patchbay.ResourceId
+ */
+export type ResourceId = Message<"patchbay.ResourceId"> & {
+  /**
+   * @generated from field: string value = 1;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message patchbay.ResourceId.
+ * Use `create(ResourceIdSchema)` to create a new message.
+ */
+export const ResourceIdSchema: GenMessage<ResourceId> = /*@__PURE__*/
+  messageDesc(file_patchbay_common, 11);
+
+/**
+ * Open adapter-owned resource collection/type identifier. The adapter
+ * capability manifest owns the admitted set; the core does not enumerate it.
+ *
+ * @generated from message patchbay.ResourceKind
+ */
+export type ResourceKind = Message<"patchbay.ResourceKind"> & {
+  /**
+   * @generated from field: string value = 1;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message patchbay.ResourceKind.
+ * Use `create(ResourceKindSchema)` to create a new message.
+ */
+export const ResourceKindSchema: GenMessage<ResourceKind> = /*@__PURE__*/
+  messageDesc(file_patchbay_common, 12);
+
+/**
+ * @generated from message patchbay.ResourceIdentity
+ */
+export type ResourceIdentity = Message<"patchbay.ResourceIdentity"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: patchbay.ResourceId resource_id = 2;
+   */
+  resourceId?: ResourceId | undefined;
+
+  /**
+   * @generated from field: patchbay.ResourceKind resource_kind = 3;
+   */
+  resourceKind?: ResourceKind | undefined;
+};
+
+/**
+ * Describes the message patchbay.ResourceIdentity.
+ * Use `create(ResourceIdentitySchema)` to create a new message.
+ */
+export const ResourceIdentitySchema: GenMessage<ResourceIdentity> = /*@__PURE__*/
+  messageDesc(file_patchbay_common, 13);
+
+/**
  * @generated from message patchbay.AuthorityDomainId
  */
 export type AuthorityDomainId = Message<"patchbay.AuthorityDomainId"> & {
@@ -223,7 +290,7 @@ export type AuthorityDomainId = Message<"patchbay.AuthorityDomainId"> & {
  * Use `create(AuthorityDomainIdSchema)` to create a new message.
  */
 export const AuthorityDomainIdSchema: GenMessage<AuthorityDomainId> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 11);
+  messageDesc(file_patchbay_common, 14);
 
 /**
  * @generated from message patchbay.GrantId
@@ -240,7 +307,7 @@ export type GrantId = Message<"patchbay.GrantId"> & {
  * Use `create(GrantIdSchema)` to create a new message.
  */
 export const GrantIdSchema: GenMessage<GrantId> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 12);
+  messageDesc(file_patchbay_common, 15);
 
 /**
  * @generated from message patchbay.OperatorSessionId
@@ -257,7 +324,7 @@ export type OperatorSessionId = Message<"patchbay.OperatorSessionId"> & {
  * Use `create(OperatorSessionIdSchema)` to create a new message.
  */
 export const OperatorSessionIdSchema: GenMessage<OperatorSessionId> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 13);
+  messageDesc(file_patchbay_common, 16);
 
 /**
  * @generated from message patchbay.SubscriptionId
@@ -274,7 +341,7 @@ export type SubscriptionId = Message<"patchbay.SubscriptionId"> & {
  * Use `create(SubscriptionIdSchema)` to create a new message.
  */
 export const SubscriptionIdSchema: GenMessage<SubscriptionId> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 14);
+  messageDesc(file_patchbay_common, 17);
 
 /**
  * @generated from message patchbay.Generation
@@ -291,7 +358,7 @@ export type Generation = Message<"patchbay.Generation"> & {
  * Use `create(GenerationSchema)` to create a new message.
  */
 export const GenerationSchema: GenMessage<Generation> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 15);
+  messageDesc(file_patchbay_common, 18);
 
 /**
  * @generated from message patchbay.ActorEndpointRef
@@ -323,7 +390,7 @@ export type ActorEndpointRef = Message<"patchbay.ActorEndpointRef"> & {
  * Use `create(ActorEndpointRefSchema)` to create a new message.
  */
 export const ActorEndpointRefSchema: GenMessage<ActorEndpointRef> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 16);
+  messageDesc(file_patchbay_common, 19);
 
 /**
  * @generated from message patchbay.TargetScope
@@ -365,9 +432,17 @@ export type TargetScope = Message<"patchbay.TargetScope"> & {
   projectOrGroup: string;
 
   /**
-   * @generated from field: string resource_id = 8;
+   * Tag-preserved audit-only target for principal/endpoint/device records.
+   * Operational resource Operations and Grants must use `resource`.
+   *
+   * @generated from field: string legacy_audit_resource_id = 8;
    */
-  resourceId: string;
+  legacyAuditResourceId: string;
+
+  /**
+   * @generated from field: patchbay.ResourceIdentity resource = 9;
+   */
+  resource?: ResourceIdentity | undefined;
 };
 
 /**
@@ -375,7 +450,7 @@ export type TargetScope = Message<"patchbay.TargetScope"> & {
  * Use `create(TargetScopeSchema)` to create a new message.
  */
 export const TargetScopeSchema: GenMessage<TargetScope> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 17);
+  messageDesc(file_patchbay_common, 20);
 
 /**
  * @generated from message patchbay.TypedCorrelation
@@ -422,7 +497,7 @@ export type TypedCorrelation = Message<"patchbay.TypedCorrelation"> & {
  * Use `create(TypedCorrelationSchema)` to create a new message.
  */
 export const TypedCorrelationSchema: GenMessage<TypedCorrelation> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 18);
+  messageDesc(file_patchbay_common, 21);
 
 /**
  * @generated from message patchbay.PayloadEnvelope
@@ -449,7 +524,7 @@ export type PayloadEnvelope = Message<"patchbay.PayloadEnvelope"> & {
  * Use `create(PayloadEnvelopeSchema)` to create a new message.
  */
 export const PayloadEnvelopeSchema: GenMessage<PayloadEnvelope> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 19);
+  messageDesc(file_patchbay_common, 22);
 
 /**
  * @generated from message patchbay.TimeWindow
@@ -471,7 +546,7 @@ export type TimeWindow = Message<"patchbay.TimeWindow"> & {
  * Use `create(TimeWindowSchema)` to create a new message.
  */
 export const TimeWindowSchema: GenMessage<TimeWindow> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 20);
+  messageDesc(file_patchbay_common, 23);
 
 /**
  * A durably-recorded state-transition event in the authority-domain log.
@@ -498,7 +573,7 @@ export type StoredEventPayload = Message<"patchbay.StoredEventPayload"> & {
  * Use `create(StoredEventPayloadSchema)` to create a new message.
  */
 export const StoredEventPayloadSchema: GenMessage<StoredEventPayload> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 21);
+  messageDesc(file_patchbay_common, 24);
 
 /**
  * An idempotency key for boundary deduplication. A key dedups only against
@@ -520,7 +595,7 @@ export type IdempotencyKey = Message<"patchbay.IdempotencyKey"> & {
  * Use `create(IdempotencyKeySchema)` to create a new message.
  */
 export const IdempotencyKeySchema: GenMessage<IdempotencyKey> = /*@__PURE__*/
-  messageDesc(file_patchbay_common, 22);
+  messageDesc(file_patchbay_common, 25);
 
 /**
  * @generated from enum patchbay.TargetScopeKind

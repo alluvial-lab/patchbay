@@ -50,6 +50,24 @@ message RuntimeSessionId {
   string value = 1;
 }
 
+// Adapter-local resource identifier. Routable identity also includes the
+// owning adapter and adapter-owned resource kind.
+message ResourceId {
+  string value = 1;
+}
+
+// Open adapter-owned resource collection/type identifier. The adapter
+// capability manifest owns the admitted set; the core does not enumerate it.
+message ResourceKind {
+  string value = 1;
+}
+
+message ResourceIdentity {
+  AdapterId adapter_id = 1;
+  ResourceId resource_id = 2;
+  ResourceKind resource_kind = 3;
+}
+
 message AuthorityDomainId {
   string value = 1;
 }
@@ -85,7 +103,10 @@ message TargetScope {
   Generation session_generation = 5;
   string deployment_scope = 6;
   string project_or_group = 7;
-  string resource_id = 8;
+  // Tag-preserved audit-only target for principal/endpoint/device records.
+  // Operational resource Operations and Grants must use `resource`.
+  string legacy_audit_resource_id = 8;
+  ResourceIdentity resource = 9;
 }
 
 enum TargetScopeKind {

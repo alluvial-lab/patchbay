@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, DescendantGrant,
     DescendantGrantProvenance, EndpointId, EventId, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, Lsn, OperationKind, Revocation, RuntimeSessionId, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind,
+    GrantRevocationPolicy, Lsn, OperationKind, ResourceId, ResourceIdentity, ResourceKind,
+    Revocation, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     authority::{
@@ -70,6 +70,18 @@ fn runtime_scope(adapter_value: &str, runtime_value: &str, generation_value: u64
         runtime_session_id: Some(runtime(runtime_value)),
         session_generation: Some(generation(generation_value)),
         deployment_scope: "machine-a".to_owned(),
+        ..TargetScope::default()
+    }
+}
+
+fn resource_scope(adapter_value: &str, kind: &str, id: &str) -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Resource as i32,
+        resource: Some(ResourceIdentity {
+            adapter_id: Some(adapter(adapter_value)),
+            resource_id: Some(ResourceId { value: id.to_owned() }),
+            resource_kind: Some(ResourceKind { value: kind.to_owned() }),
+        }),
         ..TargetScope::default()
     }
 }
@@ -407,7 +419,6 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
         session_generation: Some(generation(7)),
         deployment_scope: "machine-a".to_owned(),
         project_or_group: "patchbay".to_owned(),
-        resource_id: "resource-1".to_owned(),
         ..TargetScope::default()
     };
 
@@ -489,18 +500,16 @@ fn target_scope_matching_covers_the_full_containment_matrix() {
         &requested_session
     ));
 
-    let resource_scope = TargetScope {
-        kind: TargetScopeKind::Resource as i32,
-        resource_id: "resource-1".to_owned(),
-        ..TargetScope::default()
-    };
-    assert!(target_scope_matches(&resource_scope, &requested_session));
+    let resource = resource_scope("pi", "pool", "resource-1");
+    assert!(target_scope_matches(&resource, &resource));
+    assert!(!target_scope_matches(&resource, &requested_session));
+    assert!(target_scope_matches(
+        &resource,
+        &resource_scope("other", "window", "resource-1")
+    ));
     assert!(!target_scope_matches(
-        &TargetScope {
-            resource_id: "resource-2".to_owned(),
-            ..resource_scope
-        },
-        &requested_session
+        &resource,
+        &resource_scope("pi", "pool", "resource-2")
     ));
 
     assert!(!target_scope_matches(

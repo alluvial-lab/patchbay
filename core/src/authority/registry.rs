@@ -457,7 +457,11 @@ fn validate_target_scope(
         }
         TargetScopeKind::ProjectSessionGroup => !scope.project_or_group.is_empty(),
         TargetScopeKind::FleetSupervisor | TargetScopeKind::AuthorityDomain => true,
-        TargetScopeKind::Resource => !scope.resource_id.is_empty(),
+        TargetScopeKind::Resource => scope
+            .resource
+            .as_ref()
+            .and_then(|identity| identity.resource_id.as_ref())
+            .is_some_and(|id| !id.value.is_empty()),
     };
     if !valid {
         return Err(AuthorityError::InvalidGrant(format!(

@@ -2115,14 +2115,14 @@ fn validate_control_surface_reason(reason_code: &str) -> Result<(), Status> {
 fn revocation_target_scope(
     target: &patchbay_core::authority::ControlSurfaceRevocationTarget,
 ) -> patchbay_contracts::patchbay::TargetScope {
-    let resource_id = match target {
+    let legacy_audit_resource_id = match target {
         patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(id) => id.clone(),
         patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(id) => id.value.clone(),
         patchbay_core::authority::ControlSurfaceRevocationTarget::Device(id) => id.value.clone(),
     };
     patchbay_contracts::patchbay::TargetScope {
         kind: patchbay_contracts::patchbay::TargetScopeKind::Resource as i32,
-        resource_id,
+        legacy_audit_resource_id,
         ..patchbay_contracts::patchbay::TargetScope::default()
     }
 }
