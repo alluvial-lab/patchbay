@@ -17,6 +17,7 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   QuestionContractSchema,
+  ResourceFreshnessState,
   ResponseContractKind,
   ResponseContractSchema,
   ResponseOptionSchema,
@@ -34,10 +35,13 @@ import { JSDOM } from "jsdom";
 import {
   emptyPresentationModel,
   rendersLive,
+  resourceCollectionKey,
+  resourceKey,
   sessionKey,
   type CommandView,
   type ElicitationView,
   type PresentationModel,
+  type ResourceView,
   type SessionIdentity,
   type SessionView,
 } from "../src/domain/model.js";
@@ -103,6 +107,7 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
   assert.match(css, /@media \(max-width:\s*760px\)/);
   assert.doesNotMatch(css, /connectivity-indicator--(?:live|stale|offline|unknown|failed)/);
   assert.doesNotMatch(css, /command-step--(?:accepted|delivered|running|completed|rejected|failed|expired|cancelled|superseded)/);
+  assert.doesNotMatch(css, /resource-freshness--(?:current|stale|unknown)/);
 });
 
 test("desktop shell is two-pane and rows lead with identity before label metadata", () => {
@@ -156,7 +161,7 @@ test("destination rail uses the signed-off punch-out shell and persists panel co
   const rail = shell.element.querySelector(".rail")!;
   assert.deepEqual(
     [...rail.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
-    ["Sessions", "Security", "Diagnostics", "Files", "Git", "Settings"],
+    ["Sessions", "Resources", "Security", "Diagnostics", "Files", "Git", "Settings"],
   );
   rail.querySelector<HTMLButtonElement>('[data-destination="security"]')!.click();
   assert.equal(shell.element.dataset.destination, "security");
@@ -175,10 +180,52 @@ test("mobile uses equal-width bottom tabs and More destinations", () => {
     isMobile: () => true,
   });
   dom.window.document.body.append(shell.element);
-  assert.equal(shell.element.querySelectorAll(".bottom-tabs .tabs__tab").length, 3);
+  assert.equal(shell.element.querySelectorAll(".bottom-tabs .tabs__tab").length, 4);
   assert.equal(shell.element.querySelector<HTMLElement>(".bottom-tabs")!.getAttribute("aria-label"), "Cockpit destinations");
   shell.element.querySelector<HTMLButtonElement>('[data-destination="security"]')!.click();
   assert.equal(shell.element.dataset.destination, "security");
+});
+
+test("pooled session linkage opens the exact resource and mobile resources drill in and back", () => {
+  const linkedSession = session("session-linked");
+  const resource = pooledResource("shared-pool");
+  linkedSession.resourceLinkage = { usageResource: resource.identity };
+  const model = withSessions(linkedSession);
+  model.resources.set(resourceKey(resource.identity), resource);
+  model.resourceCollections.set(resourceCollectionKey("token-commune", "provider_pool"), {
+    adapterId: "token-commune",
+    resourceKind: "provider_pool",
+    completeness: 1,
+    sourceAdapterGeneration: 1n,
+    revisionLsn: 8n,
+    reconciled: true,
+  });
+
+  const desktop = createCockpitShell(new JSDOM().window.document, model, {
+    markdown: createMarkdownRenderer(new JSDOM().window as unknown as Window),
+    isMobile: () => false,
+  });
+  const link = desktop.element.querySelector<HTMLButtonElement>(".runtime-resource-link__button")!;
+  assert.equal(link.disabled, false);
+  link.click();
+  assert.equal(desktop.element.dataset.destination, "resources");
+  assert.equal(desktop.selectedResourceKey, resourceKey(resource.identity));
+  assert.match(desktop.element.querySelector(".resource-detail")!.textContent!, /shared-pool/);
+
+  const dom = new JSDOM();
+  const mobile = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => true,
+  });
+  dom.window.document.body.append(mobile.element);
+  mobile.element.querySelector<HTMLButtonElement>('.bottom-tabs [aria-label="Resources"]')!.click();
+  assert.equal(mobile.element.dataset.destination, "resources");
+  assert.equal(mobile.element.querySelector<HTMLElement>(".resource-list")!.hidden, false);
+  mobile.element.querySelector<HTMLButtonElement>(".resource-row")!.click();
+  assert.equal(mobile.element.querySelector<HTMLElement>(".resource-list")!.hidden, true);
+  assert.equal(mobile.element.querySelector<HTMLElement>(".resource-detail")!.hidden, false);
+  mobile.element.querySelector<HTMLButtonElement>(".resource-detail__back")!.click();
+  assert.equal(mobile.element.querySelector<HTMLElement>(".resource-list")!.hidden, false);
 });
 
 test("session rows render unavailable models honestly", () => {
@@ -449,6 +496,30 @@ function session(
     lastLsn: 1n,
     tombstoned: false,
     reconciled: true,
+  };
+}
+
+function pooledResource(resourceId: string): ResourceView {
+  return {
+    identity: { adapterId: "token-commune", resourceKind: "provider_pool", resourceId },
+    freshness: ResourceFreshnessState.CURRENT,
+    sourceAdapterGeneration: 1n,
+    revisionLsn: 8n,
+    tombstoned: false,
+    hasCachedPayload: true,
+    reconciled: true,
+    projection: {
+      status: "decoded",
+      value: {
+        kind: "pooled-provider-pool",
+        displayName: resourceId,
+        providerLabel: "Anthropic",
+        health: "serving",
+        remainingPercent: 42,
+        resetLabel: "resets in 2h",
+        controlPosture: "administration-capable",
+      },
+    },
   };
 }
 

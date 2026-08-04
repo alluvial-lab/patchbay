@@ -78,6 +78,7 @@ Source registries: `.proto` enum declarations. CI check: `node contracts/scripts
 | `OperationState` | accepted, delivered, running, completed, rejected, failed, expired, cancelled, superseded | all CSS bindings present | all showcase bindings present | pass |
 | `SessionConnectivityState` | live, stale, offline, unknown, failed | all CSS bindings present | all showcase bindings present | pass |
 | `SessionActivityState` | idle, working, unknown | all CSS bindings present | all showcase bindings present | pass |
+| `ResourceFreshnessState` | current, stale, unknown | all CSS bindings present | all showcase bindings present | pass |
 | `ElicitationState` | answered, declined, expired, cancelled, withdrawn, superseded, stale, opened (base .elicitation-card), pending (base .elicitation-card) | all CSS bindings present | all showcase bindings present | pass |
 | AdapterDiagnosticState → connectivity-indicator | unknown→unknown, attached→live, detached→offline, failed→failed | derived existing bindings | derived existing bindings | pass |
 

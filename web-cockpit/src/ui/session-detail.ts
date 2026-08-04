@@ -9,6 +9,7 @@ import {
 
 import {
   rendersLive,
+  resourceKey,
   sessionKey,
   stableTarget,
   type CommandView,
@@ -17,6 +18,7 @@ import {
   type AdapterDiagnosticView,
   type PresentationModel,
   type OperationTargetView,
+  type ResourceIdentityView,
   type SessionIdentity,
   type SessionView,
 } from "../domain/model.js";
@@ -29,6 +31,7 @@ import { renderIcon, type IconName } from "./icons.js";
 import type { MarkdownRenderer } from "./markdown.js";
 import { formatSessionIdentity, renderSessionStatus } from "./session-list.js";
 import { diagnosticsForSession, renderAdapterStatus } from "../domain/adapter-diagnostics.js";
+import { renderRuntimeResourceLink } from "./runtime-resource-link.js";
 import {
   failureCodeName,
   operationKindLabel,
@@ -60,6 +63,7 @@ export interface SessionDetailOptions {
   submission?: SubmissionFeedback;
   onBack?(): void;
   lockdownActive?: boolean;
+  onOpenResource?(identity: ResourceIdentityView): void;
 }
 
 export interface SessionDetailComponent {
@@ -82,6 +86,12 @@ export function renderSessionDetail(
   if (session) detail.dataset.sessionKey = sessionKey(session.identity);
 
   const header = renderHeader(document, model, session, options.onBack);
+  const runtimeContext = session?.resourceLinkage
+    ? renderRuntimeResourceLink(document, {
+        resource: model.resources.get(resourceKey(session.resourceLinkage.usageResource)),
+        onOpen: (identity) => options.onOpenResource?.(identity),
+      })
+    : undefined;
   const timeline = document.createElement("div");
   timeline.className = "timeline";
   timeline.setAttribute("aria-live", "polite");
@@ -93,7 +103,9 @@ export function renderSessionDetail(
     options.submission,
     options.lockdownActive,
   );
-  detail.append(header, timeline, composer);
+  detail.append(header);
+  if (runtimeContext) detail.append(runtimeContext);
+  detail.append(timeline, composer);
 
   return {
     element: detail,

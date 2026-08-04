@@ -3,7 +3,15 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { create } from "@bufbuild/protobuf";
-import { AuthorityDomainIdSchema, TargetScopeKind, TargetScopeSchema } from "@patchbay/contracts";
+import {
+  AdapterIdSchema,
+  AuthorityDomainIdSchema,
+  ResourceIdSchema,
+  ResourceIdentitySchema,
+  ResourceKindSchema,
+  TargetScopeKind,
+  TargetScopeSchema,
+} from "@patchbay/contracts";
 import { renderSecurityView } from "../src/ui/security-view.js";
 import { emptyPresentationModel } from "../src/domain/model.js";
 
@@ -94,6 +102,31 @@ test("security view renders reconciled operator, endpoint, device, and grant inv
   view.querySelector<HTMLButtonElement>('button[title="Revoke device workstation-01"]')!.click();
   view.querySelector<HTMLButtonElement>('button[title="Revoke grant grant-session-main"]')!.click();
   assert.deepEqual(calls, ["endpoint:web-local-01", "device:workstation-01", "grant:grant-session-main"]);
+});
+
+test("security grant inventory formats exact operational-resource identity", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const model = emptyPresentationModel();
+  model.security.grants.push({
+    grantId: "grant-pool",
+    subjectActorId: "operator",
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RESOURCE,
+      resource: create(ResourceIdentitySchema, {
+        adapterId: create(AdapterIdSchema, { value: "token-commune" }),
+        resourceKind: create(ResourceKindSchema, { value: "provider_pool" }),
+        resourceId: create(ResourceIdSchema, { value: "shared-anthropic" }),
+      }),
+    }),
+    allowedOperationKinds: [6],
+    revoked: false,
+    revocationPolicy: 1,
+  });
+  const view = renderSecurityView(dom.window.document, model, domain);
+  assert.match(
+    view.textContent ?? "",
+    /adapter=token-commune;resource-kind=provider_pool;resource=shared-anthropic/,
+  );
 });
 
 test("lockdown submission is visibly pending without claiming active posture", () => {

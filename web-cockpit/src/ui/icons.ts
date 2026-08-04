@@ -1,6 +1,6 @@
 export const ICON_NAMES = [
   "arrow-left", "arrow-up", "paperclip", "plus", "link",
-  "chevron-down", "chevron-right", "x", "square", "folder",
+  "chevron-down", "chevron-right", "x", "square", "folder", "sliders-horizontal",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -27,6 +27,12 @@ export const LUCIDE_ICONS: Readonly<Record<IconName, IconDefinition>> = {
   x: { paths: ["m18 6-12 12", "m6 6 12 12"] },
   square: { paths: ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"] },
   folder: { paths: ["M4 5h6l2 2h8v12H4z"] },
+  "sliders-horizontal": {
+    paths: [
+      "M21 4h-7", "M10 4H3", "M21 12h-9", "M8 12H3", "M21 20h-5", "M12 20H3",
+      "M14 2v4", "M8 10v4", "M16 18v4",
+    ],
+  },
 };
 
 export type IconSize = "sm" | "md" | "lg";

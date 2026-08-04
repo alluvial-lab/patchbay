@@ -318,6 +318,35 @@ button { font: inherit; cursor: pointer; }
 /* Compact variant: dot only, no label — for dense monitoring columns */
 .connectivity-indicator--compact { font-size: 0; gap: 0; }
 
+/* ---- resource-freshness — ResourceFreshnessState (3) ---- */
+/* Resource freshness is independent of session connectivity/activity. */
+.resource-freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.resource-freshness__dot {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.resource-freshness--current { color: var(--color-success); }
+.resource-freshness--current .resource-freshness__dot { background: var(--color-success); }
+.resource-freshness--stale { color: var(--color-warning); }
+.resource-freshness--stale .resource-freshness__dot {
+  background: var(--color-warning);
+  box-shadow: 0 0 6px var(--color-warning);
+}
+.resource-freshness--unknown { color: var(--color-text-tertiary); }
+.resource-freshness--unknown .resource-freshness__dot {
+  background: transparent;
+  border: 2px dashed var(--color-text-tertiary);
+}
+
 /* ---- activity-indicator — SessionActivityState (3) + detail ---- */
 /* Secondary to connectivity. De-emphasized when connectivity is bad (via .session-status). */
 .activity-indicator {

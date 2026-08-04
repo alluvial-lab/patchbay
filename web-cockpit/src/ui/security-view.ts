@@ -1,6 +1,7 @@
 import { OperationKind, TargetScopeKind, type AuthorityDomainId } from "@patchbay/contracts";
 
 import type { PresentationModel } from "../domain/model.js";
+import { formatTargetScope } from "./target-scope.js";
 
 export interface SecurityViewActions {
   enterLockdown(reasonCode: string): Promise<void>;
@@ -237,7 +238,7 @@ function grantInventory(document: Document, model: PresentationModel, actions?: 
     row.className = "security-row";
     row.append(
       textElement(document, "strong", "", summary.grantId),
-      textElement(document, "span", "identity", `${summary.subjectActorId} · ${scopeLabel(summary.targetScope)} · ${summary.allowedOperationKinds.map(operationKindLabel).join(", ") || "no Operations"}`),
+      textElement(document, "span", "identity", `${summary.subjectActorId} · ${formatTargetScope(summary.targetScope)} · ${summary.allowedOperationKinds.map(operationKindLabel).join(", ") || "no Operations"}`),
       textElement(document, "span", "identity", summary.revoked ? "revoked" : summary.expiresAt ? `expires ${summary.expiresAt.toISOString()}` : "active"),
     );
     const broad = isHighImpactGrant(summary.targetScope);
@@ -277,15 +278,6 @@ function sessionStatus(summary: { active: boolean; revoked: boolean; expired: bo
 function operationKindLabel(value: number): string {
   const label = OperationKind[value];
   return label ? label.replace(/^RESERVED_/, "").toLowerCase().replaceAll("_", "-") : `kind-${value}`;
-}
-
-function scopeLabel(scope: { kind: number; adapterId?: { value: string }; runtimeSessionId?: { value: string }; deploymentScope: string } | undefined): string {
-  if (!scope) return "unknown scope";
-  if (scope.kind === TargetScopeKind.AUTHORITY_DOMAIN) return "authority domain";
-  if (scope.kind === TargetScopeKind.RUNTIME_SESSION) {
-    return `${scope.adapterId?.value ?? "adapter"}/${scope.deploymentScope}/${scope.runtimeSessionId?.value ?? "session"}`;
-  }
-  return `scope kind ${scope.kind}`;
 }
 
 function mutationTitle(active: boolean, action: string): string {

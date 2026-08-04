@@ -319,6 +319,23 @@
     </div>
   </section>
 
+  <!-- ============ RESOURCE FRESHNESS ============ -->
+  <section id="resource-freshness" class="showcase-section">
+    <h2>resource-freshness — ResourceFreshnessState (3)</h2>
+    <p>Binds canonical operational-resource freshness without borrowing session connectivity or activity. Stale values are last reported; unknown carries no domain-health or meter claim.</p>
+    <div class="showcase-grid">
+      <div class="showcase-cell">
+        <h3>All 3 states</h3>
+        <div class="demo demo--col">
+          <span class="resource-freshness resource-freshness--current" aria-label="Resource freshness current"><span class="resource-freshness__dot"></span>current</span>
+          <span class="resource-freshness resource-freshness--stale" aria-label="Resource freshness stale"><span class="resource-freshness__dot"></span>stale</span>
+          <span class="resource-freshness resource-freshness--unknown" aria-label="Resource freshness unknown"><span class="resource-freshness__dot"></span>unknown</span>
+        </div>
+        <p class="matrix-note">Resource freshness is independent of SessionConnectivityState and SessionActivityState.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ ACTIVITY ============ -->
   <section id="activity" class="showcase-section">
     <h2>activity-indicator — SessionActivityState (3) + detail</h2>

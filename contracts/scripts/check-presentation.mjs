@@ -42,6 +42,13 @@ const REGISTRY = [
     members: ['idle', 'working', 'unknown'],
   },
   {
+    enum: 'ResourceFreshnessState',
+    file: 'resources.proto',
+    protoPrefix: 'RESOURCE_FRESHNESS_STATE_',
+    cssPrefix: 'resource-freshness',
+    members: ['current', 'stale', 'unknown'],
+  },
+  {
     enum: 'ElicitationState',
     file: 'elicitations.proto',
     protoPrefix: 'ELICITATION_STATE_',
