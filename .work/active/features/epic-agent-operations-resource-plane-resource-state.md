@@ -603,3 +603,20 @@ fresh-context convergence pass.
 - Model metadata, conformance-vector, and presentation checks — passed.
 - CLI — 37 passed; web cockpit — 76 passed; web server — 31 passed; Pi adapter
   — 24 passed, including the real core/adapter/Pi E2E.
+
+## Clean convergence pass (2026-08-04)
+
+**Effective weight**: `thorough`. **Reviewer path**: cross-model fresh-context `openai-codex/gpt-5.6-sol` (the clean pass that was pending when this feature was advanced to `done`). This pass closes the prior evidence gap: the body's remediation note had left the feature "at `review` for the next fresh-context convergence pass," and the stage had been flipped to `done` without that pass recorded.
+
+**Verdict**: Approve — thorough convergence achieved. No receiver-confirmed material current-cycle blocker.
+
+**Remediation-fix re-verification (each mutation-sensitive):**
+- `4195014` (unknown ≠ stale without payload): bypassing the cached-envelope guard at `core/src/resource/registry.rs:494` failed `active_stale_requires_cached_payload_envelopes` and `unknown_freshness_clears_payload_and_current_requires_payload`.
+- `dea8c18` (authoritative snapshot ≠ surviving unknown): disabling the core authoritative-snapshot/unknown guard failed `authoritative_snapshot_unknown_rejects_before_append_or_projection`.
+- `3eeefc2` (manifest redeclaration degradation): filtering out every derived degradation event failed `same_generation_manifest_redeclaration_atomically_degrades_affected_resources`, `newer_generation_attachment_degrades_cached_resources_without_a_report`, and `committed_registration_with_failed_projection_fences_prior_attachment`.
+
+**Fresh hard-contract pass — all hold (each adversarial mutation killed):** append-before-fold ingestion; completeness-tier honesty (authoritative omission tombstones; partial/none degrade; delta omission inert); replay convergence (hot/replay/replay-twice agree); freshness/tombstone-finality/generation-monotonicity; resource snapshot materialization + discriminated LoadSnapshot; cross-domain rejection (payload/event + replay domain equality); no `RESOURCE_STATE`-triggered session-cockpit reconnect loop.
+
+**Important / Nits / Rejected**: none; none; none.
+
+**Verification**: `cargo test --workspace` passed; `cargo clippy --all-targets -- -D warnings` clean; `check:vectors` (8 promoted / 11 implementation checks), `check:drift`, `check:presentation`, `check:models` passed; web-cockpit 105 passed.
