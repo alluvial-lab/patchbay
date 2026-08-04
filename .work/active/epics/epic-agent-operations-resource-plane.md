@@ -8,7 +8,7 @@ depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-26
-updated: 2026-07-26
+updated: 2026-08-04
 ---
 
 # Agent-operations resource plane
