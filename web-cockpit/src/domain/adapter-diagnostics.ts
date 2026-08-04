@@ -22,11 +22,12 @@ import {
   type QueryDiagnosticsResponse,
 } from "@patchbay/contracts";
 
-import type {
-  AdapterDiagnosticView,
-  AdapterView,
-  PresentationModel,
-  SessionIdentity,
+import {
+  runtimeSessionFromScope,
+  type AdapterDiagnosticView,
+  type AdapterView,
+  type PresentationModel,
+  type SessionIdentity,
 } from "./model.js";
 
 export function adapterConnectionPresentation(
@@ -170,16 +171,7 @@ export function foldAdapterDiagnosticObservation(
   if (observation.failureCode < FailureCode.UNSPECIFIED || observation.failureCode > FailureCode.EXECUTION_OUTCOME_UNKNOWN) return;
   if (payload.adapterGeneration?.value === undefined || payload.adapterGeneration.value === 0n || payload.code.length === 0 || payload.code.length > 64 || !/^[a-z0-9_]+$/.test(payload.code)) return;
   const targetSession = target.kind === TargetScopeKind.RUNTIME_SESSION
-    ? target.runtimeSessionId && target.sessionGeneration && target.deploymentScope
-      ? target.runtimeSessionId.value && target.deploymentScope && target.sessionGeneration.value > 0n
-        ? {
-            adapterId,
-            deploymentScope: target.deploymentScope,
-            runtimeSessionId: target.runtimeSessionId.value,
-            generation: target.sessionGeneration.value,
-          }
-        : undefined
-      : undefined
+    ? runtimeSessionFromScope(target)
     : undefined;
   if (target.kind === TargetScopeKind.RUNTIME_SESSION && !targetSession) return;
   const record: AdapterDiagnosticView = {

@@ -73,6 +73,39 @@ test("live diagnostics merge by source LSN and never changes adapter connectivit
   assert.equal(merged.adapters.get("pi")?.recentDiagnostics[0]?.lsn, 12n);
 });
 
+test("mixed runtime-session diagnostic targets are rejected without attribution", () => {
+  const model = emptyPresentationModel();
+  model.authorityDomainId = "main";
+  foldAdapterDiagnosticObservation(model, create(ObservationSchema, {
+    kind: ObservationKind.EVENT,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId: { value: "pi" },
+      deploymentScope: "laptop",
+      runtimeSessionId: { value: "session-1" },
+      sessionGeneration: { value: 1n },
+      resource: {
+        adapterId: { value: "pi" },
+        resourceKind: { value: "provider_pool" },
+        resourceId: { value: "pool-1" },
+      },
+    }),
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.AdapterDiagnosticPayload",
+      payload: toBinary(AdapterDiagnosticPayloadSchema, create(AdapterDiagnosticPayloadSchema, {
+        code: "pi_session_delivery_failed",
+        severity: AdapterDiagnosticSeverity.ERROR,
+        adapterGeneration: { value: 1n },
+        count: 1,
+      })),
+    }),
+    failureCode: FailureCode.EXECUTION_FAILED,
+  }), 13n);
+
+  assert.equal(model.adapters.get("pi"), undefined);
+});
+
 test("rejected and incomplete queries clear cached status instead of retaining stale attachment", () => {
   const model = emptyPresentationModel();
   model.adapters.set("pi", {

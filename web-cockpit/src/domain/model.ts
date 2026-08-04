@@ -1233,7 +1233,7 @@ export function operationTargetFromScope(scope: TargetScope | undefined): Operat
   }
 }
 
-function runtimeSessionFromScope(target: TargetScope | undefined): SessionIdentity | undefined {
+export function runtimeSessionFromScope(target: TargetScope | undefined): SessionIdentity | undefined {
   if (
     !target
     || target.kind !== TargetScopeKind.RUNTIME_SESSION
