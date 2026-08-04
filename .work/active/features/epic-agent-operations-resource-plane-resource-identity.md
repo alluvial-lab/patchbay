@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: review
+stage: implementing
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
@@ -428,3 +428,15 @@ The feature is review-ready. Effective review weight is `thorough` from the expl
 - Corrected snapshot verified with `cargo test --workspace --quiet`, clippy `-D warnings`, all 37 CLI tests, generated-contract build/drift, and vector/model/presentation checks.
 
 The corrected feature returns to `review`. Thorough convergence requires pass 2 to yield no receiver-confirmed material current-cycle blocker.
+
+## Review findings — pass 2 (2026-08-04)
+
+**Reviewer path**: same-harness fresh-context `openai-codex/gpt-5.6-sol` at xhigh; read-only Pi endpoint.
+
+**Verified pass-1 fixes**: exact Observation target binding and durable audit-filter compatibility evidence are correct and regression-covered.
+
+**Receiver-confirmed blocker**:
+
+- Abnormal adapter-disconnect reconciliation selected running commands through only top-level `TargetScope.adapter_id`. Canonical resource identity nests the adapter, so a running resource command could remain indefinitely `running` instead of terminalizing `failed(execution_outcome_unknown)`. Fix the selector through `target_adapter_id` and prove current-adapter resource failure plus other-adapter/malformed inertness.
+
+**Closure policy**: `thorough`; fix, verify the integrated snapshot, and run pass 3.
