@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-cockpit-composition-resource-reconciliation
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: epic-agent-operations-resource-plane-cockpit-composition
 depends_on: [epic-agent-operations-resource-plane-cockpit-composition-resource-projection-domain]
@@ -51,3 +51,14 @@ may appear reconciled.
 Depends on the resource presentation/decoder contract. Shared resource
 rendering starts only after this checkpoint supplies trustworthy current,
 stale, unknown, and tombstone views.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected highest tier for normalized-event validation and atomic dual-snapshot reconciliation.
+- Review weight: `thorough`, explicitly supplied by the autopilot caller; feature review is deferred to the orchestrator.
+- Files changed: `web-cockpit/src/domain/model.ts`, `web-cockpit/src/domain/reconcile.ts`, `web-cockpit/tests/model.test.ts`, and `web-cockpit/tests/reconcile.test.ts`.
+- Tests added: exact upsert/freshness/unknown/tombstone/replacement folding, local decoder failure versus generated-event failure, stale gap dominance, unequal snapshot horizons, invalid replay atomicity, and failed second-snapshot non-installation.
+- Simplification: removed the temporary `RESOURCE_STATE` decode-and-ignore branch and replaced the session-only snapshot replacement seam with one dual-baseline projection contract.
+- Discrepancies from design: none. The two RPC reads remain sequential so the test can prove a failed resource half-read leaves the cached projection untouched; correctness depends on max-horizon replay rather than simultaneous reads.
+- Adjacent issues parked: none.
+- Verification: `cd web-cockpit && npm test` passed 88/88; contracts generated drift, presentation conformance (4 registries), and model-promotion checks passed.

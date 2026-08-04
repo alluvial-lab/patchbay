@@ -3,19 +3,21 @@ import {
   LoadSecuritySnapshotRequestSchema,
   LoadSnapshotRequestSchema,
   LsnSchema,
+  ResourceSnapshotSchema,
   SessionSnapshotSchema,
   SnapshotViewKind,
   SubscribeRequestSchema,
   type AuthorityDomainId,
   type LoadSecuritySnapshotRequest,
   type LoadSecuritySnapshotResponse,
-  type SecuritySnapshot,
   type LoadSnapshotRequest,
   type LoadSnapshotResponse,
-  type SessionSnapshot,
+  type SecuritySnapshot,
   type SubscribeEvent,
   type SubscribeRequest,
 } from "@patchbay/contracts";
+
+import type { SnapshotBaselines } from "./model.js";
 
 export interface ReconcileClient {
   subscribe(input: SubscribeRequest, options?: { signal?: AbortSignal }): AsyncIterable<SubscribeEvent>;
@@ -26,8 +28,8 @@ export interface ReconcileClient {
 /** Port implemented by the pure presentation projection in model.ts. */
 export interface ReconcileProjection {
   markUnreconciled(reason: "stream-break" | "event-gap"): void;
-  replaceFromSnapshot(
-    snapshot: SessionSnapshot,
+  replaceFromSnapshots(
+    snapshots: SnapshotBaselines,
     replayEvents: readonly SubscribeEvent[],
   ): void | Promise<void>;
   replaceSecuritySnapshot?(snapshot: SecuritySnapshot): void | Promise<void>;
@@ -132,37 +134,48 @@ export class Reconciler {
   }
 
   private async reconcile(authorityDomainId: AuthorityDomainId): Promise<void> {
-    const response = await this.client.loadSnapshot(
-      create(LoadSnapshotRequestSchema, {
-        authorityDomainId,
-        viewKind: SnapshotViewKind.SESSION,
-      }),
+    // Load and validate both independently materialized axes before touching
+    // the cached projection. A failed second read leaves the old model stale.
+    const sessionResponse = await this.loadSnapshotView(authorityDomainId, SnapshotViewKind.SESSION);
+    const resourceResponse = await this.loadSnapshotView(authorityDomainId, SnapshotViewKind.RESOURCE);
+    const session = fromBinary(SessionSnapshotSchema, sessionResponse.snapshotPayload);
+    const resource = fromBinary(ResourceSnapshotSchema, resourceResponse.snapshotPayload);
+    const sessionLsn = validateSnapshotIdentity(
+      session.authorityDomainId?.value,
+      session.snapshotLsn?.value,
+      sessionResponse,
+      authorityDomainId.value,
+      "session",
     );
-    if (!response.present) throw new Error("authoritative snapshot is unavailable");
-    if (response.viewKind !== SnapshotViewKind.SESSION) {
-      throw new Error("core returned a non-session snapshot view");
-    }
+    const resourceLsn = validateSnapshotIdentity(
+      resource.authorityDomainId?.value,
+      resource.snapshotLsn?.value,
+      resourceResponse,
+      authorityDomainId.value,
+      "resource",
+    );
+    const horizon = sessionLsn > resourceLsn ? sessionLsn : resourceLsn;
+    if (horizon < this.cursor) throw new Error("older snapshot horizon rejected");
 
-    const snapshot = fromBinary(SessionSnapshotSchema, response.snapshotPayload);
-    const snapshotDomain = required(snapshot.authorityDomainId?.value, "snapshot authority domain");
-    const responseDomain = required(response.eventId?.authorityDomainId?.value, "snapshot event domain");
-    if (snapshotDomain !== authorityDomainId.value || responseDomain !== authorityDomainId.value) {
-      throw new Error("cross-domain snapshot rejected");
-    }
-
-    const snapshotLsn = requiredBigint(snapshot.snapshotLsn?.value, "snapshot LSN");
-    const responseLsn = requiredBigint(response.eventId?.lsn?.value, "snapshot event LSN");
-    if (snapshotLsn !== responseLsn) throw new Error("snapshot LSN does not match response event LSN");
-    if (snapshotLsn < this.cursor) throw new Error("older snapshot rejected");
-
-    // SessionSnapshot is authoritative only for the session registry. Rebuild
-    // every other presentation axis from the durable prefix instead of merging
-    // cached browser state or skipping events hidden behind snapshot_lsn.
-    const replayEvents = await this.replayThrough(authorityDomainId, snapshotLsn);
-    await this.projection.replaceFromSnapshot(snapshot, replayEvents);
+    const replayEvents = await this.replayThrough(authorityDomainId, horizon);
+    await this.projection.replaceFromSnapshots({ session, resource }, replayEvents);
     await this.loadSecuritySnapshot(authorityDomainId);
-    this.cursor = snapshotLsn;
+    this.cursor = horizon;
     this.onReconciliationComplete?.("stream-reconnect");
+  }
+
+  private async loadSnapshotView(
+    authorityDomainId: AuthorityDomainId,
+    viewKind: SnapshotViewKind.SESSION | SnapshotViewKind.RESOURCE,
+  ): Promise<LoadSnapshotResponse> {
+    const response = await this.client.loadSnapshot(
+      create(LoadSnapshotRequestSchema, { authorityDomainId, viewKind }),
+    );
+    if (!response.present) throw new Error(`${snapshotViewName(viewKind)} snapshot is unavailable`);
+    if (response.viewKind !== viewKind) {
+      throw new Error(`core returned the wrong ${snapshotViewName(viewKind)} snapshot view`);
+    }
+    return response;
   }
 
   private async replayThrough(
@@ -192,6 +205,28 @@ export class Reconciler {
     // visible prefix even when its final event precedes snapshot_lsn.
     return replayEvents;
   }
+}
+
+function validateSnapshotIdentity(
+  snapshotDomain: string | undefined,
+  snapshotLsn: bigint | undefined,
+  response: LoadSnapshotResponse,
+  expectedDomain: string,
+  viewName: "session" | "resource",
+): bigint {
+  const payloadDomain = required(snapshotDomain, `${viewName} snapshot authority domain`);
+  const responseDomain = required(response.eventId?.authorityDomainId?.value, `${viewName} snapshot event domain`);
+  if (payloadDomain !== expectedDomain || responseDomain !== expectedDomain) {
+    throw new Error(`cross-domain ${viewName} snapshot rejected`);
+  }
+  const payloadLsn = requiredBigint(snapshotLsn, `${viewName} snapshot LSN`);
+  const responseLsn = requiredBigint(response.eventId?.lsn?.value, `${viewName} snapshot event LSN`);
+  if (payloadLsn !== responseLsn) throw new Error(`${viewName} snapshot LSN does not match response event LSN`);
+  return payloadLsn;
+}
+
+function snapshotViewName(viewKind: SnapshotViewKind): "session" | "resource" {
+  return viewKind === SnapshotViewKind.SESSION ? "session" : "resource";
 }
 
 function eventLsn(event: SubscribeEvent, authorityDomain: string): bigint {

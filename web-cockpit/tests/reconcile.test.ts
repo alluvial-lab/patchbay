@@ -24,6 +24,7 @@ import {
   QuestionContractSchema,
   ResponseContractKind,
   ResponseContractSchema,
+  ResourceSnapshotSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -39,13 +40,16 @@ import {
   type AuthorityDomainId,
   type LoadSnapshotRequest,
   type LoadSnapshotResponse,
-  type SessionSnapshot,
   type SubscribeEvent,
   type SubscribeRequest,
 } from "@patchbay/contracts";
 import fc from "fast-check";
 
-import { PresentationProjection, stableTarget } from "../src/domain/model.js";
+import {
+  PresentationProjection,
+  stableTarget,
+  type SnapshotBaselines,
+} from "../src/domain/model.js";
 import {
   Reconciler,
   type ReconcileClient,
@@ -67,11 +71,11 @@ class RecordingProjection implements ReconcileProjection {
     this.visibleConnectivity = SessionConnectivityState.STALE;
   }
 
-  replaceFromSnapshot(snapshot: SessionSnapshot, replayEvents: readonly SubscribeEvent[]): void {
+  replaceFromSnapshots(snapshots: SnapshotBaselines, replayEvents: readonly SubscribeEvent[]): void {
     this.snapshots += 1;
     this.folded.splice(0, this.folded.length, ...replayEvents.map(eventLsn));
     this.visibleConnectivity =
-      snapshot.sessions[0]?.state?.connectivity ?? SessionConnectivityState.UNKNOWN;
+      snapshots.session.sessions[0]?.state?.connectivity ?? SessionConnectivityState.UNKNOWN;
   }
 
   foldEvent(event: SubscribeEvent): void {
@@ -92,9 +96,9 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
       if (subscription === 2) return values([event(1n)]);
       return values([event(2n)]);
     },
-    async loadSnapshot() {
+    async loadSnapshot(request) {
       assert.equal(projection.visibleConnectivity, SessionConnectivityState.STALE);
-      return snapshotResponse(1n);
+      return snapshotResponse(request.viewKind, 1n);
     },
   };
 
@@ -254,8 +258,8 @@ test("snapshot reconciliation replays non-session events hidden behind the highe
       assert.equal(request.cursor!.value, 3n);
       return values([event(4n)]);
     },
-    async loadSnapshot() {
-      return snapshotResponse(3n);
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 3n);
     },
   };
   const reconciler = new Reconciler(client, projection, { retryDelayMs: 0 });
@@ -272,19 +276,50 @@ test("snapshot reconciliation replays non-session events hidden behind the highe
   assert.equal(projection.model.sessions.size, 1);
 });
 
+test("a failed resource snapshot read installs no half-reconciled replacement", async () => {
+  const controller = new AbortController();
+  const projection = new PresentationProjection();
+  let snapshotReads = 0;
+  const client: ReconcileClient = {
+    subscribe: () => brokenAfter([operationEvent(1n)]),
+    async loadSnapshot(request) {
+      snapshotReads += 1;
+      if (request.viewKind === SnapshotViewKind.RESOURCE) {
+        throw new Error("injected resource snapshot failure");
+      }
+      return snapshotResponse(request.viewKind, 1n);
+    },
+  };
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    delay: async () => controller.abort(),
+  });
+
+  for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
+    // The first command folds before the stream break.
+  }
+
+  assert.equal(snapshotReads, 2);
+  assert.equal(reconciler.currentCursor, 1n);
+  assert.equal(projection.model.cursor, 1n);
+  assert.equal(projection.model.commands.has("command-1"), true);
+  assert.equal(projection.model.reconciled, false);
+  assert.equal(projection.model.sessions.size, 0, "session snapshot was not installed alone");
+});
+
 test("the cursor does not advance when projection folding throws", async () => {
   const controller = new AbortController();
   const projection: ReconcileProjection = {
     markUnreconciled() {},
-    replaceFromSnapshot() {},
+    replaceFromSnapshots() {},
     foldEvent() {
       throw new Error("injected fold failure");
     },
   };
   const client: ReconcileClient = {
     subscribe: () => values([event(1n)]),
-    async loadSnapshot() {
-      return snapshotResponse(0n);
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 0n);
     },
   };
   const reconciler = new Reconciler(client, projection, {
@@ -320,9 +355,9 @@ test("unreconciled state is never visible as live across generated stream breaks
           assert.equal(request.cursor!.value, BigInt(breakAfter));
           return values([event(BigInt(breakAfter + 1))]);
         },
-        async loadSnapshot(): Promise<LoadSnapshotResponse> {
+        async loadSnapshot(request): Promise<LoadSnapshotResponse> {
           observedAtSnapshotLoad.push(projection.visibleConnectivity);
-          return snapshotResponse(BigInt(breakAfter));
+          return snapshotResponse(request.viewKind, BigInt(breakAfter));
         },
       };
       const reconciler = new Reconciler(client, projection, { retryDelayMs: 0 });
@@ -333,7 +368,10 @@ test("unreconciled state is never visible as live across generated stream breaks
         if (count === breakAfter + 1) break;
       }
 
-      assert.deepEqual(observedAtSnapshotLoad, [SessionConnectivityState.STALE]);
+      assert.deepEqual(observedAtSnapshotLoad, [
+        SessionConnectivityState.STALE,
+        SessionConnectivityState.STALE,
+      ]);
       assert.equal(reconciler.currentCursor, BigInt(breakAfter + 1));
       assert.equal(new Set(projection.folded).size, projection.folded.length);
     }),
@@ -426,32 +464,41 @@ function target() {
   });
 }
 
-function snapshotResponse(lsn: bigint, authorityDomainId: AuthorityDomainId = DOMAIN): LoadSnapshotResponse {
-  const snapshot = create(SessionSnapshotSchema, {
-    authorityDomainId,
-    snapshotLsn: create(LsnSchema, { value: lsn }),
-    sessions: [
-      create(SessionSchema, {
+function snapshotResponse(
+  viewKind: SnapshotViewKind,
+  lsn: bigint,
+  authorityDomainId: AuthorityDomainId = DOMAIN,
+): LoadSnapshotResponse {
+  const snapshotPayload = viewKind === SnapshotViewKind.SESSION
+    ? toBinary(SessionSnapshotSchema, create(SessionSnapshotSchema, {
         authorityDomainId,
-        adapterId: ADAPTER,
-        deploymentScope: "laptop",
-        runtimeSessionId: RUNTIME,
-        sessionGeneration: create(GenerationSchema, { value: 1n }),
-        state: create(SessionStateSchema, {
-          connectivity: SessionConnectivityState.LIVE,
-          activity: SessionActivityState.IDLE,
-        }),
-      }),
-    ],
-  });
+        snapshotLsn: create(LsnSchema, { value: lsn }),
+        sessions: [
+          create(SessionSchema, {
+            authorityDomainId,
+            adapterId: ADAPTER,
+            deploymentScope: "laptop",
+            runtimeSessionId: RUNTIME,
+            sessionGeneration: create(GenerationSchema, { value: 1n }),
+            state: create(SessionStateSchema, {
+              connectivity: SessionConnectivityState.LIVE,
+              activity: SessionActivityState.IDLE,
+            }),
+          }),
+        ],
+      }))
+    : toBinary(ResourceSnapshotSchema, create(ResourceSnapshotSchema, {
+        authorityDomainId,
+        snapshotLsn: create(LsnSchema, { value: lsn }),
+      }));
   return create(LoadSnapshotResponseSchema, {
     present: true,
     eventId: create(EventIdSchema, {
       authorityDomainId,
       lsn: create(LsnSchema, { value: lsn }),
     }),
-    snapshotPayload: toBinary(SessionSnapshotSchema, snapshot),
-    viewKind: SnapshotViewKind.SESSION,
+    snapshotPayload,
+    viewKind,
   });
 }
 

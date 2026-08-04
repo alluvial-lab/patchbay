@@ -6,6 +6,7 @@ import {
   ActorEndpointRefSchema,
   ActorIdSchema,
   AdapterIdSchema,
+  AdapterSnapshotSupport,
   AuthorityDomainIdSchema,
   CommandIdSchema,
   CommandTransitionSchema,
@@ -27,14 +28,27 @@ import {
   ResponseContractKind,
   ResponseContractSchema,
   ResponseOptionSchema,
+  ResourceFreshnessChangedSchema,
   ResourceFreshnessState,
+  ResourceIdSchema,
+  ResourceIdentitySchema,
+  ResourceKindSchema,
+  ResourceSchema,
+  ResourceSnapshotSchema,
   ResourceStateEventSchema,
+  ResourceStateMutationSchema,
+  ResourceStateTombstoneSchema,
+  ResourceStateUnknownSchema,
+  ResourceStateUpsertSchema,
+  ResourceViewRevisionSchema,
+  ResourceViewStateUpdateSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
   SessionGenerationBumpedSchema,
   SessionModelChangedSchema,
   SessionRegisteredSchema,
+  SessionSchema,
   SessionSnapshotSchema,
   SessionStateEventSchema,
   SecurityLockdownEventSchema,
@@ -45,6 +59,8 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
+  type ResourceIdentity,
+  type ResourceStateMutation,
   type SubscribeEvent,
 } from "@patchbay/contracts";
 import fc from "fast-check";
@@ -56,6 +72,7 @@ import {
   markUnreconciled,
   rendersLive,
   rendersResourceCurrent,
+  replaceFromSnapshots,
   resourceCollectionKey,
   resourceKey,
   sessionKey,
@@ -217,12 +234,18 @@ test("snapshot replacement discards the old projection and pending elicitations 
   projection.markUnreconciled();
   assert.equal(rendersLive([...projection.model.sessions.values()][0]!), false);
 
-  projection.replaceFromSnapshot(
-    create(SessionSnapshotSchema, {
-      authorityDomainId: DOMAIN,
-      snapshotLsn: create(LsnSchema, { value: 0n }),
-      sessions: [],
-    }),
+  projection.replaceFromSnapshots(
+    {
+      session: create(SessionSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 0n }),
+        sessions: [],
+      }),
+      resource: create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 0n }),
+      }),
+    },
     [],
   );
   assert.equal(projection.model.sessions.size, 0);
@@ -504,25 +527,234 @@ test("resource current styling requires reconciled current non-tombstoned state"
   assert.equal(rendersResourceCurrent({ ...base, freshness: ResourceFreshnessState.UNKNOWN }), false);
 });
 
-test("resource state delivery decodes without contaminating session presentation", () => {
-  const model = fold(
-    emptyPresentationModel(),
-    stored(
-      1n,
-      StoredEventKind.RESOURCE_STATE,
-      ResourceStateEventSchema,
-      create(ResourceStateEventSchema, {
+test("resource upsert, freshness, unknown, and replacement fold exact identities", () => {
+  const pool1 = resourceIdentity("pool-1");
+  const pool2 = resourceIdentity("pool-2");
+  let model = fold(emptyPresentationModel(), resourceEvent(1n, [
+    resourceMutation(pool1, undefined, "upsert"),
+  ]));
+  let first = model.resources.get(resourceKey({
+    adapterId: "pi", resourceKind: "provider_pool", resourceId: "pool-1",
+  }))!;
+  assert.equal(first.projection.status, "decoded");
+  assert.equal(first.freshness, ResourceFreshnessState.CURRENT);
+
+  model = fold(model, resourceEvent(2n, [
+    resourceMutation(pool1, 1n, "freshness", ResourceFreshnessState.STALE),
+  ]));
+  first = model.resources.get(resourceKey(first.identity))!;
+  assert.equal(first.freshness, ResourceFreshnessState.STALE);
+  assert.equal(first.hasCachedPayload, true);
+
+  model = fold(model, resourceEvent(3n, [resourceMutation(pool1, 2n, "unknown")]));
+  first = model.resources.get(resourceKey(first.identity))!;
+  assert.equal(first.freshness, ResourceFreshnessState.UNKNOWN);
+  assert.equal(first.hasCachedPayload, false);
+  assert.equal(first.projection.status, "unavailable");
+
+  model = fold(model, resourceEvent(4n, [resourceMutation(pool1, 3n, "upsert")]));
+  model = fold(model, resourceEvent(5n, [
+    resourceMutation(pool1, 4n, "tombstone", undefined, pool2),
+    resourceMutation(pool2, undefined, "upsert"),
+  ]));
+  first = model.resources.get(resourceKey(first.identity))!;
+  const replacement = model.resources.get(resourceKey({
+    adapterId: "pi", resourceKind: "provider_pool", resourceId: "pool-2",
+  }))!;
+  assert.equal(first.tombstoned, true);
+  assert.equal(first.freshness, ResourceFreshnessState.STALE);
+  assert.deepEqual(first.replacedBy, replacement.identity);
+  assert.equal(replacement.tombstoned, false);
+  assert.equal(replacement.freshness, ResourceFreshnessState.CURRENT);
+  assert.equal(model.resourceCollections.get(resourceCollectionKey("pi", "provider_pool"))?.revisionLsn, 5n);
+  assert.equal(model.sessions.size, 0);
+});
+
+test("unequal snapshot horizons replay each state axis only after its own baseline", () => {
+  const identity = resourceIdentity("snapshot-pool");
+  const upsert = resourceMutation(identity, undefined, "upsert");
+  if (upsert.mutation.case !== "upsert") throw new Error("fixture bug");
+  const model = replaceFromSnapshots(
+    {
+      session: create(SessionSnapshotSchema, {
         authorityDomainId: DOMAIN,
-        sourceAdapterId: adapterId,
-        sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+        snapshotLsn: create(LsnSchema, { value: 1n }),
+        sessions: [create(SessionSchema, {
+          authorityDomainId: DOMAIN,
+          adapterId,
+          deploymentScope,
+          runtimeSessionId,
+          sessionGeneration: create(GenerationSchema, { value: 1n }),
+          state: create(SessionStateSchema, {
+            connectivity: SessionConnectivityState.LIVE,
+            activity: SessionActivityState.IDLE,
+          }),
+          model: "provider/model-1",
+        })],
       }),
-    ),
+      resource: create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 3n }),
+        resources: [create(ResourceSchema, {
+          authorityDomainId: DOMAIN,
+          identity,
+          resourcePayload: upsert.mutation.value.resourcePayload,
+          projectionPayload: upsert.mutation.value.projectionPayload,
+          freshness: ResourceFreshnessState.CURRENT,
+          sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+          revisionLsn: create(LsnSchema, { value: 3n }),
+          observedAt: { seconds: 3n, nanos: 0 },
+        })],
+        viewRevisions: [create(ResourceViewRevisionSchema, {
+          adapterId,
+          resourceKind: identity.resourceKind,
+          completeness: AdapterSnapshotSupport.AUTHORITATIVE,
+          sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+          revisionLsn: create(LsnSchema, { value: 3n }),
+          observedAt: { seconds: 3n, nanos: 0 },
+        })],
+      }),
+    },
+    [modelChange(2n, "provider/model-1", "provider/model-2")],
+  );
+  assert.equal(model.cursor, 3n);
+  assert.equal([...model.sessions.values()][0]!.model, "provider/model-2");
+  assert.equal([...model.resources.values()][0]!.revisionLsn, 3n);
+  assert.equal(model.reconciled, true);
+  assert.equal([...model.resources.values()][0]!.reconciled, true);
+});
+
+test("invalid replay never installs a partially rebuilt projection", () => {
+  const projection = new PresentationProjection(fold(emptyPresentationModel(), operationEvent(1n, "existing")));
+  const before = projection.model;
+  const malformed = stored(
+    1n,
+    StoredEventKind.RESOURCE_STATE,
+    ResourceStateEventSchema,
+    create(ResourceStateEventSchema, {
+      authorityDomainId: DOMAIN,
+      sourceAdapterId: adapterId,
+      sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+    }),
+  );
+  assert.throws(() => projection.replaceFromSnapshots({
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 1n }),
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 0n }),
+    }),
+  }, [malformed]));
+  assert.equal(projection.model, before);
+  assert.equal(projection.model.commands.has("existing"), true);
+});
+
+test("projection decode failure is local while malformed normalized resource events fail closed", () => {
+  const identity = resourceIdentity("bad-projection");
+  const invalidProjection = resourceMutation(identity, undefined, "upsert");
+  if (invalidProjection.mutation.case !== "upsert") throw new Error("fixture bug");
+  invalidProjection.mutation.value.projectionPayload!.payload = encoder.encode("{");
+  const model = fold(emptyPresentationModel(), resourceEvent(1n, [invalidProjection]));
+  assert.equal([...model.resources.values()][0]!.projection.status, "invalid");
+  assert.equal(model.cursor, 1n);
+
+  assert.throws(
+    () => fold(model, resourceEvent(2n, [resourceMutation(identity, 999n, "unknown")])),
+    /prior revision/,
   );
   assert.equal(model.cursor, 1n);
-  assert.equal(model.reconciled, true);
-  assert.equal(model.sessions.size, 0);
-  assert.equal(model.commands.size, 0);
+  assert.equal([...model.resources.values()][0]!.revisionLsn, 1n);
 });
+
+test("stream gaps preserve cached resource values as stale and empty values as unknown", () => {
+  const cached = resourceIdentity("cached");
+  const empty = resourceIdentity("empty");
+  let model = fold(emptyPresentationModel(), resourceEvent(1n, [
+    resourceMutation(cached, undefined, "upsert"),
+    resourceMutation(empty, undefined, "unknown"),
+  ]));
+  model = markUnreconciled(model);
+  assert.equal(model.reconciled, false);
+  assert.equal(model.resourceCollections.values().next().value!.reconciled, false);
+  assert.equal(model.resources.get(resourceKey({ adapterId: "pi", resourceKind: "provider_pool", resourceId: "cached" }))!.freshness, ResourceFreshnessState.STALE);
+  assert.equal(model.resources.get(resourceKey({ adapterId: "pi", resourceKind: "provider_pool", resourceId: "empty" }))!.freshness, ResourceFreshnessState.UNKNOWN);
+  assert.equal([...model.resources.values()].every((resource) => !resource.reconciled), true);
+});
+
+function resourceIdentity(resourceId: string): ResourceIdentity {
+  return create(ResourceIdentitySchema, {
+    adapterId,
+    resourceKind: create(ResourceKindSchema, { value: "provider_pool" }),
+    resourceId: create(ResourceIdSchema, { value: resourceId }),
+  });
+}
+
+function resourceMutation(
+  identity: ResourceIdentity,
+  fromRevision: bigint | undefined,
+  kind: "upsert" | "unknown" | "tombstone" | "freshness",
+  freshnessTo?: ResourceFreshnessState,
+  replacement?: ResourceIdentity,
+): ResourceStateMutation {
+  const mutation = kind === "upsert"
+    ? {
+        case: "upsert" as const,
+        value: create(ResourceStateUpsertSchema, {
+          resourcePayload: create(PayloadEnvelopeSchema, {
+            contentType: PayloadContentType.JSON,
+            schemaRef: "provider_pool.payload.v1",
+            payload: encoder.encode("{}"),
+          }),
+          projectionPayload: create(PayloadEnvelopeSchema, {
+            contentType: PayloadContentType.JSON,
+            schemaRef: "provider_pool.projection.v1",
+            payload: encoder.encode(JSON.stringify({
+              displayName: identity.resourceId!.value,
+              providerLabel: "Provider",
+              health: "serving",
+              remainingPercent: 75,
+            })),
+          }),
+        }),
+      }
+    : kind === "unknown"
+      ? { case: "unknown" as const, value: create(ResourceStateUnknownSchema) }
+      : kind === "tombstone"
+        ? { case: "tombstone" as const, value: create(ResourceStateTombstoneSchema, { replacedBy: replacement }) }
+        : {
+            case: "freshnessChanged" as const,
+            value: create(ResourceFreshnessChangedSchema, {
+              from: ResourceFreshnessState.CURRENT,
+              to: freshnessTo,
+            }),
+          };
+  return create(ResourceStateMutationSchema, {
+    identity,
+    fromRevisionLsn: fromRevision === undefined ? undefined : create(LsnSchema, { value: fromRevision }),
+    mutation,
+  });
+}
+
+function resourceEvent(lsn: bigint, mutations: ResourceStateMutation[]): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.RESOURCE_STATE,
+    ResourceStateEventSchema,
+    create(ResourceStateEventSchema, {
+      authorityDomainId: DOMAIN,
+      sourceAdapterId: adapterId,
+      sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+      views: [create(ResourceViewStateUpdateSchema, {
+        resourceKind: create(ResourceKindSchema, { value: "provider_pool" }),
+        completeness: AdapterSnapshotSupport.AUTHORITATIVE,
+      })],
+      mutations,
+      observedAt: { seconds: lsn, nanos: 0 },
+    }),
+  );
+}
 
 function sessionTarget(generation: bigint) {
   return create(TargetScopeSchema, {

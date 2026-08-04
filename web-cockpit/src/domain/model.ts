@@ -14,7 +14,10 @@ import {
   ResponseContractKind,
   ResourceStateEventSchema,
   ResourceFreshnessState,
-  type AdapterSnapshotSupport,
+  AdapterSnapshotSupport,
+  type Resource,
+  type ResourceSnapshot,
+  type ResourceStateEvent,
   SessionActivityState,
   SessionConnectivityState,
   SessionStateEventSchema,
@@ -37,9 +40,10 @@ import {
 
 import type { ReconcileProjection } from "./reconcile.js";
 import { foldAdapterDiagnosticObservation } from "./adapter-diagnostics.js";
-import type {
-  ResourceIdentityView,
-  ResourceProjectionResult,
+import {
+  decodeResourceProjection,
+  type ResourceIdentityView,
+  type ResourceProjectionResult,
 } from "./resource-projection.js";
 
 export type { ResourceIdentityView } from "./resource-projection.js";
@@ -283,14 +287,11 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
       foldSessionState(next, fromBinary(SessionStateEventSchema, payload.payload), lsn);
       break;
     case StoredEventKind.RESOURCE_STATE: {
-      // Resource rendering belongs to the resource-composition feature, but
-      // the current session cockpit must still consume the admitted stream
-      // without entering a reconnect loop. Decode and domain-check now; do not
-      // install adapter payloads into session presentation state.
       const resourceEvent = fromBinary(ResourceStateEventSchema, payload.payload);
       if (resourceEvent.authorityDomainId?.value !== authorityDomainId) {
         throw new Error("cross-domain resource event rejected by presentation fold");
       }
+      foldResourceState(next, resourceEvent, lsn);
       break;
     }
     case StoredEventKind.SECURITY_LOCKDOWN:
@@ -309,34 +310,83 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
   return next;
 }
 
+/** Snapshot baselines for the two independently materialized presentation axes. */
+export interface SnapshotBaselines {
+  session: SessionSnapshot;
+  resource: ResourceSnapshot;
+}
+
 /**
- * Rebuilds the projection atomically. SessionSnapshot owns the session baseline;
- * the durable prefix owns commands, Observations, and Elicitations because the
- * snapshot wire shape does not contain those axes.
+ * Rebuilds the whole projection off to the side through the larger snapshot
+ * horizon. Each snapshot suppresses only its own durable state axis.
  */
-export function replaceFromSnapshot(
-  snapshot: SessionSnapshot,
+export function replaceFromSnapshots(
+  snapshots: SnapshotBaselines,
   replayEvents: readonly SubscribeEvent[],
 ): PresentationModel {
-  const authorityDomainId = required(snapshot.authorityDomainId?.value, "snapshot authority domain");
-  const snapshotLsn = requiredBigint(snapshot.snapshotLsn?.value, "snapshot LSN");
+  const sessionDomain = required(snapshots.session.authorityDomainId?.value, "session snapshot authority domain");
+  const resourceDomain = required(snapshots.resource.authorityDomainId?.value, "resource snapshot authority domain");
+  if (sessionDomain !== resourceDomain) throw new Error("cross-domain snapshot baselines rejected");
+  const sessionLsn = requiredBigint(snapshots.session.snapshotLsn?.value, "session snapshot LSN");
+  const resourceLsn = requiredBigint(snapshots.resource.snapshotLsn?.value, "resource snapshot LSN");
+  const horizon = sessionLsn > resourceLsn ? sessionLsn : resourceLsn;
+
   const sessions = new Map<string, SessionView>();
-  for (const session of snapshot.sessions) {
-    const view = sessionFromSnapshot(session, snapshotLsn);
-    sessions.set(sessionKey(view.identity), { ...view, reconciled: false });
+  for (const session of snapshots.session.sessions) {
+    const view = sessionFromSnapshot(session, sessionLsn);
+    const key = sessionKey(view.identity);
+    if (sessions.has(key)) throw new Error(`session snapshot repeats identity ${key}`);
+    sessions.set(key, { ...view, reconciled: false });
   }
+
+  const resources = new Map<string, ResourceView>();
+  for (const resource of snapshots.resource.resources) {
+    const view = resourceFromSnapshot(resource, resourceDomain, resourceLsn);
+    const key = resourceKey(view.identity);
+    if (resources.has(key)) throw new Error(`resource snapshot repeats identity ${key}`);
+    resources.set(key, { ...view, reconciled: false });
+  }
+  const resourceCollections = new Map<string, ResourceCollectionView>();
+  for (const revision of snapshots.resource.viewRevisions) {
+    const adapterId = required(revision.adapterId?.value, "resource snapshot collection adapter");
+    const resourceKind = required(revision.resourceKind?.value, "resource snapshot collection kind");
+    const completeness = validCompleteness(revision.completeness, "resource snapshot collection completeness");
+    const sourceAdapterGeneration = requiredBigint(
+      revision.sourceAdapterGeneration?.value,
+      "resource snapshot collection generation",
+    );
+    const revisionLsn = requiredBigint(revision.revisionLsn?.value, "resource snapshot collection revision");
+    if (revisionLsn > resourceLsn) throw new Error("resource collection revision exceeds snapshot horizon");
+    const key = resourceCollectionKey(adapterId, resourceKind);
+    if (resourceCollections.has(key)) throw new Error(`resource snapshot repeats collection ${key}`);
+    resourceCollections.set(key, {
+      adapterId,
+      resourceKind,
+      completeness,
+      sourceAdapterGeneration,
+      revisionLsn,
+      observedAt: optionalTimestampDate(revision.observedAt, "resource snapshot collection observed time"),
+      reconciled: false,
+    });
+  }
+  for (const resource of resources.values()) {
+    if (!resourceCollections.has(resourceCollectionKey(resource.identity.adapterId, resource.identity.resourceKind))) {
+      throw new Error("resource snapshot record has no matching collection revision");
+    }
+  }
+
   let model: PresentationModel = {
-    authorityDomainId,
+    authorityDomainId: sessionDomain,
     cursor: 0n,
     reconciled: false,
     sessions,
-    resources: new Map(),
-    resourceCollections: new Map(),
+    resources,
+    resourceCollections,
     commands: new Map(),
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
-    lockdown: lockdownViewFromState(snapshot.lockdown),
+    lockdown: lockdownViewFromState(snapshots.session.lockdown),
     security: emptySecurityInventory(),
   };
 
@@ -344,32 +394,34 @@ export function replaceFromSnapshot(
   for (const event of replayEvents) {
     const lsn = requiredBigint(event.eventId?.lsn?.value, "replay event LSN");
     const eventDomain = required(event.eventId?.authorityDomainId?.value, "replay event authority domain");
-    if (eventDomain !== authorityDomainId) throw new Error("cross-domain replay event rejected");
-    if (lsn <= replayCursor || lsn > snapshotLsn) {
+    if (eventDomain !== sessionDomain) throw new Error("cross-domain replay event rejected");
+    if (lsn <= replayCursor || lsn > horizon) {
       throw new Error(`snapshot replay is not a strictly ordered visible prefix at LSN ${lsn}`);
     }
     replayCursor = lsn;
     if (!event.payload) throw new Error("snapshot replay event payload is missing");
 
-    if (event.payload.kind === StoredEventKind.SESSION_STATE) {
-      // The snapshot is the newer authority for sessions at snapshot_lsn.
+    const coveredByBaseline =
+      (event.payload.kind === StoredEventKind.SESSION_STATE && lsn <= sessionLsn)
+      || (event.payload.kind === StoredEventKind.RESOURCE_STATE && lsn <= resourceLsn);
+    if (coveredByBaseline) {
       model = { ...model, cursor: lsn };
     } else {
       model = fold(model, event);
       model.reconciled = false;
-      model.sessions = new Map(
-        [...model.sessions].map(([key, session]) => [key, { ...session, reconciled: false }]),
-      );
     }
   }
 
-  // Invisible authority records can trail the final operator-facing event.
-  // The snapshot is authoritative through snapshot_lsn even when the visible
-  // replay cursor ends earlier.
-  model.cursor = snapshotLsn;
+  model.cursor = horizon;
   model.reconciled = true;
   model.sessions = new Map(
     [...model.sessions].map(([key, session]) => [key, { ...session, reconciled: true }]),
+  );
+  model.resources = new Map(
+    [...model.resources].map(([key, resource]) => [key, { ...resource, reconciled: true }]),
+  );
+  model.resourceCollections = new Map(
+    [...model.resourceCollections].map(([key, collection]) => [key, { ...collection, reconciled: true }]),
   );
   deriveNeedsYou(model);
   return model;
@@ -462,6 +514,18 @@ export function markUnreconciled(model: PresentationModel): PresentationModel {
       },
     ]),
   );
+  next.resources = new Map(
+    [...model.resources].map(([key, resource]) => [key, {
+      ...resource,
+      freshness: resource.hasCachedPayload
+        ? ResourceFreshnessState.STALE
+        : ResourceFreshnessState.UNKNOWN,
+      reconciled: false,
+    }]),
+  );
+  next.resourceCollections = new Map(
+    [...model.resourceCollections].map(([key, collection]) => [key, { ...collection, reconciled: false }]),
+  );
   return next;
 }
 
@@ -472,8 +536,8 @@ export class PresentationProjection implements ReconcileProjection {
     this.model = markUnreconciled(this.model);
   }
 
-  replaceFromSnapshot(snapshot: SessionSnapshot, replayEvents: readonly SubscribeEvent[]): void {
-    this.model = replaceFromSnapshot(snapshot, replayEvents);
+  replaceFromSnapshots(snapshots: SnapshotBaselines, replayEvents: readonly SubscribeEvent[]): void {
+    this.model = replaceFromSnapshots(snapshots, replayEvents);
   }
 
   replaceSecuritySnapshot(snapshot: SecuritySnapshot): void {
@@ -680,6 +744,280 @@ export function lockdownViewFromState(state: SecurityLockdownState | undefined):
     enteredAt: timestampDate(state?.enteredAt),
     enteredEventLsn: state?.enteredEventId?.lsn?.value,
   };
+}
+
+export function foldResourceState(
+  model: PresentationModel,
+  event: ResourceStateEvent,
+  lsn: bigint,
+): void {
+  const eventDomain = required(event.authorityDomainId?.value, "resource event authority domain");
+  if (!model.authorityDomainId || eventDomain !== model.authorityDomainId) {
+    throw new Error("cross-domain resource event rejected by presentation fold");
+  }
+  const sourceAdapterId = required(event.sourceAdapterId?.value, "resource event source adapter");
+  const sourceAdapterGeneration = requiredBigint(
+    event.sourceAdapterGeneration?.value,
+    "resource event source generation",
+  );
+  const observedAt = requiredTimestampDate(event.observedAt, "resource event observed time");
+  const projectedGeneration = [...model.resourceCollections.values()]
+    .filter((collection) => collection.adapterId === sourceAdapterId)
+    .reduce(
+      (maximum, collection) => collection.sourceAdapterGeneration > maximum
+        ? collection.sourceAdapterGeneration
+        : maximum,
+      0n,
+    );
+  if (sourceAdapterGeneration < projectedGeneration) {
+    throw new Error("resource event lowers projected adapter generation");
+  }
+
+  const viewKinds = new Set<string>();
+  const validatedViews = event.views.map((view) => {
+    const resourceKind = required(view.resourceKind?.value, "resource view update kind");
+    if (viewKinds.has(resourceKind)) throw new Error("resource event repeats a view update");
+    viewKinds.add(resourceKind);
+    return {
+      resourceKind,
+      completeness: validCompleteness(view.completeness, "resource view completeness"),
+    };
+  });
+
+  const identities = new Set<string>();
+  const validatedMutations = event.mutations.map((mutation) => {
+    const identity = resourceIdentityFromWire(mutation.identity, "resource mutation identity");
+    if (identity.adapterId !== sourceAdapterId) throw new Error("resource mutation does not match source adapter");
+    if (!viewKinds.has(identity.resourceKind)) throw new Error("resource mutation has no matching view update");
+    const key = resourceKey(identity);
+    if (identities.has(key)) throw new Error("resource event mutates one identity more than once");
+    identities.add(key);
+    const current = model.resources.get(key);
+    const fromRevision = mutation.fromRevisionLsn?.value;
+    if ((!current && fromRevision !== undefined) || (current && fromRevision !== current.revisionLsn)) {
+      throw new Error("resource mutation prior revision does not match projection");
+    }
+    if (current && fromRevision === undefined) throw new Error("resource mutation omits prior revision");
+    if (!mutation.mutation.case) throw new Error("resource mutation variant is missing");
+    return { mutation, identity, key, current };
+  });
+
+  for (const { mutation, identity } of validatedMutations) {
+    if (mutation.mutation.case !== "tombstone" || !mutation.mutation.value.replacedBy) continue;
+    const replacement = resourceIdentityFromWire(
+      mutation.mutation.value.replacedBy,
+      "resource replacement identity",
+    );
+    if (replacement.adapterId !== sourceAdapterId || resourceKey(replacement) === resourceKey(identity)) {
+      throw new Error("resource tombstone has invalid replacement identity");
+    }
+    if (!validatedMutations.some((candidate) =>
+      resourceKey(candidate.identity) === resourceKey(replacement)
+      && candidate.mutation.mutation.case === "upsert")) {
+      throw new Error("resource tombstone replacement has no matching upsert");
+    }
+  }
+
+  for (const view of validatedViews) {
+    model.resourceCollections.set(resourceCollectionKey(sourceAdapterId, view.resourceKind), {
+      adapterId: sourceAdapterId,
+      resourceKind: view.resourceKind,
+      completeness: view.completeness,
+      sourceAdapterGeneration,
+      revisionLsn: lsn,
+      observedAt,
+      reconciled: true,
+    });
+  }
+
+  for (const { mutation, identity, key, current } of validatedMutations) {
+    switch (mutation.mutation.case) {
+      case "upsert": {
+        if (current?.tombstoned) throw new Error("resource upsert targets a terminal tombstone");
+        const value = mutation.mutation.value;
+        validateResourceEnvelope(value.resourcePayload, "resource upsert payload");
+        validateResourceEnvelope(value.projectionPayload, "resource upsert projection");
+        model.resources.set(key, {
+          identity,
+          freshness: ResourceFreshnessState.CURRENT,
+          sourceAdapterGeneration,
+          revisionLsn: lsn,
+          observedAt,
+          tombstoned: false,
+          hasCachedPayload: true,
+          reconciled: true,
+          projection: decodeResourceProjection(identity, value.resourcePayload, value.projectionPayload),
+        });
+        break;
+      }
+      case "unknown":
+        if (current?.tombstoned) throw new Error("resource unknown targets a terminal tombstone");
+        model.resources.set(key, {
+          identity,
+          freshness: ResourceFreshnessState.UNKNOWN,
+          sourceAdapterGeneration,
+          revisionLsn: lsn,
+          observedAt,
+          tombstoned: false,
+          hasCachedPayload: false,
+          reconciled: true,
+          projection: { status: "unavailable" },
+        });
+        break;
+      case "tombstone": {
+        if (!current || current.tombstoned) throw new Error("resource tombstone targets an unknown or retired identity");
+        const replacedBy = mutation.mutation.value.replacedBy
+          ? resourceIdentityFromWire(mutation.mutation.value.replacedBy, "resource replacement identity")
+          : undefined;
+        model.resources.set(key, {
+          ...current,
+          freshness: current.hasCachedPayload
+            ? ResourceFreshnessState.STALE
+            : ResourceFreshnessState.UNKNOWN,
+          sourceAdapterGeneration,
+          revisionLsn: lsn,
+          observedAt,
+          tombstoned: true,
+          replacedBy,
+          reconciled: true,
+        });
+        break;
+      }
+      case "freshnessChanged": {
+        if (!current || current.tombstoned) throw new Error("resource freshness change targets an unknown or retired identity");
+        const change = mutation.mutation.value;
+        const from = validFreshness(change.from, "resource freshness from");
+        const to = validFreshness(change.to, "resource freshness to");
+        if (from === to || current.freshness !== from) throw new Error("resource freshness transition is invalid");
+        if (to !== ResourceFreshnessState.UNKNOWN && !current.hasCachedPayload) {
+          throw new Error("resource freshness transition marks an empty payload current or stale");
+        }
+        model.resources.set(key, {
+          ...current,
+          freshness: to,
+          sourceAdapterGeneration,
+          revisionLsn: lsn,
+          observedAt,
+          hasCachedPayload: to === ResourceFreshnessState.UNKNOWN ? false : current.hasCachedPayload,
+          projection: to === ResourceFreshnessState.UNKNOWN ? { status: "unavailable" } : current.projection,
+          reconciled: true,
+        });
+        break;
+      }
+    }
+  }
+}
+
+function resourceFromSnapshot(resource: Resource, authorityDomainId: string, snapshotLsn: bigint): ResourceView {
+  if (required(resource.authorityDomainId?.value, "resource snapshot record domain") !== authorityDomainId) {
+    throw new Error("cross-domain resource snapshot record rejected");
+  }
+  const identity = resourceIdentityFromWire(resource.identity, "resource snapshot identity");
+  const freshness = validFreshness(resource.freshness, "resource snapshot freshness");
+  const sourceAdapterGeneration = requiredBigint(
+    resource.sourceAdapterGeneration?.value,
+    "resource snapshot source generation",
+  );
+  const revisionLsn = requiredBigint(resource.revisionLsn?.value, "resource snapshot revision");
+  if (revisionLsn > snapshotLsn) throw new Error("resource revision exceeds snapshot horizon");
+  const observedAt = requiredTimestampDate(resource.observedAt, "resource snapshot observed time");
+  const hasResourcePayload = Boolean(resource.resourcePayload);
+  const hasProjectionPayload = Boolean(resource.projectionPayload);
+  if (hasResourcePayload !== hasProjectionPayload) throw new Error("resource snapshot retains only one payload envelope");
+  const hasCachedPayload = hasResourcePayload && hasProjectionPayload;
+  if (hasCachedPayload) {
+    validateResourceEnvelope(resource.resourcePayload, "resource snapshot payload");
+    validateResourceEnvelope(resource.projectionPayload, "resource snapshot projection");
+  }
+  if (freshness === ResourceFreshnessState.UNKNOWN && hasCachedPayload) {
+    throw new Error("unknown resource snapshot retains payload");
+  }
+  if (freshness !== ResourceFreshnessState.UNKNOWN && !hasCachedPayload) {
+    throw new Error("current or stale resource snapshot has no payload");
+  }
+  if (resource.tombstoned && freshness === ResourceFreshnessState.CURRENT) {
+    throw new Error("tombstoned resource snapshot is current");
+  }
+  const replacedBy = resource.replacedBy
+    ? resourceIdentityFromWire(resource.replacedBy, "resource snapshot replacement")
+    : undefined;
+  if (replacedBy && (!resource.tombstoned || replacedBy.adapterId !== identity.adapterId || resourceKey(replacedBy) === resourceKey(identity))) {
+    throw new Error("resource snapshot replacement is invalid");
+  }
+  return {
+    identity,
+    freshness,
+    sourceAdapterGeneration,
+    revisionLsn,
+    observedAt,
+    tombstoned: resource.tombstoned,
+    replacedBy,
+    hasCachedPayload,
+    reconciled: true,
+    projection: hasCachedPayload
+      ? decodeResourceProjection(identity, resource.resourcePayload, resource.projectionPayload)
+      : { status: "unavailable" },
+  };
+}
+
+function resourceIdentityFromWire(
+  identity: { adapterId?: { value: string }; resourceKind?: { value: string }; resourceId?: { value: string } } | undefined,
+  name: string,
+): ResourceIdentityView {
+  return {
+    adapterId: required(identity?.adapterId?.value, `${name} adapter`),
+    resourceKind: required(identity?.resourceKind?.value, `${name} kind`),
+    resourceId: required(identity?.resourceId?.value, `${name} id`),
+  };
+}
+
+function validateResourceEnvelope(
+  envelope: { schemaRef: string; contentType: PayloadContentType } | undefined,
+  name: string,
+): void {
+  if (!envelope || !envelope.schemaRef) throw new Error(`${name} is missing or incomplete`);
+  if (envelope.contentType < PayloadContentType.BINARY || envelope.contentType > PayloadContentType.PROTOBUF) {
+    throw new Error(`${name} has unknown content type`);
+  }
+}
+
+function validCompleteness(value: AdapterSnapshotSupport, name: string): AdapterSnapshotSupport {
+  if (value < AdapterSnapshotSupport.AUTHORITATIVE || value > AdapterSnapshotSupport.NONE) {
+    throw new Error(`${name} is unknown or unspecified`);
+  }
+  return value;
+}
+
+function validFreshness(value: ResourceFreshnessState, name: string): ResourceFreshnessState {
+  if (value < ResourceFreshnessState.CURRENT || value > ResourceFreshnessState.UNKNOWN) {
+    throw new Error(`${name} is unknown or unspecified`);
+  }
+  return value;
+}
+
+function requiredTimestampDate(
+  timestamp: { seconds: bigint; nanos: number } | undefined,
+  name: string,
+): Date {
+  const result = optionalTimestampDate(timestamp, name);
+  if (!result) throw new Error(`${name} is missing`);
+  return result;
+}
+
+function optionalTimestampDate(
+  timestamp: { seconds: bigint; nanos: number } | undefined,
+  name: string,
+): Date | undefined {
+  if (!timestamp) return undefined;
+  if (
+    timestamp.seconds < -62_135_596_800n
+    || timestamp.seconds > 253_402_300_799n
+    || timestamp.nanos < 0
+    || timestamp.nanos >= 1_000_000_000
+  ) {
+    throw new Error(`${name} is invalid`);
+  }
+  return timestampDate(timestamp);
 }
 
 function foldSessionState(model: PresentationModel, event: ReturnType<typeof decodeSessionState>, lsn: bigint): void {
