@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { once } from "node:events";
 import { createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
-import { AdminService } from "@patchbay/contracts";
+import { AdminService, SnapshotViewKind } from "@patchbay/contracts";
 
 import { makeCoreClient } from "../dist/src/core-client.js";
 
@@ -51,7 +51,10 @@ try {
 
   const client = makeCoreClient(coreAddress, coreSecret);
   const response = await client.loadSnapshot(
-    { authorityDomainId: { value: "default" } },
+    {
+      authorityDomainId: { value: "default" },
+      viewKind: SnapshotViewKind.SESSION,
+    },
     {
       headers: {
         "x-patchbay-operator-id": "operator-primary",
