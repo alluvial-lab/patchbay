@@ -513,7 +513,7 @@ high reasoning, supplied by the harness; the caller explicitly selected
 - `cargo test --workspace` — passed.
 - `cargo clippy --workspace --all-targets -- -D warnings` — passed.
 - Contract Rust/TypeScript builds, `buf generate`, and generated drift — passed.
-- CLI tests — 37 passed; web cockpit — 75; web server — 31; Pi adapter — 24,
+- CLI tests — 37 passed; web cockpit — 76; web server — 31; Pi adapter — 24,
   including real core/adapter/Pi E2E.
 - Model-promotion, conformance-vector metadata, and presentation conformance —
   passed; no resource property/vector was promoted.
@@ -521,3 +521,29 @@ high reasoning, supplied by the harness; the caller explicitly selected
   formatting drift; repository-wide `buf lint` still reports pre-existing RPC
   request/response naming debt. Neither was weakened or attributed to this
   feature.
+
+## Review (2026-08-04)
+
+**Verdict**: Block (required fresh-context path unavailable)
+
+**Blockers**: The explicit `thorough` weight requires iterative fresh-context
+review. This delegated endpoint exposes no generic subagent, peer, or agent-mesh
+tool, so it cannot truthfully complete or label that required independent path.
+The feature remains at `review` for the parent orchestrator to dispatch an
+`openai-codex/gpt-5.6-sol` high/xhigh reviewer.
+**Important**: none.
+**Nits**: none.
+**Rejected**: none.
+
+**Notes**: A receiver-owned inline pre-review walked correctness, contract,
+replay, tier, generation, snapshot, source-authentication, stream-consumption,
+and foundation lenses. It found and fixed four material current-cycle issues in
+`87e98d4` and `a8c4b05`: `RESOURCE_STATE` delivery previously triggered the
+session cockpit's unsupported-event reconnect loop; UNKNOWN freshness could
+retain payloads; later committed events could lower source adapter generation;
+and NONE-tier live deltas were incorrectly rejected despite delta omission/
+mutation semantics being tier-independent. Full Rust workspace tests,
+warnings-denied clippy, web cockpit tests (76), contract drift, model/vector
+metadata, and presentation checks are green after those fixes. This inline work
+is not represented as fresh-context review and cannot satisfy `thorough`
+closure. No lower-risk finding remained to park.
