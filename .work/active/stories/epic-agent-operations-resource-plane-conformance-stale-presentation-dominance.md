@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance-stale-presentation-dominance
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-durability-reconnect-honesty]
@@ -69,3 +69,7 @@ is verification of the existing cockpit contract, not new UI design.
 - Simplification: reused the real attachment stream drop and canonical resource renderer; no connectivity enum, UI state, or test-only production helper was introduced.
 - Discrepancies from design: the generated property lives in `resource-view.test.ts`, where both model predicate and DOM can be judged together, rather than splitting duplicate generators across model/resource-view files. Existing reconcile fast-check coverage continues to cover stream-break and unequal-horizon repair.
 - Adjacent issues parked: none.
+
+## Deep-lane review (2026-08-04)
+
+Converged at pass 6 (clean pass — no receiver-confirmed material current-cycle blocker). Deep-lane cross-model review ran 6 fresh-context passes with adversarial mutation testing of every promoted vector/property/traceability/assurance claim; all material blockers were fixed and each drift class is now data-driven-guarded. See the parent feature body `## Deep-lane review (2026-08-04)` for the full convergence record. Advanced to `done`.
