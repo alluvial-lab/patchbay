@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance-vector-execution-bridge
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: []
@@ -55,3 +55,15 @@ does not make a green metadata check count as implementation evidence.
 Root checkpoint. The authority, reconnect, and stale-presentation checkpoints
 must register through this bridge and must not add another vector directory,
 manifest, or package-specific source of truth.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` at high reasoning, explicitly selected by the autopilot caller for the high-stakes executable-evidence surface.
+- Review weight: `thorough`, explicit caller override; this verification story remains at `review` for the project deep lane.
+- Files changed: `contracts/scripts/check-vectors.mjs`, `contracts/vectors/README.md`, `core/tests/conformance_vectors.rs`, `server/tests/conformance_vectors.rs`, `web-cockpit/tests/conformance-vectors.test.ts`, Rust dev-dependency manifests/lockfile, and `docs/VERIFICATION.md` registry/traceability prose.
+- Tests added: generic core/server/web runner entry points that deserialize the real corpus, validate requested registrations, fail unknown cases, and emit exact machine-readable execution ids; the umbrella checker groups each runner once and compares exact requested/executed sets before regenerating traceability.
+- Mutation evidence: temporarily promoted `command-acceptance.json` without `implementation_checks`; `check-vectors.mjs` exited 1 and left `docs/VERIFICATION.md` byte-identical. Requested an unregistered `command-acceptance:unregistered` core case; the runner test exited 101 before reporting an executed id. Both mutations were reverted.
+- Verification: `cargo test --workspace` passed; `cargo clippy --all-targets -- -D warnings` passed; contracts build/vector/drift/presentation/model checks passed after the expected one-time generated model table refresh; web cockpit passed 103 tests.
+- Simplification: extended the one existing checker/corpus and used test-only package runners; no resource-only manifest, runtime framework, or second traceability registry was introduced.
+- Discrepancies from design: runner case dispatch is intentionally empty at this root checkpoint and fails closed; concrete cases land in the dependent evidence stories. The exact accounting protocol and field deserialization are already executable.
+- Adjacent issues parked: none.

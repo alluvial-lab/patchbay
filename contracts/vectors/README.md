@@ -11,6 +11,9 @@ Each vector uses this envelope:
   "vector_id": "unique-kebab-case-id",
   "property_id": "PropertyIdFromVerificationOrModel",
   "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "registered-case-name" }
+  ],
   "proto_fields_constrained": ["patchbay.Message.field"],
   "description": "human-readable behavior exercised",
   "input": {},
@@ -21,7 +24,8 @@ Each vector uses this envelope:
 
 - `vector_id`: Stable unique id, normally matching the filename without `.json`.
 - `property_id`: A property id from `docs/VERIFICATION.md` or a seed model under `specs/seed/`. Boundary-only examples with no formal property use a descriptive draft id such as `boundary-validation`.
-- `promotion_status`: `draft` or `promoted`. All v0 vectors start as `draft`; promotion requires review and traceability checks. A promoted vector is authority only for the executable example, not for invariants or wire shape.
+- `promotion_status`: `draft` or `promoted`. Promotion requires review, a property-specific static expectation checker, and at least one successful implementation check. A promoted vector is authority only for the executable example, not for invariants or wire shape.
+- `implementation_checks`: Optional for draft vectors and required/non-empty for promoted vectors. Each `{ runner, case }` binds the JSON example to a registered `rust-core`, `rust-server`, or `web-cockpit` product-seam executor. The umbrella checker dispatches each used runner once and requires its exact machine-readable executed-id set; unknown, duplicate, missing, or unreported checks fail closed.
 - `proto_fields_constrained`: Fully-qualified `.proto` field or enum paths constrained by the example, using the `patchbay` package names from `contracts/proto/patchbay/*.proto` (for example `patchbay.Operation.kind`, `patchbay.SubmissionResult.failure_code`, `patchbay.OperationState`).
 - `description`: What scenario the vector exercises.
 - `input`: Proto-shaped JSON inputs. Objects name the referenced protobuf message with a companion `*_type` field, then use the proto field names from the `.proto` files.
@@ -31,7 +35,7 @@ Each vector uses this envelope:
 ## Promotion status values
 
 - `draft`: Informative example under development. Draft vectors can reference checked-model, stated-normative, or descriptive boundary-validation properties, but they do not make product semantics checked-normative.
-- `promoted`: Reviewed vector that traces to a named property and agrees with that property's invariant. No vectors are promoted yet.
+- `promoted`: Reviewed vector that traces to a named property, agrees with that property's invariant, and executes every registered implementation check against the vector's input and expected outcome.
 
 ## Property mapping
 

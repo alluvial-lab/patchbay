@@ -51,6 +51,7 @@ The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft 
 - Audit integrity: completeness of audit records and correlation coverage.
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
 - Reply and response-Operation correlation: `TypedCorrelation`, duplicate-reply idempotency/rejection, and reference-resolution edge cases remain stated-normative until correlation acceptance is checked against independent attempted evidence.
+- Operational-resource adapter boundaries: `ResourceObservationSourceAuthenticated`, `ResourceSnapshotCompletenessHonesty`, `ResourceStaleNeverLive`, `ResourceIdentityCollisionFenced`, and `ResourceCoreStateInjectionRejected` are stated-normative implementation-evidence properties. They are not model-checked or checked-normative; promoted executable examples and mutation-sensitive implementation oracles are tracked separately from formal promotion.
 
 ## v1 release assurance policy
 
@@ -405,7 +406,7 @@ Each conformance vector lives as a JSON file under `contracts/vectors/` and carr
 }
 ```
 
-Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors and regenerate the traceability table below.
+Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors, execute every promoted vector's registered package checks, and regenerate the traceability table below. Draft vectors may remain metadata-only; promoted vectors require a non-empty `implementation_checks` list whose exact executed ids are reported by known Rust core/server or web-cockpit runners.
 
 A CI script reads all vectors and:
 
@@ -425,7 +426,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 53 modeled properties (8 promoted, 45 draft), 3 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -467,6 +468,11 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 3 reserved-unmodeled stat
 | `NoOperationWithoutGrant` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `PreAppendTerminalChoice` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | before an LSN is assigned, the terminal winner may be chosen nondeterministically; after assignment, the LSN order is stable and determines all later snapshots/replay |
 | `PrincipalRevocationPreventsFuture` | draft | stated-normative | specs/seed/session_principal_revocation.qnt | apalache | — | quint verify session_principal_revocation.qnt --invariant principal_revocation_prevents_future --max-steps 8 | a principal fence rejects future Operations from that exact credential principal |
+| `ResourceCoreStateInjectionRejected` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ResourceIdentityCollisionFenced` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ResourceObservationSourceAuthenticated` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ResourceSnapshotCompletenessHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ResourceStaleNeverLive` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `RetryAfterTerminalReturnsExisting` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | retrying after a command is terminal returns the existing terminal record rather than creating a later terminal candidate |
 | `RetryReusesIdAndKey` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | a retry reuses both the command id and the idempotency key; the command-id-to-key binding is stable after acceptance (an intentional duplicate action uses a new command id and a new idempotency key, which is outside this model's `retry` action) |
 | `RevocationPreventsFuture` | draft | stated-normative | specs/seed/authority.qnt | apalache-temporal | — | <TBD — not yet checked; promote in a follow-on item> | a command cannot become accepted in the transition if it is being submitted at or below a revoked generation |
@@ -537,6 +543,11 @@ Summary: 40 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `NoOperationWithoutGrant` | stated-normative | [grant-expiry-rejected](../contracts/vectors/grant-expiry-rejected.json) (draft) | patchbay.Grant.expires_at<br>patchbay.SubmissionResult.decision_grant_id<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.SubmissionResult.reason_code |
 | `PreAppendTerminalChoice` | stated-normative | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |
 | `PrincipalRevocationPreventsFuture` | stated-normative | [principal-revocation-prevents-future](../contracts/vectors/principal-revocation-prevents-future.json) (draft) | patchbay.RevokeControlSurfacePrincipalRequest.principal_id<br>patchbay.RevokeControlSurfaceResult.newly_revoked |
+| `ResourceCoreStateInjectionRejected` | stated-normative | — | — |
+| `ResourceIdentityCollisionFenced` | stated-normative | — | — |
+| `ResourceObservationSourceAuthenticated` | stated-normative | — | — |
+| `ResourceSnapshotCompletenessHonesty` | stated-normative | — | — |
+| `ResourceStaleNeverLive` | stated-normative | — | — |
 | `RetryAfterTerminalReturnsExisting` | stated-normative | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
 | `RetryReusesIdAndKey` | stated-normative | — | — |
 | `RevocationPreventsFuture` | stated-normative | [grant-revocation-policy-effects](../contracts/vectors/grant-revocation-policy-effects.json) (draft)<br>[grant-revocation-prevents-future](../contracts/vectors/grant-revocation-prevents-future.json) (draft) | patchbay.AcceptedOperation.authorizing_grant_id<br>patchbay.FailureCode.FAILURE_CODE_AUTHORIZATION_DENIED<br>patchbay.GrantRevocationEffect.failure_code<br>patchbay.GrantRevocationEffect.from_state<br>patchbay.GrantRevocationEffect.to_state<br>patchbay.Revocation.accepted_operation_policy<br>patchbay.Revocation.command_effects<br>patchbay.Revocation.grant_id<br>patchbay.SubmissionResult.outcome |
