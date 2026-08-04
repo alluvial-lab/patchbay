@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
@@ -420,3 +420,11 @@ The feature is review-ready. Effective review weight is `thorough` from the expl
 - Adding authority-domain state to `ResourceRegistry`/`TargetRegistry`. Production constructs one projection per validated authority-domain log, v0.1 has one configured domain, the designed registry signature is identity-only, and the same latent trait-argument issue already exists for sessions in `.work/backlog/backlog-sessions-authority-domain-isolation.md`. This feature neither creates nor should partially solve that cross-cutting seam.
 
 **Closure policy**: `thorough`; after fixes and integrated verification, return to `review` for another fresh-context pass. No lower-risk finding required a new backlog item.
+
+## Review fix verification — pass 1
+
+- `CommandSnapshot` now carries the originating target; status/result Observation ingestion requires exact target equality before any append or transition. Core and authenticated server tests prove same-adapter cross-kind and cross-id resource results reject without durable evidence or command mutation.
+- Durable audit tests decode a pre-rename tag-8 scope byte fixture, append/index it, query it through the current target key, and repeat the stored-data filter for nested operational resource identity. CLI JSON tests cover both legacy and nested target presentations.
+- Corrected snapshot verified with `cargo test --workspace --quiet`, clippy `-D warnings`, all 37 CLI tests, generated-contract build/drift, and vector/model/presentation checks.
+
+The corrected feature returns to `review`. Thorough convergence requires pass 2 to yield no receiver-confirmed material current-cycle blocker.
