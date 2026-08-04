@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const vectorDir = path.join(repoRoot, 'contracts', 'vectors');
+const protoDir = path.join(repoRoot, 'contracts', 'proto', 'patchbay');
 const verificationPath = path.join(repoRoot, 'docs', 'VERIFICATION.md');
 
 // Property registry maintenance note:
@@ -218,6 +219,129 @@ function listCell(values) {
 
 function assertArrayOfStrings(value) {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function stripProtoCommentsAndStrings(source) {
+  return source.replace(
+    /"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+    (match) => (match.startsWith('"') ? '""' : ' '),
+  );
+}
+
+function closingBrace(source, openIndex) {
+  let depth = 1;
+  for (let index = openIndex + 1; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') depth -= 1;
+    if (depth === 0) return index;
+  }
+  throw new Error(`unterminated proto declaration at offset ${openIndex}`);
+}
+
+function directProtoDeclarations(source) {
+  const declarations = [];
+  const pattern = /\b(message|enum)\s+([A-Za-z_]\w*)\s*\{/g;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const openIndex = pattern.lastIndex - 1;
+    const closeIndex = closingBrace(source, openIndex);
+    declarations.push({
+      kind: match[1],
+      name: match[2],
+      start: match.index,
+      end: closeIndex + 1,
+      body: source.slice(openIndex + 1, closeIndex),
+    });
+    pattern.lastIndex = closeIndex + 1;
+  }
+  return declarations;
+}
+
+function sourceWithoutDeclarations(source, declarations) {
+  let result = '';
+  let cursor = 0;
+  for (const declaration of declarations) {
+    result += source.slice(cursor, declaration.start);
+    result += ' '.repeat(declaration.end - declaration.start);
+    cursor = declaration.end;
+  }
+  return result + source.slice(cursor);
+}
+
+function registerProtoDeclarations(source, packageName, parentName, schema) {
+  const declarations = directProtoDeclarations(source);
+  for (const declaration of declarations) {
+    const localName = parentName ? `${parentName}.${declaration.name}` : declaration.name;
+    const qualifiedName = `${packageName}.${localName}`;
+    const nestedDeclarations = directProtoDeclarations(declaration.body);
+    const declarationBody = sourceWithoutDeclarations(declaration.body, nestedDeclarations);
+
+    if (declaration.kind === 'message') {
+      if (schema.messages.has(qualifiedName) || schema.enums.has(qualifiedName)) {
+        throw new Error(`duplicate proto declaration ${qualifiedName}`);
+      }
+      const fields = new Set();
+      const fieldPattern = /\b(?:(?:optional|required|repeated)\s+)?(?:map\s*<[^;{}]+>|\.?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+([A-Za-z_]\w*)\s*=\s*\d+\b/g;
+      for (const match of declarationBody.matchAll(fieldPattern)) fields.add(match[1]);
+      schema.messages.set(qualifiedName, fields);
+    } else {
+      if (schema.enums.has(qualifiedName) || schema.messages.has(qualifiedName)) {
+        throw new Error(`duplicate proto declaration ${qualifiedName}`);
+      }
+      const members = new Set();
+      const memberPattern = /(?:^|;)\s*([A-Za-z_]\w*)\s*=\s*-?\d+\b/gm;
+      for (const match of declarationBody.matchAll(memberPattern)) members.add(match[1]);
+      schema.enums.set(qualifiedName, members);
+    }
+
+    registerProtoDeclarations(declaration.body, packageName, localName, schema);
+  }
+}
+
+async function readProtoSchema() {
+  const entries = (await readdir(protoDir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.proto'))
+    .map((entry) => entry.name)
+    .sort();
+  if (entries.length === 0) throw new Error(`${rel(protoDir)}: no *.proto schema files found`);
+
+  const schema = { messages: new Map(), enums: new Map() };
+  for (const filename of entries) {
+    const source = stripProtoCommentsAndStrings(await readFile(path.join(protoDir, filename), 'utf8'));
+    const packageName = source.match(/\bpackage\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;/)?.[1];
+    if (packageName === undefined) throw new Error(`${filename}: proto package declaration is missing`);
+    registerProtoDeclarations(source, packageName, '', schema);
+  }
+  return schema;
+}
+
+function protoReferenceResolves(reference, schema) {
+  const declarations = [...schema.messages.keys(), ...schema.enums.keys()]
+    .filter((name) => reference === name || reference.startsWith(`${name}.`))
+    .sort((left, right) => right.length - left.length);
+
+  for (const declaration of declarations) {
+    const member = reference.slice(declaration.length + 1);
+    if (reference === declaration) return true;
+    if (member.includes('.')) continue;
+    if (schema.messages.get(declaration)?.has(member)) return true;
+    if (schema.enums.get(declaration)?.has(member)) return true;
+  }
+  return false;
+}
+
+function validatePromotedProtoReferences(vectors, schema) {
+  const errors = [];
+  let checked = 0;
+  for (const vector of vectors.filter((item) => item.promotion_status === 'promoted')) {
+    for (const reference of vector.proto_fields_constrained ?? []) {
+      checked += 1;
+      if (!protoReferenceResolves(reference, schema)) {
+        errors.push(`vector ${vector.vector_id}: proto reference ${reference} does not resolve in the schema`);
+      }
+    }
+  }
+  return { errors, checked };
 }
 
 function validateImplementationChecks(vector, filename) {
@@ -598,7 +722,7 @@ async function updateVerificationMarkdown(vectors) {
   if (next !== current) await writeFile(verificationPath, next);
 }
 
-function printSummary({ vectors, envelopeErrors, propertyErrors, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted }) {
+function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted }) {
   const promotedVectors = vectors.filter((vector) => vector.promotion_status === 'promoted');
   const checkedModelWithoutPromoted = CHECKED_MODEL_PROPERTIES.filter(
     (propertyId) => !vectors.some((vector) => vector.property_id === propertyId && vector.promotion_status === 'promoted'),
@@ -610,12 +734,13 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, registryErrors,
   console.log(`- descriptive draft-only ids allowlisted: ${[...DESCRIPTIVE_DRAFT_ONLY_PROPERTY_IDS].join(', ')}`);
   console.log(`- checked-normative properties requiring promoted vectors: ${CHECKED_NORMATIVE_PROPERTIES.length}`);
   console.log(`- promoted vectors: ${promotedVectors.length}`);
+  console.log(`- promoted proto references resolved: ${protoReferencesChecked}`);
   console.log(`- promoted invariant expectation checks run: ${invariantChecked.length}`);
   console.log(`- implementation checks executed: ${implementationExecuted.length}`);
   console.log(`- checked-model properties without promoted vectors (informational, not failing until checked-normative): ${checkedModelWithoutPromoted.length}`);
   console.log(`- traceability table target: ${rel(verificationPath)}`);
 
-  const allErrors = [...envelopeErrors, ...propertyErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors];
+  const allErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors];
   if (allErrors.length > 0) {
     console.error('\nFailures:');
     for (const error of allErrors) console.error(`- ${error}`);
@@ -625,13 +750,17 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, registryErrors,
 }
 
 async function main() {
-  const { vectors, errors: envelopeErrors } = await readVectors();
+  const [{ vectors, errors: envelopeErrors }, protoSchema] = await Promise.all([
+    readVectors(),
+    readProtoSchema(),
+  ]);
   const propertyErrors = validatePropertyReferences(vectors);
+  const { errors: protoErrors, checked: protoReferencesChecked } = validatePromotedProtoReferences(vectors, protoSchema);
   const verificationMarkdown = await readFile(verificationPath, 'utf8');
   const registryErrors = validateVerificationPropertyRegistry(verificationMarkdown);
   const coverageErrors = validatePromotedCoverage(vectors);
   const { errors: invariantErrors, checked: invariantChecked } = validatePromotedInvariantExpectations(vectors);
-  const staticErrors = [...envelopeErrors, ...propertyErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];
+  const staticErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];
   const { errors: implementationErrors, executed: implementationExecuted } = staticErrors.length === 0
     ? runImplementationChecks(vectors)
     : { errors: [], executed: [] };
@@ -644,6 +773,8 @@ async function main() {
     vectors,
     envelopeErrors,
     propertyErrors,
+    protoErrors,
+    protoReferencesChecked,
     registryErrors,
     coverageErrors,
     invariantErrors,
