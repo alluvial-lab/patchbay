@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance-authority-source-isolation
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol, security]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-vector-execution-bridge]
@@ -76,3 +76,7 @@ resource-specific acceptance path or capability-derived authority.
 - Simplification: resource acceptance reuses the production Operation/grant/target pipeline; source evidence reuses authenticated adapter ingress; opaque bytes remain governed by the durable event-kind discriminator.
 - Discrepancies from design: vectors remain `draft` until the final promotion checkpoint, so focused package runner requests execute them directly while the umbrella checker correctly executes zero promoted checks at this checkpoint. Existing authority proptest already generated every tuple dimension; this unit added explicit mutation witnesses rather than duplicating the generator.
 - Adjacent issues parked: none.
+
+## Deep-lane review (2026-08-04)
+
+Converged at pass 6 (clean pass — no receiver-confirmed material current-cycle blocker). Deep-lane cross-model review ran 6 fresh-context passes with adversarial mutation testing of every promoted vector/property/traceability/assurance claim; all material blockers were fixed and each drift class is now data-driven-guarded. See the parent feature body `## Deep-lane review (2026-08-04)` for the full convergence record. Advanced to `done`.
