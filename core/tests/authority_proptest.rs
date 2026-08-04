@@ -997,6 +997,43 @@ async fn replay_matches_live_holds(
     Ok(())
 }
 
+#[test]
+fn resource_identity_oracle_kills_each_omitted_dimension_mutant() {
+    let exact = resource_scope("adapter-a", "provider_pool", "shared");
+    let changed_adapter = resource_scope("adapter-b", "provider_pool", "shared");
+    let changed_kind = resource_scope("adapter-a", "usage_window", "shared");
+    let changed_id = resource_scope("adapter-a", "provider_pool", "other");
+
+    fn fields(scope: &TargetScope) -> (&str, &str, &str) {
+        let identity = scope.resource.as_ref().expect("resource scope");
+        (
+            &identity.adapter_id.as_ref().expect("adapter").value,
+            &identity.resource_kind.as_ref().expect("kind").value,
+            &identity.resource_id.as_ref().expect("id").value,
+        )
+    }
+    let (adapter, kind, id) = fields(&exact);
+    let omit_adapter = |scope: &TargetScope| {
+        let (_, candidate_kind, candidate_id) = fields(scope);
+        kind == candidate_kind && id == candidate_id
+    };
+    let omit_kind = |scope: &TargetScope| {
+        let (candidate_adapter, _, candidate_id) = fields(scope);
+        adapter == candidate_adapter && id == candidate_id
+    };
+    let omit_id = |scope: &TargetScope| {
+        let (candidate_adapter, candidate_kind, _) = fields(scope);
+        adapter == candidate_adapter && kind == candidate_kind
+    };
+
+    assert!(omit_adapter(&changed_adapter), "adapter-omitting mutant accepts collision");
+    assert!(omit_kind(&changed_kind), "kind-omitting mutant accepts collision");
+    assert!(omit_id(&changed_id), "id-omitting mutant accepts collision");
+    assert!(!target_scope_matches(&exact, &changed_adapter));
+    assert!(!target_scope_matches(&exact, &changed_kind));
+    assert!(!target_scope_matches(&exact, &changed_id));
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 100,

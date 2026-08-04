@@ -55,6 +55,33 @@ fn replay_ignores_sibling_event_kinds_without_hiding_resource_state() {
     assert!(rebuild_from_events(&domain, &prefix).unwrap().contains(&identity));
 }
 
+#[test]
+fn opaque_observation_dispatch_mutant_is_killed() {
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let identity = ResourceIdentity::new(
+        AdapterId { value: "adapter-a".into() },
+        ResourceKind { value: "provider_pool".into() },
+        ResourceId { value: "injected".into() },
+    ).unwrap();
+    let encoded_state = state_event(&domain, &identity).encode_to_vec();
+    let observation = RecordedEvent {
+        event_id: event_id(domain.clone(), 1),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: encoded_state.clone(),
+        },
+    };
+
+    let production = rebuild_from_events(&domain, std::slice::from_ref(&observation)).unwrap();
+    assert!(!production.contains(&identity));
+
+    // Claim-breaking mutant: dispatch bytes by decodability instead of by the
+    // durable StoredEventKind discriminator.
+    let decoded = ResourceStateEvent::decode(encoded_state.as_slice()).expect("plausible injected bytes");
+    let mutant = rebuild_from_events(&domain, &[recorded(&domain, 1, decoded)]).unwrap();
+    assert!(mutant.contains(&identity), "the independent no-core-state oracle kills the dispatch mutant");
+}
+
 fn state_event(domain: &AuthorityDomainId, identity: &ResourceIdentity) -> ResourceStateEvent {
     ResourceStateEvent {
         authority_domain_id: Some(domain.clone()),

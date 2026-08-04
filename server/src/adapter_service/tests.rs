@@ -234,6 +234,30 @@ impl Storage for FailPostCommitRegistrationFoldStorage {
     }
 }
 
+#[test]
+fn resource_source_oracle_kills_channel_and_owner_mutants() {
+    #[derive(Clone, Copy)]
+    struct Attempt {
+        authenticated: bool,
+        current_token: bool,
+        exact_owner: bool,
+    }
+    let oracle = |attempt: Attempt| attempt.authenticated && attempt.current_token && attempt.exact_owner;
+    let trust_payload_source = |_attempt: Attempt| true;
+    let skip_current_token = |attempt: Attempt| attempt.authenticated && attempt.exact_owner;
+    let skip_owner = |attempt: Attempt| attempt.authenticated && attempt.current_token;
+
+    let missing = Attempt { authenticated: false, current_token: false, exact_owner: true };
+    let stale = Attempt { authenticated: true, current_token: false, exact_owner: true };
+    let cross_owner = Attempt { authenticated: true, current_token: true, exact_owner: false };
+    assert!(!oracle(missing));
+    assert!(!oracle(stale));
+    assert!(!oracle(cross_owner));
+    assert!(trust_payload_source(missing), "payload-source mutant accepts unauthenticated evidence");
+    assert!(skip_current_token(stale), "token-fence mutant accepts stale attachment");
+    assert!(skip_owner(cross_owner), "owner-binding mutant accepts cross-adapter target");
+}
+
 #[tokio::test]
 async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_registration_append() {
     let domain = AuthorityDomainId { value: "authority-main".into() };

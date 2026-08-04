@@ -1,0 +1,37 @@
+{
+  "vector_id": "resource-observation-source-authenticated",
+  "property_id": "ResourceObservationSourceAuthenticated",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-server", "case": "resource_observation_source_binding" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ObservationRequest.authority_domain_id",
+    "patchbay.ObservationRequest.event",
+    "patchbay.Observation.sender",
+    "patchbay.Observation.target_scope",
+    "patchbay.TargetScope.resource",
+    "patchbay.StoredEventPayload.kind"
+  ],
+  "description": "Only a current authenticated adapter attachment may append a resource Observation for a target it owns; payload sender/grant claims remain non-authoritative evidence.",
+  "input": {
+    "authority_domain_id": "auth-main",
+    "authenticated_adapter_id": "token-commune",
+    "attachment_generation": 2,
+    "target_identity": ["token-commune", "provider_pool", "shared"],
+    "cross_adapter_target": ["other-adapter", "provider_pool", "shared"],
+    "forged_sender_actor": "operator-admin",
+    "payload_claim": {
+      "grant_id": "forged-grant",
+      "operation_kind": "OPERATION_KIND_SESSION_MANAGEMENT"
+    }
+  },
+  "expected_outcome": {
+    "authenticated_owner": { "observation_appended": true, "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION" },
+    "unauthenticated": { "observation_appended": false, "status": "UNAUTHENTICATED" },
+    "stale_token": { "observation_appended": false, "status": "UNAUTHENTICATED" },
+    "cross_adapter_target": { "observation_appended": false, "status": "PERMISSION_DENIED" },
+    "forged_claim": { "authority_changed": false, "resource_state_changed": false, "operation_created": false }
+  },
+  "invariant_check": "ResourceObservationSourceAuthenticated: verified current channel and exact adapter ownership bind the evidence source; sender/payload claims cannot create authority or core state."
+}

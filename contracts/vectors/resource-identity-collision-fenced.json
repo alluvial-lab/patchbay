@@ -1,0 +1,33 @@
+{
+  "vector_id": "resource-identity-collision-fenced",
+  "property_id": "ResourceIdentityCollisionFenced",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "resource_identity_collision_fenced" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ResourceIdentity.adapter_id",
+    "patchbay.ResourceIdentity.resource_kind",
+    "patchbay.ResourceIdentity.resource_id",
+    "patchbay.TargetScope.resource",
+    "patchbay.Grant.target_scope"
+  ],
+  "description": "An exact resource grant and resolver membership compare all three tuple dimensions; an equal local id under another adapter or kind is not authority.",
+  "input": {
+    "grant_identity": ["token-commune", "provider_pool", "shared"],
+    "requests": {
+      "exact": ["token-commune", "provider_pool", "shared"],
+      "changed_adapter": ["other-adapter", "provider_pool", "shared"],
+      "changed_kind": ["token-commune", "usage_window", "shared"],
+      "changed_resource_id": ["token-commune", "provider_pool", "other"]
+    }
+  },
+  "expected_outcome": {
+    "exact_tuple_authorized": true,
+    "changed_adapter_authorized": false,
+    "changed_kind_authorized": false,
+    "changed_resource_id_authorized": false,
+    "target_keys_all_distinct": true
+  },
+  "invariant_check": "ResourceIdentityCollisionFenced: adapter id, resource kind, and adapter-local resource id are independently load-bearing for authority, resolution, routing, and target keys."
+}

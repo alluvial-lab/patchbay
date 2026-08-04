@@ -1,0 +1,39 @@
+{
+  "vector_id": "resource-core-state-injection-rejected",
+  "property_id": "ResourceCoreStateInjectionRejected",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "opaque_observation_cannot_fold_resource_state" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.Observation.payload",
+    "patchbay.Observation.kind",
+    "patchbay.StoredEventPayload.kind",
+    "patchbay.ResourceStateEvent.authority_domain_id",
+    "patchbay.ResourceStateEvent.source_adapter_id",
+    "patchbay.ResourceStateEvent.mutations"
+  ],
+  "description": "A generic Observation carrying valid encoded ResourceStateEvent bytes remains an OBSERVATION; replay ignores it and the adapter cannot select RESOURCE_STATE, LSN, revision, or authority domain.",
+  "input": {
+    "authenticated_adapter_id": "token-commune",
+    "observation_target": ["token-commune", "provider_pool", "injected"],
+    "opaque_payload": {
+      "content_type": "PAYLOAD_CONTENT_TYPE_PROTOBUF",
+      "schema_ref": "patchbay.ResourceStateEvent",
+      "encoded_claim": {
+        "authority_domain_id": "forged-domain",
+        "source_adapter_id": "other-adapter",
+        "source_adapter_generation": 999,
+        "resource_identity": ["other-adapter", "provider_pool", "injected"],
+        "adapter_assigned_lsn": 777
+      }
+    }
+  },
+  "expected_outcome": {
+    "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION",
+    "resource_registry_changed": false,
+    "resource_resolved": false,
+    "adapter_assigned_lsn_accepted": false
+  },
+  "invariant_check": "ResourceCoreStateInjectionRejected: only typed report normalization followed by core append emits RESOURCE_STATE; opaque Observation bytes never dispatch by claimed schema."
+}

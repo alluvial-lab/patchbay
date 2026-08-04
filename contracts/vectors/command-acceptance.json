@@ -2,6 +2,9 @@
   "vector_id": "command-acceptance",
   "property_id": "CommandDurability",
   "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "resource_operation_durable_acceptance" }
+  ],
   "proto_fields_constrained": [
     "patchbay.Operation.command_id",
     "patchbay.Operation.authority_domain_id",
@@ -9,75 +12,64 @@
     "patchbay.Operation.recipient",
     "patchbay.Operation.kind",
     "patchbay.Operation.target_scope",
+    "patchbay.TargetScope.resource",
+    "patchbay.ResourceIdentity.adapter_id",
+    "patchbay.ResourceIdentity.resource_kind",
+    "patchbay.ResourceIdentity.resource_id",
     "patchbay.Operation.idempotency_key",
     "patchbay.SubmissionResult.outcome",
     "patchbay.SubmissionResult.operation_state",
     "patchbay.SubmissionResult.accepted_lsn"
   ],
-  "description": "A valid instruct Operation with a live target and idempotency key is durably accepted before delivery.",
+  "description": "Session and resource Operations use the same grant-checked acceptance pipeline; an exact resource query is durably accepted before delivery.",
   "input": {
-    "operation_type": "patchbay.Operation",
-    "operation": {
-      "command_id": { "value": "cmd-accept-001" },
-      "authority_domain_id": { "value": "auth-main" },
-      "sender": {
-        "actor_id": { "value": "operator-alice" },
-        "endpoint_id": { "value": "web-1" },
-        "device_id": { "value": "device-browser" },
-        "endpoint_generation": { "value": 7 }
-      },
-      "recipient": {
-        "actor_id": { "value": "agent-runner" },
-        "endpoint_id": { "value": "pi-adapter-1" },
-        "device_id": { "value": "host-pi" },
-        "endpoint_generation": { "value": 3 }
-      },
-      "kind": "OPERATION_KIND_INSTRUCT",
-      "target_scope": {
-        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
-        "adapter_id": { "value": "pi" },
-        "runtime_session_id": { "value": "sess-001" },
-        "session_generation": { "value": 12 }
-      },
-      "idempotency_key": "idem-accept-001",
-      "payload": {
-        "payload": "eyJpbnN0cnVjdGlvbiI6InN0YXR1cyJ9",
-        "content_type": "PAYLOAD_CONTENT_TYPE_JSON",
-        "schema_ref": "patchbay.examples.instruct.v0"
-      },
-      "submitted_at": "2026-07-06T00:00:00Z"
-    },
-    "preconditions": {
-      "matching_grant_type": "patchbay.Grant",
-      "matching_grant": {
-        "grant_id": { "value": "grant-instruct-001" },
+    "session_case_preserved": "The original runtime-session acceptance shape remains covered by the same CommandDurability property and package acceptance suite.",
+    "resource_case": {
+      "operation_type": "patchbay.Operation",
+      "operation": {
+        "command_id": { "value": "resource-query-accepted" },
         "authority_domain_id": { "value": "auth-main" },
-        "subject_actor_id": { "value": "operator-alice" },
-        "subject_endpoint_id": { "value": "web-1" },
+        "sender": { "actor_id": { "value": "payload-forgery" } },
+        "kind": "OPERATION_KIND_QUERY",
         "target_scope": {
-          "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
-          "adapter_id": { "value": "pi" },
-          "runtime_session_id": { "value": "sess-001" },
-          "session_generation": { "value": 12 }
+          "kind": "TARGET_SCOPE_KIND_RESOURCE",
+          "resource": {
+            "adapter_id": { "value": "token-commune" },
+            "resource_kind": { "value": "provider_pool" },
+            "resource_id": { "value": "shared-pool" }
+          }
         },
-        "allowed_operation_kinds": ["OPERATION_KIND_INSTRUCT"]
-      }
+        "idempotency_key": "resource-query-key",
+        "submitted_at": "2026-08-04T12:00:00Z",
+        "validity_window": {
+          "starts_at": "2026-08-04T11:59:00Z",
+          "expires_at": "2026-08-04T12:01:00Z"
+        }
+      },
+      "verified_issuer": { "actor_id": "operator", "endpoint_id": "web" },
+      "matching_grant": {
+        "grant_id": "resource-query-grant",
+        "operation_kind": "OPERATION_KIND_QUERY",
+        "target": ["token-commune", "provider_pool", "shared-pool"]
+      },
+      "registered_resource": ["token-commune", "provider_pool", "shared-pool"]
     }
   },
   "expected_outcome": {
-    "result_type": "patchbay.SubmissionResult",
-    "submission_result": {
-      "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
-      "command_id": { "value": "cmd-accept-001" },
-      "operation_state": "OPERATION_STATE_ACCEPTED",
-      "accepted_lsn": { "value": 101 },
-      "deduplicated": false
-    },
-    "durable_record": {
-      "command_id": { "value": "cmd-accept-001" },
-      "operation_state": "OPERATION_STATE_ACCEPTED",
-      "recorded_lsn": { "value": 101 }
+    "resource_case": {
+      "submission_result": {
+        "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
+        "operation_state": "OPERATION_STATE_ACCEPTED",
+        "decision_grant_id": "resource-query-grant",
+        "deduplicated": false
+      },
+      "durable_record": {
+        "operation_state": "OPERATION_STATE_ACCEPTED",
+        "append_count": 1
+      },
+      "durable_before_delivery": true,
+      "delivered_before_append": false
     }
   },
-  "invariant_check": "CommandDurability: accepted Operations have a durable record and remain observable in canonical state."
+  "invariant_check": "CommandDurability: the shared acceptance path appends an accepted resource Operation before any adapter delivery can observe it."
 }
