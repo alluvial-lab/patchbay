@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane
 kind: epic
-stage: review
+stage: done
 tags: [foundation, protocol, adapter, ux]
 parent: null
 depends_on: []
@@ -154,3 +154,31 @@ All five child features are `done` after thorough review:
 - `conformance` (done) — executable, mutation-sensitive conformance vectors + property oracles proving a resource adapter cannot bypass authority, durability, or stale-state rules; deep-lane convergence (6 passes; all drift classes now data-driven-guarded).
 
 Advanced to `review` for the deeper aggregate review over the whole agent-operations resource-plane arc.
+
+## Epic aggregate review (2026-08-04)
+
+**Effective weight**: `thorough`. **Reviewer path**: cross-model fresh-context `openai-codex/gpt-5.6-sol` aggregate pass over the whole arc (capability, cross-feature contracts, scope boundaries, non-foreclosure, foundation for the dependent epic, foundation-doc alignment).
+
+**Verdict**: Approve (both pass-1 blockers resolved).
+
+**Capability completeness**: every item in the epic's Capability outline is delivered — resource identity + target resolution; snapshot/revision + reconnect degradation; resource-scoped query/Observation/authority/audit/subscription; resource health distinct from connectivity/lifecycle; cockpit navigation/composition; adapter-shaped projections bounded by the conformance floor; mutation-sensitive conformance evidence. No promised capability gap.
+
+**Cross-feature contract coherence**: the identity→state→manifest→cockpit-composition→conformance chain is consistent at every seam (identity shape, snapshot/freshness semantics, manifest kind/category registry, decoders, conformance vectors proving the established invariants).
+
+**Strategic-decision + scope-boundary adherence**: resources are NOT sessions (separate registry + `TargetBinding::Resource`, no fabricated session state); one-operator/one-domain grant-gated authority; adapter projections nested below the canonical wrapper; no multi-human/delegation/federation/agent-routing/resource-to-resource coordination; no data-plane proxying; no monitoring ontology/plugin marketplace; Pi remains session-only.
+
+**Non-foreclosure / reserved seams**: OKF third kind (`knowledge_bundle`) wire-present but rejected at registration until promoted; no foreign data source admitted; no convention-correlation + attention-flag validation without a real contract; multi-human/federation/broad-adapter-ecosystem/dynamic-surfaces all preserved as additive future promotions.
+
+**Foundation for dependent epic**: the resource-adapter concept admits both pooled `provider_pool` (administration-capable) and `usage_window` (read-only) shapes; core admission is open-declaration (not hard-coded kinds); partial/none tiers support read-only adapters; no single-adapter assumption baked into core routing/state — `epic-token-commune-observer` and `epic-token-commune-control-attention` can build on it.
+
+**Pass-1 blockers (both resolved with verified evidence):**
+1. `resource-state` lacked a recorded clean thorough-convergence pass after its 3 fixes (the stage had been flipped to `done` without it). Resolved: an independent cross-model fresh-context thorough convergence pass was run and recorded (Approve) — all 3 remediation fixes mutation-sensitive, wider hard-contract review clean.
+2. `docs/SECURITY.md` mislabeled post-v0.1 operational-resource security guarantees as `v0.1.0` release obligations (contradicting `docs/SPEC.md`'s "Post-v0.1 agent-operations direction"). Resolved (`2768f42`): the doc intro, objectives list, and resource-report boundary now qualify operational-resource security as post-v0.1, matching the doc's existing post-v0.1 labeling convention.
+
+**Convergence adjudication**: both findings were evidence/doc-drift, not capability or contract defects; pass 1's capability/contract/scope/non-foreclosure assessment was a clean approve, and both blockers are now resolved with verified evidence (an independent thorough review verdict + a foundation-doc correction aligned with SPEC). A full epic re-pass is unwarranted.
+
+**Foundation-doc alignment**: aligned after the SECURITY.md correction; no remaining false/stale/contradictory assertion.
+
+**Verification**: `cargo test --workspace` 341 passed; `cargo clippy --all-targets -- -D warnings` clean; `check:vectors` 8 promoted / 11 implementation checks / 63 proto references; `check:drift`, `check:presentation` (5 registries, axe-core), `check:models` (8 checked-model, 0 checked-normative, 53 stated-normative) passed; web-cockpit 105 passed.
+
+Advanced to `done`.
