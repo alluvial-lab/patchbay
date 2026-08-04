@@ -22,7 +22,7 @@ This layered order takes effect once generated schemas or IDL exist. `docs/PROTO
 
 Each required model area below is obligated at v0.1.0. Properties within each area are tiered by risk, not all-or-nothing per area. This reconciles `docs/SPEC.md`'s verification-floor seed ("at least seed formal/property checks for command acceptance, idempotent retry, session identity, snapshots, and authority") with this document's required-areas list: the checked set is the seed done right, not a different program.
 
-**checked-model** (also called **model-promoted**) — the formal model exists, passes with documented tool invocation, and carries promoted model metadata, but no promoted conformance vector has landed yet. This is the current status of the seed models listed under "Seed models (v0.1.0)" below. It is a real formal check, but it is not yet checked-normative product behavior.
+**checked-model** (also called **model-promoted**) — the formal model exists, passes with documented tool invocation, and carries promoted model metadata, but no promoted conformance vector traces to that property yet. This is the current status of the seed models listed under "Seed models (v0.1.0)" below. It is a real formal check, but it is not yet checked-normative product behavior.
 
 Current checked-model properties:
 
@@ -34,7 +34,7 @@ The session/principal revocation model and its four vectors are present as draft
 
 The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft properties/four draft vectors exercise rejection, replay persistence, stale-session dominance, operator-session invalidation, and bootstrap-only exit. They are **stated-normative**: Quint parses/compiles, model-promotion metadata checks, vector schema checks, and implementation tests pass, but no lockdown vector is promoted and no stronger checked-normative claim is made.
 
-**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because no conformance vector has been promoted yet.
+**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because the promoted vectors trace only to stated-normative properties and do not overlap a checked-model property.
 
 **stated-normative** — documented v0.1.0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
@@ -613,7 +613,7 @@ The v0.1.0 seed formal models live under `specs/seed/`. Each model carries its p
 
 ### Checked-model (model promoted; awaiting conformance vectors)
 
-These checked-model properties are **unaffected** by the O/O/E vocabulary roll-forward and apply to `OperationState` by equivalence for the listed properties only. They are not checked-normative until at least one conformance vector tracing to each property is promoted. No checked-normative property exists yet in this repository because no conformance vector has been promoted.
+These checked-model properties are **unaffected** by the O/O/E vocabulary roll-forward and apply to `OperationState` by equivalence for the listed properties only. They are not checked-normative until at least one conformance vector tracing to each property is promoted. No checked-normative property exists yet in this repository because the promoted vectors trace only to stated-normative properties and do not overlap a checked-model property.
 
 | Model | Language | Properties checked | Backend |
 |---|---|---|---|
