@@ -1,7 +1,7 @@
 {
   "vector_id": "resource-snapshot-completeness-honesty",
   "property_id": "ResourceSnapshotCompletenessHonesty",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-core", "case": "resource_snapshot_completeness_truth_table" }
   ],

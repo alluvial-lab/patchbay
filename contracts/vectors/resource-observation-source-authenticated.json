@@ -1,7 +1,7 @@
 {
   "vector_id": "resource-observation-source-authenticated",
   "property_id": "ResourceObservationSourceAuthenticated",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-server", "case": "resource_observation_source_binding" }
   ],

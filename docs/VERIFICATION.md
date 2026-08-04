@@ -317,10 +317,31 @@ resolver population after restart, resource snapshot materialization,
 cross-view rejection, and current session-caller compatibility.
 
 This evidence establishes implementation behavior, not a promoted invariant or
-checked-normative resource-plane claim. No new formal property or conformance
-vector is promoted by this feature. The resource-plane conformance sibling owns
-mutation-survivable formal properties and promoted vectors for durability,
-wrong-target safety, reconnect honesty, and adapter portability.
+checked-normative resource-plane claim. Formal promotion remains separate from
+the executable conformance evidence below.
+
+### Operational-resource conformance evidence (implementation-checked)
+
+The resource-plane corpus promotes eight executable examples through the single
+`contracts/vectors/` registry. The umbrella checker runs nine exact package
+checks across Rust core, Rust server, and web cockpit and rejects any promoted
+example whose expected outcome, runner registration, or reported execution id
+does not match. The shared session-shaped vectors retain their existing property
+classifications while adding resource refinements.
+
+| Property id | Executable vectors | Property implementation | Mutation witness | Assurance tier |
+|---|---|---|---|---|
+| `ResourceObservationSourceAuthenticated` | `resource-observation-source-authenticated` | authenticated adapter ingress, current attachment-token fence, exact target ownership, durable event-kind/source isolation | unconditional `require_same_adapter` admitted the cross-owner witness and failed the vector | promoted vector + implementation-checked; not model-checked |
+| `ResourceSnapshotCompletenessHonesty` | `resource-snapshot-completeness-honesty`; resource case in `snapshot-reconciliation` | independent raw mode/tier/listing truth table, 100-case bounded report traces, append-before-fold, hot/replay/replay-twice convergence | authoritative→stale, partial→tombstone, delta-as-snapshot, pre-append fold, generation rollback, and resurrection mutants failed | promoted vector + implementation-checked; not model-checked |
+| `ResourceStaleNeverLive` | `resource-stale-never-live` | real attachment-stream disconnect → durable stale snapshot; generated model+DOM eligibility oracle | omitted disconnect degradation, freshness-only current predicate, and adapter-health override mutants failed | promoted vector + implementation-checked; not model-checked |
+| `ResourceIdentityCollisionFenced` | `resource-identity-collision-fenced`; resource cases in `command-acceptance` and `failure-missing-grant` | exact grant/target acceptance plus generated adapter/kind/local-id containment and target-key checks | adapter-, kind-, and local-id-omitting comparisons failed | promoted vector + implementation-checked; not model-checked |
+| `ResourceCoreStateInjectionRejected` | `resource-core-state-injection-rejected` | generic Observation append plus durable discriminator replay against `ResourceRegistry` | Observation-payload dispatch to `ResourceStateEvent` failed on the forged state witness | promoted vector + implementation-checked; not model-checked |
+
+`CommandDurability`, `NoCommandWithoutGrant`, and `SnapshotStaleRejected` remain
+stated-normative properties because their formal models are draft; promoted
+resource examples do not make them checked-normative. None of the five new
+resource properties has a promoted formal model. Accordingly this evidence is
+not described as checked-normative, model-checked, or release-verified.
 
 ### Audit integrity
 
@@ -426,7 +447,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stated-normative properties, 0 properties with promoted vector coverage.
+Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stated-normative properties, 8 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -435,7 +456,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stat
 | `BootstrapOnlyExit` | draft | stated-normative | specs/seed/security_lockdown.qnt | apalache | — | quint verify security_lockdown.qnt --invariant BootstrapOnlyExit --max-steps 12 | only the configured loopback admin bootstrap channel can clear lockdown |
 | `BoundaryDedup` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache | — | quint verify command_lifecycle.qnt --invariant boundary_dedup --max-steps 12 | retrying the same idempotency key cannot double-apply a command at the Patchbay boundary |
 | `browser_local_state_not_authority` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant browser_local_state_not_authority --max-steps 12 | browser-local UI claims cannot grant authority or override server-side session/CSRF checks |
-| `CommandDurability` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | an accepted command is durably recorded before delivery and cannot vanish silently |
+| `CommandDurability` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache | command-acceptance | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | an accepted command is durably recorded before delivery and cannot vanish silently |
 | `CompoundIssuer` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | accepted commands use verified session-derived actor identity, not self-asserted payload actor |
 | `CrashNoAcceptedLost` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | after ungraceful restart and replay, accepted pre-crash command entries remain reconstructable in-memory |
 | `CsrfRejectsMissingProof` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant csrf_rejects_missing_proof --max-steps 12 | SECURITY.md §CSRF requires a CSRF token tied to the authenticated operator session before command acceptance |
@@ -464,15 +485,15 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stat
 | `LockdownReplayPersists` | draft | stated-normative | specs/seed/security_lockdown.qnt | apalache | — | quint verify security_lockdown.qnt --invariant LockdownReplayPersists --max-steps 12 | replay of the committed entry event preserves active posture across restart |
 | `LsnDeterminesTerminalWinner` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | for competing valid terminal candidates, the terminal winner is the one with the lowest committed LSN in the authority domain; once terminal, exactly one LSN records it |
 | `NoAcceptedToCompleted` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal no_accepted_to_completed --max-steps 10 | a command cannot transition directly from 'accepted' to 'completed'; it must pass through 'delivered' or 'running' |
-| `NoCommandWithoutGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | commands that reach accepted state do so only with a live matching grant |
+| `NoCommandWithoutGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | failure-missing-grant | <TBD — not yet checked; promote in a follow-on item> | commands that reach accepted state do so only with a live matching grant |
 | `NoOperationWithoutGrant` | reserved-unmodeled | stated-normative | — | — | — | — | — |
 | `PreAppendTerminalChoice` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | before an LSN is assigned, the terminal winner may be chosen nondeterministically; after assignment, the LSN order is stable and determines all later snapshots/replay |
 | `PrincipalRevocationPreventsFuture` | draft | stated-normative | specs/seed/session_principal_revocation.qnt | apalache | — | quint verify session_principal_revocation.qnt --invariant principal_revocation_prevents_future --max-steps 8 | a principal fence rejects future Operations from that exact credential principal |
-| `ResourceCoreStateInjectionRejected` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `ResourceIdentityCollisionFenced` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `ResourceObservationSourceAuthenticated` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `ResourceSnapshotCompletenessHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `ResourceStaleNeverLive` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `ResourceCoreStateInjectionRejected` | reserved-unmodeled | stated-normative | — | — | resource-core-state-injection-rejected | — | — |
+| `ResourceIdentityCollisionFenced` | reserved-unmodeled | stated-normative | — | — | resource-identity-collision-fenced | — | — |
+| `ResourceObservationSourceAuthenticated` | reserved-unmodeled | stated-normative | — | — | resource-observation-source-authenticated | — | — |
+| `ResourceSnapshotCompletenessHonesty` | reserved-unmodeled | stated-normative | — | — | resource-snapshot-completeness-honesty | — | — |
+| `ResourceStaleNeverLive` | reserved-unmodeled | stated-normative | — | — | resource-stale-never-live | — | — |
 | `RetryAfterTerminalReturnsExisting` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | retrying after a command is terminal returns the existing terminal record rather than creating a later terminal candidate |
 | `RetryReusesIdAndKey` | draft | stated-normative | specs/seed/command_lifecycle.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | a retry reuses both the command id and the idempotency key; the command-id-to-key binding is stable after acceptance (an intentional duplicate action uses a new command id and a new idempotency key, which is outside this model's `retry` action) |
 | `RevocationPreventsFuture` | draft | stated-normative | specs/seed/authority.qnt | apalache-temporal | — | <TBD — not yet checked; promote in a follow-on item> | a command cannot become accepted in the transition if it is being submitted at or below a revoked generation |
@@ -482,7 +503,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stat
 | `SessionIdentityTuple` | draft | stated-normative | specs/seed/session_generation.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | session target identity is adapter id + deployment scope + runtime session id + generation, excluding project/cwd/name metadata |
 | `SnapshotConsistentPrefix` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it |
 | `SnapshotCrossDomainRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | applied snapshots do not change authority when origin domain or core generation differs |
-| `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
+| `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | snapshot-reconciliation | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
 | `SpawnCreatesDescendantGrant` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — demoted; model uses invented kind names (reboot/snapshot/stop_session) contradicting PROTOCOL.md:181; allowed-kind set is a hard-coded pure function, not action-created state; v1 formal gate owns the real property> | successful spawn inserts an explicit descendant Grant record for the spawned session with non-spawn OperationKinds |
 | `SpawnRevocationDoesNotCascade` | draft | stated-normative | specs/seed/authority.qnt | apalache-temporal | — | <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property> | revoking the fleet spawn grant blocks future spawns and, when a descendant grant exists, does not revoke it |
 | `SubscriptionAudited` | draft | stated-normative | specs/seed/subscription_authority.qnt | apalache | — | <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property> | subscription allow/deny decisions create audit records without creating OperationState records |
@@ -501,7 +522,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 8 reserved-unmodeled stat
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 45 vector(s), 0 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 45 vector(s), 8 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -510,7 +531,7 @@ Summary: 45 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `BootstrapOnlyExit` | stated-normative | [lockdown-bootstrap-only-exit](../contracts/vectors/lockdown-bootstrap-only-exit.json) (draft) | patchbay.BootstrapChannelKind<br>patchbay.ExitSecurityLockdownRequest<br>patchbay.ExitSecurityLockdownResult |
 | `BoundaryDedup` | checked-model | [replay-committed-prefix-idempotent](../contracts/vectors/replay-committed-prefix-idempotent.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.deduplicated |
 | `browser_local_state_not_authority` | checked-model | — | — |
-| `CommandDurability` | stated-normative | [command-acceptance](../contracts/vectors/command-acceptance.json) (draft) | patchbay.Operation.authority_domain_id<br>patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.Operation.kind<br>patchbay.Operation.recipient<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.operation_state<br>patchbay.SubmissionResult.outcome<br>patchbay.TargetScope.resource |
+| `CommandDurability` | stated-normative | [command-acceptance](../contracts/vectors/command-acceptance.json) (promoted) | patchbay.Operation.authority_domain_id<br>patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.Operation.kind<br>patchbay.Operation.recipient<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.operation_state<br>patchbay.SubmissionResult.outcome<br>patchbay.TargetScope.resource |
 | `CompoundIssuer` | stated-normative | — | — |
 | `CrashNoAcceptedLost` | stated-normative | — | — |
 | `CsrfRejectsMissingProof` | checked-model | — | — |
@@ -539,15 +560,15 @@ Summary: 45 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `LockdownReplayPersists` | stated-normative | [lockdown-replay-persists](../contracts/vectors/lockdown-replay-persists.json) (draft) | patchbay.SecurityLockdownEntered.reason_code<br>patchbay.SecurityLockdownEvent<br>patchbay.SecurityLockdownState.active |
 | `LsnDeterminesTerminalWinner` | stated-normative | [late-terminal-candidate-audit-only](../contracts/vectors/late-terminal-candidate-audit-only.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.event_id<br>patchbay.Observation.failure_code<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.SubmissionResult.operation_state |
 | `NoAcceptedToCompleted` | checked-model | [operation-query-diagnostics-lifecycle](../contracts/vectors/operation-query-diagnostics-lifecycle.json) (draft) | DiagnosticsResult.as_of_lsn<br>Operation.kind<br>QueryDiagnosticsRequest.operation<br>QueryDiagnosticsResponse.submission |
-| `NoCommandWithoutGrant` | stated-normative | [failure-missing-grant](../contracts/vectors/failure-missing-grant.json) (draft) | patchbay.Grant.allowed_operation_kinds<br>patchbay.Grant.target_scope<br>patchbay.Operation.kind<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.TargetScope.resource |
+| `NoCommandWithoutGrant` | stated-normative | [failure-missing-grant](../contracts/vectors/failure-missing-grant.json) (promoted) | patchbay.Grant.allowed_operation_kinds<br>patchbay.Grant.target_scope<br>patchbay.Operation.kind<br>patchbay.Operation.sender<br>patchbay.Operation.target_scope<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.TargetScope.resource |
 | `NoOperationWithoutGrant` | stated-normative | [grant-expiry-rejected](../contracts/vectors/grant-expiry-rejected.json) (draft) | patchbay.Grant.expires_at<br>patchbay.SubmissionResult.decision_grant_id<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.SubmissionResult.reason_code |
 | `PreAppendTerminalChoice` | stated-normative | [terminal-cancellation-before-completion](../contracts/vectors/terminal-cancellation-before-completion.json) (draft)<br>[terminal-completion-before-cancellation](../contracts/vectors/terminal-completion-before-cancellation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.failure_code<br>patchbay.Observation.kind<br>patchbay.Observation.lsn<br>patchbay.Operation.command_id<br>patchbay.Operation.correlations<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.operation_state |
 | `PrincipalRevocationPreventsFuture` | stated-normative | [principal-revocation-prevents-future](../contracts/vectors/principal-revocation-prevents-future.json) (draft) | patchbay.RevokeControlSurfacePrincipalRequest.principal_id<br>patchbay.RevokeControlSurfaceResult.newly_revoked |
-| `ResourceCoreStateInjectionRejected` | stated-normative | [resource-core-state-injection-rejected](../contracts/vectors/resource-core-state-injection-rejected.json) (draft) | patchbay.Observation.kind<br>patchbay.Observation.payload<br>patchbay.ResourceStateEvent.authority_domain_id<br>patchbay.ResourceStateEvent.mutations<br>patchbay.ResourceStateEvent.source_adapter_id<br>patchbay.StoredEventPayload.kind |
-| `ResourceIdentityCollisionFenced` | stated-normative | [resource-identity-collision-fenced](../contracts/vectors/resource-identity-collision-fenced.json) (draft) | patchbay.Grant.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.TargetScope.resource |
-| `ResourceObservationSourceAuthenticated` | stated-normative | [resource-observation-source-authenticated](../contracts/vectors/resource-observation-source-authenticated.json) (draft) | patchbay.Observation.sender<br>patchbay.Observation.target_scope<br>patchbay.ObservationRequest.authority_domain_id<br>patchbay.ObservationRequest.event<br>patchbay.StoredEventPayload.kind<br>patchbay.TargetScope.resource |
-| `ResourceSnapshotCompletenessHonesty` | stated-normative | [resource-snapshot-completeness-honesty](../contracts/vectors/resource-snapshot-completeness-honesty.json) (draft) | patchbay.Resource.revision_lsn<br>patchbay.Resource.tombstoned<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceReport.delta<br>patchbay.ResourceReport.snapshot<br>patchbay.ResourceViewReport.completeness<br>patchbay.ResourceViewReport.mutations<br>patchbay.ResourceViewRevision.revision_lsn |
-| `ResourceStaleNeverLive` | stated-normative | [resource-stale-never-live](../contracts/vectors/resource-stale-never-live.json) (draft) | patchbay.AdapterRegistration.adapter_generation<br>patchbay.Resource.freshness<br>patchbay.Resource.projection_payload<br>patchbay.Resource.resource_payload<br>patchbay.Resource.tombstoned<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceSnapshot.resources |
+| `ResourceCoreStateInjectionRejected` | stated-normative | [resource-core-state-injection-rejected](../contracts/vectors/resource-core-state-injection-rejected.json) (promoted) | patchbay.Observation.kind<br>patchbay.Observation.payload<br>patchbay.ResourceStateEvent.authority_domain_id<br>patchbay.ResourceStateEvent.mutations<br>patchbay.ResourceStateEvent.source_adapter_id<br>patchbay.StoredEventPayload.kind |
+| `ResourceIdentityCollisionFenced` | stated-normative | [resource-identity-collision-fenced](../contracts/vectors/resource-identity-collision-fenced.json) (promoted) | patchbay.Grant.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.TargetScope.resource |
+| `ResourceObservationSourceAuthenticated` | stated-normative | [resource-observation-source-authenticated](../contracts/vectors/resource-observation-source-authenticated.json) (promoted) | patchbay.Observation.sender<br>patchbay.Observation.target_scope<br>patchbay.ObservationRequest.authority_domain_id<br>patchbay.ObservationRequest.event<br>patchbay.StoredEventPayload.kind<br>patchbay.TargetScope.resource |
+| `ResourceSnapshotCompletenessHonesty` | stated-normative | [resource-snapshot-completeness-honesty](../contracts/vectors/resource-snapshot-completeness-honesty.json) (promoted) | patchbay.Resource.revision_lsn<br>patchbay.Resource.tombstoned<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceReport.delta<br>patchbay.ResourceReport.snapshot<br>patchbay.ResourceViewReport.completeness<br>patchbay.ResourceViewReport.mutations<br>patchbay.ResourceViewRevision.revision_lsn |
+| `ResourceStaleNeverLive` | stated-normative | [resource-stale-never-live](../contracts/vectors/resource-stale-never-live.json) (promoted) | patchbay.AdapterRegistration.adapter_generation<br>patchbay.Resource.freshness<br>patchbay.Resource.projection_payload<br>patchbay.Resource.resource_payload<br>patchbay.Resource.tombstoned<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceSnapshot.resources |
 | `RetryAfterTerminalReturnsExisting` | stated-normative | [retry-after-terminal-returns-existing](../contracts/vectors/retry-after-terminal-returns-existing.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.command_id<br>patchbay.SubmissionResult.deduplicated<br>patchbay.SubmissionResult.operation_state |
 | `RetryReusesIdAndKey` | stated-normative | — | — |
 | `RevocationPreventsFuture` | stated-normative | [grant-revocation-policy-effects](../contracts/vectors/grant-revocation-policy-effects.json) (draft)<br>[grant-revocation-prevents-future](../contracts/vectors/grant-revocation-prevents-future.json) (draft) | patchbay.AcceptedOperation.authorizing_grant_id<br>patchbay.FailureCode.FAILURE_CODE_AUTHORIZATION_DENIED<br>patchbay.GrantRevocationEffect.failure_code<br>patchbay.GrantRevocationEffect.from_state<br>patchbay.GrantRevocationEffect.to_state<br>patchbay.Revocation.accepted_operation_policy<br>patchbay.Revocation.command_effects<br>patchbay.Revocation.grant_id<br>patchbay.SubmissionResult.outcome |
@@ -557,7 +578,7 @@ Summary: 45 vector(s), 0 promoted vector(s), 0 checked-normative properties requ
 | `SessionIdentityTuple` | stated-normative | — | — |
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
-| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (draft) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResult.resource_snapshot<br>patchbay.LoadSnapshotResult.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
+| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResult.resource_snapshot<br>patchbay.LoadSnapshotResult.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
 | `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |

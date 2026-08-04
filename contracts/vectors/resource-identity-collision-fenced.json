@@ -1,7 +1,7 @@
 {
   "vector_id": "resource-identity-collision-fenced",
   "property_id": "ResourceIdentityCollisionFenced",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-core", "case": "resource_identity_collision_fenced" }
   ],

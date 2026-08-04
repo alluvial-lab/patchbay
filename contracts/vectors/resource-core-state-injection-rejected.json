@@ -1,7 +1,7 @@
 {
   "vector_id": "resource-core-state-injection-rejected",
   "property_id": "ResourceCoreStateInjectionRejected",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-core", "case": "opaque_observation_cannot_fold_resource_state" }
   ],

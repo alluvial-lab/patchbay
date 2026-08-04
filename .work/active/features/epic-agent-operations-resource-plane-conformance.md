@@ -467,3 +467,20 @@ presentation conformance.
 - Parked: none. Formal promotion is an explicit reserved seam, not silently included in this implementation-evidence feature.
 - Rejected: Rust-only hard-coded resource vectors and unlinked property tests because neither makes the existing JSON corpus executable.
 - Skipped/degraded: independent advisory dispatch is unavailable in this worker surface. Direct grounding was exhaustive across sibling designs/implementation/review findings and foundation/code paths; the caller's `thorough` review and the project verification deep lane remain mandatory.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, high reasoning, explicitly selected by the autopilot caller for executable safety evidence.
+- Review weight: `thorough`, explicit caller override. The feature remains `implementing` while all five verification children wait at `review` for their required deep lane.
+- Integrated delivery: the existing corpus now has additive exact package execution accounting; all eight designed resource/shared vectors are promoted; five stated resource property ids are registered; Rust core/server and web-cockpit runners consume vector fields and report nine exact check ids; independent Rust and fast-check oracles cover authority, source binding, completeness/durability, stale presentation, collision fencing, and core-state isolation.
+- Mutation ledger:
+  - Authority/durability: fabricated accepted `EventId` without append failed `command-acceptance`; an empty-grant authorization bypass failed `failure-missing-grant`.
+  - Observation source: unconditional adapter ownership matching admitted a cross-owner request and failed `resource-observation-source-authenticated`; missing/stale token cases remained separately executed.
+  - Identity collision: omitting adapter from production equality failed both generated authority property and `resource-identity-collision-fenced`; explicit kind/id-omitting mutant witnesses also fail the independent tuple oracle.
+  - Core-state injection: dispatching opaque Observation payload bytes to `ResourceStateEvent` failed `resource-core-state-injection-rejected` on forged domain/state; the retained durable discriminator regression proves production ignores sibling event kinds.
+  - Completeness/durability/replay: authoritative→stale, partial/none→tombstone, delta-as-snapshot, fold-before-failed-append, generation rollback, tombstone resurrection, and zero materialized snapshot LSN mutants each failed a vector/property witness. The partial-tombstone mutation initially exposed a missing tombstone assertion in the vector runner; the oracle was strengthened before promotion and the same mutant then failed.
+  - Stale presentation: omission of disconnect resource degradation, freshness-only current eligibility, and adapter-health-driven effective freshness each failed server/vector/generated DOM evidence.
+  - Runner integrity: missing promoted implementation registration, unregistered case, duplicate execution reports, and a changed vector identity all failed closed; failed checks did not regenerate traceability.
+- Integrated verification: final evidence is recorded in the promotion child story; no existing test/vector was weakened, skipped, or deleted.
+- Discrepancies from design: no formal model was added; the new properties remain implementation-evidence stated-normative. The arbitrary completeness trace constrains authoritative omission to an optional terminal step so subsequent generated actions cannot become invalid resurrection attempts; focused regressions cover rejection traces.
+- Adjacent issues parked: none.

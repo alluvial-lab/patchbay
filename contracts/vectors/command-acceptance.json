@@ -1,9 +1,12 @@
 {
   "vector_id": "command-acceptance",
   "property_id": "CommandDurability",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
-    { "runner": "rust-core", "case": "resource_operation_durable_acceptance" }
+    {
+      "runner": "rust-core",
+      "case": "resource_operation_durable_acceptance"
+    }
   ],
   "proto_fields_constrained": [
     "patchbay.Operation.command_id",
@@ -23,20 +26,124 @@
   ],
   "description": "Session and resource Operations use the same grant-checked acceptance pipeline; an exact resource query is durably accepted before delivery.",
   "input": {
-    "session_case_preserved": "The original runtime-session acceptance shape remains covered by the same CommandDurability property and package acceptance suite.",
+    "session_case": {
+      "operation_type": "patchbay.Operation",
+      "operation": {
+        "command_id": {
+          "value": "cmd-accept-001"
+        },
+        "authority_domain_id": {
+          "value": "auth-main"
+        },
+        "sender": {
+          "actor_id": {
+            "value": "operator-alice"
+          },
+          "endpoint_id": {
+            "value": "web-1"
+          },
+          "device_id": {
+            "value": "device-browser"
+          },
+          "endpoint_generation": {
+            "value": 7
+          }
+        },
+        "recipient": {
+          "actor_id": {
+            "value": "agent-runner"
+          },
+          "endpoint_id": {
+            "value": "pi-adapter-1"
+          },
+          "device_id": {
+            "value": "host-pi"
+          },
+          "endpoint_generation": {
+            "value": 3
+          }
+        },
+        "kind": "OPERATION_KIND_INSTRUCT",
+        "target_scope": {
+          "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+          "adapter_id": {
+            "value": "pi"
+          },
+          "runtime_session_id": {
+            "value": "sess-001"
+          },
+          "session_generation": {
+            "value": 12
+          }
+        },
+        "idempotency_key": "idem-accept-001",
+        "payload": {
+          "payload": "eyJpbnN0cnVjdGlvbiI6InN0YXR1cyJ9",
+          "content_type": "PAYLOAD_CONTENT_TYPE_JSON",
+          "schema_ref": "patchbay.examples.instruct.v0"
+        },
+        "submitted_at": "2026-07-06T00:00:00Z"
+      },
+      "preconditions": {
+        "matching_grant_type": "patchbay.Grant",
+        "matching_grant": {
+          "grant_id": {
+            "value": "grant-instruct-001"
+          },
+          "authority_domain_id": {
+            "value": "auth-main"
+          },
+          "subject_actor_id": {
+            "value": "operator-alice"
+          },
+          "subject_endpoint_id": {
+            "value": "web-1"
+          },
+          "target_scope": {
+            "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+            "adapter_id": {
+              "value": "pi"
+            },
+            "runtime_session_id": {
+              "value": "sess-001"
+            },
+            "session_generation": {
+              "value": 12
+            }
+          },
+          "allowed_operation_kinds": [
+            "OPERATION_KIND_INSTRUCT"
+          ]
+        }
+      }
+    },
     "resource_case": {
       "operation_type": "patchbay.Operation",
       "operation": {
-        "command_id": { "value": "resource-query-accepted" },
-        "authority_domain_id": { "value": "auth-main" },
-        "sender": { "actor_id": { "value": "payload-forgery" } },
+        "command_id": {
+          "value": "resource-query-accepted"
+        },
+        "authority_domain_id": {
+          "value": "auth-main"
+        },
+        "sender": {
+          "actor_id": {
+            "value": "payload-forgery"
+          }
+        },
         "kind": "OPERATION_KIND_QUERY",
         "target_scope": {
           "kind": "TARGET_SCOPE_KIND_RESOURCE",
           "resource": {
-            "adapter_id": { "value": "token-commune" },
-            "resource_kind": { "value": "provider_pool" },
-            "resource_id": { "value": "shared-pool" }
+            "adapter_id": {
+              "value": "token-commune"
+            },
+            "resource_kind": {
+              "value": "provider_pool"
+            },
+            "resource_id": {
+              "value": "shared-pool"
+            }
           }
         },
         "idempotency_key": "resource-query-key",
@@ -46,16 +153,50 @@
           "expires_at": "2026-08-04T12:01:00Z"
         }
       },
-      "verified_issuer": { "actor_id": "operator", "endpoint_id": "web" },
+      "verified_issuer": {
+        "actor_id": "operator",
+        "endpoint_id": "web"
+      },
       "matching_grant": {
         "grant_id": "resource-query-grant",
         "operation_kind": "OPERATION_KIND_QUERY",
-        "target": ["token-commune", "provider_pool", "shared-pool"]
+        "target": [
+          "token-commune",
+          "provider_pool",
+          "shared-pool"
+        ]
       },
-      "registered_resource": ["token-commune", "provider_pool", "shared-pool"]
+      "registered_resource": [
+        "token-commune",
+        "provider_pool",
+        "shared-pool"
+      ]
     }
   },
   "expected_outcome": {
+    "session_case": {
+      "result_type": "patchbay.SubmissionResult",
+      "submission_result": {
+        "outcome": "SUBMISSION_OUTCOME_ACCEPTED",
+        "command_id": {
+          "value": "cmd-accept-001"
+        },
+        "operation_state": "OPERATION_STATE_ACCEPTED",
+        "accepted_lsn": {
+          "value": 101
+        },
+        "deduplicated": false
+      },
+      "durable_record": {
+        "command_id": {
+          "value": "cmd-accept-001"
+        },
+        "operation_state": "OPERATION_STATE_ACCEPTED",
+        "recorded_lsn": {
+          "value": 101
+        }
+      }
+    },
     "resource_case": {
       "submission_result": {
         "outcome": "SUBMISSION_OUTCOME_ACCEPTED",

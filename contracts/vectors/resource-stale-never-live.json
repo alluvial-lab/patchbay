@@ -1,7 +1,7 @@
 {
   "vector_id": "resource-stale-never-live",
   "property_id": "ResourceStaleNeverLive",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-server", "case": "resource_disconnect_degrades_snapshot" },
     { "runner": "web-cockpit", "case": "resource_stale_presentation_dominance" }
