@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-resource-identity
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane
 depends_on: []
@@ -440,3 +440,11 @@ The corrected feature returns to `review`. Thorough convergence requires pass 2 
 - Abnormal adapter-disconnect reconciliation selected running commands through only top-level `TargetScope.adapter_id`. Canonical resource identity nests the adapter, so a running resource command could remain indefinitely `running` instead of terminalizing `failed(execution_outcome_unknown)`. Fix the selector through `target_adapter_id` and prove current-adapter resource failure plus other-adapter/malformed inertness.
 
 **Closure policy**: `thorough`; fix, verify the integrated snapshot, and run pass 3.
+
+## Review fix verification — pass 2
+
+- Running-command disconnect reconciliation now selects adapter/session/resource targets through the canonical `target_adapter_id` helper. A canonical resource for the lost adapter terminalizes `failed(execution_outcome_unknown)`; another adapter and a malformed nested tuple remain inert.
+- Added a focused core selector regression and extended the real adapter-stream-loss integration to deliver, acknowledge, run, disconnect, and rebuild a resource command alongside the existing session cases.
+- Corrected snapshot verified with workspace tests, clippy `-D warnings`, 37 CLI tests, contract build/drift, and vector/model/presentation checks.
+
+The feature returns to `review` for thorough convergence pass 3.
