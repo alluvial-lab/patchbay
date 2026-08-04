@@ -88,14 +88,15 @@ impl TargetResolver for TestTargetResolver {
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send {
         self.calls.fetch_add(1, Ordering::Relaxed);
         ready(if self.found {
-            Ok(TargetBinding {
+            Ok(TargetBinding::RuntimeSession {
+                adapter_id: AdapterId {
+                    value: "pi".to_owned(),
+                },
+                deployment_scope: "local".to_owned(),
                 runtime_session_id: RuntimeSessionId {
                     value: "session-1".to_owned(),
                 },
                 session_generation: Generation { value: 7 },
-                adapter_id: AdapterId {
-                    value: "pi".to_owned(),
-                },
             })
         } else {
             Err(TargetNotFound::NotFound {

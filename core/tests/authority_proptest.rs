@@ -360,10 +360,11 @@ impl TargetResolver for AlwaysResolvedTarget {
         _authority_domain_id: &AuthorityDomainId,
         _target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
-        Ok(TargetBinding {
+        Ok(TargetBinding::RuntimeSession {
+            adapter_id: adapter("adapter-pi"),
+            deployment_scope: "local".to_owned(),
             runtime_session_id: runtime_session("compound-issuer-session"),
             session_generation: Generation { value: 1 },
-            adapter_id: adapter("adapter-pi"),
         })
     }
 }

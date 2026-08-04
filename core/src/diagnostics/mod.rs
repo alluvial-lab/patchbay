@@ -53,15 +53,7 @@ impl TargetResolver for AuthorityDomainTargetResolver {
                 target: "diagnostics target is not an authority domain".to_owned(),
             });
         }
-        Ok(TargetBinding {
-            runtime_session_id: patchbay_contracts::patchbay::RuntimeSessionId {
-                value: format!("authority-domain:{}", authority_domain_id.value),
-            },
-            session_generation: patchbay_contracts::patchbay::Generation { value: 0 },
-            adapter_id: patchbay_contracts::patchbay::AdapterId {
-                value: "core-diagnostics".to_owned(),
-            },
-        })
+        Ok(TargetBinding::AuthorityDomain(authority_domain_id.clone()))
     }
 }
 

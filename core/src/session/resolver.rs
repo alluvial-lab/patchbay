@@ -1,6 +1,6 @@
 //! Acceptance target resolution backed by the session projection.
 
-use patchbay_contracts::patchbay::{AuthorityDomainId, TargetScope};
+use patchbay_contracts::patchbay::{AuthorityDomainId, TargetScope, TargetScopeKind};
 
 use crate::acceptance::{TargetBinding, TargetNotFound, TargetResolver};
 
@@ -18,6 +18,11 @@ impl TargetResolver for SessionRegistry {
         _authority_domain_id: &AuthorityDomainId,
         target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
+        if TargetScopeKind::try_from(target_scope.kind).ok()
+            != Some(TargetScopeKind::RuntimeSession)
+        {
+            return Err(not_found(target_scope, "target is not a runtime session"));
+        }
         let adapter_id = target_scope
             .adapter_id
             .as_ref()
@@ -60,10 +65,11 @@ impl TargetResolver for SessionRegistry {
             ));
         }
 
-        Ok(TargetBinding {
+        Ok(TargetBinding::RuntimeSession {
+            adapter_id: record.identity.adapter_id.clone(),
+            deployment_scope: record.identity.deployment_scope.clone(),
             runtime_session_id: record.identity.runtime_session_id.clone(),
             session_generation: record.identity.session_generation,
-            adapter_id: record.identity.adapter_id.clone(),
         })
     }
 }

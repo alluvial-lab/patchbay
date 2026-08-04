@@ -283,14 +283,15 @@ impl TargetResolver for AlwaysResolved {
         _authority_domain_id: &AuthorityDomainId,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send {
-        ready(Ok(TargetBinding {
+        ready(Ok(TargetBinding::RuntimeSession {
+            adapter_id: AdapterId {
+                value: "adapter-proptest".to_owned(),
+            },
+            deployment_scope: "local".to_owned(),
             runtime_session_id: RuntimeSessionId {
                 value: "session-proptest".to_owned(),
             },
             session_generation: Generation { value: 1 },
-            adapter_id: AdapterId {
-                value: "adapter-proptest".to_owned(),
-            },
         }))
     }
 }

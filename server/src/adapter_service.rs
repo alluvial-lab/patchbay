@@ -20,6 +20,7 @@ use patchbay_core::{
     authority::hash_principal_credential,
     session::{self, SessionRegistry, SessionReport},
     storage::{AuditRecordDraft, RecordedEvent, Storage},
+    target::target_adapter_id,
 };
 use prost::Message;
 use tokio::{
@@ -324,7 +325,7 @@ fn deliveries_for_events(
             let targets_adapter = operation
                 .target_scope
                 .as_ref()
-                .and_then(|target| target.adapter_id.as_ref())
+                .and_then(target_adapter_id)
                 == Some(adapter_id);
             let remains_deliverable = operation
                 .command_id
@@ -730,7 +731,7 @@ where
                     observation
                         .target_scope
                         .as_ref()
-                        .and_then(|target| target.adapter_id.as_ref()),
+                        .and_then(target_adapter_id),
                     &authenticated_adapter,
                 )?;
                 let mut commands = self.commands.lock().await;

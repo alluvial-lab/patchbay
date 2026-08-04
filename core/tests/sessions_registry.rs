@@ -205,7 +205,13 @@ fn folds_axis_changes_relabel_and_generation_bump() {
     let binding = registry
         .resolve(&live_target)
         .expect("an unspecified generation binds the live generation");
-    assert_eq!(binding.session_generation, generation(2));
+    assert!(matches!(
+        binding,
+        patchbay_core::acceptance::TargetBinding::RuntimeSession {
+            session_generation,
+            ..
+        } if session_generation == generation(2)
+    ));
 }
 
 #[test]
@@ -286,6 +292,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
     assert!(!registry.is_tombstoned(&adapter_b, "machine-b", &runtime(), &generation(1)));
 
     let target_b = TargetScope {
+        kind: patchbay_contracts::patchbay::TargetScopeKind::RuntimeSession as i32,
         adapter_id: Some(adapter_b.clone()),
         runtime_session_id: Some(runtime()),
         session_generation: Some(generation(1)),
@@ -295,8 +302,14 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
     let binding = TargetResolver::resolve(&registry, &domain(), &target_b)
         .await
         .expect("a same-runtime session under another adapter must remain resolvable");
-    assert_eq!(binding.adapter_id, adapter_b);
-    assert_eq!(binding.session_generation, generation(1));
+    assert!(matches!(
+        binding,
+        patchbay_core::acceptance::TargetBinding::RuntimeSession {
+            adapter_id,
+            session_generation,
+            ..
+        } if adapter_id == adapter_b && session_generation == generation(1)
+    ));
 }
 
 #[test]

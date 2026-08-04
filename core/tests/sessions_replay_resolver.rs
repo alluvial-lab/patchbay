@@ -126,9 +126,15 @@ async fn resolve_binds_a_live_session() {
     let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1)))
         .await
         .unwrap();
-    assert_eq!(binding.runtime_session_id, runtime_session("s-1"));
-    assert_eq!(binding.session_generation, generation(1));
-    assert_eq!(binding.adapter_id, adapter());
+    assert_eq!(
+        binding,
+        patchbay_core::acceptance::TargetBinding::RuntimeSession {
+            adapter_id: adapter(),
+            deployment_scope: "local".to_owned(),
+            runtime_session_id: runtime_session("s-1"),
+            session_generation: generation(1),
+        }
+    );
 }
 
 #[tokio::test]
@@ -148,7 +154,13 @@ async fn resolve_binds_the_live_generation_when_unspecified() {
     let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(None))
         .await
         .unwrap();
-    assert_eq!(binding.session_generation, generation(7));
+    assert!(matches!(
+        binding,
+        patchbay_core::acceptance::TargetBinding::RuntimeSession {
+            session_generation,
+            ..
+        } if session_generation == generation(7)
+    ));
 }
 
 #[tokio::test]

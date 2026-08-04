@@ -10,7 +10,7 @@ use patchbay_contracts::patchbay::{
 };
 use prost_types::Timestamp;
 
-use crate::authority::IssuerContext;
+use crate::{authority::IssuerContext, resource::ResourceIdentity};
 
 pub use crate::time::{Clock, SystemClock, TestClock};
 
@@ -137,12 +137,17 @@ pub enum GrantDenied {
     },
 }
 
-/// Concrete delivery identity returned by the session registry.
+/// Concrete target identity returned by the target-kind-polymorphic resolver.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetBinding {
-    pub runtime_session_id: RuntimeSessionId,
-    pub session_generation: Generation,
-    pub adapter_id: AdapterId,
+pub enum TargetBinding {
+    RuntimeSession {
+        adapter_id: AdapterId,
+        deployment_scope: String,
+        runtime_session_id: RuntimeSessionId,
+        session_generation: Generation,
+    },
+    Resource(ResourceIdentity),
+    AuthorityDomain(AuthorityDomainId),
 }
 
 /// A target that cannot be bound in the requested authority domain.

@@ -8,8 +8,8 @@ use patchbay_contracts::patchbay::{
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
-    SecurityLockdownEntered,
-    PayloadContentType, PayloadEnvelope, ReceiveRequest, RuntimeSessionId, SessionActivityState,
+    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind,
+    RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
 };
@@ -171,6 +171,55 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
     assert_eq!(audit.source_event_id, Some(diagnostic_source));
     assert_eq!(audit.reason_code, "pi_adapter_started");
     assert!(audit.adapter_diagnostic.is_some());
+}
+
+#[test]
+fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let operation = Operation {
+        command_id: Some(CommandId { value: "resource-command".into() }),
+        authority_domain_id: Some(domain.clone()),
+        kind: OperationKind::Query as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource: Some(ResourceIdentity {
+                adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+                resource_id: Some(ResourceId { value: "shared".into() }),
+                resource_kind: Some(ResourceKind { value: "pool".into() }),
+            }),
+            ..TargetScope::default()
+        }),
+        idempotency_key: "resource-command-key".into(),
+        ..Operation::default()
+    };
+    let event = RecordedEvent {
+        event_id: patchbay_contracts::patchbay::EventId {
+            authority_domain_id: Some(domain),
+            lsn: Some(Lsn { value: 1 }),
+        },
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Operation as i32,
+            payload: accepted_operation_bytes(&operation),
+        },
+    };
+    let mut commands = CommandIndex::new();
+    commands.apply(&event).expect("accepted operation projects");
+
+    let adapter_a = AdapterId { value: "adapter-a".into() };
+    let adapter_b = AdapterId { value: "adapter-b".into() };
+    assert_eq!(deliveries_for_events(&[event.clone()], &commands, &adapter_a, 0).len(), 1);
+    assert!(deliveries_for_events(&[event.clone()], &commands, &adapter_b, 0).is_empty());
+
+    let mut malformed = operation;
+    malformed.target_scope.as_mut().unwrap().resource.as_mut().unwrap().resource_kind = None;
+    let malformed_event = RecordedEvent {
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Operation as i32,
+            payload: accepted_operation_bytes(&malformed),
+        },
+        ..event
+    };
+    assert!(deliveries_for_events(&[malformed_event], &commands, &adapter_a, 0).is_empty());
 }
 
 #[tokio::test]

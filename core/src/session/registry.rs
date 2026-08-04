@@ -229,10 +229,11 @@ impl SessionRegistry {
             return None;
         }
 
-        Some(TargetBinding {
+        Some(TargetBinding::RuntimeSession {
+            adapter_id: record.identity.adapter_id.clone(),
+            deployment_scope: record.identity.deployment_scope.clone(),
             runtime_session_id: record.identity.runtime_session_id.clone(),
             session_generation: record.identity.session_generation,
-            adapter_id: record.identity.adapter_id.clone(),
         })
     }
 

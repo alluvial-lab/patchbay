@@ -22,8 +22,10 @@ use patchbay_core::{
     },
     diagnostics::DiagnosticsProjection,
     security::SecurityPostureProjection,
+    resource::ResourceRegistry,
     session::SessionRegistry,
     storage::{RecordedEvent, Storage, StorageError},
+    target::TargetRegistry,
 };
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -127,7 +129,10 @@ impl ProjectionState {
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
-            target_resolver: LockedTargetResolver::new(sessions),
+            target_resolver: LockedTargetResolver::new(TargetRegistry::new(
+                sessions,
+                ResourceRegistry::new(),
+            )),
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
@@ -228,7 +233,7 @@ impl ProjectionState {
     }
 
     pub async fn current_runtime_session_count(&self) -> u32 {
-        self.target_resolver.inner.lock().await.sessions().count() as u32
+        self.target_resolver.inner.lock().await.sessions().sessions().count() as u32
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
@@ -248,7 +253,7 @@ impl ProjectionState {
     ) -> SessionSnapshot {
         let cursor = self.last_applied_lsn.lock().await;
         let registry = self.target_resolver.inner.lock().await;
-        let mut sessions: Vec<_> = registry.sessions().cloned().collect();
+        let mut sessions: Vec<_> = registry.sessions().sessions().cloned().collect();
         sessions.sort_by(|left, right| {
             (
                 &left.identity.adapter_id.value,
@@ -788,11 +793,11 @@ impl GrantCheck for LockedGrantCheck {
 
 #[derive(Clone)]
 pub struct LockedTargetResolver {
-    inner: Arc<Mutex<SessionRegistry>>,
+    inner: Arc<Mutex<TargetRegistry>>,
 }
 
 impl LockedTargetResolver {
-    fn new(registry: SessionRegistry) -> Self {
+    fn new(registry: TargetRegistry) -> Self {
         Self {
             inner: Arc::new(Mutex::new(registry)),
         }
@@ -802,7 +807,7 @@ impl LockedTargetResolver {
         &self,
         event: &RecordedEvent,
     ) -> Result<(), patchbay_core::session::SessionError> {
-        self.inner.lock().await.observe(event)
+        self.inner.lock().await.observe_session_event(event)
     }
 }
 
