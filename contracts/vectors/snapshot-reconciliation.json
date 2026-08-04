@@ -5,7 +5,7 @@
   "implementation_checks": [
     {
       "runner": "rust-server",
-      "case": "resource_snapshot_reconciliation"
+      "case": "snapshot_reconciliation"
     }
   ],
   "proto_fields_constrained": [
@@ -41,6 +41,7 @@
               "adapter_id": {
                 "value": "pi"
               },
+              "deployment_scope": "conformance-host",
               "runtime_session_id": {
                 "value": "sess-001"
               },

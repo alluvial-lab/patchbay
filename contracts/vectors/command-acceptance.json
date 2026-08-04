@@ -5,7 +5,11 @@
   "implementation_checks": [
     {
       "runner": "rust-core",
-      "case": "resource_operation_durable_acceptance"
+      "case": "operation_durable_acceptance"
+    },
+    {
+      "runner": "rust-server",
+      "case": "operation_durable_acceptance"
     }
   ],
   "proto_fields_constrained": [
@@ -69,6 +73,7 @@
           "adapter_id": {
             "value": "pi"
           },
+          "deployment_scope": "conformance-host",
           "runtime_session_id": {
             "value": "sess-001"
           },
@@ -82,7 +87,11 @@
           "content_type": "PAYLOAD_CONTENT_TYPE_JSON",
           "schema_ref": "patchbay.examples.instruct.v0"
         },
-        "submitted_at": "2026-07-06T00:00:00Z"
+        "submitted_at": "2026-07-06T00:00:00Z",
+        "validity_window": {
+          "starts_at": "2026-07-05T23:59:00Z",
+          "expires_at": "2026-07-06T00:01:00Z"
+        }
       },
       "preconditions": {
         "matching_grant_type": "patchbay.Grant",
@@ -104,6 +113,7 @@
             "adapter_id": {
               "value": "pi"
             },
+            "deployment_scope": "conformance-host",
             "runtime_session_id": {
               "value": "sess-001"
             },

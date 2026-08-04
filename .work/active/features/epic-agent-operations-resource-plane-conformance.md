@@ -472,7 +472,7 @@ presentation conformance.
 
 - Execution capability: `openai-codex/gpt-5.6-sol`, high reasoning, explicitly selected by the autopilot caller for executable safety evidence.
 - Review weight: `thorough`, explicit caller override. The feature remains `implementing` while all five verification children wait at `review` for their required deep lane.
-- Integrated delivery: the existing corpus now has additive exact package execution accounting; all eight designed resource/shared vectors are promoted; five stated resource property ids are registered; Rust core/server and web-cockpit runners consume vector fields and report nine exact check ids; independent Rust and fast-check oracles cover authority, source binding, completeness/durability, stale presentation, collision fencing, and core-state isolation.
+- Integrated delivery: the existing corpus now has additive exact package execution accounting; all eight designed resource/shared vectors are promoted; five stated resource property ids are registered; Rust core/server and web-cockpit runners consume vector fields and report eleven exact package check ids, with the three extended vectors executing and validating both their session and resource cases; independent Rust and fast-check oracles cover authority, source binding, completeness/durability, stale presentation, collision fencing, and core-state isolation.
 - Mutation ledger:
   - Authority/durability: fabricated accepted `EventId` without append failed `command-acceptance`; an empty-grant authorization bypass failed `failure-missing-grant`.
   - Observation source: unconditional adapter ownership matching admitted a cross-owner request and failed `resource-observation-source-authenticated`; missing/stale token cases remained separately executed.

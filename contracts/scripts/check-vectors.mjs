@@ -111,8 +111,21 @@ function expectation(ok, detail) {
   return { ok: Boolean(ok), detail };
 }
 
-function resourceCase(vector) {
-  return vector.expected_outcome?.resource_case ?? vector.expected_outcome;
+function expectedCases(vector) {
+  const session = vector.expected_outcome?.session_case;
+  const resource = vector.expected_outcome?.resource_case;
+  if (session !== undefined && resource !== undefined) {
+    return [
+      { name: 'session_case', input: vector.input?.session_case, outcome: session },
+      { name: 'resource_case', input: vector.input?.resource_case, outcome: resource },
+    ];
+  }
+  return [{ name: 'single_case', input: vector.input?.resource_case ?? vector.input, outcome: resource ?? vector.expected_outcome }];
+}
+
+function everyExpectedCase(vector, detail, check) {
+  const failed = expectedCases(vector).find((entry) => !check(entry));
+  return expectation(failed === undefined, failed === undefined ? detail : `${failed.name}: ${detail}`);
 }
 
 // These check raw expected examples only. Package runners separately execute the
@@ -120,36 +133,33 @@ function resourceCase(vector) {
 // prevents a successful implementation test from laundering a contradictory
 // expected outcome.
 const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
-  CommandDurability: (vector) => {
-    const outcome = resourceCase(vector);
-    return expectation(
-      outcome?.submission_result?.outcome === 'SUBMISSION_OUTCOME_ACCEPTED'
-        && outcome?.durable_record?.operation_state === 'OPERATION_STATE_ACCEPTED'
-        && outcome?.durable_before_delivery === true,
-      'resource acceptance must be durably accepted before delivery',
-    );
-  },
-  NoCommandWithoutGrant: (vector) => {
-    const outcome = resourceCase(vector);
-    return expectation(
-      outcome?.submission_result?.outcome === 'SUBMISSION_OUTCOME_REJECTED'
-        && outcome?.submission_result?.failure_code === 'FAILURE_CODE_AUTHORIZATION_DENIED'
-        && outcome?.durable_acceptance_record_created === false
-        && outcome?.delivered_to_adapter === false,
-      'missing resource grant must reject before append and delivery',
-    );
-  },
-  SnapshotStaleRejected: (vector) => {
-    const outcome = resourceCase(vector);
-    return expectation(
-      outcome?.requested_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE'
-        && outcome?.returned_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE'
-        && outcome?.snapshot_decision?.accepted === false
-        && Number(outcome?.snapshot_decision?.replacement_required_from_lsn?.value)
-          > Number(vector.input?.resource_case?.cached_snapshot?.snapshot_lsn?.value),
-      'an older resource snapshot must be replaced by the explicitly selected current resource view',
-    );
-  },
+  CommandDurability: (vector) => everyExpectedCase(
+    vector,
+    'acceptance must produce an accepted durable record before delivery',
+    ({ name, outcome }) => outcome?.submission_result?.outcome === 'SUBMISSION_OUTCOME_ACCEPTED'
+      && outcome?.submission_result?.operation_state === 'OPERATION_STATE_ACCEPTED'
+      && outcome?.durable_record?.operation_state === 'OPERATION_STATE_ACCEPTED'
+      && (name !== 'resource_case' || outcome?.durable_before_delivery === true),
+  ),
+  NoCommandWithoutGrant: (vector) => everyExpectedCase(
+    vector,
+    'a missing grant must reject before append and delivery',
+    ({ outcome }) => outcome?.submission_result?.outcome === 'SUBMISSION_OUTCOME_REJECTED'
+      && outcome?.submission_result?.failure_code === 'FAILURE_CODE_AUTHORIZATION_DENIED'
+      && outcome?.durable_acceptance_record_created === false
+      && outcome?.delivered_to_adapter === false,
+  ),
+  SnapshotStaleRejected: (vector) => everyExpectedCase(
+    vector,
+    'an older snapshot must be rejected and replaced by the current view',
+    ({ name, input, outcome }) => outcome?.snapshot_decision?.accepted === false
+      && outcome?.snapshot_decision?.failure_code === 'FAILURE_CODE_STALE_EVENT'
+      && Number(outcome?.snapshot_decision?.replacement_required_from_lsn?.value)
+        > Number(input?.cached_snapshot?.snapshot_lsn?.value)
+      && (name !== 'resource_case'
+        || (outcome?.requested_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE'
+          && outcome?.returned_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE')),
+  ),
   ResourceObservationSourceAuthenticated: (vector) => expectation(
     vector.expected_outcome?.authenticated_owner?.observation_appended === true
       && vector.expected_outcome?.unauthenticated?.observation_appended === false

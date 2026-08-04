@@ -1,20 +1,26 @@
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterId,
-    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
-    AuthorityDomainId, DeviceId, EndpointId, Generation, LoadSnapshotRequest, Lsn, Observation,
-    ObservationKind, ObservationRequest, OperatorRecord, PayloadContentType, PayloadEnvelope,
-    PrincipalEnrollment, ReceiveRequest, ResourceCapability, ResourceId, ResourceIdentity,
-    ResourceKind, ResourceProjectionContract, ResourceReport, ResourceReportMutation,
-    ResourceSnapshot, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
-    SchemaDescriptor, SnapshotViewKind, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind, VerifyOperatorPasswordRequest,
+    observation_request, resource_report, resource_report_mutation, AcceptedOperation,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuthorityDomainId, CommandId,
+    DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, LoadSnapshotRequest, Lsn, Observation, ObservationKind,
+    ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
+    PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceCapability,
+    ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUpsert,
+    ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
+    SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
+    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
+    authority::events as authority_events,
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    session::events as session_events,
     storage::{RusqliteStorage, Storage},
+    time::TestClock,
 };
 use patchbay_core_server::{
     adapter_service::{
@@ -135,11 +141,11 @@ fn authenticated<T>(message: T, adapter_id: &str, token: &str) -> Result<Request
     Ok(request)
 }
 
-fn authenticated_control<T>(message: T, session_id: &str, principal_id: &str, principal_secret: &str) -> Result<Request<T>, String> {
+fn authenticated_control<T>(message: T, actor_id: &str, session_id: &str, principal_id: &str, principal_secret: &str) -> Result<Request<T>, String> {
     let mut request = Request::new(message);
     for (header, value) in [
         (OPERATOR_SESSION_HEADER, session_id),
-        (OPERATOR_ID_HEADER, OPERATOR_ACTOR),
+        (OPERATOR_ID_HEADER, actor_id),
         (PRINCIPAL_ID_HEADER, principal_id),
         (PRINCIPAL_SECRET_HEADER, principal_secret),
     ] {
@@ -172,6 +178,580 @@ fn observation(vector: &ConformanceVector, domain: &AuthorityDomainId, identity:
             ..Observation::default()
         })),
     })
+}
+
+fn case_pointer(case_name: &str, suffix: &str) -> String {
+    format!("/{case_name}{suffix}")
+}
+
+fn operation_target(vector: &ConformanceVector, case_name: &str) -> Result<TargetScope, String> {
+    let pointer = case_pointer(case_name, "/operation/target_scope");
+    match string(&vector.input, &format!("{pointer}/kind"))? {
+        "TARGET_SCOPE_KIND_RUNTIME_SESSION" => Ok(TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: Some(AdapterId {
+                value: string(&vector.input, &format!("{pointer}/adapter_id/value"))?.to_owned(),
+            }),
+            deployment_scope: string(&vector.input, &format!("{pointer}/deployment_scope"))?
+                .to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: string(
+                    &vector.input,
+                    &format!("{pointer}/runtime_session_id/value"),
+                )?
+                .to_owned(),
+            }),
+            session_generation: Some(Generation {
+                value: vector
+                    .input
+                    .pointer(&format!("{pointer}/session_generation/value"))
+                    .and_then(Value::as_u64)
+                    .ok_or("missing session generation")?,
+            }),
+            ..TargetScope::default()
+        }),
+        "TARGET_SCOPE_KIND_RESOURCE" => Ok(TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource: Some(ResourceIdentity {
+                adapter_id: Some(AdapterId {
+                    value: string(
+                        &vector.input,
+                        &format!("{pointer}/resource/adapter_id/value"),
+                    )?
+                    .to_owned(),
+                }),
+                resource_kind: Some(ResourceKind {
+                    value: string(
+                        &vector.input,
+                        &format!("{pointer}/resource/resource_kind/value"),
+                    )?
+                    .to_owned(),
+                }),
+                resource_id: Some(ResourceId {
+                    value: string(
+                        &vector.input,
+                        &format!("{pointer}/resource/resource_id/value"),
+                    )?
+                    .to_owned(),
+                }),
+            }),
+            ..TargetScope::default()
+        }),
+        kind => Err(format!("unsupported conformance target kind {kind}")),
+    }
+}
+
+fn operation(
+    vector: &ConformanceVector,
+    case_name: &str,
+    authority_domain_id: &AuthorityDomainId,
+) -> Result<Operation, String> {
+    let pointer = case_pointer(case_name, "/operation");
+    let kind = match string(&vector.input, &format!("{pointer}/kind"))? {
+        "OPERATION_KIND_INSTRUCT" => OperationKind::Instruct,
+        "OPERATION_KIND_QUERY" => OperationKind::Query,
+        kind => return Err(format!("unsupported conformance OperationKind {kind}")),
+    };
+    for suffix in [
+        "/submitted_at",
+        "/validity_window/starts_at",
+        "/validity_window/expires_at",
+    ] {
+        let _ = string(&vector.input, &format!("{pointer}{suffix}"))?;
+    }
+    Ok(Operation {
+        command_id: Some(CommandId {
+            value: string(&vector.input, &format!("{pointer}/command_id/value"))?.to_owned(),
+        }),
+        authority_domain_id: Some(authority_domain_id.clone()),
+        sender: Some(ActorEndpointRef {
+            actor_id: vector
+                .input
+                .pointer(&format!("{pointer}/sender/actor_id/value"))
+                .and_then(Value::as_str)
+                .map(|value| ActorId {
+                    value: value.to_owned(),
+                }),
+            ..ActorEndpointRef::default()
+        }),
+        kind: kind as i32,
+        target_scope: Some(operation_target(vector, case_name)?),
+        idempotency_key: string(&vector.input, &format!("{pointer}/idempotency_key"))?.to_owned(),
+        payload: Some(PayloadEnvelope::default()),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp {
+                seconds: 99,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 101,
+                nanos: 0,
+            }),
+        }),
+        submitted_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
+        ..Operation::default()
+    })
+}
+
+fn operation_actor(vector: &ConformanceVector, case_name: &str) -> Result<String, String> {
+    let pointer = if case_name == "session_case" {
+        "/session_case/operation/sender/actor_id/value"
+    } else {
+        "/resource_case/verified_issuer/actor_id"
+    };
+    Ok(string(&vector.input, pointer)?.to_owned())
+}
+
+fn operation_grant(
+    vector: &ConformanceVector,
+    case_name: &str,
+    authority_domain_id: &AuthorityDomainId,
+    target: &TargetScope,
+) -> Result<Grant, String> {
+    let (grant_id, kind, endpoint) = if case_name == "session_case" {
+        let grant_target = "/session_case/preconditions/matching_grant/target_scope";
+        if string(
+            &vector.input,
+            "/session_case/preconditions/matching_grant/allowed_operation_kinds/0",
+        )? != "OPERATION_KIND_INSTRUCT"
+            || string(&vector.input, &format!("{grant_target}/kind"))?
+                != "TARGET_SCOPE_KIND_RUNTIME_SESSION"
+            || string(&vector.input, &format!("{grant_target}/adapter_id/value"))?
+                != target
+                    .adapter_id
+                    .as_ref()
+                    .map_or("", |id| id.value.as_str())
+            || string(&vector.input, &format!("{grant_target}/deployment_scope"))?
+                != target.deployment_scope
+            || string(
+                &vector.input,
+                &format!("{grant_target}/runtime_session_id/value"),
+            )? != target
+                .runtime_session_id
+                .as_ref()
+                .map_or("", |id| id.value.as_str())
+            || vector
+                .input
+                .pointer(&format!("{grant_target}/session_generation/value"))
+                .and_then(Value::as_u64)
+                != target.session_generation.map(|generation| generation.value)
+        {
+            return Err("session matching grant differs from the requested target/kind".to_owned());
+        }
+        (
+            string(
+                &vector.input,
+                "/session_case/preconditions/matching_grant/grant_id/value",
+            )?,
+            OperationKind::Instruct,
+            Some(EndpointId {
+                value: string(
+                    &vector.input,
+                    "/session_case/operation/sender/endpoint_id/value",
+                )?
+                .to_owned(),
+            }),
+        )
+    } else {
+        if string(
+            &vector.input,
+            "/resource_case/matching_grant/operation_kind",
+        )? != "OPERATION_KIND_QUERY"
+            || tuple(&vector.input, "/resource_case/matching_grant/target")?
+                != target
+                    .resource
+                    .clone()
+                    .ok_or("resource target missing identity")?
+        {
+            return Err(
+                "resource matching grant differs from the requested target/kind".to_owned(),
+            );
+        }
+        (
+            string(&vector.input, "/resource_case/matching_grant/grant_id")?,
+            OperationKind::Query,
+            None,
+        )
+    };
+    Ok(Grant {
+        grant_id: Some(GrantId {
+            value: grant_id.to_owned(),
+        }),
+        authority_domain_id: Some(authority_domain_id.clone()),
+        subject_actor_id: Some(ActorId {
+            value: operation_actor(vector, case_name)?,
+        }),
+        subject_endpoint_id: endpoint,
+        target_scope: Some(target.clone()),
+        allowed_operation_kinds: vec![kind as i32],
+        provenance: Some(GrantProvenance {
+            reason: "server conformance vector".to_owned(),
+            ..GrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    })
+}
+
+async fn seed_operator(
+    storage: &RusqliteStorage,
+    authority_domain_id: &AuthorityDomainId,
+    actor_id: &str,
+) -> Result<(), String> {
+    storage.append(
+        authority_domain_id,
+        StoredEventPayload {
+            kind: StoredEventKind::OperatorRecord as i32,
+            payload: OperatorRecord {
+                actor_id: Some(ActorId { value: actor_id.to_owned() }),
+                password_hash: "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g".to_owned(),
+                created_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+            }.encode_to_vec(),
+        },
+    ).await.map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn seed_operation_target(
+    storage: &RusqliteStorage,
+    authority_domain_id: &AuthorityDomainId,
+    target: &TargetScope,
+) -> Result<(), String> {
+    if TargetScopeKind::try_from(target.kind).ok() == Some(TargetScopeKind::RuntimeSession) {
+        let registration = session_events::registered(
+            authority_domain_id.clone(),
+            SessionRegistered {
+                adapter_id: target.adapter_id.clone(),
+                deployment_scope: target.deployment_scope.clone(),
+                runtime_session_id: target.runtime_session_id.clone(),
+                session_generation: target.session_generation,
+                initial_state: Some(SessionState {
+                    connectivity: SessionConnectivityState::Live as i32,
+                    activity: SessionActivityState::Idle as i32,
+                }),
+                project: "conformance".to_owned(),
+                cwd: "/conformance".to_owned(),
+                name: "session-vector".to_owned(),
+                model: "provider/model".to_owned(),
+                spawn_origin: None,
+            },
+        );
+        storage
+            .append(authority_domain_id, session_events::encode(&registration))
+            .await
+            .map_err(|error| error.to_string())?;
+    } else {
+        let identity = target
+            .resource
+            .clone()
+            .ok_or("resource target missing identity")?;
+        let adapter_id = identity
+            .adapter_id
+            .clone()
+            .ok_or("resource identity missing adapter")?;
+        let resource_kind = identity
+            .resource_kind
+            .clone()
+            .ok_or("resource identity missing kind")?;
+        let mut registry = ResourceRegistry::new();
+        ingest_resource_report(
+            storage,
+            &mut registry,
+            ValidatedResourceReport {
+                authority_domain_id: authority_domain_id.clone(),
+                adapter_id,
+                adapter_generation: Generation { value: 1 },
+                mode: ResourceReportMode::Delta,
+                views: vec![ResourceViewReport {
+                    resource_kind: Some(resource_kind),
+                    completeness: AdapterSnapshotSupport::Partial as i32,
+                    mutations: vec![ResourceReportMutation {
+                        identity: Some(identity),
+                        mutation: Some(resource_report_mutation::Mutation::Upsert(
+                            ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: vec![1],
+                                    content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: "resource.schema".to_owned(),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: vec![2],
+                                    content_type: PayloadContentType::Json as i32,
+                                    schema_ref: "projection.schema".to_owned(),
+                                }),
+                            },
+                        )),
+                    }],
+                }],
+                observed_at: Timestamp {
+                    seconds: 100,
+                    nanos: 0,
+                },
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+async fn server_operation_case(
+    vector: &ConformanceVector,
+    case_name: &str,
+    with_grant: bool,
+) -> Result<(), String> {
+    let authority_domain_id = AuthorityDomainId {
+        value: string(
+            &vector.input,
+            &case_pointer(case_name, "/operation/authority_domain_id/value"),
+        )?
+        .to_owned(),
+    };
+    let actor_id = operation_actor(vector, case_name)?;
+    let target = operation_target(vector, case_name)?;
+    if case_name == "resource_case"
+        && tuple(&vector.input, "/resource_case/registered_resource")?
+            != target
+                .resource
+                .clone()
+                .ok_or("resource target missing identity")?
+    {
+        return Err("registered resource differs from Operation target".to_owned());
+    }
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    seed_operator(&storage, &authority_domain_id, &actor_id).await?;
+    seed_operation_target(&storage, &authority_domain_id, &target).await?;
+    if with_grant {
+        storage
+            .append(
+                &authority_domain_id,
+                authority_events::grant(
+                    authority_domain_id.clone(),
+                    operation_grant(vector, case_name, &authority_domain_id, &target)?,
+                ),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    } else {
+        let grants_pointer = if case_name == "session_case" {
+            "/session_case/available_grants"
+        } else {
+            "/resource_case/available_grants"
+        };
+        if vector
+            .input
+            .pointer(grants_pointer)
+            .and_then(Value::as_array)
+            .is_none_or(|grants| !grants.is_empty())
+        {
+            return Err(format!(
+                "{case_name} missing-grant witness must provide an empty grant set"
+            ));
+        }
+    }
+    let service = ControlServiceImpl::new_with_clock(
+        storage.clone(),
+        authority_domain_id.clone(),
+        Arc::new(TestClock::new(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        })),
+    )
+    .await?;
+    let login = service
+        .verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId {
+                value: actor_id.clone(),
+            }),
+            password: OPERATOR_PASSWORD.to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId {
+                    value: if case_name == "session_case" {
+                        string(
+                            &vector.input,
+                            "/session_case/operation/sender/endpoint_id/value",
+                        )?
+                        .to_owned()
+                    } else {
+                        string(&vector.input, "/resource_case/verified_issuer/endpoint_id")?
+                            .to_owned()
+                    },
+                }),
+                device_id: Some(DeviceId {
+                    value: "conformance-host".to_owned(),
+                }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let session_id = login
+        .operator_session_id
+        .as_ref()
+        .ok_or("operation login omitted operator session")?
+        .value
+        .clone();
+    let principal = login.principal.ok_or("operation login omitted principal")?;
+    let result = service
+        .submit(authenticated_control(
+            SubmitRequest {
+                operation: Some(operation(vector, case_name, &authority_domain_id)?),
+            },
+            &actor_id,
+            &session_id,
+            &principal.principal_id,
+            &principal.secret,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let events = storage
+        .read_after(&authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    let operation_events = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .collect::<Vec<_>>();
+    let expected_pointer = format!("/{case_name}");
+    if with_grant {
+        let expected_append_count = vector
+            .expected_outcome
+            .pointer(&format!("{expected_pointer}/durable_record/append_count"))
+            .and_then(Value::as_u64)
+            .unwrap_or(1) as usize;
+        let durable = operation_events
+            .first()
+            .ok_or_else(|| format!("{case_name} server acceptance did not append an Operation"))?;
+        let accepted = AcceptedOperation::decode(durable.payload.payload.as_slice())
+            .map_err(|error| error.to_string())?;
+        let durable_operation = accepted
+            .operation
+            .as_ref()
+            .ok_or("durable acceptance omitted Operation")?;
+        let expected_result_command = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/command_id/value"
+            ))
+            .and_then(Value::as_str);
+        let expected_durable_command = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/durable_record/command_id/value"
+            ))
+            .and_then(Value::as_str);
+        let expected_deduplicated = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/deduplicated"
+            ))
+            .and_then(Value::as_bool);
+        if string(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/submission_result/outcome"),
+        )? != "SUBMISSION_OUTCOME_ACCEPTED"
+            || string(
+                &vector.expected_outcome,
+                &format!("{expected_pointer}/submission_result/operation_state"),
+            )? != "OPERATION_STATE_ACCEPTED"
+            || string(
+                &vector.expected_outcome,
+                &format!("{expected_pointer}/durable_record/operation_state"),
+            )? != "OPERATION_STATE_ACCEPTED"
+            || result.outcome != SubmissionOutcome::Accepted as i32
+            || result.operation_state != OperationState::Accepted as i32
+            || operation_events.len() != expected_append_count
+            || result.accepted_lsn != durable.event_id.lsn
+            || result.command_id != durable_operation.command_id
+            || expected_result_command.is_some_and(|expected| {
+                result.command_id.as_ref().map(|id| id.value.as_str()) != Some(expected)
+            })
+            || expected_durable_command.is_some_and(|expected| {
+                durable_operation
+                    .command_id
+                    .as_ref()
+                    .map(|id| id.value.as_str())
+                    != Some(expected)
+            })
+            || expected_deduplicated.is_some_and(|expected| result.deduplicated != expected)
+        {
+            return Err(format!(
+                "{case_name} durable-acceptance outcome disagrees with server execution"
+            ));
+        }
+        if let Some(expected_grant) = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/decision_grant_id"
+            ))
+            .and_then(Value::as_str)
+        {
+            if result
+                .decision_grant_id
+                .as_ref()
+                .map(|id| id.value.as_str())
+                != Some(expected_grant)
+            {
+                return Err(format!(
+                    "{case_name} server acceptance selected the wrong grant"
+                ));
+            }
+        }
+    } else if string(
+        &vector.expected_outcome,
+        &format!("{expected_pointer}/submission_result/outcome"),
+    )? != "SUBMISSION_OUTCOME_REJECTED"
+        || string(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/submission_result/failure_code"),
+        )? != "FAILURE_CODE_AUTHORIZATION_DENIED"
+        || vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/command_id/value"
+            ))
+            .and_then(Value::as_str)
+            .is_some_and(|expected| {
+                result.command_id.as_ref().map(|id| id.value.as_str()) != Some(expected)
+            })
+        || vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/deduplicated"
+            ))
+            .and_then(Value::as_bool)
+            .is_some_and(|expected| result.deduplicated != expected)
+        || result.outcome != SubmissionOutcome::Rejected as i32
+        || result.failure_code != FailureCode::AuthorizationDenied as i32
+        || !operation_events.is_empty()
+        || boolean(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/durable_acceptance_record_created"),
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/delivered_to_adapter"),
+        )?
+    {
+        return Err(format!(
+            "{case_name} missing-grant outcome disagrees with server execution"
+        ));
+    }
+    Ok(())
+}
+
+async fn server_operation_scenario(
+    vector: &ConformanceVector,
+    with_grant: bool,
+) -> Result<(), String> {
+    server_operation_case(vector, "session_case", with_grant).await?;
+    server_operation_case(vector, "resource_case", with_grant).await
 }
 
 async fn disconnect_degrades_snapshot(vector: &ConformanceVector) -> Result<(), String> {
@@ -258,7 +838,257 @@ async fn disconnect_degrades_snapshot(vector: &ConformanceVector) -> Result<(), 
     Ok(())
 }
 
-async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
+fn lsn_values(value: &Value, pointer: &str) -> Result<Vec<u64>, String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing LSN list {pointer}"))?
+        .iter()
+        .map(|entry| {
+            entry
+                .pointer("/lsn/value")
+                .or_else(|| entry.pointer("/value"))
+                .and_then(Value::as_u64)
+                .ok_or_else(|| format!("invalid LSN entry in {pointer}"))
+        })
+        .collect()
+}
+
+async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
+    let cached_lsn = vector
+        .input
+        .pointer("/session_case/cached_snapshot/snapshot_lsn/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing cached session snapshot LSN")?;
+    let current_revision = vector
+        .input
+        .pointer("/session_case/current_authoritative_view/current_revision_lsn/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing current session revision")?;
+    let replacement_lsn = vector
+        .expected_outcome
+        .pointer("/session_case/snapshot_decision/replacement_required_from_lsn/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing expected session replacement LSN")?;
+    let cursor = vector
+        .input
+        .pointer("/session_case/subscription/cursor/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing session replay cursor")?;
+    let available = lsn_values(&vector.input, "/session_case/available_observations")?;
+    let replayed = lsn_values(
+        &vector.expected_outcome,
+        "/session_case/replayed_observations",
+    )?;
+    let excluded = lsn_values(&vector.expected_outcome, "/session_case/excluded_lsns")?;
+    let expected_replayed = available
+        .iter()
+        .copied()
+        .filter(|lsn| *lsn > cursor)
+        .collect::<Vec<_>>();
+    let expected_excluded = available
+        .iter()
+        .copied()
+        .filter(|lsn| *lsn <= cursor)
+        .collect::<Vec<_>>();
+    if vector
+        .expected_outcome
+        .pointer("/session_case/snapshot_decision/accepted")
+        .and_then(Value::as_bool)
+        != Some(false)
+        || string(
+            &vector.expected_outcome,
+            "/session_case/snapshot_decision/failure_code",
+        )? != "FAILURE_CODE_STALE_EVENT"
+        || replacement_lsn != current_revision
+        || current_revision <= cached_lsn
+        || replayed != expected_replayed
+        || excluded != expected_excluded
+    {
+        return Err("session snapshot/replay expectation contradicts stale rejection".to_owned());
+    }
+
+    let authority_domain_id = AuthorityDomainId {
+        value: string(
+            &vector.input,
+            "/session_case/cached_snapshot/authority_domain_id/value",
+        )?
+        .to_owned(),
+    };
+    if string(
+        &vector.input,
+        "/session_case/current_authoritative_view/authority_domain_id/value",
+    )? != authority_domain_id.value
+    {
+        return Err("session cached/current authority domains differ".to_owned());
+    }
+    let actor_id = string(
+        &vector.input,
+        "/session_case/subscription/subscriber/actor_id/value",
+    )?
+    .to_owned();
+    let target = vector
+        .input
+        .pointer("/session_case/cached_snapshot/view_revisions/0/target_scope")
+        .ok_or("missing session view target")?;
+    let adapter_id = AdapterId {
+        value: string(target, "/adapter_id/value")?.to_owned(),
+    };
+    let deployment_scope = string(target, "/deployment_scope")?.to_owned();
+    let runtime_session_id = RuntimeSessionId {
+        value: string(target, "/runtime_session_id/value")?.to_owned(),
+    };
+    let generation = Generation {
+        value: target
+            .pointer("/session_generation/value")
+            .and_then(Value::as_u64)
+            .ok_or("missing snapshot session generation")?,
+    };
+
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    seed_operator(&storage, &authority_domain_id, &actor_id).await?;
+    for index in 0..(current_revision.saturating_sub(2)) {
+        let filler = Grant {
+            grant_id: Some(GrantId {
+                value: format!("snapshot-filler-{index}"),
+            }),
+            authority_domain_id: Some(authority_domain_id.clone()),
+            subject_actor_id: Some(ActorId {
+                value: actor_id.clone(),
+            }),
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::AuthorityDomain as i32,
+                ..TargetScope::default()
+            }),
+            allowed_operation_kinds: vec![OperationKind::Query as i32],
+            provenance: Some(GrantProvenance {
+                reason: "snapshot revision fixture".to_owned(),
+                ..GrantProvenance::default()
+            }),
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
+        };
+        storage
+            .append(
+                &authority_domain_id,
+                authority_events::grant(authority_domain_id.clone(), filler),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    let registration = session_events::registered(
+        authority_domain_id.clone(),
+        SessionRegistered {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: deployment_scope.clone(),
+            runtime_session_id: Some(runtime_session_id.clone()),
+            session_generation: Some(generation),
+            initial_state: Some(SessionState {
+                connectivity: SessionConnectivityState::Live as i32,
+                activity: SessionActivityState::Idle as i32,
+            }),
+            project: "conformance".to_owned(),
+            cwd: "/conformance".to_owned(),
+            name: "snapshot-vector".to_owned(),
+            model: "provider/model".to_owned(),
+            spawn_origin: None,
+        },
+    );
+    let registration_event = storage
+        .append(&authority_domain_id, session_events::encode(&registration))
+        .await
+        .map_err(|error| error.to_string())?;
+    if registration_event.lsn.as_ref().map(|lsn| lsn.value) != Some(current_revision) {
+        return Err("session fixture did not commit at the vector's current revision".to_owned());
+    }
+
+    let service = ControlServiceImpl::new_with_clock(
+        storage.clone(),
+        authority_domain_id.clone(),
+        Arc::new(TestClock::new(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        })),
+    )
+    .await?;
+    let login = service
+        .verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId {
+                value: actor_id.clone(),
+            }),
+            password: OPERATOR_PASSWORD.to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId {
+                    value: "session-snapshot".to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "conformance-host".to_owned(),
+                }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let session_id = login
+        .operator_session_id
+        .as_ref()
+        .ok_or("session snapshot login omitted operator session")?
+        .value
+        .clone();
+    let principal = login
+        .principal
+        .ok_or("session snapshot login omitted principal")?;
+    let response = service
+        .load_snapshot(authenticated_control(
+            LoadSnapshotRequest {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                at_or_before: Some(Lsn { value: cached_lsn }),
+                view_kind: SnapshotViewKind::Session as i32,
+            },
+            &actor_id,
+            &session_id,
+            &principal.principal_id,
+            &principal.secret,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let snapshot = SessionSnapshot::decode(response.snapshot_payload.as_slice())
+        .map_err(|error| format!("load_snapshot returned a non-session payload: {error}"))?;
+    let current_lsn = snapshot
+        .snapshot_lsn
+        .as_ref()
+        .ok_or("session RPC snapshot missing LSN")?
+        .value;
+    let session = snapshot.sessions.iter().find(|session| {
+        session.adapter_id.as_ref() == Some(&adapter_id)
+            && session.deployment_scope == deployment_scope
+            && session.runtime_session_id.as_ref() == Some(&runtime_session_id)
+            && session.session_generation == Some(generation)
+    });
+    if response.view_kind != SnapshotViewKind::Session as i32
+        || !response.present
+        || response
+            .event_id
+            .as_ref()
+            .and_then(|event| event.lsn.as_ref())
+            .map(|lsn| lsn.value)
+            != Some(current_lsn)
+        || current_lsn < current_revision
+        || current_lsn <= cached_lsn
+        || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
+        || session.is_none()
+    {
+        return Err(
+            "load_snapshot RPC did not replace the stale session view with current authority"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
     let request_kind = string(&vector.input, "/resource_case/request/view_kind")?;
     let expected_request_kind = string(&vector.expected_outcome, "/resource_case/requested_view_kind")?;
     let expected_return_kind = string(&vector.expected_outcome, "/resource_case/returned_view_kind")?;
@@ -359,6 +1189,7 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
             at_or_before: Some(Lsn { value: cached_lsn }),
             view_kind: requested_view_kind as i32,
         },
+        OPERATOR_ACTOR,
         &session_id,
         &principal.principal_id,
         &principal.secret,
@@ -388,6 +1219,11 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
         return Err("load_snapshot RPC did not return the vector's current resource replacement".to_owned());
     }
     Ok(())
+}
+
+async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
+    session_snapshot_reconciliation(vector).await?;
+    resource_snapshot_reconciliation(vector).await
 }
 
 async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
@@ -453,8 +1289,10 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
+        "operation_durable_acceptance" => server_operation_scenario(vector, true).await,
+        "operation_missing_grant" => server_operation_scenario(vector, false).await,
         "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
-        "resource_snapshot_reconciliation" => snapshot_reconciliation(vector).await,
+        "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "resource_observation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
     }
@@ -463,7 +1301,15 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
 #[tokio::test]
 async fn conformance_vector_runner() {
     let vectors = vectors();
-    for request in requests() {
+    let requested = if env::var("PATCHBAY_CONFORMANCE_REQUESTS").is_ok() {
+        requests()
+    } else {
+        vectors.values().flat_map(|vector| vector.implementation_checks.iter()
+            .filter(|check| check.runner == RUNNER)
+            .map(|check| RequestedCheck { vector_id: vector.vector_id.clone(), case: check.case.clone() }))
+            .collect()
+    };
+    for request in requested {
         let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
         assert!(vector.implementation_checks.iter().any(|check| check.runner == RUNNER && check.case == request.case), "unregistered requested check {}:{}", request.vector_id, request.case);
         execute_case(vector, &request.case).await.unwrap_or_else(|error| panic!("{error}"));

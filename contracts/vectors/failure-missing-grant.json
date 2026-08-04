@@ -5,7 +5,11 @@
   "implementation_checks": [
     {
       "runner": "rust-core",
-      "case": "resource_operation_missing_grant"
+      "case": "operation_missing_grant"
+    },
+    {
+      "runner": "rust-server",
+      "case": "operation_missing_grant"
     }
   ],
   "proto_fields_constrained": [
@@ -63,6 +67,7 @@
           "adapter_id": {
             "value": "pi"
           },
+          "deployment_scope": "conformance-host",
           "runtime_session_id": {
             "value": "sess-unauthorized"
           },
@@ -70,7 +75,12 @@
             "value": 1
           }
         },
-        "idempotency_key": "idem-no-grant-001"
+        "idempotency_key": "idem-no-grant-001",
+        "submitted_at": "2026-07-06T00:00:00Z",
+        "validity_window": {
+          "starts_at": "2026-07-05T23:59:00Z",
+          "expires_at": "2026-07-06T00:01:00Z"
+        }
       },
       "available_grants_type": "patchbay.Grant",
       "available_grants": []

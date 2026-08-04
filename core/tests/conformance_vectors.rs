@@ -1,13 +1,15 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use patchbay_contracts::patchbay::{
-    resource_report_mutation, resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
-    AuthorityDomainId, CommandId, DeviceId, EndpointId, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, Observation, ObservationKind, Operation,
-    OperationKind, OperationState, PayloadContentType, PayloadEnvelope, ResourceId,
-    ResourceFreshnessState, ResourceKind, ResourceReportMutation, ResourceStateEvent,
+    resource_report_mutation, resource_state_mutation, AcceptedOperation, ActorEndpointRef,
+    ActorId, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, CommandId, DeviceId, EndpointId,
+    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    ResourceId, ResourceFreshnessState, ResourceKind, ResourceReportMutation, ResourceStateEvent,
     ResourceStateMutation, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
-    ResourceViewStateUpdate, StoredEventKind, SubmissionOutcome, TimeWindow,
+    ResourceViewStateUpdate, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
+    SessionRegistered, SessionState, StoredEventKind, SubmissionOutcome, TargetScope,
+    TargetScopeKind, TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
@@ -16,10 +18,10 @@ use patchbay_core::{
     },
     authority::{ingest_grant, target_scope_matches, AuthorityRegistry, IssuerContext},
     resource::{
-        events, ingest_resource_report, rebuild_from_log, ResourceIdentity, ResourceRegistry,
-        ResourceReportMode, ValidatedResourceReport,
+        events as resource_events, ingest_resource_report, rebuild_from_log, ResourceIdentity,
+        ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
     },
-    session::SessionRegistry,
+    session::{events as session_events, SessionRegistry},
     storage::{event_id, RecordedEvent, RusqliteStorage, Storage},
     target::TargetRegistry,
     time::TestClock,
@@ -148,7 +150,7 @@ fn resource_registry(authority_domain_id: &AuthorityDomainId, identities: &[Reso
         registry
             .observe(&RecordedEvent {
                 event_id: event_id(authority_domain_id.clone(), index as u64 + 1),
-                payload: events::encode(&state),
+                payload: resource_events::encode(&state),
             })
             .expect("valid resource fixture");
     }
@@ -193,123 +195,487 @@ impl CommandStateLookup for NoContracts {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> { None }
 }
 
-fn issuer(vector: &ConformanceVector, authority_domain_id: AuthorityDomainId) -> Result<Issuer, String> {
+fn case_pointer(case_name: &str, suffix: &str) -> String {
+    format!("/{case_name}{suffix}")
+}
+
+fn issuer(
+    vector: &ConformanceVector,
+    case_name: &str,
+    authority_domain_id: AuthorityDomainId,
+) -> Result<Issuer, String> {
+    let (actor_pointer, endpoint_pointer) = if case_name == "session_case" {
+        (
+            "/operation/sender/actor_id/value",
+            "/operation/sender/endpoint_id/value",
+        )
+    } else {
+        ("/verified_issuer/actor_id", "/verified_issuer/endpoint_id")
+    };
     Ok(Issuer {
-        actor: ActorId { value: string(&vector.input, "/resource_case/verified_issuer/actor_id")?.to_owned() },
-        endpoint: EndpointId { value: string(&vector.input, "/resource_case/verified_issuer/endpoint_id")?.to_owned() },
-        device: DeviceId { value: "conformance-device".to_owned() },
+        actor: ActorId {
+            value: string(&vector.input, &case_pointer(case_name, actor_pointer))?.to_owned(),
+        },
+        endpoint: EndpointId {
+            value: string(&vector.input, &case_pointer(case_name, endpoint_pointer))?.to_owned(),
+        },
+        device: DeviceId {
+            value: "conformance-device".to_owned(),
+        },
         domain: authority_domain_id,
     })
 }
 
-fn operation(vector: &ConformanceVector, authority_domain_id: AuthorityDomainId, identity: &ResourceIdentity) -> Result<Operation, String> {
-    if string(&vector.input, "/resource_case/operation/kind")? != "OPERATION_KIND_QUERY" {
-        return Err("resource conformance operation must be QUERY".to_owned());
+fn operation_target(vector: &ConformanceVector, case_name: &str) -> Result<TargetScope, String> {
+    let target_pointer = case_pointer(case_name, "/operation/target_scope");
+    match string(&vector.input, &format!("{target_pointer}/kind"))? {
+        "TARGET_SCOPE_KIND_RUNTIME_SESSION" => Ok(TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: Some(AdapterId {
+                value: string(&vector.input, &format!("{target_pointer}/adapter_id/value"))?
+                    .to_owned(),
+            }),
+            deployment_scope: string(&vector.input, &format!("{target_pointer}/deployment_scope"))?
+                .to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: string(
+                    &vector.input,
+                    &format!("{target_pointer}/runtime_session_id/value"),
+                )?
+                .to_owned(),
+            }),
+            session_generation: Some(Generation {
+                value: vector
+                    .input
+                    .pointer(&format!("{target_pointer}/session_generation/value"))
+                    .and_then(Value::as_u64)
+                    .ok_or("missing session generation")?,
+            }),
+            ..TargetScope::default()
+        }),
+        "TARGET_SCOPE_KIND_RESOURCE" => {
+            Ok(wire_identity(&vector.input, &format!("{target_pointer}/resource"))?.to_scope())
+        }
+        kind => Err(format!("unsupported conformance target kind {kind}")),
     }
-    for pointer in [
-        "/resource_case/operation/submitted_at",
-        "/resource_case/operation/validity_window/starts_at",
-        "/resource_case/operation/validity_window/expires_at",
+}
+
+fn operation(
+    vector: &ConformanceVector,
+    case_name: &str,
+    authority_domain_id: AuthorityDomainId,
+) -> Result<Operation, String> {
+    let operation_pointer = case_pointer(case_name, "/operation");
+    let kind = match string(&vector.input, &format!("{operation_pointer}/kind"))? {
+        "OPERATION_KIND_INSTRUCT" => OperationKind::Instruct,
+        "OPERATION_KIND_QUERY" => OperationKind::Query,
+        kind => return Err(format!("unsupported conformance OperationKind {kind}")),
+    };
+    for suffix in [
+        "/submitted_at",
+        "/validity_window/starts_at",
+        "/validity_window/expires_at",
     ] {
-        let _ = string(&vector.input, pointer)?;
+        let _ = string(&vector.input, &format!("{operation_pointer}{suffix}"))?;
     }
+    let sender_actor = vector
+        .input
+        .pointer(&format!("{operation_pointer}/sender/actor_id/value"))
+        .and_then(Value::as_str)
+        .unwrap_or("payload-claim");
     Ok(Operation {
-        command_id: Some(CommandId { value: string(&vector.input, "/resource_case/operation/command_id/value")?.to_owned() }),
+        command_id: Some(CommandId {
+            value: string(
+                &vector.input,
+                &format!("{operation_pointer}/command_id/value"),
+            )?
+            .to_owned(),
+        }),
         authority_domain_id: Some(authority_domain_id),
-        sender: Some(ActorEndpointRef { actor_id: Some(ActorId { value: string(&vector.input, "/resource_case/operation/sender/actor_id/value").unwrap_or("payload-claim").to_owned() }), ..ActorEndpointRef::default() }),
-        kind: OperationKind::Query as i32,
-        target_scope: Some(identity.to_scope()),
-        idempotency_key: string(&vector.input, "/resource_case/operation/idempotency_key")?.to_owned(),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: sender_actor.to_owned(),
+            }),
+            ..ActorEndpointRef::default()
+        }),
+        kind: kind as i32,
+        target_scope: Some(operation_target(vector, case_name)?),
+        idempotency_key: string(
+            &vector.input,
+            &format!("{operation_pointer}/idempotency_key"),
+        )?
+        .to_owned(),
         payload: Some(PayloadEnvelope::default()),
         validity_window: Some(TimeWindow {
-            starts_at: Some(Timestamp { seconds: 99, nanos: 0 }),
-            expires_at: Some(Timestamp { seconds: 101, nanos: 0 }),
+            starts_at: Some(Timestamp {
+                seconds: 99,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 101,
+                nanos: 0,
+            }),
         }),
-        submitted_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        submitted_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
         ..Operation::default()
     })
 }
 
-fn grant(vector: &ConformanceVector, authority_domain_id: AuthorityDomainId, identity: &ResourceIdentity) -> Result<Grant, String> {
-    if string(&vector.input, "/resource_case/matching_grant/operation_kind")? != "OPERATION_KIND_QUERY" {
-        return Err("resource conformance grant must permit QUERY".to_owned());
-    }
-    let grant_identity = tuple(&vector.input, "/resource_case/matching_grant/target")?;
-    if &grant_identity != identity {
-        return Err("matching grant target differs from registered resource".to_owned());
+fn matching_grant(
+    vector: &ConformanceVector,
+    case_name: &str,
+    authority_domain_id: AuthorityDomainId,
+    target_scope: &TargetScope,
+) -> Result<Grant, String> {
+    let (grant_pointer, actor_pointer, endpoint_pointer, kind) = if case_name == "session_case" {
+        (
+            "/session_case/preconditions/matching_grant",
+            "/session_case/operation/sender/actor_id/value",
+            Some("/session_case/operation/sender/endpoint_id/value"),
+            OperationKind::Instruct,
+        )
+    } else {
+        (
+            "/resource_case/matching_grant",
+            "/resource_case/verified_issuer/actor_id",
+            None,
+            OperationKind::Query,
+        )
+    };
+    let grant_id_pointer = if case_name == "session_case" {
+        "/grant_id/value"
+    } else {
+        "/grant_id"
+    };
+    if case_name == "resource_case" {
+        if string(
+            &vector.input,
+            "/resource_case/matching_grant/operation_kind",
+        )? != "OPERATION_KIND_QUERY"
+            || tuple(&vector.input, "/resource_case/matching_grant/target")?.to_scope()
+                != *target_scope
+        {
+            return Err(
+                "resource matching grant differs from the requested target/kind".to_owned(),
+            );
+        }
+    } else {
+        let grant_target = "/session_case/preconditions/matching_grant/target_scope";
+        if string(
+            &vector.input,
+            "/session_case/preconditions/matching_grant/allowed_operation_kinds/0",
+        )? != "OPERATION_KIND_INSTRUCT"
+            || string(&vector.input, &format!("{grant_target}/kind"))?
+                != "TARGET_SCOPE_KIND_RUNTIME_SESSION"
+            || string(&vector.input, &format!("{grant_target}/adapter_id/value"))?
+                != target_scope
+                    .adapter_id
+                    .as_ref()
+                    .map_or("", |id| id.value.as_str())
+            || string(&vector.input, &format!("{grant_target}/deployment_scope"))?
+                != target_scope.deployment_scope
+            || string(
+                &vector.input,
+                &format!("{grant_target}/runtime_session_id/value"),
+            )? != target_scope
+                .runtime_session_id
+                .as_ref()
+                .map_or("", |id| id.value.as_str())
+            || vector
+                .input
+                .pointer(&format!("{grant_target}/session_generation/value"))
+                .and_then(Value::as_u64)
+                != target_scope
+                    .session_generation
+                    .map(|generation| generation.value)
+        {
+            return Err("session matching grant differs from the requested target/kind".to_owned());
+        }
     }
     Ok(Grant {
-        grant_id: Some(GrantId { value: string(&vector.input, "/resource_case/matching_grant/grant_id")?.to_owned() }),
+        grant_id: Some(GrantId {
+            value: string(&vector.input, &format!("{grant_pointer}{grant_id_pointer}"))?.to_owned(),
+        }),
         authority_domain_id: Some(authority_domain_id),
-        subject_actor_id: Some(ActorId { value: string(&vector.input, "/resource_case/verified_issuer/actor_id")?.to_owned() }),
-        target_scope: Some(identity.to_scope()),
-        allowed_operation_kinds: vec![OperationKind::Query as i32],
-        provenance: Some(GrantProvenance { reason: "conformance vector".to_owned(), ..GrantProvenance::default() }),
+        subject_actor_id: Some(ActorId {
+            value: string(&vector.input, actor_pointer)?.to_owned(),
+        }),
+        subject_endpoint_id: endpoint_pointer.map(|pointer| EndpointId {
+            value: string(&vector.input, pointer)
+                .expect("session endpoint was validated")
+                .to_owned(),
+        }),
+        target_scope: Some(target_scope.clone()),
+        allowed_operation_kinds: vec![kind as i32],
+        provenance: Some(GrantProvenance {
+            reason: "conformance vector".to_owned(),
+            ..GrantProvenance::default()
+        }),
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     })
 }
 
-async fn resource_operation(vector: &ConformanceVector, with_grant: bool) -> Result<(), String> {
-    let authority_domain_id = domain(&vector.input, "/resource_case/operation/authority_domain_id/value")?;
-    let identity = wire_identity(&vector.input, "/resource_case/operation/target_scope/resource")?;
-    if tuple(&vector.input, "/resource_case/registered_resource")? != identity {
-        return Err("registered resource differs from Operation target".to_owned());
-    }
+fn session_registry(
+    authority_domain_id: &AuthorityDomainId,
+    target: &TargetScope,
+) -> Result<SessionRegistry, String> {
+    let registration = session_events::registered(
+        authority_domain_id.clone(),
+        SessionRegistered {
+            adapter_id: target.adapter_id.clone(),
+            deployment_scope: target.deployment_scope.clone(),
+            runtime_session_id: target.runtime_session_id.clone(),
+            session_generation: target.session_generation,
+            initial_state: Some(SessionState {
+                connectivity: SessionConnectivityState::Live as i32,
+                activity: SessionActivityState::Idle as i32,
+            }),
+            project: "conformance".to_owned(),
+            cwd: "/conformance".to_owned(),
+            name: "session-vector".to_owned(),
+            model: "provider/model".to_owned(),
+            spawn_origin: None,
+        },
+    );
+    let mut sessions = SessionRegistry::new();
+    sessions
+        .observe(&RecordedEvent {
+            event_id: event_id(authority_domain_id.clone(), 1),
+            payload: session_events::encode(&registration),
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(sessions)
+}
+
+async fn operation_case(
+    vector: &ConformanceVector,
+    case_name: &str,
+    with_grant: bool,
+) -> Result<(), String> {
+    let authority_domain_id = domain(
+        &vector.input,
+        &case_pointer(case_name, "/operation/authority_domain_id/value"),
+    )?;
+    let target_scope = operation_target(vector, case_name)?;
+    let (sessions, resources) = if case_name == "session_case" {
+        (
+            session_registry(&authority_domain_id, &target_scope)?,
+            ResourceRegistry::new(),
+        )
+    } else {
+        let identity =
+            ResourceIdentity::try_from_scope(&target_scope).map_err(|error| error.to_string())?;
+        if tuple(&vector.input, "/resource_case/registered_resource")? != identity {
+            return Err("registered resource differs from Operation target".to_owned());
+        }
+        (
+            SessionRegistry::new(),
+            resource_registry(&authority_domain_id, std::slice::from_ref(&identity)),
+        )
+    };
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     let mut authority = AuthorityRegistry::new();
     if with_grant {
-        ingest_grant(&storage, &mut authority, &authority_domain_id, grant(vector, authority_domain_id.clone(), &identity)?)
-            .await
-            .map_err(|error| error.to_string())?;
-    } else if vector.input.pointer("/resource_case/available_grants").and_then(Value::as_array).is_none_or(|grants| !grants.is_empty()) {
-        return Err("missing-grant vector must provide an empty grant set".to_owned());
+        ingest_grant(
+            &storage,
+            &mut authority,
+            &authority_domain_id,
+            matching_grant(
+                vector,
+                case_name,
+                authority_domain_id.clone(),
+                &target_scope,
+            )?,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    } else {
+        let grants_pointer = if case_name == "session_case" {
+            "/session_case/available_grants"
+        } else {
+            "/resource_case/available_grants"
+        };
+        if vector
+            .input
+            .pointer(grants_pointer)
+            .and_then(Value::as_array)
+            .is_none_or(|grants| !grants.is_empty())
+        {
+            return Err(format!(
+                "{case_name} missing-grant witness must provide an empty grant set"
+            ));
+        }
     }
-    let targets = TargetRegistry::new(
-        SessionRegistry::new(),
-        resource_registry(&authority_domain_id, std::slice::from_ref(&identity)),
-    );
     let result = submit_with_clock(
         &storage,
         &authority,
-        &targets,
+        &TargetRegistry::new(sessions, resources),
         &CommandIndex::new(),
         &NoContracts,
-        &issuer(vector, authority_domain_id.clone())?,
-        operation(vector, authority_domain_id.clone(), &identity)?,
-        &TestClock::new(Timestamp { seconds: 100, nanos: 0 }),
+        &issuer(vector, case_name, authority_domain_id.clone())?,
+        operation(vector, case_name, authority_domain_id.clone())?,
+        &TestClock::new(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
     )
     .await
     .map_err(|error| error.to_string())?;
     let events = storage
-        .read_after(&authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .read_after(
+            &authority_domain_id,
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
         .await
         .map_err(|error| error.to_string())?;
-    let operation_count = events.iter().filter(|event| event.payload.kind == StoredEventKind::Operation as i32).count();
+    let operation_events = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .collect::<Vec<_>>();
+    let expected_pointer = format!("/{case_name}");
     if with_grant {
-        if string(&vector.expected_outcome, "/resource_case/submission_result/outcome")? != "SUBMISSION_OUTCOME_ACCEPTED"
-            || string(&vector.expected_outcome, "/resource_case/submission_result/operation_state")? != "OPERATION_STATE_ACCEPTED"
+        let expected_append_count = vector
+            .expected_outcome
+            .pointer(&format!("{expected_pointer}/durable_record/append_count"))
+            .and_then(Value::as_u64)
+            .unwrap_or(1) as usize;
+        let durable = operation_events
+            .first()
+            .ok_or_else(|| format!("{case_name} acceptance did not append an Operation"))?;
+        let accepted = AcceptedOperation::decode(durable.payload.payload.as_slice())
+            .map_err(|error| error.to_string())?;
+        let durable_operation = accepted
+            .operation
+            .as_ref()
+            .ok_or("durable acceptance omitted Operation")?;
+        let expected_result_command = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/command_id/value"
+            ))
+            .and_then(Value::as_str);
+        let expected_durable_command = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/durable_record/command_id/value"
+            ))
+            .and_then(Value::as_str);
+        let expected_deduplicated = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/deduplicated"
+            ))
+            .and_then(Value::as_bool);
+        if string(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/submission_result/outcome"),
+        )? != "SUBMISSION_OUTCOME_ACCEPTED"
+            || string(
+                &vector.expected_outcome,
+                &format!("{expected_pointer}/submission_result/operation_state"),
+            )? != "OPERATION_STATE_ACCEPTED"
+            || string(
+                &vector.expected_outcome,
+                &format!("{expected_pointer}/durable_record/operation_state"),
+            )? != "OPERATION_STATE_ACCEPTED"
             || result.outcome != SubmissionOutcome::Accepted as i32
             || result.operation_state != OperationState::Accepted as i32
-            || operation_count != vector.expected_outcome.pointer("/resource_case/durable_record/append_count").and_then(Value::as_u64).unwrap_or(0) as usize
-            || !boolean(&vector.expected_outcome, "/resource_case/durable_before_delivery")?
-            || boolean(&vector.expected_outcome, "/resource_case/delivered_before_append")?
+            || operation_events.len() != expected_append_count
+            || result.accepted_lsn != durable.event_id.lsn
+            || result.command_id != durable_operation.command_id
+            || expected_result_command.is_some_and(|expected| {
+                result.command_id.as_ref().map(|id| id.value.as_str()) != Some(expected)
+            })
+            || expected_durable_command.is_some_and(|expected| {
+                durable_operation
+                    .command_id
+                    .as_ref()
+                    .map(|id| id.value.as_str())
+                    != Some(expected)
+            })
+            || expected_deduplicated.is_some_and(|expected| result.deduplicated != expected)
         {
-            return Err("resource durable-acceptance outcome disagrees with product execution".to_owned());
+            return Err(format!(
+                "{case_name} durable-acceptance outcome disagrees with core execution"
+            ));
         }
-        if result.decision_grant_id.as_ref().map(|id| id.value.as_str()) != Some(string(&vector.expected_outcome, "/resource_case/submission_result/decision_grant_id")?) {
-            return Err("acceptance selected the wrong grant".to_owned());
+        if let Some(expected_grant) = vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/decision_grant_id"
+            ))
+            .and_then(Value::as_str)
+        {
+            if result
+                .decision_grant_id
+                .as_ref()
+                .map(|id| id.value.as_str())
+                != Some(expected_grant)
+            {
+                return Err(format!("{case_name} acceptance selected the wrong grant"));
+            }
         }
-    } else if string(&vector.expected_outcome, "/resource_case/submission_result/outcome")? != "SUBMISSION_OUTCOME_REJECTED"
-        || string(&vector.expected_outcome, "/resource_case/submission_result/failure_code")? != "FAILURE_CODE_AUTHORIZATION_DENIED"
+        if case_name == "resource_case"
+            && (!boolean(
+                &vector.expected_outcome,
+                "/resource_case/durable_before_delivery",
+            )? || boolean(
+                &vector.expected_outcome,
+                "/resource_case/delivered_before_append",
+            )?)
+        {
+            return Err("resource delivery ordering expectation is contradictory".to_owned());
+        }
+    } else if string(
+        &vector.expected_outcome,
+        &format!("{expected_pointer}/submission_result/outcome"),
+    )? != "SUBMISSION_OUTCOME_REJECTED"
+        || string(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/submission_result/failure_code"),
+        )? != "FAILURE_CODE_AUTHORIZATION_DENIED"
+        || vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/command_id/value"
+            ))
+            .and_then(Value::as_str)
+            .is_some_and(|expected| {
+                result.command_id.as_ref().map(|id| id.value.as_str()) != Some(expected)
+            })
+        || vector
+            .expected_outcome
+            .pointer(&format!(
+                "{expected_pointer}/submission_result/deduplicated"
+            ))
+            .and_then(Value::as_bool)
+            .is_some_and(|expected| result.deduplicated != expected)
         || result.outcome != SubmissionOutcome::Rejected as i32
-        || operation_count != 0
-        || boolean(&vector.expected_outcome, "/resource_case/durable_acceptance_record_created")?
-        || boolean(&vector.expected_outcome, "/resource_case/delivered_to_adapter")?
+        || result.failure_code != FailureCode::AuthorizationDenied as i32
+        || !operation_events.is_empty()
+        || boolean(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/durable_acceptance_record_created"),
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            &format!("{expected_pointer}/delivered_to_adapter"),
+        )?
     {
-        return Err("resource missing-grant outcome disagrees with product execution".to_owned());
+        return Err(format!(
+            "{case_name} missing-grant outcome disagrees with core execution"
+        ));
     }
     Ok(())
+}
+
+async fn operation_scenario(vector: &ConformanceVector, with_grant: bool) -> Result<(), String> {
+    operation_case(vector, "session_case", with_grant).await?;
+    operation_case(vector, "resource_case", with_grant).await
 }
 
 fn report_mutation(identity: &ResourceIdentity, cached: bool) -> ResourceReportMutation {
@@ -602,8 +968,8 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
-        "resource_operation_durable_acceptance" => resource_operation(vector, true).await,
-        "resource_operation_missing_grant" => resource_operation(vector, false).await,
+        "operation_durable_acceptance" => operation_scenario(vector, true).await,
+        "operation_missing_grant" => operation_scenario(vector, false).await,
         "resource_snapshot_completeness_truth_table" => completeness(vector).await,
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
@@ -614,7 +980,15 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
 #[tokio::test]
 async fn conformance_vector_runner() {
     let vectors = vectors();
-    for request in requests() {
+    let requested = if env::var("PATCHBAY_CONFORMANCE_REQUESTS").is_ok() {
+        requests()
+    } else {
+        vectors.values().flat_map(|vector| vector.implementation_checks.iter()
+            .filter(|check| check.runner == RUNNER)
+            .map(|check| RequestedCheck { vector_id: vector.vector_id.clone(), case: check.case.clone() }))
+            .collect()
+    };
+    for request in requested {
         let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
         assert!(
             vector.implementation_checks.iter().any(|check| check.runner == RUNNER && check.case == request.case),
