@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance-stale-presentation-dominance
 kind: story
-stage: implementing
+stage: review
 tags: [verification, protocol]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-durability-reconnect-honesty]
@@ -57,3 +57,15 @@ adapter-domain `health = serving` as current, must fail.
 Depends on both the execution bridge and durable reconnect checkpoint so the
 vector proves the real degradation source before asserting presentation. This
 is verification of the existing cockpit contract, not new UI design.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` at high reasoning, explicit caller selection for stale-state dominance evidence.
+- Review weight: `thorough`, explicit caller override; left at `review` for the verification deep lane.
+- Files changed: new `resource-stale-never-live.json`, server/web conformance runners, and `web-cockpit/tests/resource-view.test.ts` plus generated vector traceability.
+- Tests added: real authenticated adapter attach/report/delivery-stream-drop followed by durable resource replay and ResourceSnapshot materialization; vector-driven model+DOM stale/unknown assertions with deliberately `serving` domain health; a 100-run fast-check property over internally valid freshness/reconciliation/tombstone/health combinations; explicit current-eligibility mutants.
+- Mutation evidence: (1) removed the production resource `adapter_stale_event` from abnormal stream-drop reconciliation; the server vector timed out waiting for stale and failed. (2) changed `rendersResourceCurrent` to freshness-only; both fast-check and the strengthened vector failed on unreconciled/tombstoned current witnesses. (3) changed DOM effective freshness to promote adapter-owned `health=serving`; the vector failed because stale rendered current. All mutations were reverted.
+- Verification: both package checks reported exact ids; `cargo test --workspace`, clippy with warnings denied, contracts build/vector/drift/presentation/model checks, and web cockpit 105/105 passed.
+- Simplification: reused the real attachment stream drop and canonical resource renderer; no connectivity enum, UI state, or test-only production helper was introduced.
+- Discrepancies from design: the generated property lives in `resource-view.test.ts`, where both model predicate and DOM can be judged together, rather than splitting duplicate generators across model/resource-view files. Existing reconcile fast-check coverage continues to cover stream-break and unequal-horizon repair.
+- Adjacent issues parked: none.

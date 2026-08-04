@@ -1,12 +1,14 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use patchbay_contracts::patchbay::{
-    observation_request, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    observation_request, resource_report, resource_report_mutation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
     AuthorityDomainId, EndpointId, Generation, Observation, ObservationKind, ObservationRequest,
-    PayloadContentType, PayloadEnvelope, ResourceCapability, ResourceId, ResourceIdentity,
-    ResourceKind, ResourceProjectionContract, SchemaDescriptor, StoredEventKind, TargetScope,
-    TargetScopeKind,
+    Lsn, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
+    SchemaDescriptor, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
@@ -150,6 +152,90 @@ fn observation(vector: &ConformanceVector, domain: &AuthorityDomainId, identity:
             ..Observation::default()
         })),
     })
+}
+
+async fn disconnect_degrades_snapshot(vector: &ConformanceVector) -> Result<(), String> {
+    let domain = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
+    let adapter_id = AdapterId { value: string(&vector.input, "/adapter_id")?.to_owned() };
+    let generation = vector.input.pointer("/adapter_generation").and_then(Value::as_u64).ok_or("missing adapter generation")?;
+    let identity = tuple(&vector.input, "/resource_identity")?;
+    let kind = identity.resource_kind.clone().ok_or("resource identity missing kind")?;
+    if identity.adapter_id.as_ref() != Some(&adapter_id)
+        || string(&vector.input, "/disconnect")? != "abnormal_delivery_stream_drop"
+    {
+        return Err("disconnect witness has inconsistent adapter identity or source".to_owned());
+    }
+    let projection = vector.input.pointer("/current_projection").ok_or("missing projection")?;
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(), domain.clone(), AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+    ).await?;
+    let attached = service.attach(Request::new(AttachRequest {
+        registration: Some(registration(&domain, &adapter_id, &kind, generation)),
+        attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+    })).await.map_err(|error| error.to_string())?;
+    let token = attachment_token(&attached)?;
+    let projection_payload = serde_json::to_vec(projection).map_err(|error| error.to_string())?;
+    service.ingest_observation(authenticated(
+        ObservationRequest {
+            authority_domain_id: Some(domain.clone()),
+            observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
+                adapter_id: Some(adapter_id.clone()),
+                adapter_generation: Some(Generation { value: generation }),
+                report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                    views: vec![ResourceViewReport {
+                        resource_kind: Some(kind.clone()),
+                        completeness: AdapterSnapshotSupport::Partial as i32,
+                        mutations: vec![ResourceReportMutation {
+                            identity: Some(identity.clone()),
+                            mutation: Some(resource_report_mutation::Mutation::Upsert(ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: vec![1], content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: format!("{}.payload.v1", kind.value),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: projection_payload, content_type: PayloadContentType::Json as i32,
+                                    schema_ref: format!("{}.projection.v1", kind.value),
+                                }),
+                            })),
+                        }],
+                    }],
+                })),
+                observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+            })),
+        },
+        &adapter_id.value,
+        &token,
+    )?).await.map_err(|error| error.to_string())?;
+
+    let stream = service.receive_deliveries(authenticated(
+        ReceiveRequest { adapter_id: Some(adapter_id.clone()), cursor: Some(Lsn { value: 0 }) },
+        &adapter_id.value,
+        &token,
+    )?).await.map_err(|error| error.to_string())?.into_inner();
+    drop(stream);
+
+    let expected_domain_identity = patchbay_core::resource::ResourceIdentity::try_from_wire(&identity).map_err(|error| error.to_string())?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let rebuilt = patchbay_core::resource::rebuild_from_log(&storage, &domain).await.expect("resource replay");
+            if rebuilt.get(&expected_domain_identity).is_some_and(|record| record.freshness == patchbay_contracts::patchbay::ResourceFreshnessState::Stale) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }).await.map_err(|_| "disconnect degradation timed out".to_owned())?;
+    let state = ProjectionState::rebuild(&storage, &domain).await?;
+    let snapshot = state.materialize_resource_snapshot(domain, Timestamp { seconds: 101, nanos: 0 }).await;
+    let record = snapshot.resources.first().ok_or("degraded snapshot omitted resource")?;
+    if string(&vector.expected_outcome, "/snapshot_record/freshness")? != "RESOURCE_FRESHNESS_STATE_STALE"
+        || record.freshness != patchbay_contracts::patchbay::ResourceFreshnessState::Stale as i32
+        || boolean(&vector.expected_outcome, "/snapshot_record/has_cached_payload")? != record.resource_payload.is_some()
+        || boolean(&vector.expected_outcome, "/snapshot_record/tombstoned")? != record.tombstoned
+    {
+        return Err("adapter disconnect did not produce honest stale cached resource snapshot".to_owned());
+    }
+    Ok(())
 }
 
 async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
@@ -304,6 +390,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
+        "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
         "resource_snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "resource_observation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),

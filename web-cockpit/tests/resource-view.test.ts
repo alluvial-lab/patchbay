@@ -17,10 +17,12 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
 } from "@patchbay/contracts";
+import fc from "fast-check";
 import { JSDOM } from "jsdom";
 
 import {
   emptyPresentationModel,
+  rendersResourceCurrent,
   resourceCollectionKey,
   resourceKey,
   type CommandView,
@@ -123,6 +125,82 @@ function modelWith(...resources: ResourceView[]): PresentationModel {
   }
   return model;
 }
+
+const resourceViewArbitrary: fc.Arbitrary<ResourceView> = fc.record({
+  freshness: fc.constantFrom(
+    ResourceFreshnessState.CURRENT,
+    ResourceFreshnessState.STALE,
+    ResourceFreshnessState.UNKNOWN,
+  ),
+  reconciled: fc.boolean(),
+  tombstoned: fc.boolean(),
+  health: fc.constantFrom("serving" as const, "degraded" as const, "exhausted" as const, "unknown" as const),
+}).map(({ freshness, reconciled, tombstoned, health }) => {
+  const effectiveFreshness = tombstoned && freshness === ResourceFreshnessState.CURRENT
+    ? ResourceFreshnessState.STALE
+    : freshness;
+  const hasCachedPayload = effectiveFreshness !== ResourceFreshnessState.UNKNOWN;
+  return pool("generated", effectiveFreshness, {
+    reconciled,
+    tombstoned,
+    hasCachedPayload,
+    projection: hasCachedPayload
+      ? {
+          status: "decoded",
+          value: {
+            kind: "pooled-provider-pool",
+            displayName: "Generated pool",
+            providerLabel: "Provider",
+            health,
+            remainingPercent: 50,
+            serviceLabel: "adapter",
+            controlPosture: "administration-capable",
+          },
+        }
+      : { status: "unavailable" },
+  });
+});
+
+function resourceMayRenderCurrent(view: ResourceView): boolean {
+  return view.reconciled
+    && !view.tombstoned
+    && view.freshness === ResourceFreshnessState.CURRENT;
+}
+
+test("resource freshness dominates model and DOM across generated valid views", async () => {
+  await fc.assert(fc.asyncProperty(resourceViewArbitrary, async (view) => {
+    const expected = resourceMayRenderCurrent(view);
+    assert.equal(rendersResourceCurrent(view), expected);
+    const dom = new JSDOM();
+    const component = renderResourceDestination(dom.window.document, modelWith(view), {
+      selectedKey: resourceKey(view.identity), mobileDetailOpen: true, lockdownActive: false,
+      onSelect() {}, onBack() {},
+    });
+    assert.equal(Boolean(component.element.querySelector(".resource-freshness--current")), expected);
+    if (!expected) {
+      assert.equal(Boolean(component.element.querySelector(".resource-detail .resource-health:not(.resource-health--unknown)")?.textContent?.startsWith("domain health")), false);
+    }
+    if (view.freshness === ResourceFreshnessState.UNKNOWN) {
+      assert.equal(component.element.querySelector(".resource-detail .resource-meter"), null);
+    }
+  }), { numRuns: 100 });
+});
+
+test("independent current-eligibility oracle kills presentation mutants", () => {
+  const base = pool("mutant");
+  const unreconciled = { ...base, reconciled: false };
+  const retired = { ...base, tombstoned: true };
+  const stale = { ...base, freshness: ResourceFreshnessState.STALE };
+  const healthServingOnly = (_view: ResourceView) => true;
+  const freshnessOnly = (view: ResourceView) => view.freshness === ResourceFreshnessState.CURRENT;
+  const ignoreTombstone = (view: ResourceView) => view.reconciled && view.freshness === ResourceFreshnessState.CURRENT;
+  assert.equal(resourceMayRenderCurrent(unreconciled), false);
+  assert.equal(freshnessOnly(unreconciled), true);
+  assert.equal(resourceMayRenderCurrent(retired), false);
+  assert.equal(ignoreTombstone(retired), true);
+  assert.equal(resourceMayRenderCurrent(stale), false);
+  assert.equal(healthServingOnly(stale), true);
+});
 
 test("resource destination groups pooled, direct, and unavailable projections without raw bytes", () => {
   const dom = new JSDOM();

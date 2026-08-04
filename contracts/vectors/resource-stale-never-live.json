@@ -1,0 +1,51 @@
+{
+  "vector_id": "resource-stale-never-live",
+  "property_id": "ResourceStaleNeverLive",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-server", "case": "resource_disconnect_degrades_snapshot" },
+    { "runner": "web-cockpit", "case": "resource_stale_presentation_dominance" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ResourceFreshnessState",
+    "patchbay.Resource.freshness",
+    "patchbay.Resource.tombstoned",
+    "patchbay.Resource.resource_payload",
+    "patchbay.Resource.projection_payload",
+    "patchbay.ResourceSnapshot.resources",
+    "patchbay.AdapterRegistration.adapter_generation"
+  ],
+  "description": "A real adapter stream disconnect degrades cached resource evidence, and cockpit reconciliation/freshness/tombstone state dominates adapter-owned serving health in model and DOM presentation.",
+  "input": {
+    "authority_domain_id": "auth-main",
+    "adapter_id": "token-commune",
+    "adapter_generation": 2,
+    "resource_identity": ["token-commune", "provider_pool", "shared"],
+    "current_projection": {
+      "displayName": "Shared pool",
+      "providerLabel": "Anthropic",
+      "health": "serving",
+      "remainingPercent": 80,
+      "serviceLabel": "token-commune",
+      "controlPosture": "administration-capable"
+    },
+    "disconnect": "abnormal_delivery_stream_drop"
+  },
+  "expected_outcome": {
+    "snapshot_record": {
+      "freshness": "RESOURCE_FRESHNESS_STATE_STALE",
+      "has_cached_payload": true,
+      "tombstoned": false
+    },
+    "current_eligibility": {
+      "reconciled": true,
+      "tombstoned": false,
+      "freshness": "RESOURCE_FRESHNESS_STATE_CURRENT"
+    },
+    "disallowed_states_render_current": false,
+    "adapter_health_overrides_freshness": false,
+    "stale_wording": "last reported",
+    "unknown_exposes_domain_health_or_meter": false
+  },
+  "invariant_check": "ResourceStaleNeverLive: only reconciled, non-tombstoned CURRENT state may render current; stale/unknown/unreconciled/retired state dominates even a serving adapter projection."
+}
