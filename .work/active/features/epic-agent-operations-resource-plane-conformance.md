@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-conformance
 kind: feature
-stage: review
+stage: done
 tags: [foundation, verification]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity, epic-agent-operations-resource-plane-resource-state, epic-agent-operations-resource-plane-capability-manifest, epic-agent-operations-resource-plane-cockpit-composition]
