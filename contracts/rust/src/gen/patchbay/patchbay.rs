@@ -705,7 +705,7 @@ impl FailureCode {
         }
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterCapability {
     #[prost(enumeration = "OperationKind", repeated, tag = "1")]
     pub supported_operation_kinds: ::prost::alloc::vec::Vec<i32>,
@@ -714,7 +714,7 @@ pub struct AdapterCapability {
     #[prost(bool, tag = "3")]
     pub streaming_support: bool,
     #[prost(enumeration = "AdapterSnapshotSupport", tag = "4")]
-    pub snapshot_support: i32,
+    pub session_snapshot_support: i32,
     #[prost(bool, tag = "5")]
     pub cancellation_support: bool,
     #[prost(bool, tag = "6")]
@@ -727,6 +727,37 @@ pub struct AdapterCapability {
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, optional, tag = "10")]
     pub diagnostic_reporting: ::core::option::Option<AdapterDiagnosticReportingCapability>,
+    #[prost(enumeration = "AdapterTargetCategory", repeated, tag = "11")]
+    pub target_categories: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, repeated, tag = "12")]
+    pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
+}
+/// A schema identity binding. Matching this descriptor does not establish that
+/// opaque payload bytes semantically conform to the named schema.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SchemaDescriptor {
+    #[prost(string, tag = "1")]
+    pub schema_ref: ::prost::alloc::string::String,
+    #[prost(enumeration = "PayloadContentType", tag = "2")]
+    pub content_type: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceProjectionContract {
+    #[prost(enumeration = "AdapterTargetCategory", tag = "1")]
+    pub target_category: i32,
+    #[prost(message, optional, tag = "2")]
+    pub payload_schema: ::core::option::Option<SchemaDescriptor>,
+    #[prost(message, optional, tag = "3")]
+    pub projection_schema: ::core::option::Option<SchemaDescriptor>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResourceCapability {
+    #[prost(message, optional, tag = "1")]
+    pub resource_kind: ::core::option::Option<ResourceKind>,
+    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    pub snapshot_support: i32,
+    #[prost(message, optional, tag = "3")]
+    pub projection_contract: ::core::option::Option<ResourceProjectionContract>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterDiagnosticReportingCapability {
@@ -742,7 +773,7 @@ pub struct AttachmentMethod {
     #[prost(enumeration = "PayloadContentType", tag = "3")]
     pub descriptor_content_type: i32,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterRegistration {
     #[prost(message, optional, tag = "1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
@@ -758,6 +789,41 @@ pub struct AdapterRegistration {
     pub attach_lsn: ::core::option::Option<Lsn>,
     #[prost(message, optional, tag = "7")]
     pub attached_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Registry-owned adapter target families. Knowledge bundles are wire-present
+/// for a future promotion whose candidate payload family is OKF v0.2; current
+/// adapter registration rejects that reserved category.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AdapterTargetCategory {
+    Unspecified = 0,
+    RuntimeSession = 1,
+    OperationalResource = 2,
+    KnowledgeBundle = 3,
+}
+impl AdapterTargetCategory {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ADAPTER_TARGET_CATEGORY_UNSPECIFIED",
+            Self::RuntimeSession => "ADAPTER_TARGET_CATEGORY_RUNTIME_SESSION",
+            Self::OperationalResource => "ADAPTER_TARGET_CATEGORY_OPERATIONAL_RESOURCE",
+            Self::KnowledgeBundle => "ADAPTER_TARGET_CATEGORY_KNOWLEDGE_BUNDLE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADAPTER_TARGET_CATEGORY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ADAPTER_TARGET_CATEGORY_RUNTIME_SESSION" => Some(Self::RuntimeSession),
+            "ADAPTER_TARGET_CATEGORY_OPERATIONAL_RESOURCE" => Some(Self::OperationalResource),
+            "ADAPTER_TARGET_CATEGORY_KNOWLEDGE_BUNDLE" => Some(Self::KnowledgeBundle),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1610,7 +1676,7 @@ impl AttentionRequiredState {
         }
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AttachRequest {
     #[prost(message, optional, tag = "1")]
     pub registration: ::core::option::Option<AdapterRegistration>,

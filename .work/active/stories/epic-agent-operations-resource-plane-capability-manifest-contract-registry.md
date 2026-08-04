@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-capability-manifest-contract-registry
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, adapter]
 parent: epic-agent-operations-resource-plane-capability-manifest
 depends_on: []
@@ -44,3 +44,18 @@ loader.
 
 This is the contract source for the core admission checkpoint. Do not begin
 manifest validation against handwritten stand-ins before this story lands.
+
+## Implementation notes
+
+- Added the closed `AdapterTargetCategory` wire registry with runtime-session and
+  operational-resource committed values plus the registration-rejected
+  knowledge-bundle/OKF-v0.2 reservation.
+- Added generated `SchemaDescriptor`, `ResourceProjectionContract`, and
+  `ResourceCapability` shapes while retaining open generated `ResourceKind`.
+- Renamed protobuf tag 4 to `session_snapshot_support` without changing its wire
+  identity and regenerated both committed Rust and TypeScript artifacts from the
+  proto source.
+- Verified `buf generate`, the Rust contract build, and the TypeScript contract
+  build. Repository-wide `buf lint` remains blocked by pre-existing RPC request/
+  response naming findings in unchanged service contracts; this story introduced
+  no new lint finding.

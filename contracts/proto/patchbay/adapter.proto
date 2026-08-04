@@ -10,13 +10,44 @@ message AdapterCapability {
   repeated OperationKind supported_operation_kinds = 1;
   repeated string supported_target_spec_shapes = 2;
   bool streaming_support = 3;
-  AdapterSnapshotSupport snapshot_support = 4;
+  AdapterSnapshotSupport session_snapshot_support = 4;
   bool cancellation_support = 5;
   bool session_replacement_support = 6;
   IdempotencyStrength idempotency_strength = 7;
   AttachmentMethod attachment_method = 8;
   repeated FailureCode known_failure_modes = 9;
   AdapterDiagnosticReportingCapability diagnostic_reporting = 10;
+  repeated AdapterTargetCategory target_categories = 11;
+  repeated ResourceCapability resource_capabilities = 12;
+}
+
+// Registry-owned adapter target families. Knowledge bundles are wire-present
+// for a future promotion whose candidate payload family is OKF v0.2; current
+// adapter registration rejects that reserved category.
+enum AdapterTargetCategory {
+  ADAPTER_TARGET_CATEGORY_UNSPECIFIED = 0;
+  ADAPTER_TARGET_CATEGORY_RUNTIME_SESSION = 1;
+  ADAPTER_TARGET_CATEGORY_OPERATIONAL_RESOURCE = 2;
+  ADAPTER_TARGET_CATEGORY_KNOWLEDGE_BUNDLE = 3;
+}
+
+// A schema identity binding. Matching this descriptor does not establish that
+// opaque payload bytes semantically conform to the named schema.
+message SchemaDescriptor {
+  string schema_ref = 1;
+  PayloadContentType content_type = 2;
+}
+
+message ResourceProjectionContract {
+  AdapterTargetCategory target_category = 1;
+  SchemaDescriptor payload_schema = 2;
+  SchemaDescriptor projection_schema = 3;
+}
+
+message ResourceCapability {
+  ResourceKind resource_kind = 1;
+  AdapterSnapshotSupport snapshot_support = 2;
+  ResourceProjectionContract projection_contract = 3;
 }
 
 message AdapterDiagnosticReportingCapability {

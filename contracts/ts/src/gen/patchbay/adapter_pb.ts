@@ -6,7 +6,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { AdapterId, AuthorityDomainId, EndpointId, Generation, Lsn, PayloadContentType } from "./common_pb.js";
+import type { AdapterId, AuthorityDomainId, EndpointId, Generation, Lsn, PayloadContentType, ResourceKind } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { FailureCode, OperationKind } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/adapter.proto.
  */
 export const file_patchbay_adapter: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSKFBAoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBI6ChBzbmFwc2hvdF9zdXBwb3J0GAQgASgOMiAucGF0Y2hiYXkuQWRhcHRlclNuYXBzaG90U3VwcG9ydBIcChRjYW5jZWxsYXRpb25fc3VwcG9ydBgFIAEoCBIjChtzZXNzaW9uX3JlcGxhY2VtZW50X3N1cHBvcnQYBiABKAgSOwoUaWRlbXBvdGVuY3lfc3RyZW5ndGgYByABKA4yHS5wYXRjaGJheS5JZGVtcG90ZW5jeVN0cmVuZ3RoEjUKEWF0dGFjaG1lbnRfbWV0aG9kGAggASgLMhoucGF0Y2hiYXkuQXR0YWNobWVudE1ldGhvZBIyChNrbm93bl9mYWlsdXJlX21vZGVzGAkgAygOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSTAoUZGlhZ25vc3RpY19yZXBvcnRpbmcYCiABKAsyLi5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkiQAokQWRhcHRlckRpYWdub3N0aWNSZXBvcnRpbmdDYXBhYmlsaXR5EhgKEGRpYWdub3N0aWNfY29kZXMYASADKAkicwoQQXR0YWNobWVudE1ldGhvZBIMCgRraW5kGAEgASgJEhIKCmRlc2NyaXB0b3IYAiABKAwSPQoXZGVzY3JpcHRvcl9jb250ZW50X3R5cGUYAyABKA4yHC5wYXRjaGJheS5QYXlsb2FkQ29udGVudFR5cGUi2gIKE0FkYXB0ZXJSZWdpc3RyYXRpb24SJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIpCgtlbmRwb2ludF9pZBgCIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgDIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEjAKEmFkYXB0ZXJfZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SLwoKY2FwYWJpbGl0eRgFIAEoCzIbLnBhdGNoYmF5LkFkYXB0ZXJDYXBhYmlsaXR5EiEKCmF0dGFjaF9sc24YBiABKAsyDS5wYXRjaGJheS5Mc24SLwoLYXR0YWNoZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKq4BChNJZGVtcG90ZW5jeVN0cmVuZ3RoEiQKIElERU1QT1RFTkNZX1NUUkVOR1RIX1VOU1BFQ0lGSUVEEAASHQoZSURFTVBPVEVOQ1lfU1RSRU5HVEhfTk9ORRABEi0KKUlERU1QT1RFTkNZX1NUUkVOR1RIX0FUX1BBVENIQkFZX0JPVU5EQVJZEAISIwofSURFTVBPVEVOQ1lfU1RSRU5HVEhfRU5EX1RPX0VORBADKrcBChZBZGFwdGVyU25hcHNob3RTdXBwb3J0EigKJEFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9VTlNQRUNJRklFRBAAEioKJkFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9BVVRIT1JJVEFUSVZFEAESJAogQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1BBUlRJQUwQAhIhCh1BREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfTk9ORRADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSKGBQoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBJCChhzZXNzaW9uX3NuYXBzaG90X3N1cHBvcnQYBCABKA4yIC5wYXRjaGJheS5BZGFwdGVyU25hcHNob3RTdXBwb3J0EhwKFGNhbmNlbGxhdGlvbl9zdXBwb3J0GAUgASgIEiMKG3Nlc3Npb25fcmVwbGFjZW1lbnRfc3VwcG9ydBgGIAEoCBI7ChRpZGVtcG90ZW5jeV9zdHJlbmd0aBgHIAEoDjIdLnBhdGNoYmF5LklkZW1wb3RlbmN5U3RyZW5ndGgSNQoRYXR0YWNobWVudF9tZXRob2QYCCABKAsyGi5wYXRjaGJheS5BdHRhY2htZW50TWV0aG9kEjIKE2tub3duX2ZhaWx1cmVfbW9kZXMYCSADKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRJMChRkaWFnbm9zdGljX3JlcG9ydGluZxgKIAEoCzIuLnBhdGNoYmF5LkFkYXB0ZXJEaWFnbm9zdGljUmVwb3J0aW5nQ2FwYWJpbGl0eRI6ChF0YXJnZXRfY2F0ZWdvcmllcxgLIAMoDjIfLnBhdGNoYmF5LkFkYXB0ZXJUYXJnZXRDYXRlZ29yeRI7ChVyZXNvdXJjZV9jYXBhYmlsaXRpZXMYDCADKAsyHC5wYXRjaGJheS5SZXNvdXJjZUNhcGFiaWxpdHkiWgoQU2NoZW1hRGVzY3JpcHRvchISCgpzY2hlbWFfcmVmGAEgASgJEjIKDGNvbnRlbnRfdHlwZRgCIAEoDjIcLnBhdGNoYmF5LlBheWxvYWRDb250ZW50VHlwZSLBAQoaUmVzb3VyY2VQcm9qZWN0aW9uQ29udHJhY3QSOAoPdGFyZ2V0X2NhdGVnb3J5GAEgASgOMh8ucGF0Y2hiYXkuQWRhcHRlclRhcmdldENhdGVnb3J5EjIKDnBheWxvYWRfc2NoZW1hGAIgASgLMhoucGF0Y2hiYXkuU2NoZW1hRGVzY3JpcHRvchI1ChFwcm9qZWN0aW9uX3NjaGVtYRgDIAEoCzIaLnBhdGNoYmF5LlNjaGVtYURlc2NyaXB0b3IiwgEKElJlc291cmNlQ2FwYWJpbGl0eRItCg1yZXNvdXJjZV9raW5kGAEgASgLMhYucGF0Y2hiYXkuUmVzb3VyY2VLaW5kEjoKEHNuYXBzaG90X3N1cHBvcnQYAiABKA4yIC5wYXRjaGJheS5BZGFwdGVyU25hcHNob3RTdXBwb3J0EkEKE3Byb2plY3Rpb25fY29udHJhY3QYAyABKAsyJC5wYXRjaGJheS5SZXNvdXJjZVByb2plY3Rpb25Db250cmFjdCJACiRBZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkSGAoQZGlhZ25vc3RpY19jb2RlcxgBIAMoCSJzChBBdHRhY2htZW50TWV0aG9kEgwKBGtpbmQYASABKAkSEgoKZGVzY3JpcHRvchgCIAEoDBI9ChdkZXNjcmlwdG9yX2NvbnRlbnRfdHlwZRgDIAEoDjIcLnBhdGNoYmF5LlBheWxvYWRDb250ZW50VHlwZSLaAgoTQWRhcHRlclJlZ2lzdHJhdGlvbhInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEikKC2VuZHBvaW50X2lkGAIgASgLMhQucGF0Y2hiYXkuRW5kcG9pbnRJZBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAMgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMAoSYWRhcHRlcl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIvCgpjYXBhYmlsaXR5GAUgASgLMhsucGF0Y2hiYXkuQWRhcHRlckNhcGFiaWxpdHkSIQoKYXR0YWNoX2xzbhgGIAEoCzINLnBhdGNoYmF5LkxzbhIvCgthdHRhY2hlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqzQEKFUFkYXB0ZXJUYXJnZXRDYXRlZ29yeRInCiNBREFQVEVSX1RBUkdFVF9DQVRFR09SWV9VTlNQRUNJRklFRBAAEisKJ0FEQVBURVJfVEFSR0VUX0NBVEVHT1JZX1JVTlRJTUVfU0VTU0lPThABEjAKLEFEQVBURVJfVEFSR0VUX0NBVEVHT1JZX09QRVJBVElPTkFMX1JFU09VUkNFEAISLAooQURBUFRFUl9UQVJHRVRfQ0FURUdPUllfS05PV0xFREdFX0JVTkRMRRADKq4BChNJZGVtcG90ZW5jeVN0cmVuZ3RoEiQKIElERU1QT1RFTkNZX1NUUkVOR1RIX1VOU1BFQ0lGSUVEEAASHQoZSURFTVBPVEVOQ1lfU1RSRU5HVEhfTk9ORRABEi0KKUlERU1QT1RFTkNZX1NUUkVOR1RIX0FUX1BBVENIQkFZX0JPVU5EQVJZEAISIwofSURFTVBPVEVOQ1lfU1RSRU5HVEhfRU5EX1RPX0VORBADKrcBChZBZGFwdGVyU25hcHNob3RTdXBwb3J0EigKJEFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9VTlNQRUNJRklFRBAAEioKJkFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9BVVRIT1JJVEFUSVZFEAESJAogQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1BBUlRJQUwQAhIhCh1BREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfTk9ORRADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.AdapterCapability
@@ -38,9 +38,9 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
   streamingSupport: boolean;
 
   /**
-   * @generated from field: patchbay.AdapterSnapshotSupport snapshot_support = 4;
+   * @generated from field: patchbay.AdapterSnapshotSupport session_snapshot_support = 4;
    */
-  snapshotSupport: AdapterSnapshotSupport;
+  sessionSnapshotSupport: AdapterSnapshotSupport;
 
   /**
    * @generated from field: bool cancellation_support = 5;
@@ -71,6 +71,16 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
    * @generated from field: patchbay.AdapterDiagnosticReportingCapability diagnostic_reporting = 10;
    */
   diagnosticReporting?: AdapterDiagnosticReportingCapability | undefined;
+
+  /**
+   * @generated from field: repeated patchbay.AdapterTargetCategory target_categories = 11;
+   */
+  targetCategories: AdapterTargetCategory[];
+
+  /**
+   * @generated from field: repeated patchbay.ResourceCapability resource_capabilities = 12;
+   */
+  resourceCapabilities: ResourceCapability[];
 };
 
 /**
@@ -79,6 +89,85 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
  */
 export const AdapterCapabilitySchema: GenMessage<AdapterCapability> = /*@__PURE__*/
   messageDesc(file_patchbay_adapter, 0);
+
+/**
+ * A schema identity binding. Matching this descriptor does not establish that
+ * opaque payload bytes semantically conform to the named schema.
+ *
+ * @generated from message patchbay.SchemaDescriptor
+ */
+export type SchemaDescriptor = Message<"patchbay.SchemaDescriptor"> & {
+  /**
+   * @generated from field: string schema_ref = 1;
+   */
+  schemaRef: string;
+
+  /**
+   * @generated from field: patchbay.PayloadContentType content_type = 2;
+   */
+  contentType: PayloadContentType;
+};
+
+/**
+ * Describes the message patchbay.SchemaDescriptor.
+ * Use `create(SchemaDescriptorSchema)` to create a new message.
+ */
+export const SchemaDescriptorSchema: GenMessage<SchemaDescriptor> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter, 1);
+
+/**
+ * @generated from message patchbay.ResourceProjectionContract
+ */
+export type ResourceProjectionContract = Message<"patchbay.ResourceProjectionContract"> & {
+  /**
+   * @generated from field: patchbay.AdapterTargetCategory target_category = 1;
+   */
+  targetCategory: AdapterTargetCategory;
+
+  /**
+   * @generated from field: patchbay.SchemaDescriptor payload_schema = 2;
+   */
+  payloadSchema?: SchemaDescriptor | undefined;
+
+  /**
+   * @generated from field: patchbay.SchemaDescriptor projection_schema = 3;
+   */
+  projectionSchema?: SchemaDescriptor | undefined;
+};
+
+/**
+ * Describes the message patchbay.ResourceProjectionContract.
+ * Use `create(ResourceProjectionContractSchema)` to create a new message.
+ */
+export const ResourceProjectionContractSchema: GenMessage<ResourceProjectionContract> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter, 2);
+
+/**
+ * @generated from message patchbay.ResourceCapability
+ */
+export type ResourceCapability = Message<"patchbay.ResourceCapability"> & {
+  /**
+   * @generated from field: patchbay.ResourceKind resource_kind = 1;
+   */
+  resourceKind?: ResourceKind | undefined;
+
+  /**
+   * @generated from field: patchbay.AdapterSnapshotSupport snapshot_support = 2;
+   */
+  snapshotSupport: AdapterSnapshotSupport;
+
+  /**
+   * @generated from field: patchbay.ResourceProjectionContract projection_contract = 3;
+   */
+  projectionContract?: ResourceProjectionContract | undefined;
+};
+
+/**
+ * Describes the message patchbay.ResourceCapability.
+ * Use `create(ResourceCapabilitySchema)` to create a new message.
+ */
+export const ResourceCapabilitySchema: GenMessage<ResourceCapability> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter, 3);
 
 /**
  * @generated from message patchbay.AdapterDiagnosticReportingCapability
@@ -95,7 +184,7 @@ export type AdapterDiagnosticReportingCapability = Message<"patchbay.AdapterDiag
  * Use `create(AdapterDiagnosticReportingCapabilitySchema)` to create a new message.
  */
 export const AdapterDiagnosticReportingCapabilitySchema: GenMessage<AdapterDiagnosticReportingCapability> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 1);
+  messageDesc(file_patchbay_adapter, 4);
 
 /**
  * @generated from message patchbay.AttachmentMethod
@@ -122,7 +211,7 @@ export type AttachmentMethod = Message<"patchbay.AttachmentMethod"> & {
  * Use `create(AttachmentMethodSchema)` to create a new message.
  */
 export const AttachmentMethodSchema: GenMessage<AttachmentMethod> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 2);
+  messageDesc(file_patchbay_adapter, 5);
 
 /**
  * @generated from message patchbay.AdapterRegistration
@@ -169,7 +258,42 @@ export type AdapterRegistration = Message<"patchbay.AdapterRegistration"> & {
  * Use `create(AdapterRegistrationSchema)` to create a new message.
  */
 export const AdapterRegistrationSchema: GenMessage<AdapterRegistration> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 3);
+  messageDesc(file_patchbay_adapter, 6);
+
+/**
+ * Registry-owned adapter target families. Knowledge bundles are wire-present
+ * for a future promotion whose candidate payload family is OKF v0.2; current
+ * adapter registration rejects that reserved category.
+ *
+ * @generated from enum patchbay.AdapterTargetCategory
+ */
+export enum AdapterTargetCategory {
+  /**
+   * @generated from enum value: ADAPTER_TARGET_CATEGORY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ADAPTER_TARGET_CATEGORY_RUNTIME_SESSION = 1;
+   */
+  RUNTIME_SESSION = 1,
+
+  /**
+   * @generated from enum value: ADAPTER_TARGET_CATEGORY_OPERATIONAL_RESOURCE = 2;
+   */
+  OPERATIONAL_RESOURCE = 2,
+
+  /**
+   * @generated from enum value: ADAPTER_TARGET_CATEGORY_KNOWLEDGE_BUNDLE = 3;
+   */
+  KNOWLEDGE_BUNDLE = 3,
+}
+
+/**
+ * Describes the enum patchbay.AdapterTargetCategory.
+ */
+export const AdapterTargetCategorySchema: GenEnum<AdapterTargetCategory> = /*@__PURE__*/
+  enumDesc(file_patchbay_adapter, 0);
 
 /**
  * @generated from enum patchbay.IdempotencyStrength
@@ -200,7 +324,7 @@ export enum IdempotencyStrength {
  * Describes the enum patchbay.IdempotencyStrength.
  */
 export const IdempotencyStrengthSchema: GenEnum<IdempotencyStrength> = /*@__PURE__*/
-  enumDesc(file_patchbay_adapter, 0);
+  enumDesc(file_patchbay_adapter, 1);
 
 /**
  * @generated from enum patchbay.AdapterSnapshotSupport
@@ -231,5 +355,5 @@ export enum AdapterSnapshotSupport {
  * Describes the enum patchbay.AdapterSnapshotSupport.
  */
 export const AdapterSnapshotSupportSchema: GenEnum<AdapterSnapshotSupport> = /*@__PURE__*/
-  enumDesc(file_patchbay_adapter, 1);
+  enumDesc(file_patchbay_adapter, 2);
 
