@@ -440,12 +440,11 @@ where
 /// connectivity transition writer. A single rebuilt projection is installed
 /// after the append batch; if a partial append fails, that committed prefix is
 /// still rebuilt before the error is returned.
-pub async fn mark_adapter_sessions_stale<S: Storage>(
-    storage: &S,
-    registry: &mut SessionRegistry,
+pub fn adapter_stale_events(
+    registry: &SessionRegistry,
     authority_domain_id: &AuthorityDomainId,
     adapter_id: &AdapterId,
-) -> Result<Vec<EventId>, SessionError> {
+) -> Result<Vec<patchbay_contracts::patchbay::StoredEventPayload>, SessionError> {
     let reports: Vec<_> = registry
         .sessions()
         .filter(|record| {
@@ -471,8 +470,11 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
     let mut sources = Vec::with_capacity(reports.len());
     for report in &reports {
         let current = registry
-            .current_session(&report.adapter_id, &report.deployment_scope, &report.runtime_session_id)
-            .await
+            .get_live_session(
+                &report.adapter_id,
+                &report.deployment_scope,
+                &report.runtime_session_id,
+            )
             .ok_or_else(|| SessionError::CorruptLog("session disappeared during detach reconciliation".to_owned()))?;
         sources.push(events::encode(&events::connectivity_changed(
             authority_domain_id.clone(),
@@ -486,6 +488,18 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
             },
         )));
     }
+    Ok(sources)
+}
+
+/// Compatibility composition for session-only callers. Production adapter
+/// detach composes session and resource stale events into one audited batch.
+pub async fn mark_adapter_sessions_stale<S: Storage>(
+    storage: &S,
+    registry: &mut SessionRegistry,
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+) -> Result<Vec<EventId>, SessionError> {
+    let sources = adapter_stale_events(registry, authority_domain_id, adapter_id)?;
     let mut audit = crate::storage::AuditRecordDraft::new(
         crate::acceptance::SystemClock.now(),
         patchbay_contracts::patchbay::AuditEventKind::AdapterDetached,

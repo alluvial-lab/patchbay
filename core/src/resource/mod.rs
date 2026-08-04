@@ -2,12 +2,17 @@
 
 pub mod events;
 pub mod identity;
+pub mod ingest;
 pub mod registry;
 pub mod replay;
 pub(crate) mod resolver;
 pub mod state;
 
 pub use identity::{ResourceIdentity, ResourceIdentityError};
+pub use ingest::{
+    adapter_stale_event, ingest_resource_report, ResourceIngestResult, ResourceReportMode,
+    ValidatedResourceReport,
+};
 pub use registry::ResourceRegistry;
 pub use replay::rebuild_from_log;
 pub use state::{ResourceRecord, ResourceViewKey, ResourceViewRecord};
@@ -18,6 +23,10 @@ pub enum ResourceError {
     CorruptRecord(String),
     #[error("corrupt resource log: {0}")]
     CorruptLog(String),
+    #[error("invalid resource report: {0}")]
+    InvalidReport(String),
+    #[error("stale adapter generation: live={live}, reported={reported}")]
+    StaleAdapterGeneration { live: u64, reported: u64 },
     #[error("resource identity is terminally tombstoned: {0:?}")]
     TerminalTombstone(ResourceIdentity),
     #[error(transparent)]

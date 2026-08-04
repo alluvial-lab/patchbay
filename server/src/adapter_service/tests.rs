@@ -4,12 +4,15 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
+    observation_request, resource_report, resource_report_mutation, typed_correlation,
+    AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
     PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
-    ResourceIdentity, ResourceKind, ResourceProjectionContract, SchemaDescriptor,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
+    SchemaDescriptor,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -18,6 +21,7 @@ use patchbay_core::{security::events as security_events, storage::{
     DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
 }};
 use prost::Message;
+use prost_types::Timestamp;
 use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 use tonic::Request;
@@ -205,6 +209,175 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
             .and_then(|observation| observation.payload)
             .is_none_or(|payload| payload.schema_ref != "patchbay.AdapterRegistration")
     }));
+}
+
+#[tokio::test]
+async fn authenticated_resource_report_uses_manifest_admission_and_durable_projection() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut registration = registration(domain.clone());
+    registration.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Partial,
+        )],
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("resource adapter attaches");
+    let token = attachment_token(&attached);
+    let identity = ResourceIdentity {
+        adapter_id: Some(adapter_id()),
+        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+        resource_id: Some(ResourceId { value: "pool-1".into() }),
+    };
+    let report = ResourceReport {
+        adapter_id: Some(adapter_id()),
+        adapter_generation: Some(Generation { value: 1 }),
+        report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+            views: vec![ResourceViewReport {
+                resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                completeness: AdapterSnapshotSupport::Partial as i32,
+                mutations: vec![ResourceReportMutation {
+                    identity: Some(identity.clone()),
+                    mutation: Some(resource_report_mutation::Mutation::Upsert(
+                        ResourceStateUpsert {
+                            resource_payload: Some(PayloadEnvelope {
+                                payload: vec![1],
+                                content_type: PayloadContentType::Protobuf as i32,
+                                schema_ref: "provider_pool.payload.v1".into(),
+                            }),
+                            projection_payload: Some(PayloadEnvelope {
+                                payload: br#"{\"state\":\"ok\"}"#.to_vec(),
+                                content_type: PayloadContentType::Json as i32,
+                                schema_ref: "provider_pool.projection.v1".into(),
+                            }),
+                        },
+                    )),
+                }],
+            }],
+        })),
+        observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+    };
+    let mut overclaimed = report.clone();
+    let Some(resource_report::Report::Snapshot(snapshot)) = overclaimed.report.as_mut() else {
+        unreachable!()
+    };
+    snapshot.views[0].completeness = AdapterSnapshotSupport::Authoritative as i32;
+    assert_eq!(
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::ResourceReport(
+                        overclaimed,
+                    )),
+                },
+                &token,
+            ))
+            .await
+            .expect_err("overclaimed tier rejects")
+            .code(),
+        tonic::Code::InvalidArgument
+    );
+    let mut mismatched = report.clone();
+    let Some(resource_report::Report::Snapshot(snapshot)) = mismatched.report.as_mut() else {
+        unreachable!()
+    };
+    let Some(resource_report_mutation::Mutation::Upsert(upsert)) =
+        snapshot.views[0].mutations[0].mutation.as_mut()
+    else {
+        unreachable!()
+    };
+    upsert
+        .projection_payload
+        .as_mut()
+        .expect("projection")
+        .schema_ref = "foreign.schema".into();
+    assert_eq!(
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::ResourceReport(
+                        mismatched,
+                    )),
+                },
+                &token,
+            ))
+            .await
+            .expect_err("schema mismatch rejects")
+            .code(),
+        tonic::Code::InvalidArgument
+    );
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(report)),
+            },
+            &token,
+        ))
+        .await
+        .expect("admitted resource report succeeds");
+    let rebuilt = resource::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("resource projection replays");
+    let projected = patchbay_core::resource::ResourceIdentity::try_from_wire(&identity).unwrap();
+    assert!(rebuilt.contains(&projected));
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap()
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::ResourceState as i32)
+            .count(),
+        1
+    );
+
+    let stream = service
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &token,
+        ))
+        .await
+        .expect("resource adapter stream opens")
+        .into_inner();
+    drop(stream);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let replayed = resource::rebuild_from_log(&storage, &domain).await.unwrap();
+            if replayed
+                .get(&projected)
+                .is_some_and(|record| {
+                    record.freshness
+                        == patchbay_contracts::patchbay::ResourceFreshnessState::Stale
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("disconnect durably stales the resource");
 }
 
 fn resource_declaration(kind: &str, tier: AdapterSnapshotSupport) -> ResourceCapability {

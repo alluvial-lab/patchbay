@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-state-report-ingress-reconciliation
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, storage]
 parent: epic-agent-operations-resource-plane-resource-state
 depends_on: [epic-agent-operations-resource-plane-resource-state-projection-replay, epic-agent-operations-resource-plane-capability-manifest-core-admission]
 release_binding: null
 gate_origin: null
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Ingest authenticated resource reports and reconcile reconnects
@@ -46,3 +46,32 @@ generation.
 Consumes the resource projection/replay checkpoint. The parallel capability-manifest checkpoint owns declarations; this checkpoint
 consumes its admission API, while retaining ownership only of state/tier fold
 semantics and adding no manifest fields.
+
+## Implementation notes
+
+Added authenticated typed `ResourceReport` ingress under the shared
+`CoreDecisionGate`. The server binds adapter id/generation to the current
+attachment, requires exact manifest kind admission, enforces equal-or-weaker
+snapshot tiers, and checks both payload/projection envelopes through
+`validate_resource_projection` before normalization. The core normalizer emits
+one stable-ordered `RESOURCE_STATE` event per valid report, derives
+snapshot omissions by authoritative/partial/none semantics, keeps delta
+omissions inert, validates atomic replacement, fences stale adapter generations,
+and folds only after durable append. A fold failure rebuilds from the committed
+log before the projection can be reused.
+
+Adapter-generation advance stales unreported active records before installing
+new evidence. Abnormal disconnect now composes session and resource degradation
+sources into one existing `append_batch_audited` transaction with one
+`ADAPTER_DETACHED` audit, then rebuilds both projections. Stream epoch/token
+fences still make an obsolete disconnect inert.
+
+Core tests cover all three completeness branches, delta omission, replacement,
+new-generation degradation, stale-generation rejection, duplicate/malformed
+reports, and durable replay. Server evidence covers authenticated manifest-bound
+ingress, overclaimed tier/schema rejection without resource-state append,
+durable projection, and resource staleness after stream loss.
+
+Checkpoint verification: focused core resource tests and adapter-service tests
+passed; `cargo check --workspace` and
+`cargo clippy --workspace --all-targets -- -D warnings` passed.

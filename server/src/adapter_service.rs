@@ -7,7 +7,8 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, AcceptedOperation, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
+    observation_request, resource_report, resource_report_mutation, AcceptedOperation,
+    AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport,
     AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
     ObservationRequest, ObservationResult, OperationState, ReceiveRequest,
     SessionActivityState, SessionConnectivityState, StoredEventKind,
@@ -18,6 +19,7 @@ use patchbay_core::{
     diagnostics::{ingest_adapter_diagnostic, validate_adapter_diagnostic_report},
     adapter::{self, AdapterRegistry},
     authority::hash_principal_credential,
+    resource::{self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
     session::{self, SessionRegistry, SessionReport},
     storage::{AuditRecordDraft, RecordedEvent, Storage},
     target::target_adapter_id,
@@ -122,6 +124,7 @@ pub struct AdapterControlServiceImpl<S> {
     adapters: Arc<Mutex<AdapterRegistry>>,
     commands: Arc<Mutex<CommandProjection>>,
     sessions: Arc<Mutex<SessionRegistry>>,
+    resources: Arc<Mutex<ResourceRegistry>>,
     attachment_tokens: Arc<Mutex<HashMap<AdapterId, Vec<u8>>>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
     decision_gate: CoreDecisionGate,
@@ -163,6 +166,9 @@ where
         let sessions = session::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
+        let resources = resource::rebuild_from_log(&storage, &authority_domain_id)
+            .await
+            .map_err(|error| error.to_string())?;
         let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
             Arc::new(DurableAuditSink::new(storage.clone(), authority_domain_id.clone())),
             vec![Arc::new(StderrAuditSink)],
@@ -175,6 +181,7 @@ where
             adapters: Arc::new(Mutex::new(adapters)),
             commands: Arc::new(Mutex::new(commands)),
             sessions: Arc::new(Mutex::new(sessions)),
+            resources: Arc::new(Mutex::new(resources)),
             attachment_tokens: Arc::new(Mutex::new(HashMap::new())),
             delivery_stream_epochs: Arc::new(Mutex::new(HashMap::new())),
             decision_gate,
@@ -721,6 +728,62 @@ where
                 *sessions = rebuilt;
                 session_result_event_id(result)
             }
+            Some(observation_request::Observation::ResourceReport(report)) => {
+                require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
+                let generation = report.adapter_generation.ok_or_else(|| {
+                    Status::invalid_argument("resource report is missing adapter_generation")
+                })?;
+                let observed_at = report.observed_at.ok_or_else(|| {
+                    Status::invalid_argument("resource report is missing observed_at")
+                })?;
+                let (mode, views) = match report.report {
+                    Some(resource_report::Report::Snapshot(snapshot)) => {
+                        (ResourceReportMode::Snapshot, snapshot.views)
+                    }
+                    Some(resource_report::Report::Delta(delta)) => {
+                        (ResourceReportMode::Delta, delta.views)
+                    }
+                    None => {
+                        return Err(Status::invalid_argument(
+                            "resource report is missing report variant",
+                        ));
+                    }
+                };
+                {
+                    let adapters = self.adapters.lock().await;
+                    let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                        Status::unauthenticated(
+                            "adapter attachment is not current; reattach required",
+                        )
+                    })?;
+                    if record.registration.adapter_generation.as_ref() != Some(&generation) {
+                        return Err(Status::failed_precondition(
+                            "resource report adapter generation is stale",
+                        ));
+                    }
+                    validate_resource_views(&adapters, &authenticated_adapter, &views)?;
+                }
+                let rebuilt = resource::rebuild_from_log(&self.storage, &domain)
+                    .await
+                    .map_err(map_resource_error)?;
+                let mut resources = self.resources.lock().await;
+                *resources = rebuilt;
+                let result = resource::ingest_resource_report(
+                    &self.storage,
+                    &mut resources,
+                    ValidatedResourceReport {
+                        authority_domain_id: domain.clone(),
+                        adapter_id: authenticated_adapter.clone(),
+                        adapter_generation: generation,
+                        mode,
+                        views,
+                        observed_at,
+                    },
+                )
+                .await
+                .map_err(map_resource_error)?;
+                Some(result.event_id)
+            }
             Some(observation_request::Observation::Event(observation)) => {
                 if observation.authority_domain_id.as_ref() != Some(&domain) {
                     return Err(Status::invalid_argument(
@@ -816,7 +879,9 @@ where
 
         let storage = self.storage.clone();
         let commands = Arc::clone(&self.commands);
+        let adapters = Arc::clone(&self.adapters);
         let sessions = Arc::clone(&self.sessions);
+        let resources = Arc::clone(&self.resources);
         let delivery_stream_epochs = Arc::clone(&self.delivery_stream_epochs);
         let audit = Arc::clone(&self.audit);
         let decision_gate = self.decision_gate.clone();
@@ -861,20 +926,71 @@ where
                     })
                 };
 
-                let session_result = session::mark_adapter_sessions_stale(
-                    &storage,
-                    &mut *sessions.lock().await,
-                    &stale_domain,
-                    &stale_adapter,
-                )
+                let state_result: Result<(), String> = async {
+                    let rebuilt_sessions = session::rebuild_from_log(&storage, &stale_domain)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let rebuilt_resources = resource::rebuild_from_log(&storage, &stale_domain)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let adapter_generation = adapters
+                        .lock()
+                        .await
+                        .get(&stale_adapter)
+                        .and_then(|record| record.registration.adapter_generation)
+                        .ok_or_else(|| "detached adapter has no current generation".to_owned())?;
+                    let mut sources = session::adapter_stale_events(
+                        &rebuilt_sessions,
+                        &stale_domain,
+                        &stale_adapter,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    if let Some(source) = resource::adapter_stale_event(
+                        &rebuilt_resources,
+                        &stale_domain,
+                        &stale_adapter,
+                        adapter_generation,
+                        crate::identity::now_timestamp().map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?
+                    {
+                        sources.push(source);
+                    }
+                    let mut audit_draft = AuditRecordDraft::new(
+                        crate::identity::now_timestamp().map_err(|error| error.to_string())?,
+                        patchbay_contracts::patchbay::AuditEventKind::AdapterDetached,
+                    );
+                    audit_draft.actor_id = Some(patchbay_contracts::patchbay::ActorId {
+                        value: stale_adapter.value.clone(),
+                    });
+                    audit_draft.reason_code = "adapter_detached".to_owned();
+                    if sources.is_empty() {
+                        storage
+                            .append_audit(&stale_domain, audit_draft)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    } else {
+                        storage
+                            .append_batch_audited(&stale_domain, sources, audit_draft)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    }
+                    *sessions.lock().await = session::rebuild_from_log(&storage, &stale_domain)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    *resources.lock().await = resource::rebuild_from_log(&storage, &stale_domain)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    Ok(())
+                }
                 .await;
                 drop(epochs);
 
-                let reconciliation_failed = command_result.is_err() || session_result.is_err();
-                // A successful detach is audited by
-                // mark_adapter_sessions_stale in the same writer transaction
-                // as the session degradation source events. Only the failure
-                // path has no paired source and needs a standalone audit.
+                let reconciliation_failed = command_result.is_err() || state_result.is_err();
+                // A successful detach writes session/resource degradation and
+                // the one ADAPTER_DETACHED audit in the same batch. Only the
+                // failure path has no trustworthy paired source and needs a
+                // standalone audit.
                 if reconciliation_failed {
                     if let Err(error) = record_adapter_audit(
                         audit.as_ref(),
@@ -892,9 +1008,9 @@ where
                         "patchbay-core-server: failed to reconcile running commands after adapter disconnect: {error}"
                     );
                 }
-                if let Err(error) = session_result {
+                if let Err(error) = state_result {
                     eprintln!(
-                        "patchbay-core-server: failed to mark sessions stale after adapter disconnect: {error}"
+                        "patchbay-core-server: failed to mark adapter state stale after disconnect: {error}"
                     );
                 }
             };
@@ -926,6 +1042,67 @@ where
         );
         let tail = DeliveryTail::new(subscription, on_abnormal_disconnect);
         Ok(Response::new(Box::pin(tail)))
+    }
+}
+
+fn validate_resource_views(
+    adapters: &AdapterRegistry,
+    authenticated_adapter: &AdapterId,
+    views: &[patchbay_contracts::patchbay::ResourceViewReport],
+) -> Result<(), Status> {
+    for view in views {
+        let kind = view.resource_kind.as_ref().ok_or_else(|| {
+            Status::invalid_argument("resource view is missing resource_kind")
+        })?;
+        let declared = adapters
+            .get(authenticated_adapter)
+            .and_then(|record| record.validated_capability.resource(kind))
+            .ok_or_else(|| Status::invalid_argument("resource kind is not declared"))?;
+        let reported = AdapterSnapshotSupport::try_from(view.completeness)
+            .map_err(|_| Status::invalid_argument("resource view has unknown completeness"))?;
+        if reported == AdapterSnapshotSupport::Unspecified
+            || snapshot_strength(reported) > snapshot_strength(declared.snapshot_support())
+        {
+            return Err(Status::invalid_argument(
+                "resource report completeness exceeds the declared tier",
+            ));
+        }
+        for mutation in &view.mutations {
+            let identity = ResourceIdentity::try_from_wire(
+                mutation.identity.as_ref().ok_or_else(|| {
+                    Status::invalid_argument("resource mutation is missing identity")
+                })?,
+            )
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            if identity.adapter_id() != authenticated_adapter || identity.resource_kind() != kind {
+                return Err(Status::permission_denied(
+                    "resource mutation identity does not match authenticated view",
+                ));
+            }
+            if let Some(resource_report_mutation::Mutation::Upsert(upsert)) =
+                mutation.mutation.as_ref()
+            {
+                let payload = upsert.resource_payload.as_ref().ok_or_else(|| {
+                    Status::invalid_argument("resource upsert is missing resource payload")
+                })?;
+                let projection = upsert.projection_payload.as_ref().ok_or_else(|| {
+                    Status::invalid_argument("resource upsert is missing projection payload")
+                })?;
+                adapters
+                    .validate_resource_projection(&identity, payload, projection)
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+const fn snapshot_strength(tier: AdapterSnapshotSupport) -> u8 {
+    match tier {
+        AdapterSnapshotSupport::Authoritative => 3,
+        AdapterSnapshotSupport::Partial => 2,
+        AdapterSnapshotSupport::None => 1,
+        AdapterSnapshotSupport::Unspecified => 0,
     }
 }
 
@@ -987,6 +1164,20 @@ fn map_adapter_error(error: adapter::AdapterError) -> Status {
         }
         adapter::AdapterError::CorruptRecord(message) => Status::internal(message),
         adapter::AdapterError::Storage(error) => map_storage_error_to_status(error),
+    }
+}
+
+fn map_resource_error(error: resource::ResourceError) -> Status {
+    match error {
+        resource::ResourceError::InvalidReport(_)
+        | resource::ResourceError::Identity(_)
+        | resource::ResourceError::TerminalTombstone(_)
+        | resource::ResourceError::StaleAdapterGeneration { .. } => {
+            Status::invalid_argument(error.to_string())
+        }
+        resource::ResourceError::CorruptRecord(message) => Status::invalid_argument(message),
+        resource::ResourceError::CorruptLog(message) => Status::internal(message),
+        resource::ResourceError::Storage(error) => map_storage_error_to_status(error),
     }
 }
 
