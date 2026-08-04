@@ -121,7 +121,7 @@ impl Storage for BlockingReadStorage {
 }
 
 #[tokio::test]
-async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_append() {
+async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_registration_append() {
     let domain = AuthorityDomainId { value: "authority-main".into() };
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let service = AdapterControlServiceImpl::new(

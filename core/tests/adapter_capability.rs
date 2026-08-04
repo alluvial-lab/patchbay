@@ -1,8 +1,9 @@
 use patchbay_contracts::patchbay::{
     AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
-    AdapterTargetCategory, AuthorityDomainId, EndpointId, Generation, Observation, ObservationKind,
-    PayloadContentType, PayloadEnvelope, ResourceCapability, ResourceId, ResourceKind,
-    ResourceProjectionContract, SchemaDescriptor, StoredEventKind, StoredEventPayload,
+    AdapterTargetCategory, AttachmentMethod, AuthorityDomainId, EndpointId, Generation,
+    Observation, ObservationKind, PayloadContentType, PayloadEnvelope, ResourceCapability,
+    ResourceId, ResourceKind, ResourceProjectionContract, SchemaDescriptor, StoredEventKind,
+    StoredEventPayload,
 };
 use patchbay_core::{
     adapter::{
@@ -195,20 +196,113 @@ async fn exact_identity_lookup_and_schema_binding_select_each_resource_declarati
     .expect("identity");
     assert!(registry.resource_capability(&undeclared).is_none());
 
-    let mismatch = registry.validate_resource_projection(
-        &usage,
-        &PayloadEnvelope {
-            content_type: PayloadContentType::Json as i32,
-            schema_ref: "example.usage_window.payload.v1".to_owned(),
-            ..PayloadEnvelope::default()
-        },
-        &PayloadEnvelope {
-            content_type: PayloadContentType::Json as i32,
-            schema_ref: "example.usage_window.projection.v1".to_owned(),
-            ..PayloadEnvelope::default()
-        },
-    );
-    assert!(mismatch.is_err(), "content type mismatch must fail closed");
+    let payload = PayloadEnvelope {
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: "example.usage_window.payload.v1".to_owned(),
+        ..PayloadEnvelope::default()
+    };
+    let projection = PayloadEnvelope {
+        content_type: PayloadContentType::Json as i32,
+        schema_ref: "example.usage_window.projection.v1".to_owned(),
+        ..PayloadEnvelope::default()
+    };
+    for (name, mismatched_payload, mismatched_projection) in [
+        (
+            "payload content type",
+            PayloadEnvelope {
+                content_type: PayloadContentType::Json as i32,
+                ..payload.clone()
+            },
+            projection.clone(),
+        ),
+        (
+            "payload schema ref",
+            PayloadEnvelope {
+                schema_ref: "wrong.payload.v1".to_owned(),
+                ..payload.clone()
+            },
+            projection.clone(),
+        ),
+        (
+            "projection content type",
+            payload.clone(),
+            PayloadEnvelope {
+                content_type: PayloadContentType::Protobuf as i32,
+                ..projection.clone()
+            },
+        ),
+        (
+            "projection schema ref",
+            payload.clone(),
+            PayloadEnvelope {
+                schema_ref: "wrong.projection.v1".to_owned(),
+                ..projection.clone()
+            },
+        ),
+    ] {
+        assert!(
+            registry
+                .validate_resource_projection(&usage, &mismatched_payload, &mismatched_projection)
+                .is_err(),
+            "{name} mismatch must fail closed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn registration_redacts_attachment_descriptor_before_durable_replay() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage");
+    let mut registry = AdapterRegistry::new();
+    let mut capability = session_capability();
+    capability.attachment_method = Some(AttachmentMethod {
+        kind: "configured-local-material".to_owned(),
+        descriptor: b"sentinel-attachment-secret".to_vec(),
+        descriptor_content_type: PayloadContentType::Binary as i32,
+    });
+    ingest_registration(
+        &storage,
+        &mut registry,
+        registration("redacted", capability),
+    )
+    .await
+    .expect("adapter attaches");
+
+    let domain = AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    };
+    let events = storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .expect("events read");
+    let stored_registration = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Observation as i32)
+        .filter_map(|event| Observation::decode(event.payload.payload.as_slice()).ok())
+        .find_map(|observation| {
+            observation
+                .payload
+                .filter(|payload| payload.schema_ref == "patchbay.AdapterRegistration")
+        })
+        .map(|payload| {
+            AdapterRegistration::decode(payload.payload.as_slice()).expect("registration decodes")
+        })
+        .expect("durable registration observation");
+    assert!(stored_registration
+        .capability
+        .as_ref()
+        .and_then(|capability| capability.attachment_method.as_ref())
+        .is_some_and(|method| method.descriptor.is_empty()));
+
+    let rebuilt = rebuild_from_log(&storage, &domain)
+        .await
+        .expect("registration replays");
+    assert!(rebuilt
+        .get(&AdapterId {
+            value: "redacted".to_owned()
+        })
+        .and_then(|record| record.registration.capability.as_ref())
+        .and_then(|capability| capability.attachment_method.as_ref())
+        .is_some_and(|method| method.descriptor.is_empty()));
 }
 
 #[test]
