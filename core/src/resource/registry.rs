@@ -457,7 +457,26 @@ fn apply_freshness_change(
             prior.freshness
         )));
     }
-    prior.freshness = freshness(change.to, event_lsn)?;
+    let to = freshness(change.to, event_lsn)?;
+    match to {
+        ResourceFreshnessState::Unknown => {
+            // UNKNOWN means Patchbay has no payload it can honestly classify;
+            // use the explicit unknown semantics even for a normalized
+            // freshness-only transition.
+            prior.resource_payload = None;
+            prior.projection_payload = None;
+        }
+        ResourceFreshnessState::Current
+            if prior.resource_payload.is_none() || prior.projection_payload.is_none() =>
+        {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource freshness change at LSN {event_lsn} would mark an empty payload current"
+            )));
+        }
+        ResourceFreshnessState::Current | ResourceFreshnessState::Stale => {}
+        ResourceFreshnessState::Unspecified => unreachable!("freshness() rejects unspecified"),
+    }
+    prior.freshness = to;
     prior.source_adapter_generation = generation;
     prior.revision_lsn = event_lsn;
     prior.observed_at = observed_at;

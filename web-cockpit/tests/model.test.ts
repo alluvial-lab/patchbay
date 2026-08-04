@@ -27,6 +27,7 @@ import {
   ResponseContractKind,
   ResponseContractSchema,
   ResponseOptionSchema,
+  ResourceStateEventSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -468,6 +469,26 @@ function responseOperationEvent(lsn: bigint, commandId: string, selectedOptionId
     }),
   );
 }
+
+test("resource state delivery decodes without contaminating session presentation", () => {
+  const model = fold(
+    emptyPresentationModel(),
+    stored(
+      1n,
+      StoredEventKind.RESOURCE_STATE,
+      ResourceStateEventSchema,
+      create(ResourceStateEventSchema, {
+        authorityDomainId: DOMAIN,
+        sourceAdapterId: adapterId,
+        sourceAdapterGeneration: create(GenerationSchema, { value: 1n }),
+      }),
+    ),
+  );
+  assert.equal(model.cursor, 1n);
+  assert.equal(model.reconciled, true);
+  assert.equal(model.sessions.size, 0);
+  assert.equal(model.commands.size, 0);
+});
 
 function sessionTarget(generation: bigint) {
   return create(TargetScopeSchema, {

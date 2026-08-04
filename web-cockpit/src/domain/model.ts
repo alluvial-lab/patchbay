@@ -12,6 +12,7 @@ import {
   OperationState,
   PayloadContentType,
   ResponseContractKind,
+  ResourceStateEventSchema,
   SessionActivityState,
   SessionConnectivityState,
   SessionStateEventSchema,
@@ -241,6 +242,17 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
     case StoredEventKind.SESSION_STATE:
       foldSessionState(next, fromBinary(SessionStateEventSchema, payload.payload), lsn);
       break;
+    case StoredEventKind.RESOURCE_STATE: {
+      // Resource rendering belongs to the resource-composition feature, but
+      // the current session cockpit must still consume the admitted stream
+      // without entering a reconnect loop. Decode and domain-check now; do not
+      // install adapter payloads into session presentation state.
+      const resourceEvent = fromBinary(ResourceStateEventSchema, payload.payload);
+      if (resourceEvent.authorityDomainId?.value !== authorityDomainId) {
+        throw new Error("cross-domain resource event rejected by presentation fold");
+      }
+      break;
+    }
     case StoredEventKind.SECURITY_LOCKDOWN:
       foldSecurityLockdown(next, fromBinary(SecurityLockdownEventSchema, payload.payload), lsn);
       break;

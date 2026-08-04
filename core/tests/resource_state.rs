@@ -127,6 +127,77 @@ fn unknown_and_stale_are_reconciliation_freshness_not_payload_health() {
 }
 
 #[test]
+fn unknown_freshness_clears_payload_and_current_requires_payload() {
+    let domain = domain();
+    let id = identity("adapter-a", "provider_pool", "pool-1");
+    let mut registry = ResourceRegistry::new();
+    registry
+        .observe(&recorded(
+            &domain,
+            1,
+            state_event(
+                &domain,
+                "adapter-a",
+                1,
+                vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+                vec![upsert(&id, None)],
+            ),
+        ))
+        .unwrap();
+    registry
+        .observe(&recorded(
+            &domain,
+            2,
+            state_event(
+                &domain,
+                "adapter-a",
+                1,
+                vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+                vec![ResourceStateMutation {
+                    identity: Some(id.to_scope().resource.unwrap()),
+                    from_revision_lsn: Some(Lsn { value: 1 }),
+                    mutation: Some(resource_state_mutation::Mutation::FreshnessChanged(
+                        ResourceFreshnessChanged {
+                            from: ResourceFreshnessState::Current as i32,
+                            to: ResourceFreshnessState::Unknown as i32,
+                        },
+                    )),
+                }],
+            ),
+        ))
+        .unwrap();
+    let unknown = registry.get(&id).unwrap();
+    assert_eq!(unknown.freshness, ResourceFreshnessState::Unknown);
+    assert!(unknown.resource_payload.is_none());
+    assert!(unknown.projection_payload.is_none());
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&recorded(
+            &domain,
+            3,
+            state_event(
+                &domain,
+                "adapter-a",
+                1,
+                vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+                vec![ResourceStateMutation {
+                    identity: Some(id.to_scope().resource.unwrap()),
+                    from_revision_lsn: Some(Lsn { value: 2 }),
+                    mutation: Some(resource_state_mutation::Mutation::FreshnessChanged(
+                        ResourceFreshnessChanged {
+                            from: ResourceFreshnessState::Unknown as i32,
+                            to: ResourceFreshnessState::Current as i32,
+                        },
+                    )),
+                }],
+            ),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
 fn contradictory_prior_revision_is_rejected_without_partial_fold() {
     let domain = domain();
     let first = identity("adapter-a", "pool", "one");
