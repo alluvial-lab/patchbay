@@ -198,6 +198,41 @@ fn unknown_freshness_clears_payload_and_current_requires_payload() {
 }
 
 #[test]
+fn later_event_cannot_lower_source_adapter_generation() {
+    let domain = domain();
+    let id = identity("adapter-a", "provider_pool", "pool-1");
+    let mut registry = ResourceRegistry::new();
+    registry
+        .observe(&recorded(
+            &domain,
+            1,
+            state_event(
+                &domain,
+                "adapter-a",
+                2,
+                vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+                vec![upsert(&id, None)],
+            ),
+        ))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&recorded(
+            &domain,
+            2,
+            state_event(
+                &domain,
+                "adapter-a",
+                1,
+                vec![view("usage_window", AdapterSnapshotSupport::Partial)],
+                Vec::new(),
+            ),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
 fn contradictory_prior_revision_is_rejected_without_partial_fold() {
     let domain = domain();
     let first = identity("adapter-a", "pool", "one");

@@ -338,7 +338,10 @@ fn validate_report_shape(report: &ValidatedResourceReport) -> Result<(), Resourc
                 "resource view completeness is unspecified".into(),
             ));
         }
-        if tier == AdapterSnapshotSupport::None && !view.mutations.is_empty() {
+        if report.mode == ResourceReportMode::Snapshot
+            && tier == AdapterSnapshotSupport::None
+            && !view.mutations.is_empty()
+        {
             return Err(ResourceError::InvalidReport(
                 "none-completeness view cannot carry reconstructed mutations".into(),
             ));

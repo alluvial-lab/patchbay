@@ -181,6 +181,25 @@ async fn newer_adapter_generation_stales_prior_unreported_state_and_old_generati
 }
 
 #[tokio::test]
+async fn none_tier_live_delta_can_mutate_an_explicit_identity() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = ResourceRegistry::new();
+    ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::None,
+            vec![upsert("one")],
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(registry.contains(&domain_identity("one")));
+}
+
+#[tokio::test]
 async fn malformed_none_and_duplicate_reports_reject_before_append() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = ResourceRegistry::new();

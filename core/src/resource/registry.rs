@@ -97,6 +97,19 @@ impl ResourceRegistry {
             .source_adapter_generation
             .expect("validated adapter generation");
         let observed_at = state.observed_at.expect("validated observed_at");
+        let projected_generation = self
+            .views
+            .values()
+            .filter(|view| view.key.adapter_id == *adapter_id)
+            .map(|view| view.source_adapter_generation.value)
+            .max()
+            .unwrap_or(0);
+        if generation.value < projected_generation {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource state event at LSN {event_lsn} lowers adapter generation from {projected_generation} to {}",
+                generation.value
+            )));
+        }
 
         for view in &state.views {
             let key = ResourceViewKey {
