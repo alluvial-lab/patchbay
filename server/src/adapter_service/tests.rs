@@ -18,7 +18,8 @@ use patchbay_contracts::patchbay::{
     TypedCorrelation,
 };
 use patchbay_core::{security::events as security_events, storage::{
-    DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+    AuditRecordDraft, AuditedBatchAppend, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
+    StorageError, StoredSnapshot, TargetKey,
 }};
 use prost::Message;
 use prost_types::Timestamp;
@@ -121,6 +122,115 @@ impl Storage for BlockingReadStorage {
         self.inner
             .load_latest_snapshot(authority_domain_id, at_or_before)
             .await
+    }
+}
+
+/// Commits the real batch, then corrupts only the returned event identity once
+/// so the hot projection fold fails while durable replay remains valid.
+#[derive(Clone)]
+struct FailPostCommitRegistrationFoldStorage {
+    inner: RusqliteStorage,
+    fail_next_batch_result: Arc<AtomicBool>,
+}
+
+impl FailPostCommitRegistrationFoldStorage {
+    fn new() -> Self {
+        Self {
+            inner: RusqliteStorage::open_in_memory().expect("storage opens"),
+            fail_next_batch_result: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn fail_next_batch_fold(&self) {
+        self.fail_next_batch_result.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Storage for FailPostCommitRegistrationFoldStorage {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
+    }
+
+    async fn append_decision(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner
+            .append_decision(authority_domain_id, source, audit)
+            .await
+    }
+
+    async fn append_batch_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        sources: Vec<StoredEventPayload>,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedBatchAppend, StorageError> {
+        let mut committed = self
+            .inner
+            .append_batch_audited(authority_domain_id, sources, audit)
+            .await?;
+        if self.fail_next_batch_result.swap(false, Ordering::SeqCst) {
+            committed.source_event_ids[0].authority_domain_id = Some(AuthorityDomainId {
+                value: "injected-wrong-domain".into(),
+            });
+        }
+        Ok(committed)
     }
 }
 
@@ -517,6 +627,114 @@ async fn same_generation_manifest_redeclaration_atomically_degrades_affected_res
             .expect("old token is fenced after atomic redeclaration")
             .code(),
         tonic::Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+async fn committed_registration_with_failed_projection_fences_prior_attachment() {
+    let storage = FailPostCommitRegistrationFoldStorage::new();
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut initial = registration(domain.clone());
+    initial.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Authoritative,
+        )],
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(initial),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("initial attachment succeeds");
+    let prior_token = attachment_token(&attached);
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(
+                    resource_snapshot_report(
+                        1,
+                        &[("provider_pool", AdapterSnapshotSupport::Authoritative)],
+                    ),
+                )),
+            },
+            &prior_token,
+        ))
+        .await
+        .expect("initial report installs a resource view");
+    let mut prior_stream = service
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &prior_token,
+        ))
+        .await
+        .expect("prior delivery stream opens")
+        .into_inner();
+
+    storage.fail_next_batch_fold();
+    let mut replacement = registration(domain.clone());
+    replacement.adapter_generation = Some(Generation { value: 2 });
+    replacement.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Authoritative,
+        )],
+        ..AdapterCapability::default()
+    });
+    service
+        .attach(Request::new(AttachRequest {
+            registration: Some(replacement),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect_err("post-commit projection failure returns an attach error");
+
+    let durable = adapter::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("committed replacement registration replays");
+    assert_eq!(
+        durable
+            .get(&adapter_id())
+            .and_then(|record| record.registration.adapter_generation.as_ref())
+            .map(|generation| generation.value),
+        Some(2),
+        "replacement commit is the point of no return"
+    );
+    let stale_token_error = service
+        .receive_deliveries(authenticated_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &prior_token,
+        ))
+        .await
+        .err()
+        .expect("prior token must be unusable after the replacement commits");
+    assert_eq!(stale_token_error.code(), tonic::Code::Unauthenticated);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), prior_stream.next())
+            .await
+            .expect("prior stream epoch is fenced promptly")
+            .is_none(),
+        "delivery stream authenticated under the prior epoch must close"
     );
 }
 

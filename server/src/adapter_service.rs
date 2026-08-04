@@ -231,6 +231,20 @@ where
         self.require_domain(&domain)?;
         Ok(domain)
     }
+
+    /// Fail closed after a replacement registration has durably committed but
+    /// its in-memory projection could not be refreshed. The old token and any
+    /// delivery stream authenticated under its epoch must become inert even
+    /// though the attach RPC returns an error.
+    async fn fence_attachment_after_commit(&self, adapter_id: &AdapterId) -> Result<(), Status> {
+        self.attachment_tokens.lock().await.remove(adapter_id);
+        let mut epochs = self.delivery_stream_epochs.lock().await;
+        let epoch = epochs.entry(adapter_id.clone()).or_default();
+        *epoch = epoch
+            .checked_add(1)
+            .ok_or_else(|| Status::internal("delivery stream epoch overflow"))?;
+        Ok(())
+    }
 }
 
 const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
@@ -566,6 +580,14 @@ where
         {
             Ok(event_id) => event_id,
             Err(error) => {
+                let committed = error.committed();
+                let error = error.into_adapter_error();
+                if committed {
+                    // Durable replacement is the point of no return. Never let
+                    // projection failure preserve authority for the attachment
+                    // that the log has already superseded.
+                    self.fence_attachment_after_commit(&adapter_id).await?;
+                }
                 let kind = if matches!(error, adapter::AdapterError::StaleGeneration { .. }) {
                     patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch
                 } else {

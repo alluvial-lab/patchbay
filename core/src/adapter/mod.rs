@@ -225,8 +225,10 @@ pub async fn ingest_registration_with_resources<S: Storage>(
     registry: &mut AdapterRegistry,
     resources: &mut ResourceRegistry,
     registration: AdapterRegistration,
-) -> Result<EventId, AdapterError> {
-    registry.preflight(&registration)?;
+) -> Result<EventId, RegistrationIngestError> {
+    registry
+        .preflight(&registration)
+        .map_err(RegistrationIngestError::PreCommit)?;
     let adapter_id = registration.adapter_id.clone().expect("validated adapter id");
     let incoming_generation = registration
         .adapter_generation
@@ -234,7 +236,8 @@ pub async fn ingest_registration_with_resources<S: Storage>(
     let incoming_capability = validate_registration(
         &registration,
         CapabilityValidationContext::Attach,
-    )?;
+    )
+    .map_err(RegistrationIngestError::PreCommit)?;
     let current = registry.get(&adapter_id).cloned();
     let prepared = prepare_registration(registration);
     let degradation = current
@@ -256,7 +259,9 @@ pub async fn ingest_registration_with_resources<S: Storage>(
                 },
             )
         })
-        .transpose()?
+        .transpose()
+        .map_err(AdapterError::from)
+        .map_err(RegistrationIngestError::PreCommit)?
         .flatten();
     let Some(degradation) = degradation else {
         let event_id = storage
@@ -265,11 +270,15 @@ pub async fn ingest_registration_with_resources<S: Storage>(
                 prepared.source.clone(),
                 prepared.audit,
             )
-            .await?;
-        registry.observe(&RecordedEvent {
-            event_id: event_id.clone(),
-            payload: prepared.source,
-        })?;
+            .await
+            .map_err(AdapterError::from)
+            .map_err(RegistrationIngestError::PreCommit)?;
+        registry
+            .observe(&RecordedEvent {
+                event_id: event_id.clone(),
+                payload: prepared.source,
+            })
+            .map_err(RegistrationIngestError::PostCommitProjection)?;
         return Ok(event_id);
     };
 
@@ -279,10 +288,14 @@ pub async fn ingest_registration_with_resources<S: Storage>(
             vec![degradation.clone(), prepared.source.clone()],
             prepared.audit,
         )
-        .await?;
+        .await
+        .map_err(AdapterError::from)
+        .map_err(RegistrationIngestError::PreCommit)?;
     let [degradation_event_id, registration_event_id] = appended.source_event_ids.as_slice() else {
-        return Err(AdapterError::CorruptRecord(
-            "registration degradation batch returned the wrong number of source events".into(),
+        return Err(RegistrationIngestError::PostCommitProjection(
+            AdapterError::CorruptRecord(
+                "registration degradation batch returned the wrong number of source events".into(),
+            ),
         ));
     };
     let mut next_resources = resources.clone();
@@ -300,10 +313,17 @@ pub async fn ingest_registration_with_resources<S: Storage>(
             })
         });
     if let Err(error) = fold_result {
-        *registry = rebuild_from_log(storage, &prepared.authority_domain_id).await?;
-        *resources = crate::resource::rebuild_from_log(storage, &prepared.authority_domain_id)
-            .await?;
-        return Err(error);
+        let rebuilt_registry = rebuild_from_log(storage, &prepared.authority_domain_id)
+            .await
+            .map_err(RegistrationIngestError::PostCommitProjection)?;
+        let rebuilt_resources =
+            crate::resource::rebuild_from_log(storage, &prepared.authority_domain_id)
+                .await
+                .map_err(AdapterError::from)
+                .map_err(RegistrationIngestError::PostCommitProjection)?;
+        *registry = rebuilt_registry;
+        *resources = rebuilt_resources;
+        return Err(RegistrationIngestError::PostCommitProjection(error));
     }
     *registry = next_registry;
     *resources = next_resources;
@@ -643,6 +663,31 @@ fn validate_registration(
         }
     }
     Ok(validated_capability)
+}
+
+/// Registration failures are classified around the durable commit boundary.
+/// Once a replacement registration commits, callers must fence the prior
+/// attachment even if refreshing the in-memory projections fails.
+#[derive(Debug, thiserror::Error)]
+pub enum RegistrationIngestError {
+    #[error(transparent)]
+    PreCommit(AdapterError),
+    #[error("adapter registration committed but projection refresh failed: {0}")]
+    PostCommitProjection(AdapterError),
+}
+
+impl RegistrationIngestError {
+    #[must_use]
+    pub const fn committed(&self) -> bool {
+        matches!(self, Self::PostCommitProjection(_))
+    }
+
+    #[must_use]
+    pub fn into_adapter_error(self) -> AdapterError {
+        match self {
+            Self::PreCommit(error) | Self::PostCommitProjection(error) => error,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
