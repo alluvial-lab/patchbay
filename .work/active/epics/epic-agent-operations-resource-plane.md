@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane
 kind: epic
-stage: implementing
+stage: review
 tags: [foundation, protocol, adapter, ux]
 parent: null
 depends_on: []
@@ -142,3 +142,15 @@ scope (see Mockups), so they do not appear as child features here.
   validates only the cheap half manufactures the durable false confidence it
   was built to prevent. The design must not reach for that pattern without a
   real validation contract.
+
+## Child features reviewed and complete
+
+All five child features are `done` after thorough review:
+
+- `resource-identity` (done) — typed resource identity, target-resolution polymorphism, grant-containment.
+- `resource-state` (done) — resource snapshot/revision, typed report ingress, delta folding, replay, LoadSnapshot; thorough convergence review.
+- `capability-manifest` (done) — adapter manifest resource-kind/category/projection-schema extensions; target-category registry extensible for the reserved OKF third kind.
+- `cockpit-composition` (done) — Resources peer destination, canonical wrapper + local decoders, dual-snapshot atomic reconciliation, runtime-context resource linkage; thorough convergence review (3 passes; 3 contract blockers fixed: mixed diagnostic targets, reverse-horizon oracle, historical diagnostic path).
+- `conformance` (done) — executable, mutation-sensitive conformance vectors + property oracles proving a resource adapter cannot bypass authority, durability, or stale-state rules; deep-lane convergence (6 passes; all drift classes now data-driven-guarded).
+
+Advanced to `review` for the deeper aggregate review over the whole agent-operations resource-plane arc.
