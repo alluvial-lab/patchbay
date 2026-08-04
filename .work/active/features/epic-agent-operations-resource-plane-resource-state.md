@@ -1,14 +1,14 @@
 ---
 id: epic-agent-operations-resource-plane-resource-state
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol, storage]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity]
 release_binding: null
 gate_origin: null
 created: 2026-07-30
-updated: 2026-08-03
+updated: 2026-08-04
 ---
 
 # Resource snapshot, revision & ingestion
@@ -480,3 +480,44 @@ The feature is cohesive despite five checkpoints: schema, fold, ingress, and mat
 - Parked: typed periodic checkpoint namespaces remain reserved until checkpointing is activated or replay cost is measured.
 - Rejected: generic Observation folding and a second resource store because they cannot preserve deterministic schema-neutral replay.
 - Skipped/degraded: no independent subagent/peer mechanism is exposed in this delegated worker. Direct source verification and pre-mortem were completed; caller-required `thorough` implementation review remains mandatory.
+
+## Implementation summary
+
+All five dependency-ordered checkpoints are complete:
+
+1. Generated Rust/TypeScript contracts define resource records, report/event
+   variants, freshness, view completeness/revision, `RESOURCE_STATE`, and
+   discriminated snapshots.
+2. The canonical `ResourceRegistry` folds and replays durable state with exact
+   typed identity, core-LSN revisions, active/tombstoned membership, terminal
+   replacement, and atomic corruption handling.
+3. Authenticated adapter ingress consumes the landed manifest tier/schema APIs,
+   normalizes snapshot/delta reports, fences adapter generations, appends before
+   fold, and composes session/resource disconnect degradation into one audited
+   batch.
+4. The server materializes stable session/resource snapshots, repairs invalid or
+   stale session checkpoints, delivers resource events, and all owned session
+   callers select the session view explicitly.
+5. Real-process report → durable event → restart resolver → resource snapshot
+   evidence, generated-sequence reconciliation testing, and rolling foundation
+   updates close the integrated boundary without promoting conformance claims.
+
+Implementation stayed with one cohesive host worker because this delegated
+harness exposes no generic subagent dispatch tool and schema/core/server/caller
+write sets overlap heavily. Worker capability was `openai-codex/gpt-5.6-sol`,
+high reasoning, supplied by the harness; the caller explicitly selected
+`review_weight: thorough`.
+
+## Integrated verification
+
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- Contract Rust/TypeScript builds, `buf generate`, and generated drift — passed.
+- CLI tests — 37 passed; web cockpit — 75; web server — 31; Pi adapter — 24,
+  including real core/adapter/Pi E2E.
+- Model-promotion, conformance-vector metadata, and presentation conformance —
+  passed; no resource property/vector was promoted.
+- Repository-wide `cargo fmt --check` still reports pre-existing broad Rust
+  formatting drift; repository-wide `buf lint` still reports pre-existing RPC
+  request/response naming debt. Neither was weakened or attributed to this
+  feature.
