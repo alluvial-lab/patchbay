@@ -7,21 +7,26 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
-    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
+    observation_request, resource_report, resource_report_mutation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId,
+    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
     RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
     RevokeControlSurfacePrincipalRequest, RevokeGrantRequest,
     PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
-    ResourceFreshnessState, ResourceId, ResourceKind, ResourceSnapshot, ResourceStateEvent,
-    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, SessionActivityState,
+    ObservationRequest, ResourceCapability, ResourceFreshnessState, ResourceId, ResourceKind,
+    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshot,
+    ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
+    SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
     StoredEventKind, StoredEventPayload, SubmissionOutcome,
     SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
     VerifyOperatorPasswordRequest, diagnostics_query, query_diagnostics_response,
 };
 use patchbay_core::{
+    acceptance::{TargetBinding, TargetResolver},
     authority::{events as authority_events, hash_principal_credential},
     session::events as session_events,
     time::{Clock, TestClock},
@@ -31,6 +36,10 @@ use patchbay_core::{
     },
 };
 use patchbay_core_server::{
+    adapter_service::{
+        AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
+    },
     admin_service::{AdminServiceImpl, SetupSecret},
     decision_gate::CoreDecisionGate,
     login_security::{LoginLimiter, StderrLoginAuditSink},
@@ -38,12 +47,14 @@ use patchbay_core_server::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
     rpc::{
+        adapter_control_service_server::AdapterControlService,
         admin_service_server::AdminService, control_service_client::ControlServiceClient,
         control_service_server::{ControlService, ControlServiceServer},
     },
     service::{
         map_storage_error_to_status, ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER,
     },
+    state::ProjectionState,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -807,41 +818,112 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
         resource_id: Some(ResourceId { value: "pool-1".into() }),
     };
-    server
-        .storage
-        .append(
-            &domain(),
-            patchbay_core::resource::events::encode(&ResourceStateEvent {
+    let adapter_service = AdapterControlServiceImpl::new(
+        server.storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new("resource-evidence").unwrap(),
+    )
+    .await
+    .unwrap();
+    let attached = adapter_service
+        .attach(Request::new(AttachRequest {
+            registration: Some(AdapterRegistration {
+                adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
+                endpoint_id: Some(EndpointId { value: "resource-endpoint".into() }),
                 authority_domain_id: Some(domain()),
-                source_adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
-                source_adapter_generation: Some(Generation { value: 3 }),
-                views: vec![ResourceViewStateUpdate {
+                adapter_generation: Some(Generation { value: 3 }),
+                capability: Some(AdapterCapability {
+                    target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+                    resource_capabilities: vec![ResourceCapability {
+                        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                        snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                        projection_contract: Some(ResourceProjectionContract {
+                            target_category: AdapterTargetCategory::OperationalResource as i32,
+                            payload_schema: Some(SchemaDescriptor {
+                                schema_ref: "provider_pool.payload.v1".into(),
+                                content_type: PayloadContentType::Protobuf as i32,
+                            }),
+                            projection_schema: Some(SchemaDescriptor {
+                                schema_ref: "provider_pool.projection.v1".into(),
+                                content_type: PayloadContentType::Json as i32,
+                            }),
+                        }),
+                    }],
+                    ..AdapterCapability::default()
+                }),
+                ..AdapterRegistration::default()
+            }),
+            attachment_evidence: b"resource-evidence".to_vec(),
+        }))
+        .await
+        .expect("resource adapter attaches");
+    let attachment_token = attached
+        .metadata()
+        .get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut report = Request::new(ObservationRequest {
+        authority_domain_id: Some(domain()),
+        observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
+            adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
+            adapter_generation: Some(Generation { value: 3 }),
+            report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                views: vec![ResourceViewReport {
                     resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
                     completeness: AdapterSnapshotSupport::Partial as i32,
+                    mutations: vec![ResourceReportMutation {
+                        identity: Some(resource_identity.clone()),
+                        mutation: Some(resource_report_mutation::Mutation::Upsert(
+                            ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: vec![1],
+                                    content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: "provider_pool.payload.v1".into(),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: br#"{\"state\":\"ok\"}"#.to_vec(),
+                                    content_type: PayloadContentType::Json as i32,
+                                    schema_ref: "provider_pool.projection.v1".into(),
+                                }),
+                            },
+                        )),
+                    }],
                 }],
-                mutations: vec![ResourceStateMutation {
-                    identity: Some(resource_identity.clone()),
-                    from_revision_lsn: None,
-                    mutation: Some(resource_state_mutation::Mutation::Upsert(
-                        ResourceStateUpsert {
-                            resource_payload: Some(PayloadEnvelope {
-                                payload: vec![1],
-                                content_type: PayloadContentType::Protobuf as i32,
-                                schema_ref: "provider_pool.payload.v1".into(),
-                            }),
-                            projection_payload: Some(PayloadEnvelope {
-                                payload: br#"{\"state\":\"ok\"}"#.to_vec(),
-                                content_type: PayloadContentType::Json as i32,
-                                schema_ref: "provider_pool.projection.v1".into(),
-                            }),
-                        },
-                    )),
-                }],
-                observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
-            }),
-        )
+            })),
+            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        })),
+    });
+    report.metadata_mut().insert(ADAPTER_ID_HEADER, "resource-adapter".parse().unwrap());
+    report.metadata_mut().insert(ADAPTER_EVIDENCE_HEADER, "resource-evidence".parse().unwrap());
+    report.metadata_mut().insert(
+        ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        attachment_token.parse().unwrap(),
+    );
+    adapter_service
+        .ingest_observation(report)
         .await
-        .expect("resource state appends");
+        .expect("authenticated resource report appends");
+
+    let restarted = ProjectionState::rebuild(&server.storage, &domain())
+        .await
+        .expect("resource projection survives restart");
+    assert_eq!(
+        TargetResolver::resolve(
+            restarted.target_resolver(),
+            &domain(),
+            &TargetScope {
+                kind: TargetScopeKind::Resource as i32,
+                resource: Some(resource_identity.clone()),
+                ..TargetScope::default()
+            },
+        )
+        .await,
+        Ok(TargetBinding::Resource(
+            patchbay_core::resource::ResourceIdentity::try_from_wire(&resource_identity).unwrap(),
+        ))
+    );
     let resource_response = server
         .client
         .load_snapshot(authenticated_request(

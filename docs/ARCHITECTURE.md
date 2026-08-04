@@ -28,6 +28,15 @@ The operational resource plane contains non-session targets whose state material
 
 Resource domain health remains adapter-owned payload state. For example, an exhausted model contribution is not an offline runtime session. The coordination core owns durable Operations, authority, correlation, and reconciliation around a resource but does not interpret allocation policy, quota mathematics, or adapter-specific health variants. The adapter capability manifest binds each exact resource kind to its snapshot tier and payload/domain-projection schemas; a local compositor may interpret the domain projection only inside the canonical Patchbay wrapper.
 
+The core's revisioned `ResourceRegistry` is a projection separate from the
+runtime-session registry while sharing the authority-domain durable log and
+composite target resolver. Authenticated typed snapshot/delta reports normalize
+to atomic `RESOURCE_STATE` events; live catch-up and restart replay fold the same
+event. The projection owns active membership, current/stale/unknown cache
+freshness, per-adapter-kind completeness/revision, terminal exact-identity
+tombstones, and explicit replacement links. It is not a second persistence
+store and cannot be populated by opaque generic Observations.
+
 ### Adapter plane
 
 Adapters translate between Patchbay concepts and external systems. Pi is the first session adapter. token-commune is the second reference adapter and the first materially non-session resource adapter. Adapters declare capabilities and own external-system details.
@@ -59,7 +68,7 @@ This plane defines Operation acceptance, delivery, reply/response correlation, i
 
 This plane defines authoritative state for actors, sessions, and resources. Session connectivity/activity axes are owned by `docs/PROTOCOL.md`; control surfaces compose those axes and must display stale, offline, and unknown states distinctly from live states. Resource domain state is carried by an adapter-owned schema and never coerced into those session axes; its snapshot still carries Patchbay revision, authority-domain, source, and staleness context.
 
-Snapshots repair missed streams and reconnect gaps when the adapter or core can provide an authoritative snapshot. Adapters with partial or no snapshot capability degrade as defined in `docs/PROTOCOL.md`. A resource adapter may claim only the tier supported by the complete external view it can actually reconstruct.
+Snapshots repair missed streams and reconnect gaps when the adapter or core can provide an authoritative snapshot. Adapters with partial or no snapshot capability degrade as defined in `docs/PROTOCOL.md`. A resource adapter may claim only the tier supported by the complete external view it can actually reconstruct. `LoadSnapshot` explicitly selects and echoes the session or resource view so opaque bytes cannot be decoded as the wrong projection. Resource snapshots materialize on demand from the durable resource projection; the existing checkpoint namespace remains session-only until a future typed-checkpoint migration is justified.
 
 ### Authority and identity plane
 

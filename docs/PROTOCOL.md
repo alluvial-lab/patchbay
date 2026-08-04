@@ -458,6 +458,71 @@ v0.1.0 revision/cursor rules:
 - Late events carry the `LSN` at which they were committed; an event whose `LSN` is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
 - The core may serve a compressed snapshot at any `LSN`; cursors remain valid across compaction because revisions are monotonic.
 
+### Operational-resource state and reconciliation
+
+Operational resources use a separate revisioned `ResourceRegistry` projection,
+keyed by the exact `ResourceIdentity`; they do not inherit runtime-session
+generation or connectivity/activity. Each record carries schema-bound resource
+and domain-projection envelopes, source adapter generation, observed time, the
+LSN that last revised it, and Patchbay reconciliation freshness:
+
+- `current` — the cached resource payload is confirmed by accepted current
+  adapter evidence;
+- `stale` — cached payload exists but is not confirmed by current evidence;
+- `unknown` — Patchbay has no payload it can honestly classify as current.
+
+Freshness is confidence in the cache, not adapter-owned domain health. Provider
+exhaustion, credential hold, contribution health, and model availability remain
+inside the manifest-bound payload and never become session state.
+
+Completeness and revision are tracked independently for each
+`(adapter_id, ResourceKind)` view. The report tier must be equal to or weaker
+than that kind's manifest declaration. Typed `ResourceReport` ingress has two
+modes:
+
+- A reconnect **snapshot** with `authoritative` completeness is a complete
+  external collection: listed resources are installed as current and omitted
+  active identities are terminally tombstoned. An adapter whose external view
+  may omit live members must not claim this tier.
+- A `partial` snapshot updates listed identities and marks omitted cached
+  identities stale. A `none` snapshot carries no reconstructed mutations and
+  marks cached identities stale.
+- A live **delta** changes only explicitly named identities regardless of tier;
+  omission has no meaning.
+
+Every accepted report is normalized before append into one durable
+`RESOURCE_STATE` event and advances each reported view revision even when its
+payload bytes are unchanged. Core-assigned `(authority_domain_id, LSN)` order is
+the only Patchbay revision authority. The event carries explicit prior record
+revisions so replay rejects contradictory history. No resource projection
+mutation occurs before durable append; restart and live catch-up fold the same
+normalized event.
+
+An authenticated adapter id and current adapter generation fence report
+source. The first report from a newer adapter generation stales prior active
+records before applying the new evidence; abnormal stream loss durably stales
+all active resources owned by that adapter. An old attachment token or stream
+epoch is inert.
+
+A tombstone is terminal for one exact resource identity. A permanent
+replacement uses a distinct same-adapter `ResourceIdentity`; the old record
+retains `replaced_by`, and the matching replacement upsert commits in the same
+durable event. Late evidence cannot resurrect the retired tuple. Cross-adapter
+replacement and reusing a tombstoned identity are invalid.
+
+`LoadSnapshot` requires and echoes `SnapshotViewKind`. `session` returns only a
+validated `SessionSnapshot`; `resource` returns only a `ResourceSnapshot`
+materialized from the current resource projection. Resource reads never decode
+the current undiscriminated session checkpoint slot. A corrupt, cross-type, or
+older session checkpoint is repaired by the current materialized session view;
+a historical bound that the current implementation cannot reconstruct likewise
+returns the newer current authority rather than an empty or older view.
+
+These post-v0.1 semantics are implementation-checked by generated-contract,
+Rust projection/replay/property, authenticated server-ingress, reconnect, and
+real-process snapshot tests. Promoted resource conformance vectors and formal
+assurance remain owned by the resource-plane conformance feature.
+
 ### Atomicity between events and snapshots
 
 v0.1.0 requires the following atomicity guarantees at the persistence boundary:
@@ -624,7 +689,7 @@ Degraded behavior rules:
 
 ## Extension pressure classification
 
-- **Committed post-v0.1 adapter direction:** the `AdapterTargetCategory` registry admits `runtime_session` and `operational_resource`; each operational resource kind has an exact snapshot tier and schema-bound payload/domain projection contract. `knowledge_bundle` is wire-present and registration-rejected with OKF v0.2 named as the candidate format. Schema matching is a format binding, not semantic payload validation, and capabilities remain advisory rather than authority.
+- **Committed post-v0.1 adapter direction:** the `AdapterTargetCategory` registry admits `runtime_session` and `operational_resource`; each operational resource kind has an exact snapshot tier and schema-bound payload/domain projection contract. Resource state uses typed snapshot/delta reports, current/stale/unknown reconciliation freshness, core-LSN record/view revisions, terminal exact-identity tombstones with atomic distinct replacement, durable `RESOURCE_STATE` replay, and discriminated session/resource snapshot loading. `knowledge_bundle` is wire-present and registration-rejected with OKF v0.2 named as the candidate format. Schema matching is a format binding, not semantic payload validation, and capabilities remain advisory rather than authority.
 - **Committed v0.1.0 behavior:** `SubmissionOutcome`, `CommandState` (the checked lifecycle registry, reused by `OperationState` refinement equivalence), `LocalSubmissionState`, `SessionConnectivityState`, `SessionActivityState`, opaque adapter-reported mutable session `model` metadata with durable `SessionModelChanged` deltas, the `OperationKind` registry (committed kinds: `spawn`, `attach`, `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`), the `ElicitationState` lifecycle (stated-normative formal obligations for finality, first valid answer, typed correlation, invalid-response rejection, stale-target inertness, withdrawal, and timeout/grant behavior), the `response_contract` registry (committed contract kinds: `approval`, `question`), the five id spaces, the Presence/Subscription axes, failure vocabulary, idempotent retry at the Patchbay boundary, stale/unknown presentation honesty, and one long-lived authenticated delivery subscription per current adapter attachment whose abnormal loss marks sessions `stale` and resolves `running` commands to `failed(execution_outcome_unknown)`.
 - **Reserved extension seams:** richer structured session-model descriptors and a distinct model-history projection, heartbeat/last-report-age adapter liveness policy (timer, freshness deadline, restart policy, and any adapter-declared liveness capability), future OperationKinds (including per-variant spawn kinds), reserved `response_contract.contract_kind` values (`freeform`, `secret`, `function_result`, `file_attachment`, `structured_schema`, `service_request`), reserved richer `ApprovalDecision` values (`ALLOW_ONCE`, `ALWAYS`, `POLICY_AMEND`, `MODIFIED_INPUT` — named in the enum, rejected with `validation_failed` in v0.1.0), surface-reject (an operator surface signals it cannot handle an Elicitation; distinct from operator approve/decline and from machine command rejection), reserved `agent-send` and `adapter-utility-exec` OperationKinds (rejected with `validation_failed` in v0.1.0), non-operator Operation senders (agent→agent, adapter→operator service Operations), no-lifecycle reads optimization, tighter Elicitation responder binding (endpoint/endpoint class/fallback chain), responder-actor distinction for multi-operator sessions, cross-actor delegation lineage, per-spawn-variant authority, presence-leak prevention for multi-operator, multi-answer/quorum Elicitations, richer activity details, multi-operator authority domains, lease lifecycle, native/mobile-specific local cache states, and additional control surfaces.
 - **Rejected direction:** finite clean-completing delivery tails as the v0.1.0 adapter-liveness mechanism, Pi-specific state names, UI-only optimistic states, transport-specific errors, adapter-specific lifecycle variants becoming core protocol states without registry updates, a generic operator-originated no-grant `Message` as a v0.1.0 action, and a `query-presence` OperationKind (presence is a derived fact, not a query target).
@@ -642,7 +707,8 @@ Classification key: **C** = committed v0.1.0; **R** = reserved seam (v0.1.0 does
 | adapters | Pi as the first workflow-migration adapter | C | SPEC "Adapter posture" |
 | operational resources | typed identity `(adapter_id, resource_kind, resource_id)`, exact resource-grant containment, and target-kind-polymorphic ordinary resolution | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-resource-identity`; PROTOCOL "Operational-resource identity and resolution" |
 | operational resources | manifest-admitted exact resource kinds, per-kind snapshot tiers, and schema-bound adapter domain projections above the canonical presentation floor | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-capability-manifest`; PROTOCOL "Adapter capabilities" |
-| operational resources | resource revision/replacement/tombstones and resource-kind-wide grants | R | resource-plane sibling features; PROTOCOL "Operational-resource identity and resolution" |
+| operational resources | per-adapter-kind completeness, revisioned resource records, typed report ingress, current/stale/unknown reconciliation, terminal replacement tombstones, durable replay, and discriminated resource snapshots | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-resource-state`; PROTOCOL "Operational-resource state and reconciliation" |
+| operational resources | resource-kind-wide grants and typed periodic resource checkpoint namespaces | R | resource-plane sibling/future checkpoint features; PROTOCOL "Operational-resource identity and resolution" |
 | adapter target categories | `runtime_session` and `operational_resource` admitted; `knowledge_bundle` wire-present but registration-rejected with OKF v0.2 as candidate format | C (shape/committed values) / R (knowledge-bundle value) | `epic-agent-operations-resource-plane-capability-manifest`; PROTOCOL "Adapter capabilities" |
 | adapter projections | locally decoded schema-bound domain projections nested beneath canonical authority/delivery/stale-state/attention presentation | C (post-v0.1 direction) | `epic-agent-operations-resource-plane-capability-manifest`; UX "Adapter-shaped resource projections" |
 | adapter projections | dynamic loading of adapter-provided renderer/plugin code | X | `epic-agent-operations-resource-plane-capability-manifest` |

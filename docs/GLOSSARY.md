@@ -143,6 +143,42 @@ A non-empty open identifier for an adapter-owned resource collection or type. Th
 
 The full routable operational-resource tuple `(adapter_id, resource_kind, resource_id)`. Equality, resolution, grant containment, delivery routing, and idempotency scoping use the complete tuple. It carries no runtime-session generation. Protobuf tag 8's `legacy_audit_resource_id` is an audit-only control-surface target and is not a ResourceIdentity.
 
+## Resource freshness
+
+Patchbay's confidence in one cached resource record: `current`, `stale`, or
+`unknown`. It is reconciliation state, not adapter-owned domain health. An
+exhausted provider pool may be current; a healthy-looking cached pool may be
+stale.
+
+## Resource view
+
+The collection projection for one exact `(adapter_id, ResourceKind)`. Its
+completeness (`authoritative`, `partial`, or `none`), source adapter generation,
+observed time, and core-assigned revision LSN determine how reconnect omissions
+are reconciled. A resource kind never inherits another kind's or the runtime
+session's tier.
+
+## Resource report
+
+Authenticated typed adapter evidence with a reconnect `snapshot` or live
+`delta` variant. Patchbay validates it against the current attachment and exact
+manifest declaration, normalizes it into one durable `RESOURCE_STATE` event,
+and folds only after append.
+
+## Resource tombstone and replacement
+
+A terminal retirement of one exact `ResourceIdentity`. The retired record stays
+in snapshots/audit context but does not resolve. Replacement requires a
+distinct same-adapter identity whose upsert commits atomically with the old
+record's tombstone; the old record retains the `replaced_by` link.
+
+## Resource snapshot
+
+The stable-ordered authoritative Patchbay projection of resource records and
+per-view revisions at one authority-domain LSN. It is selected explicitly by
+`SnapshotViewKind = resource` and is distinct from `SessionSnapshot`; the
+current implementation materializes it on demand from durable resource events.
+
 ## Operator session
 
 An authenticated browser or CLI session for the operator, represented by a server-side record and bound to an actor, endpoint, device, endpoint generation, and core-assigned operator-session generation. Opaque session ids are process-local bearer references and are not restored after restart. It is the continuity mechanism for a control surface, not a substitute for command grants.

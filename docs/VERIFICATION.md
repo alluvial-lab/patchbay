@@ -296,6 +296,28 @@ The post-v0.1 capability-manifest extension is implementation-checked. Generated
 
 This evidence establishes format binding, not semantic validation of opaque resource bytes. Malformed typed resource reports, revision/stale-state behavior, cockpit decoding/composition, and promoted resource-plane vectors remain with the resource-state, cockpit-composition, and conformance features. No target-category or projection-contract claim is currently checked-model or checked-normative.
 
+### Operational-resource state evidence (implementation-checked)
+
+The post-v0.1 resource-state projection is implementation-checked. Generated
+Rust/TypeScript contract builds cover `ResourceReport` snapshot/delta variants,
+resource freshness, per-view completeness/revision, normalized durable
+mutations, terminal replacement, `RESOURCE_STATE`, and discriminated
+session/resource snapshot loading. Rust interface and property-oriented tests
+exercise exact identity dimensions, strict domain/LSN replay, deterministic
+restart, record/view revisions, all three completeness branches, live-delta
+omission, terminal resurrection rejection, atomic replacement, adapter-generation
+fencing, append-before-fold behavior, and disconnect degradation. Authenticated
+server and real-process gRPC evidence exercises manifest tier/schema admission,
+durable report append, ordinary resolver population after restart, resource
+snapshot materialization, cross-view rejection, and current session-caller
+compatibility.
+
+This evidence establishes implementation behavior, not a promoted invariant or
+checked-normative resource-plane claim. No new formal property or conformance
+vector is promoted by this feature. The resource-plane conformance sibling owns
+mutation-survivable formal properties and promoted vectors for durability,
+wrong-target safety, reconnect honesty, and adapter portability.
+
 ### Audit integrity
 
 Properties:

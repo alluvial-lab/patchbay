@@ -139,6 +139,31 @@ Retries with the same idempotency key return the existing command record. A new 
 
 Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0.1.0 mediated behavior.
 
+### Operational-resource report boundary
+
+A typed resource report is accepted only on the current authenticated adapter
+attachment. The core replaces source authority with the verified adapter id,
+requires the report generation to equal the current attachment generation,
+selects the exact manifest declaration by `(adapter_id, ResourceKind)`, caps the
+reported completeness tier to that declaration, and matches both resource and
+domain-projection envelope descriptors before durable append. Payload-supplied
+identity cannot override this binding; mixed kind, cross-adapter, stale-token,
+stale-generation, undeclared, overclaimed, and schema-mismatched reports fail
+closed without a resource-state append.
+
+Resource and projection envelopes are metadata/control-plane state only. They
+must not contain provider credentials, onboarding secrets, access tokens,
+model prompts or responses, tool data-plane content, or other LLM traffic.
+Schema-reference matching establishes declared format identity but does not make
+opaque bytes trusted or semantically valid; local typed decoders remain
+fail-closed. The canonical no-log/redaction list below still applies, and a
+resource report must never create a diagnostic or audit path around it.
+
+Terminal exact-identity tombstones and same-event distinct replacement prevent
+late or reordered evidence from redirecting an Operation to a retired resource.
+Abnormal disconnect and newer-generation reconciliation may reduce cache
+freshness but never manufacture adapter domain health or authority.
+
 ### Compound issuer
 
 When an Operation arrives at the core through a control surface (the v0.1.0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The implemented web↔core wire shape carries the operator-session evidence and control-surface principal evidence separately, and the core independently verifies both before accepting an Operation.
