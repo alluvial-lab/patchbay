@@ -4,6 +4,7 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   SessionSnapshotSchema,
+  SnapshotViewKind,
   type Session,
   type TargetScope,
 } from "@patchbay/contracts";
@@ -17,8 +18,12 @@ export async function loadSessions(
 ): Promise<Session[]> {
   const response = await client.loadSnapshot({
     authorityDomainId: create(AuthorityDomainIdSchema, { value: authorityDomainId }),
+    viewKind: SnapshotViewKind.SESSION,
   });
   if (!response.present) return [];
+  if (response.viewKind !== SnapshotViewKind.SESSION) {
+    throw new Error("core returned a non-session snapshot view");
+  }
   if (response.snapshotPayload.length === 0) {
     throw new Error("core returned an empty snapshot payload");
   }

@@ -32,6 +32,7 @@ import {
   GenerationSchema,
   LoadSnapshotRequestSchema,
   LsnSchema,
+  SnapshotViewKind,
   ObservationKind,
   ObservationSchema,
   OperationKind,
@@ -146,9 +147,11 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     const loadedSnapshot = await control.loadSnapshot(
       create(LoadSnapshotRequestSchema, {
         authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+        viewKind: SnapshotViewKind.SESSION,
       }),
     );
     assert.equal(loadedSnapshot.present, true);
+    assert.equal(loadedSnapshot.viewKind, SnapshotViewKind.SESSION);
     const snapshot = fromBinary(SessionSnapshotSchema, loadedSnapshot.snapshotPayload);
     assert.equal(snapshot.authorityDomainId?.value, domainId);
     assert.equal(snapshot.snapshotLsn?.value, loadedSnapshot.eventId?.lsn?.value);
@@ -866,6 +869,7 @@ async function waitForSessionConnectivity(
     const loaded = await control.loadSnapshot(
       create(LoadSnapshotRequestSchema, {
         authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+        viewKind: SnapshotViewKind.SESSION,
       }),
     );
     if (!loaded.present) return false;

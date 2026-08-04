@@ -4,6 +4,7 @@ import {
   LoadSnapshotRequestSchema,
   LsnSchema,
   SessionSnapshotSchema,
+  SnapshotViewKind,
   SubscribeRequestSchema,
   type AuthorityDomainId,
   type LoadSecuritySnapshotRequest,
@@ -132,9 +133,15 @@ export class Reconciler {
 
   private async reconcile(authorityDomainId: AuthorityDomainId): Promise<void> {
     const response = await this.client.loadSnapshot(
-      create(LoadSnapshotRequestSchema, { authorityDomainId }),
+      create(LoadSnapshotRequestSchema, {
+        authorityDomainId,
+        viewKind: SnapshotViewKind.SESSION,
+      }),
     );
     if (!response.present) throw new Error("authoritative snapshot is unavailable");
+    if (response.viewKind !== SnapshotViewKind.SESSION) {
+      throw new Error("core returned a non-session snapshot view");
+    }
 
     const snapshot = fromBinary(SessionSnapshotSchema, response.snapshotPayload);
     const snapshotDomain = required(snapshot.authorityDomainId?.value, "snapshot authority domain");

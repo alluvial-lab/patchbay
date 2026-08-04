@@ -12,6 +12,7 @@ import {
   PrincipalCredentialSchema,
   QueryDiagnosticsResponseSchema,
   RecordControlSurfaceAuditResponseSchema,
+  SnapshotViewKind,
   SubmissionOutcome,
   SubmissionResultSchema,
   SubmitRequestSchema,
@@ -542,7 +543,10 @@ test("CSRF token issuance and LoadSnapshot are authenticated reads without CSRF"
   const { client, close } = await listen(fixture);
   try {
     const snapshot = await client.loadSnapshot(
-      { authorityDomainId: { value: "default" } },
+      {
+        authorityDomainId: { value: "default" },
+        viewKind: SnapshotViewKind.SESSION,
+      },
       { headers: { cookie } },
     );
     assert.equal(snapshot.present, false);
@@ -588,6 +592,7 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown; re
       return create(LoadSnapshotResponseSchema, {
         present: false,
         snapshotPayload: new Uint8Array(),
+        viewKind: SnapshotViewKind.SESSION,
       });
     },
     async verifyOperatorPassword(request, options) {

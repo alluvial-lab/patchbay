@@ -696,15 +696,19 @@ where
     ) -> Result<Response<LoadSnapshotResponse>, Status> {
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
+        let view_kind = patchbay_contracts::patchbay::SnapshotViewKind::try_from(
+            request.get_ref().view_kind,
+        )
+        .map_err(|_| Status::invalid_argument("unknown snapshot view kind"))?;
+        if view_kind == patchbay_contracts::patchbay::SnapshotViewKind::Unspecified {
+            return Err(Status::invalid_argument("snapshot view kind is required"));
+        }
         self.issuer_from_request(&request, authority_domain_id.clone())
             .await?;
         let at_or_before = request.get_ref().at_or_before;
 
-        // Snapshot reads share the submission gate and catch-up ordering so a
-        // caller never observes a projection behind an already committed
-        // event. If no durable checkpoint exists, serve the current rebuilt
-        // session projection directly; this deliberately does not write into
-        // the still-undiscriminated durable snapshot namespace.
+        // View validation precedes stateful work. Catch-up and compound-issuer
+        // re-verification then share the core decision gate with writers.
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
@@ -712,33 +716,71 @@ where
             .map_err(map_storage_error_to_status)?;
         self.issuer_from_request(&request, authority_domain_id.clone())
             .await?;
-        if let Some(snapshot) = self
-            .storage
-            .load_latest_snapshot(&authority_domain_id, at_or_before)
-            .await
-            .map_err(map_storage_error_to_status)?
-        {
+
+        if view_kind == patchbay_contracts::patchbay::SnapshotViewKind::Session {
+            let current_lsn = self.state.current_lsn().await;
+            if let Some(stored) = self
+                .storage
+                .load_latest_snapshot(&authority_domain_id, at_or_before)
+                .await
+                .map_err(map_storage_error_to_status)?
+            {
+                let stored_lsn = stored.event_id.lsn.as_ref().map(|lsn| lsn.value);
+                let decoded = patchbay_contracts::patchbay::SessionSnapshot::decode(
+                    stored.payload.as_slice(),
+                )
+                .ok();
+                let valid = decoded.as_ref().is_some_and(|snapshot| {
+                    snapshot.authority_domain_id.as_ref() == Some(&authority_domain_id)
+                        && snapshot.snapshot_lsn.as_ref().map(|lsn| lsn.value) == stored_lsn
+                        && stored.event_id.authority_domain_id.as_ref()
+                            == Some(&authority_domain_id)
+                        && stored_lsn.is_some_and(|lsn| lsn >= current_lsn)
+                });
+                if valid {
+                    return Ok(Response::new(LoadSnapshotResponse {
+                        present: true,
+                        event_id: Some(stored.event_id),
+                        snapshot_payload: stored.payload,
+                        view_kind: view_kind as i32,
+                    }));
+                }
+            }
+
+            let snapshot = self
+                .state
+                .materialize_session_snapshot(
+                    authority_domain_id.clone(),
+                    crate::identity::now_timestamp()?,
+                )
+                .await;
+            let snapshot_lsn = snapshot
+                .snapshot_lsn
+                .ok_or_else(|| Status::internal("materialized session snapshot has no LSN"))?;
             return Ok(Response::new(LoadSnapshotResponse {
                 present: true,
-                event_id: Some(snapshot.event_id),
-                snapshot_payload: snapshot.payload,
+                event_id: Some(EventId {
+                    authority_domain_id: Some(authority_domain_id),
+                    lsn: Some(snapshot_lsn),
+                }),
+                snapshot_payload: snapshot.encode_to_vec(),
+                view_kind: view_kind as i32,
             }));
         }
 
-        // A historical at_or_before bound cannot be reconstructed from the
-        // current hot projection. Returning the newer current authoritative
-        // view follows the protocol's stale-snapshot repair rule rather than
-        // reporting an empty deployment.
+        // Resource checkpoints cannot share the current undiscriminated
+        // session slot. Materialize directly from the replayable projection;
+        // a historical bound repairs to the newer current authority.
         let snapshot = self
             .state
-            .materialize_session_snapshot(
+            .materialize_resource_snapshot(
                 authority_domain_id.clone(),
                 crate::identity::now_timestamp()?,
             )
             .await;
         let snapshot_lsn = snapshot
             .snapshot_lsn
-            .ok_or_else(|| Status::internal("materialized session snapshot has no LSN"))?;
+            .ok_or_else(|| Status::internal("materialized resource snapshot has no LSN"))?;
         Ok(Response::new(LoadSnapshotResponse {
             present: true,
             event_id: Some(EventId {
@@ -746,6 +788,7 @@ where
                 lsn: Some(snapshot_lsn),
             }),
             snapshot_payload: snapshot.encode_to_vec(),
+            view_kind: view_kind as i32,
         }))
     }
 
@@ -2079,6 +2122,7 @@ fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEven
             | StoredEventKind::Observation
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
+            | StoredEventKind::ResourceState
             | StoredEventKind::CommandTransition
             | StoredEventKind::SecurityLockdown
     )

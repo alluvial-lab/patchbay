@@ -2,9 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
-    Grant, GrantId, Lsn, OperationKind, OperatorRecord, Session, SessionSnapshot, TargetScope,
-    Generation, OperatorSessionRevocation, ControlSurfaceRevocation,
-    TargetScopeKind, ViewRevision,
+    ControlSurfaceRevocation, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
+    OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision, Session,
+    SessionSnapshot, TargetScope, TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
     acceptance::{
@@ -312,6 +312,82 @@ impl ProjectionState {
             view_revisions,
             materialized_at: Some(materialized_at),
             lockdown: Some(lockdown),
+        }
+    }
+
+    /// Materialize the complete operational-resource projection at one applied
+    /// durable prefix. Active and tombstoned records are retained; consumers
+    /// use freshness and tombstone fields rather than inferring liveness.
+    pub async fn materialize_resource_snapshot(
+        &self,
+        authority_domain_id: AuthorityDomainId,
+        materialized_at: prost_types::Timestamp,
+    ) -> ResourceSnapshot {
+        let cursor = self.last_applied_lsn.lock().await;
+        let registry = self.target_resolver.inner.lock().await;
+        let mut records: Vec<_> = registry.resources().resources().cloned().collect();
+        records.sort_by(|left, right| {
+            (
+                &left.identity.adapter_id().value,
+                &left.identity.resource_kind().value,
+                &left.identity.resource_id().value,
+            )
+                .cmp(&(
+                    &right.identity.adapter_id().value,
+                    &right.identity.resource_kind().value,
+                    &right.identity.resource_id().value,
+                ))
+        });
+        let resources = records
+            .into_iter()
+            .map(|record| {
+                let tombstoned = record.tombstoned();
+                Resource {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                identity: record.identity.to_scope().resource,
+                resource_payload: record.resource_payload,
+                projection_payload: record.projection_payload,
+                freshness: record.freshness as i32,
+                source_adapter_generation: Some(record.source_adapter_generation),
+                revision_lsn: Some(Lsn {
+                    value: record.revision_lsn,
+                }),
+                observed_at: Some(record.observed_at),
+                tombstoned,
+                tombstoned_at_lsn: record
+                    .tombstoned_at_lsn
+                    .map(|value| Lsn { value }),
+                replaced_by: record
+                    .replaced_by
+                    .map(|identity| identity.to_scope().resource.expect("canonical resource")),
+                }
+            })
+            .collect();
+        let mut views: Vec<_> = registry.resources().views().cloned().collect();
+        views.sort_by(|left, right| {
+            (&left.key.adapter_id.value, &left.key.resource_kind.value)
+                .cmp(&(&right.key.adapter_id.value, &right.key.resource_kind.value))
+        });
+        let view_revisions = views
+            .into_iter()
+            .map(|view| ResourceViewRevision {
+                adapter_id: Some(view.key.adapter_id),
+                resource_kind: Some(view.key.resource_kind),
+                completeness: view.completeness as i32,
+                source_adapter_generation: Some(view.source_adapter_generation),
+                revision_lsn: Some(Lsn {
+                    value: view.revision_lsn,
+                }),
+                observed_at: Some(view.observed_at),
+            })
+            .collect();
+        ResourceSnapshot {
+            authority_domain_id: Some(authority_domain_id),
+            snapshot_lsn: Some(Lsn { value: *cursor }),
+            core_generation: None,
+            resources,
+            view_revisions,
+            materialized_at: Some(materialized_at),
         }
     }
 
@@ -899,6 +975,117 @@ mod tests {
         StoredEventPayload,
     };
     use prost::Message;
+
+    #[tokio::test]
+    async fn resource_snapshot_is_stable_ordered_and_restart_equivalent() {
+        use patchbay_contracts::patchbay::{
+            resource_state_mutation, AdapterId, AdapterSnapshotSupport, Generation, Lsn,
+            PayloadContentType, PayloadEnvelope, ResourceId,
+            ResourceIdentity as WireResourceIdentity, ResourceKind, ResourceStateEvent,
+            ResourceStateMutation, ResourceStateTombstone, ResourceStateUpsert,
+            ResourceViewStateUpdate,
+        };
+        use prost_types::Timestamp;
+
+        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let identity = |id: &str| WireResourceIdentity {
+            adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            resource_kind: Some(ResourceKind { value: "pool".into() }),
+            resource_id: Some(ResourceId { value: id.into() }),
+        };
+        let upsert = |id: &str, from: Option<u64>| ResourceStateMutation {
+            identity: Some(identity(id)),
+            from_revision_lsn: from.map(|value| Lsn { value }),
+            mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
+                resource_payload: Some(PayloadEnvelope {
+                    payload: vec![1],
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: "pool.payload.v1".into(),
+                }),
+                projection_payload: Some(PayloadEnvelope {
+                    payload: vec![2],
+                    content_type: PayloadContentType::Json as i32,
+                    schema_ref: "pool.projection.v1".into(),
+                }),
+            })),
+        };
+        let event = |mutations| ResourceStateEvent {
+            authority_domain_id: Some(domain.clone()),
+            source_adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            source_adapter_generation: Some(Generation { value: 2 }),
+            views: vec![ResourceViewStateUpdate {
+                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                completeness: AdapterSnapshotSupport::Authoritative as i32,
+            }],
+            mutations,
+            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        };
+        storage
+            .append(
+                &domain,
+                patchbay_core::resource::events::encode(&event(vec![
+                    upsert("z", None),
+                    upsert("a", None),
+                ])),
+            )
+            .await
+            .unwrap();
+        storage
+            .append(
+                &domain,
+                patchbay_core::resource::events::encode(&event(vec![
+                    ResourceStateMutation {
+                        identity: Some(identity("z")),
+                        from_revision_lsn: Some(Lsn { value: 1 }),
+                        mutation: Some(resource_state_mutation::Mutation::Tombstone(
+                            ResourceStateTombstone {
+                                replaced_by: Some(identity("m")),
+                            },
+                        )),
+                    },
+                    upsert("m", None),
+                ])),
+            )
+            .await
+            .unwrap();
+
+        let first = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        let snapshot = first
+            .materialize_resource_snapshot(
+                domain.clone(),
+                Timestamp { seconds: 200, nanos: 0 },
+            )
+            .await;
+        let ids: Vec<_> = snapshot
+            .resources
+            .iter()
+            .map(|resource| resource.identity.as_ref().unwrap().resource_id.as_ref().unwrap().value.as_str())
+            .collect();
+        assert_eq!(ids, ["a", "m", "z"]);
+        let retired = snapshot.resources.iter().find(|resource| {
+            resource.identity.as_ref().unwrap().resource_id.as_ref().unwrap().value == "z"
+        }).unwrap();
+        assert!(retired.tombstoned);
+        assert_eq!(retired.tombstoned_at_lsn, Some(Lsn { value: 2 }));
+        assert_eq!(
+            retired.replaced_by.as_ref().unwrap().resource_id.as_ref().unwrap().value,
+            "m"
+        );
+        assert_eq!(snapshot.snapshot_lsn, Some(Lsn { value: 2 }));
+        assert_eq!(snapshot.view_revisions[0].revision_lsn, Some(Lsn { value: 2 }));
+
+        let restarted = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        let after_restart = restarted
+            .materialize_resource_snapshot(
+                domain,
+                Timestamp { seconds: 201, nanos: 0 },
+            )
+            .await;
+        assert_eq!(snapshot.resources, after_restart.resources);
+        assert_eq!(snapshot.view_revisions, after_restart.view_revisions);
+        assert_eq!(snapshot.snapshot_lsn, after_restart.snapshot_lsn);
+    }
 
     #[tokio::test]
     async fn fold_lag_invariant_exposes_contract_only_after_storage_catch_up() {

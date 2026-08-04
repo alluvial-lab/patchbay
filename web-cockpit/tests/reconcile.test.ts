@@ -30,6 +30,7 @@ import {
   SessionSchema,
   SessionSnapshotSchema,
   SessionStateSchema,
+  SnapshotViewKind,
   StoredEventKind,
   StoredEventPayloadSchema,
   SubscribeEventSchema,
@@ -450,6 +451,7 @@ function snapshotResponse(lsn: bigint, authorityDomainId: AuthorityDomainId = DO
       lsn: create(LsnSchema, { value: lsn }),
     }),
     snapshotPayload: toBinary(SessionSnapshotSchema, snapshot),
+    viewKind: SnapshotViewKind.SESSION,
   });
 }
 

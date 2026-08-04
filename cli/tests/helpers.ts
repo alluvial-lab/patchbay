@@ -13,6 +13,7 @@ import {
   SessionSchema,
   SessionSnapshotSchema,
   SessionStateSchema,
+  SnapshotViewKind,
   QueryDiagnosticsResponseSchema,
   SubmissionOutcome,
   SubmissionResultSchema,
@@ -76,6 +77,7 @@ export function snapshotResponse(sessions: Session[] = [session()]) {
       lsn: create(LsnSchema, { value: 7n }),
     }),
     snapshotPayload: toBinary(SessionSnapshotSchema, snapshot),
+    viewKind: SnapshotViewKind.SESSION,
   });
 }
 

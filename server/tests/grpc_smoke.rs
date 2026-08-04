@@ -7,15 +7,17 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, CommandId,
-    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
+    resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
+    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
     GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
     AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
     RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
     RevokeControlSurfacePrincipalRequest, RevokeGrantRequest,
     PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
-    SessionState, StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    ResourceFreshnessState, ResourceId, ResourceKind, ResourceSnapshot, ResourceStateEvent,
+    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, SessionActivityState,
+    SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome,
     SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
     VerifyOperatorPasswordRequest, diagnostics_query, query_diagnostics_response,
 };
@@ -703,12 +705,30 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         "subscribe must return only events with LSN greater than the cursor and complete"
     );
 
+    for invalid_view in [SnapshotViewKind::Unspecified as i32, 99] {
+        let error = server
+            .client
+            .load_snapshot(authenticated_request(
+                LoadSnapshotRequest {
+                    authority_domain_id: Some(domain()),
+                    at_or_before: None,
+                    view_kind: invalid_view,
+                },
+                SECRET,
+                &server.operator_session,
+            ))
+            .await
+            .expect_err("unspecified/unknown snapshot view rejects");
+        assert_eq!(error.code(), Code::InvalidArgument);
+    }
+
     let materialized_snapshot = server
         .client
         .load_snapshot(authenticated_request(
             LoadSnapshotRequest {
                 authority_domain_id: Some(domain()),
                 at_or_before: None,
+                view_kind: patchbay_contracts::patchbay::SnapshotViewKind::Session as i32,
             },
             SECRET,
             &server.operator_session,
@@ -720,6 +740,10 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
     // wrote durable checkpoints. A missing durable checkpoint now falls back
     // to the authoritative rebuilt session projection.
     assert!(materialized_snapshot.present);
+    assert_eq!(
+        materialized_snapshot.view_kind,
+        patchbay_contracts::patchbay::SnapshotViewKind::Session as i32
+    );
     let materialized = SessionSnapshot::decode(materialized_snapshot.snapshot_payload.as_slice())
         .expect("read-materialized snapshot must be valid protobuf");
     assert_eq!(materialized.authority_domain_id, Some(domain()));
@@ -761,6 +785,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
             LoadSnapshotRequest {
                 authority_domain_id: Some(domain()),
                 at_or_before: None,
+                view_kind: patchbay_contracts::patchbay::SnapshotViewKind::Session as i32,
             },
             SECRET,
             &server.operator_session,
@@ -769,7 +794,81 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         .expect("latest snapshot lookup must complete")
         .into_inner();
     assert!(loaded_snapshot.present);
-    assert_eq!(loaded_snapshot.snapshot_payload, b"snapshot-v1");
+    assert_eq!(
+        loaded_snapshot.view_kind,
+        patchbay_contracts::patchbay::SnapshotViewKind::Session as i32
+    );
+    assert_ne!(loaded_snapshot.snapshot_payload, b"snapshot-v1");
+    SessionSnapshot::decode(loaded_snapshot.snapshot_payload.as_slice())
+        .expect("corrupt/older checkpoint is repaired by the current session projection");
+
+    let resource_identity = patchbay_contracts::patchbay::ResourceIdentity {
+        adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
+        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+        resource_id: Some(ResourceId { value: "pool-1".into() }),
+    };
+    server
+        .storage
+        .append(
+            &domain(),
+            patchbay_core::resource::events::encode(&ResourceStateEvent {
+                authority_domain_id: Some(domain()),
+                source_adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
+                source_adapter_generation: Some(Generation { value: 3 }),
+                views: vec![ResourceViewStateUpdate {
+                    resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                    completeness: AdapterSnapshotSupport::Partial as i32,
+                }],
+                mutations: vec![ResourceStateMutation {
+                    identity: Some(resource_identity.clone()),
+                    from_revision_lsn: None,
+                    mutation: Some(resource_state_mutation::Mutation::Upsert(
+                        ResourceStateUpsert {
+                            resource_payload: Some(PayloadEnvelope {
+                                payload: vec![1],
+                                content_type: PayloadContentType::Protobuf as i32,
+                                schema_ref: "provider_pool.payload.v1".into(),
+                            }),
+                            projection_payload: Some(PayloadEnvelope {
+                                payload: br#"{\"state\":\"ok\"}"#.to_vec(),
+                                content_type: PayloadContentType::Json as i32,
+                                schema_ref: "provider_pool.projection.v1".into(),
+                            }),
+                        },
+                    )),
+                }],
+                observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+            }),
+        )
+        .await
+        .expect("resource state appends");
+    let resource_response = server
+        .client
+        .load_snapshot(authenticated_request(
+            LoadSnapshotRequest {
+                authority_domain_id: Some(domain()),
+                at_or_before: Some(Lsn { value: 1 }),
+                view_kind: SnapshotViewKind::Resource as i32,
+            },
+            SECRET,
+            &server.operator_session,
+        ))
+        .await
+        .expect("resource snapshot loads")
+        .into_inner();
+    assert_eq!(resource_response.view_kind, SnapshotViewKind::Resource as i32);
+    let resources = ResourceSnapshot::decode(resource_response.snapshot_payload.as_slice())
+        .expect("resource response contains ResourceSnapshot");
+    assert_eq!(resources.resources.len(), 1);
+    assert_eq!(resources.resources[0].identity, Some(resource_identity));
+    assert_eq!(
+        resources.resources[0].freshness,
+        ResourceFreshnessState::Current as i32
+    );
+    assert_eq!(
+        resources.snapshot_lsn,
+        resource_response.event_id.and_then(|event| event.lsn)
+    );
 }
 
 #[tokio::test]
