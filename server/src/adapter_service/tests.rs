@@ -9,10 +9,10 @@ use patchbay_contracts::patchbay::{
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
     AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
     Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
-    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceId,
-    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport, SchemaDescriptor,
+    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
+    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
+    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
+    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -381,6 +381,221 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
 }
 
 #[tokio::test]
+async fn same_generation_manifest_redeclaration_atomically_degrades_affected_resources() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let initial_kinds = ["removed_pool", "down_tiered_pool", "schema_changed_pool"];
+    let mut initial = registration(domain.clone());
+    initial.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: initial_kinds
+            .iter()
+            .map(|kind| resource_declaration(kind, AdapterSnapshotSupport::Authoritative))
+            .collect(),
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(initial),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("initial resource adapter attaches");
+    let initial_token = attachment_token(&attached);
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(
+                    resource_snapshot_report(
+                        1,
+                        &initial_kinds
+                            .iter()
+                            .map(|kind| (*kind, AdapterSnapshotSupport::Authoritative))
+                            .collect::<Vec<_>>(),
+                    ),
+                )),
+            },
+            &initial_token,
+        ))
+        .await
+        .expect("initial authoritative resource report succeeds");
+
+    let mut schema_changed = resource_declaration(
+        "schema_changed_pool",
+        AdapterSnapshotSupport::Authoritative,
+    );
+    schema_changed
+        .projection_contract
+        .as_mut()
+        .expect("projection contract")
+        .projection_schema
+        .as_mut()
+        .expect("projection schema")
+        .schema_ref = "schema_changed_pool.projection.v2".into();
+    let mut redeclared = registration(domain.clone());
+    redeclared.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![
+            resource_declaration("down_tiered_pool", AdapterSnapshotSupport::Partial),
+            schema_changed,
+        ],
+        ..AdapterCapability::default()
+    });
+    let replacement = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(redeclared),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("same-generation capability redeclaration succeeds atomically");
+    let attach_lsn = replacement
+        .get_ref()
+        .attach_event_id
+        .as_ref()
+        .and_then(|event| event.lsn.as_ref())
+        .expect("replacement registration LSN")
+        .value;
+
+    let replayed = resource::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("resource degradation replays");
+    for kind in initial_kinds {
+        let identity = patchbay_core::resource::ResourceIdentity::try_from_wire(
+            &resource_identity(kind, "resource-1"),
+        )
+        .unwrap();
+        assert_eq!(
+            replayed.get(&identity).unwrap().freshness,
+            ResourceFreshnessState::Stale,
+            "{kind} cached state must degrade before the replacement attachment is returned"
+        );
+    }
+    let view_tier = |kind: &str| {
+        replayed
+            .views()
+            .find(|view| view.key.resource_kind.value == kind)
+            .expect("affected view")
+            .completeness
+    };
+    assert_eq!(view_tier("removed_pool"), AdapterSnapshotSupport::None);
+    assert_eq!(
+        view_tier("down_tiered_pool"),
+        AdapterSnapshotSupport::Partial
+    );
+    assert_eq!(
+        view_tier("schema_changed_pool"),
+        AdapterSnapshotSupport::None
+    );
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let degradation_lsn = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::ResourceState as i32)
+        .filter_map(|event| event.event_id.lsn.as_ref())
+        .map(|lsn| lsn.value)
+        .max()
+        .expect("degradation resource event");
+    assert_eq!(degradation_lsn + 1, attach_lsn);
+    assert_eq!(
+        service
+            .receive_deliveries(authenticated_with_attachment_token(
+                ReceiveRequest {
+                    adapter_id: Some(adapter_id()),
+                    cursor: Some(Lsn { value: 0 }),
+                },
+                &initial_token,
+            ))
+            .await
+            .err()
+            .expect("old token is fenced after atomic redeclaration")
+            .code(),
+        tonic::Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+async fn newer_generation_attachment_degrades_cached_resources_without_a_report() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut initial = registration(domain.clone());
+    initial.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Authoritative,
+        )],
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(initial),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("initial attachment succeeds");
+    let token = attachment_token(&attached);
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(
+                    resource_snapshot_report(
+                        1,
+                        &[("provider_pool", AdapterSnapshotSupport::Authoritative)],
+                    ),
+                )),
+            },
+            &token,
+        ))
+        .await
+        .expect("initial report succeeds");
+
+    let mut replacement = registration(domain.clone());
+    replacement.adapter_generation = Some(Generation { value: 2 });
+    replacement.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Authoritative,
+        )],
+        ..AdapterCapability::default()
+    });
+    service
+        .attach(Request::new(AttachRequest {
+            registration: Some(replacement),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("newer attachment succeeds without a resource report");
+
+    let replayed = resource::rebuild_from_log(&storage, &domain).await.unwrap();
+    let identity = patchbay_core::resource::ResourceIdentity::try_from_wire(
+        &resource_identity("provider_pool", "resource-1"),
+    )
+    .unwrap();
+    let record = replayed.get(&identity).unwrap();
+    assert_eq!(record.freshness, ResourceFreshnessState::Stale);
+    assert_eq!(record.source_adapter_generation, Generation { value: 2 });
+    let view = replayed.views().next().expect("resource view");
+    assert_eq!(view.completeness, AdapterSnapshotSupport::None);
+    assert_eq!(view.source_adapter_generation, Generation { value: 2 });
+}
+
+#[tokio::test]
 async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId { value: "authority-main".into() };
@@ -452,6 +667,56 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
         "rejection must happen before durable append"
     );
     assert_eq!(service.resources.lock().await.resources().count(), 0);
+}
+
+fn resource_snapshot_report(
+    generation: u64,
+    views: &[(&str, AdapterSnapshotSupport)],
+) -> ResourceReport {
+    ResourceReport {
+        adapter_id: Some(adapter_id()),
+        adapter_generation: Some(Generation { value: generation }),
+        report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+            views: views
+                .iter()
+                .map(|(kind, tier)| ResourceViewReport {
+                    resource_kind: Some(ResourceKind {
+                        value: (*kind).into(),
+                    }),
+                    completeness: *tier as i32,
+                    mutations: vec![ResourceReportMutation {
+                        identity: Some(resource_identity(kind, "resource-1")),
+                        mutation: Some(resource_report_mutation::Mutation::Upsert(
+                            ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: vec![1],
+                                    content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: format!("{kind}.payload.v1"),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: vec![2],
+                                    content_type: PayloadContentType::Json as i32,
+                                    schema_ref: format!("{kind}.projection.v1"),
+                                }),
+                            },
+                        )),
+                    }],
+                })
+                .collect(),
+        })),
+        observed_at: Some(Timestamp {
+            seconds: 100 + generation as i64,
+            nanos: 0,
+        }),
+    }
+}
+
+fn resource_identity(kind: &str, id: &str) -> ResourceIdentity {
+    ResourceIdentity {
+        adapter_id: Some(adapter_id()),
+        resource_kind: Some(ResourceKind { value: kind.into() }),
+        resource_id: Some(ResourceId { value: id.into() }),
+    }
 }
 
 fn resource_declaration(kind: &str, tier: AdapterSnapshotSupport) -> ResourceCapability {

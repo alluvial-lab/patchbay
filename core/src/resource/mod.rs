@@ -10,8 +10,8 @@ pub mod state;
 
 pub use identity::{ResourceIdentity, ResourceIdentityError};
 pub use ingest::{
-    adapter_stale_event, ingest_resource_report, ResourceIngestResult, ResourceReportMode,
-    ValidatedResourceReport,
+    adapter_redeclaration_event, adapter_stale_event, ingest_resource_report,
+    AdapterResourceRedeclaration, ResourceIngestResult, ResourceReportMode, ValidatedResourceReport,
 };
 pub use registry::ResourceRegistry;
 pub use replay::rebuild_from_log;

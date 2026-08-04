@@ -8,7 +8,10 @@ use patchbay_contracts::patchbay::{
 };
 use prost_types::Timestamp;
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::{
+    adapter::ValidatedAdapterCapability,
+    storage::{RecordedEvent, Storage},
+};
 
 use super::{
     events, replay, ResourceError, ResourceIdentity, ResourceRecord, ResourceRegistry,
@@ -124,6 +127,120 @@ pub fn adapter_stale_event(
         authority_domain_id: Some(authority_domain_id.clone()),
         source_adapter_id: Some(adapter_id.clone()),
         source_adapter_generation: Some(adapter_generation),
+        views,
+        mutations,
+        observed_at: Some(observed_at),
+    })))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AdapterResourceRedeclaration<'a> {
+    pub authority_domain_id: &'a AuthorityDomainId,
+    pub adapter_id: &'a AdapterId,
+    pub previous_generation: Generation,
+    pub incoming_generation: Generation,
+    pub previous_capability: &'a ValidatedAdapterCapability,
+    pub incoming_capability: &'a ValidatedAdapterCapability,
+    pub observed_at: Timestamp,
+}
+
+/// Build the durable resource degradation required before a redeclared
+/// manifest becomes the current authenticated attachment.
+pub fn adapter_redeclaration_event(
+    registry: &ResourceRegistry,
+    redeclaration: &AdapterResourceRedeclaration<'_>,
+) -> Result<Option<patchbay_contracts::patchbay::StoredEventPayload>, ResourceError> {
+    let authority_domain_id = redeclaration.authority_domain_id;
+    let adapter_id = redeclaration.adapter_id;
+    let previous_generation = redeclaration.previous_generation;
+    let incoming_generation = redeclaration.incoming_generation;
+    let previous = redeclaration.previous_capability;
+    let incoming = redeclaration.incoming_capability;
+    let observed_at = redeclaration.observed_at;
+    if authority_domain_id.value.is_empty() || adapter_id.value.is_empty() {
+        return Err(ResourceError::InvalidReport(
+            "adapter redeclaration event requires domain and adapter identity".into(),
+        ));
+    }
+    validate_observed_at(&observed_at)?;
+    if incoming_generation.value < previous_generation.value {
+        return Err(ResourceError::StaleAdapterGeneration {
+            live: previous_generation.value,
+            reported: incoming_generation.value,
+        });
+    }
+    let newer_generation = incoming_generation.value > previous_generation.value;
+    let mut affected = HashSet::new();
+    let mut views = Vec::new();
+    for view in registry
+        .views()
+        .filter(|view| view.key.adapter_id == *adapter_id)
+    {
+        let old = previous.resource(&view.key.resource_kind);
+        let next = incoming.resource(&view.key.resource_kind);
+        let removed = old.is_some() && next.is_none();
+        let down_tiered = old.zip(next).is_some_and(|(old, next)| {
+            snapshot_strength(next.snapshot_support()) < snapshot_strength(old.snapshot_support())
+        });
+        let schema_incompatible = old.zip(next).is_some_and(|(old, next)| {
+            old.projection_contract() != next.projection_contract()
+        });
+        if !(newer_generation || removed || down_tiered || schema_incompatible) {
+            continue;
+        }
+        affected.insert(view.key.resource_kind.clone());
+        let completeness = if newer_generation || removed || schema_incompatible {
+            AdapterSnapshotSupport::None
+        } else {
+            let incoming_tier = next
+                .expect("down-tiered declaration exists")
+                .snapshot_support();
+            if snapshot_strength(incoming_tier) < snapshot_strength(view.completeness) {
+                incoming_tier
+            } else {
+                view.completeness
+            }
+        };
+        views.push(ResourceViewStateUpdate {
+            resource_kind: Some(view.key.resource_kind.clone()),
+            completeness: completeness as i32,
+        });
+    }
+    if views.is_empty() {
+        return Ok(None);
+    }
+    views.sort_by(|left, right| {
+        left.resource_kind
+            .as_ref()
+            .map(|kind| &kind.value)
+            .cmp(&right.resource_kind.as_ref().map(|kind| &kind.value))
+    });
+    let mut records: Vec<_> = registry
+        .resources()
+        .filter(|record| {
+            record.identity.adapter_id() == adapter_id
+                && !record.tombstoned()
+                && affected.contains(record.identity.resource_kind())
+        })
+        .collect();
+    records.sort_by(resource_record_order);
+    let mutations = records
+        .into_iter()
+        .filter_map(|record| {
+            stale_change(record).map(|mutation| ResourceStateMutation {
+                identity: Some(record.identity.to_scope().resource.expect("canonical resource")),
+                from_revision_lsn: Some(Lsn {
+                    value: record.revision_lsn,
+                }),
+                mutation: Some(mutation),
+            })
+        })
+        .collect();
+
+    Ok(Some(events::encode(&ResourceStateEvent {
+        authority_domain_id: Some(authority_domain_id.clone()),
+        source_adapter_id: Some(adapter_id.clone()),
+        source_adapter_generation: Some(incoming_generation),
         views,
         mutations,
         observed_at: Some(observed_at),
@@ -445,6 +562,15 @@ fn stale_change(record: &ResourceRecord) -> Option<resource_state_mutation::Muta
             to: ResourceFreshnessState::Stale as i32,
         },
     ))
+}
+
+const fn snapshot_strength(tier: AdapterSnapshotSupport) -> u8 {
+    match tier {
+        AdapterSnapshotSupport::Authoritative => 3,
+        AdapterSnapshotSupport::Partial => 2,
+        AdapterSnapshotSupport::None => 1,
+        AdapterSnapshotSupport::Unspecified => 0,
+    }
 }
 
 fn validate_observed_at(timestamp: &Timestamp) -> Result<(), ResourceError> {

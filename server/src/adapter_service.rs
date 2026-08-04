@@ -546,9 +546,23 @@ where
         // against the old token before this point must not establish a
         // decision after this replacement commits.
         let _decision_guard = self.decision_gate.acquire().await;
-        let mut adapters = self.adapters.lock().await;
-        let event_id = match adapter::ingest_registration(&self.storage, &mut adapters, registration)
+        let rebuilt_adapters = adapter::rebuild_from_log(&self.storage, &self.authority_domain_id)
             .await
+            .map_err(map_adapter_error)?;
+        let rebuilt_resources = resource::rebuild_from_log(&self.storage, &self.authority_domain_id)
+            .await
+            .map_err(map_resource_error)?;
+        let mut adapters = self.adapters.lock().await;
+        *adapters = rebuilt_adapters;
+        let mut resources = self.resources.lock().await;
+        *resources = rebuilt_resources;
+        let event_id = match adapter::ingest_registration_with_resources(
+            &self.storage,
+            &mut adapters,
+            &mut resources,
+            registration,
+        )
+        .await
         {
             Ok(event_id) => event_id,
             Err(error) => {
@@ -583,6 +597,7 @@ where
             .checked_add(1)
             .ok_or_else(|| Status::internal("delivery stream epoch overflow"))?;
         drop(epochs);
+        drop(resources);
         drop(adapters);
 
         let mut response = Response::new(AttachResult {
@@ -1178,6 +1193,7 @@ fn map_adapter_error(error: adapter::AdapterError) -> Status {
             Status::failed_precondition(message)
         }
         adapter::AdapterError::CorruptRecord(message) => Status::internal(message),
+        adapter::AdapterError::Resource(error) => map_resource_error(error),
         adapter::AdapterError::Storage(error) => map_storage_error_to_status(error),
     }
 }

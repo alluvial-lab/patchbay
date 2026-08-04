@@ -505,11 +505,12 @@ mutation occurs before durable append; restart and live catch-up fold the same
 normalized event.
 
 An authenticated adapter id and current adapter generation fence report
-source. A newer adapter generation fences prior cached records: records with both
-cached envelopes move from `current` to `stale`, while no-payload `unknown`
-records remain `unknown`. Abnormal stream loss applies the same degradation to
-resources owned by that adapter. An old attachment token or stream epoch is
-inert.
+source. A newer adapter attachment generation fences prior cached records before its
+replacement token becomes usable: records with both cached envelopes move from
+`current` to `stale`, no-payload `unknown` records remain `unknown`, and prior
+resource views move to `none` completeness until the new generation reports.
+Abnormal stream loss applies the same record degradation to resources owned by
+that adapter. An old attachment token or stream epoch is inert.
 
 A tombstone is terminal for one exact resource identity. A permanent
 replacement uses a distinct same-adapter `ResourceIdentity`; the old record
@@ -675,7 +676,7 @@ Adapter capability declarations are advisory for control-surface UX only: they l
 
 An adapter is a **principal** with an explicit registration lifecycle. At attach time it submits (a) attachment evidence verified by an adapter-specific trust root (the Pi adapter uses configured local material; future adapters may use mTLS or OAuth — the mechanism is adapter-specific, not mandated by the core), and (b) its capability manifest. The core records the adapter id, capability manifest, attach LSN, and adapter generation (adapter-reported, monotonic per adapter, used to reject stale events from a prior adapter attachment).
 
-Attach, detach, failure, and capability redeclaration are audit events. Capability redeclaration is allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected sessions per the rules below. Sessions discovered or reported by the adapter inherit the adapter's authenticated channel.
+Attach, detach, failure, and capability redeclaration are audit events. Capability redeclaration is allowed with audit. Before a redeclared manifest and replacement token become usable, the core atomically records the registration together with any required resource degradation: removed resource kinds move their existing views to `none`; down-tiered kinds move to the incoming weaker tier; schema-incompatible kinds move to `none`; affected cached `current` records become `stale`, while no-payload `unknown` records remain `unknown`. A newer attachment generation applies the same record degradation to every prior resource view and moves those views to `none` until a report from that generation arrives. If this registration/degradation batch cannot commit, the replacement attachment is not published. Session capability loss follows the session rules below. Sessions and resources discovered or reported by the adapter inherit the adapter's authenticated channel.
 
 A current v0.1.0 adapter attachment maintains one long-lived authenticated delivery subscription. The subscription incrementally follows the durable log and remains pending while idle; finite tails that complete between polls are not the liveness mechanism. Abnormal stream loss is connection-liveness evidence: the core marks that adapter's sessions `stale` and terminalizes its `running` commands as `failed` with `execution_outcome_unknown`. Commands still at `accepted` or `delivered` remain eligible for the existing bounded redelivery behavior because execution is not known to have started. Attachment-token and stream-epoch fences make a replaced attachment's late disconnect inert. This transport signal does not detect every network black hole; heartbeat/last-report-age policy, including its freshness deadline and adapter capability implications, remains a reserved seam.
 

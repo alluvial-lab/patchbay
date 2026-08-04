@@ -306,11 +306,14 @@ session/resource snapshot loading. Rust interface and property-oriented tests
 exercise exact identity dimensions, strict domain/LSN replay, deterministic
 restart, record/view revisions, all three completeness branches, live-delta
 omission, terminal resurrection rejection, atomic replacement, adapter-generation
-fencing, append-before-fold behavior, and disconnect degradation. Authenticated
-server and real-process gRPC evidence exercises manifest tier/schema admission,
-durable report append, ordinary resolver population after restart, resource
-snapshot materialization, cross-view rejection, and current session-caller
-compatibility.
+fencing, append-before-fold behavior, disconnect degradation, and no-payload
+`unknown` preservation through omission/tombstone/replay/snapshot paths.
+Authenticated server and real-process gRPC evidence exercises manifest
+tier/schema admission, authoritative-unknown pre-append rejection, atomic
+same-generation capability redeclaration, newer-generation attachment
+degradation without a follow-up report, durable report append, ordinary
+resolver population after restart, resource snapshot materialization,
+cross-view rejection, and current session-caller compatibility.
 
 This evidence establishes implementation behavior, not a promoted invariant or
 checked-normative resource-plane claim. No new formal property or conformance

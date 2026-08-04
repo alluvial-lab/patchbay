@@ -56,7 +56,7 @@ The adapter lifecycle is audited:
 - **Attach** — registration with identity proof and capability manifest.
 - **Detach** — clean detachment; the core marks affected sessions and resources `stale` or `offline` under their respective state contracts.
 - **Failure** — loss detected via timeout; the core degrades affected sessions and resources honestly rather than fabricating liveness or health.
-- **Capability redeclaration** — allowed with audit; when an adapter loses a capability it previously had, the core records the change and degrades affected targets per the rules in `docs/PROTOCOL.md` and the resource contract promoted by the agent-operations arc.
+- **Capability redeclaration** — allowed with audit; the core compares the prior and incoming validated manifests and atomically couples registration to any required resource degradation before publishing the replacement attachment. Removed, down-tiered, schema-incompatible, and newer-generation resource views degrade per `docs/PROTOCOL.md`; a failed batch leaves no usable replacement token.
 
 The trust-root mechanism is adapter-specific; the core validates attachment evidence but does not mandate a single mechanism. An adapter that cannot provide attachment evidence cannot register (fail-closed).
 

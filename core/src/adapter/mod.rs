@@ -24,7 +24,7 @@ use prost::Message;
 
 use crate::{
     acceptance::{Clock, CommandIndex},
-    resource::ResourceIdentity,
+    resource::{ResourceIdentity, ResourceRegistry},
     storage::{RecordedEvent, Storage},
     target::target_adapter_id,
 };
@@ -203,6 +203,120 @@ pub async fn ingest_registration<S: Storage>(
     registration: AdapterRegistration,
 ) -> Result<EventId, AdapterError> {
     registry.preflight(&registration)?;
+    let prepared = prepare_registration(registration);
+    let event_id = storage
+        .append_decision(
+            &prepared.authority_domain_id,
+            prepared.source.clone(),
+            prepared.audit,
+        )
+        .await?;
+    registry.observe(&RecordedEvent {
+        event_id: event_id.clone(),
+        payload: prepared.source,
+    })?;
+    Ok(event_id)
+}
+
+/// Atomically append registration and any resource-state degradation required
+/// by a capability or attachment-generation redeclaration.
+pub async fn ingest_registration_with_resources<S: Storage>(
+    storage: &S,
+    registry: &mut AdapterRegistry,
+    resources: &mut ResourceRegistry,
+    registration: AdapterRegistration,
+) -> Result<EventId, AdapterError> {
+    registry.preflight(&registration)?;
+    let adapter_id = registration.adapter_id.clone().expect("validated adapter id");
+    let incoming_generation = registration
+        .adapter_generation
+        .expect("validated adapter generation");
+    let incoming_capability = validate_registration(
+        &registration,
+        CapabilityValidationContext::Attach,
+    )?;
+    let current = registry.get(&adapter_id).cloned();
+    let prepared = prepare_registration(registration);
+    let degradation = current
+        .as_ref()
+        .map(|current| {
+            crate::resource::adapter_redeclaration_event(
+                resources,
+                &crate::resource::AdapterResourceRedeclaration {
+                    authority_domain_id: &prepared.authority_domain_id,
+                    adapter_id: &adapter_id,
+                    previous_generation: current
+                        .registration
+                        .adapter_generation
+                        .expect("validated current adapter generation"),
+                    incoming_generation,
+                    previous_capability: &current.validated_capability,
+                    incoming_capability: &incoming_capability,
+                    observed_at: crate::acceptance::SystemClock.now(),
+                },
+            )
+        })
+        .transpose()?
+        .flatten();
+    let Some(degradation) = degradation else {
+        let event_id = storage
+            .append_decision(
+                &prepared.authority_domain_id,
+                prepared.source.clone(),
+                prepared.audit,
+            )
+            .await?;
+        registry.observe(&RecordedEvent {
+            event_id: event_id.clone(),
+            payload: prepared.source,
+        })?;
+        return Ok(event_id);
+    };
+
+    let appended = storage
+        .append_batch_audited(
+            &prepared.authority_domain_id,
+            vec![degradation.clone(), prepared.source.clone()],
+            prepared.audit,
+        )
+        .await?;
+    let [degradation_event_id, registration_event_id] = appended.source_event_ids.as_slice() else {
+        return Err(AdapterError::CorruptRecord(
+            "registration degradation batch returned the wrong number of source events".into(),
+        ));
+    };
+    let mut next_resources = resources.clone();
+    let mut next_registry = registry.clone();
+    let fold_result = next_resources
+        .observe(&RecordedEvent {
+            event_id: degradation_event_id.clone(),
+            payload: degradation,
+        })
+        .map_err(AdapterError::from)
+        .and_then(|()| {
+            next_registry.observe(&RecordedEvent {
+                event_id: registration_event_id.clone(),
+                payload: prepared.source,
+            })
+        });
+    if let Err(error) = fold_result {
+        *registry = rebuild_from_log(storage, &prepared.authority_domain_id).await?;
+        *resources = crate::resource::rebuild_from_log(storage, &prepared.authority_domain_id)
+            .await?;
+        return Err(error);
+    }
+    *registry = next_registry;
+    *resources = next_resources;
+    Ok(registration_event_id.clone())
+}
+
+struct PreparedRegistration {
+    authority_domain_id: AuthorityDomainId,
+    source: StoredEventPayload,
+    audit: crate::storage::AuditRecordDraft,
+}
+
+fn prepare_registration(registration: AdapterRegistration) -> PreparedRegistration {
     let authority_domain_id = registration
         .authority_domain_id
         .clone()
@@ -233,7 +347,7 @@ pub async fn ingest_registration<S: Storage>(
         }),
         ..Default::default()
     };
-    let payload = StoredEventPayload {
+    let source = StoredEventPayload {
         kind: StoredEventKind::Observation as i32,
         payload: observation.encode_to_vec(),
     };
@@ -251,17 +365,11 @@ pub async fn ingest_registration<S: Storage>(
         ..Default::default()
     });
     audit.reason_code = "adapter_attached".to_owned();
-    let event_id = storage
-        .append_decision(&authority_domain_id, payload, audit)
-        .await?;
-    registry.observe(&RecordedEvent {
-        event_id: event_id.clone(),
-        payload: StoredEventPayload {
-            kind: StoredEventKind::Observation as i32,
-            payload: observation.encode_to_vec(),
-        },
-    })?;
-    Ok(event_id)
+    PreparedRegistration {
+        authority_domain_id,
+        source,
+        audit,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -547,6 +655,8 @@ pub enum AdapterError {
     InvalidDeliveryAcknowledgement(String),
     #[error("corrupt adapter record: {0}")]
     CorruptRecord(String),
+    #[error(transparent)]
+    Resource(#[from] crate::resource::ResourceError),
     #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),
 }
