@@ -27,6 +27,7 @@ import {
   ResponseContractKind,
   ResponseContractSchema,
   ResponseOptionSchema,
+  ResourceFreshnessState,
   ResourceStateEventSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
@@ -54,6 +55,9 @@ import {
   fold,
   markUnreconciled,
   rendersLive,
+  rendersResourceCurrent,
+  resourceCollectionKey,
+  resourceKey,
   sessionKey,
 } from "../src/domain/model.js";
 
@@ -469,6 +473,36 @@ function responseOperationEvent(lsn: bigint, commandId: string, selectedOptionId
     }),
   );
 }
+
+test("resource identities and collection keys use collision-proof tuple composition", () => {
+  assert.notEqual(
+    resourceKey({ adapterId: "a/b", resourceKind: "c", resourceId: "d" }),
+    resourceKey({ adapterId: "a", resourceKind: "b/c", resourceId: "d" }),
+  );
+  assert.notEqual(
+    resourceKey({ adapterId: "a", resourceKind: "b", resourceId: "c/d" }),
+    resourceKey({ adapterId: "a", resourceKind: "b/c", resourceId: "d" }),
+  );
+  assert.notEqual(resourceCollectionKey("a/b", "c"), resourceCollectionKey("a", "b/c"));
+});
+
+test("resource current styling requires reconciled current non-tombstoned state", () => {
+  const base = {
+    identity: { adapterId: "token-commune", resourceKind: "provider_pool", resourceId: "pool-1" },
+    freshness: ResourceFreshnessState.CURRENT,
+    sourceAdapterGeneration: 1n,
+    revisionLsn: 4n,
+    tombstoned: false,
+    hasCachedPayload: true,
+    reconciled: true,
+    projection: { status: "unavailable" as const },
+  };
+  assert.equal(rendersResourceCurrent(base), true);
+  assert.equal(rendersResourceCurrent({ ...base, reconciled: false }), false);
+  assert.equal(rendersResourceCurrent({ ...base, tombstoned: true }), false);
+  assert.equal(rendersResourceCurrent({ ...base, freshness: ResourceFreshnessState.STALE }), false);
+  assert.equal(rendersResourceCurrent({ ...base, freshness: ResourceFreshnessState.UNKNOWN }), false);
+});
 
 test("resource state delivery decodes without contaminating session presentation", () => {
   const model = fold(

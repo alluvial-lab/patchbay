@@ -1,7 +1,7 @@
 ---
 id: epic-agent-operations-resource-plane-cockpit-composition-resource-projection-domain
 kind: story
-stage: implementing
+stage: done
 tags: [ux, protocol]
 parent: epic-agent-operations-resource-plane-cockpit-composition
 depends_on: []
@@ -49,3 +49,15 @@ or dynamic adapter renderer code.
 
 This is the first checkpoint. The resource reconciliation checkpoint depends on
 these model and decoder contracts.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected highest tier for the untrusted projection boundary and cross-module feature band.
+- Review weight: `thorough`, explicitly supplied by the autopilot caller; feature review is intentionally deferred to the orchestrator.
+- Land mode: not active; only the temporary resource-event decode-and-ignore path existed.
+- Files changed: `web-cockpit/src/domain/resource-projection.ts`, `web-cockpit/src/domain/model.ts`, `web-cockpit/tests/resource-projection.test.ts`, and `web-cockpit/tests/model.test.ts`.
+- Tests added: exact kind plus dual-descriptor matching, distinct local variants, semantic JSON rejection without byte retention, collision-proof resource/collection keys, and current-style dominance.
+- Simplification: one frozen local decoder registry and shared validation helpers cover both selected compositions; no dynamic adapter renderer or copied protocol enum was introduced.
+- Discrepancies from design: none. Decoder bytes come exclusively from the projection envelope after the complete resource/payload/projection contract matches.
+- Adjacent issues parked: none.
+- Verification: `cd web-cockpit && npm test` passed 83/83; contracts generated drift, presentation conformance (4 registries), and model-promotion checks passed.

@@ -13,6 +13,8 @@ import {
   PayloadContentType,
   ResponseContractKind,
   ResourceStateEventSchema,
+  ResourceFreshnessState,
+  type AdapterSnapshotSupport,
   SessionActivityState,
   SessionConnectivityState,
   SessionStateEventSchema,
@@ -35,6 +37,12 @@ import {
 
 import type { ReconcileProjection } from "./reconcile.js";
 import { foldAdapterDiagnosticObservation } from "./adapter-diagnostics.js";
+import type {
+  ResourceIdentityView,
+  ResourceProjectionResult,
+} from "./resource-projection.js";
+
+export type { ResourceIdentityView } from "./resource-projection.js";
 
 export interface SessionIdentity {
   adapterId: string;
@@ -56,6 +64,34 @@ export interface SessionView {
   tombstoned: boolean;
   reconciled: boolean;
   lockdownActive?: boolean;
+  resourceLinkage?: SessionResourceLinkage;
+}
+
+export interface ResourceCollectionView {
+  adapterId: string;
+  resourceKind: string;
+  completeness: AdapterSnapshotSupport;
+  sourceAdapterGeneration: bigint;
+  revisionLsn: bigint;
+  observedAt?: Date;
+  reconciled: boolean;
+}
+
+export interface ResourceView {
+  identity: ResourceIdentityView;
+  freshness: ResourceFreshnessState;
+  sourceAdapterGeneration: bigint;
+  revisionLsn: bigint;
+  observedAt?: Date;
+  tombstoned: boolean;
+  replacedBy?: ResourceIdentityView;
+  hasCachedPayload: boolean;
+  reconciled: boolean;
+  projection: ResourceProjectionResult;
+}
+
+export interface SessionResourceLinkage {
+  usageResource: ResourceIdentityView;
 }
 
 export interface CommandHistoryEntry {
@@ -179,6 +215,8 @@ export interface PresentationModel {
   cursor: bigint;
   reconciled: boolean;
   sessions: Map<string, SessionView>;
+  resources: Map<string, ResourceView>;
+  resourceCollections: Map<string, ResourceCollectionView>;
   commands: Map<string, CommandView>;
   elicitations: Map<string, ElicitationView>;
   adapters: Map<string, AdapterView>;
@@ -192,6 +230,8 @@ export function emptyPresentationModel(): PresentationModel {
     cursor: 0n,
     reconciled: false,
     sessions: new Map(),
+    resources: new Map(),
+    resourceCollections: new Map(),
     commands: new Map(),
     elicitations: new Map(),
     adapters: new Map(),
@@ -290,6 +330,8 @@ export function replaceFromSnapshot(
     cursor: 0n,
     reconciled: false,
     sessions,
+    resources: new Map(),
+    resourceCollections: new Map(),
     commands: new Map(),
     elicitations: new Map(),
     adapters: new Map(),
@@ -441,6 +483,24 @@ export class PresentationProjection implements ReconcileProjection {
   foldEvent(event: SubscribeEvent): void {
     this.model = fold(this.model, event);
   }
+}
+
+export function resourceKey(identity: ResourceIdentityView): string {
+  return [identity.adapterId, identity.resourceKind, identity.resourceId]
+    .map((part) => `${part.length}:${part}`)
+    .join("|");
+}
+
+export function resourceCollectionKey(adapterId: string, resourceKind: string): string {
+  return [adapterId, resourceKind]
+    .map((part) => `${part.length}:${part}`)
+    .join("|");
+}
+
+export function rendersResourceCurrent(resource: ResourceView): boolean {
+  return resource.reconciled
+    && !resource.tombstoned
+    && resource.freshness === ResourceFreshnessState.CURRENT;
 }
 
 export function sessionKey(identity: SessionIdentity): string {
@@ -1051,6 +1111,8 @@ function cloneModel(model: PresentationModel): PresentationModel {
   return {
     ...model,
     sessions: new Map(model.sessions),
+    resources: new Map(model.resources),
+    resourceCollections: new Map(model.resourceCollections),
     commands: new Map(model.commands),
     elicitations: new Map(model.elicitations),
     adapters: new Map(model.adapters),
