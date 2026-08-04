@@ -1,4 +1,7 @@
-use patchbay_contracts::patchbay::{AuditEventKind, AuthorityDomainId, StoredEventKind, StoredEventPayload};
+use patchbay_contracts::patchbay::{
+    AdapterId, AuditEventKind, AuthorityDomainId, ResourceId, ResourceIdentity, ResourceKind,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+};
 use prost::Message;
 use patchbay_core::storage::{
     AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, RusqliteStorage, Storage, StorageError,
@@ -17,6 +20,16 @@ fn draft(kind: AuditEventKind, reason: &str) -> AuditRecordDraft {
     draft
 }
 
+fn target_key(scope: &TargetScope) -> TargetKey {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = scope.encode_to_vec();
+    let encoded = bytes
+        .iter()
+        .flat_map(|byte| [HEX[(byte >> 4) as usize] as char, HEX[(byte & 0x0f) as usize] as char])
+        .collect();
+    TargetKey::new(encoded).unwrap()
+}
+
 fn page(limit: u16) -> AuditPageSpec {
     AuditPageSpec {
         kinds: Vec::new(),
@@ -31,6 +44,46 @@ fn page(limit: u16) -> AuditPageSpec {
         occurred_before: None,
         before_lsn: None,
         limit,
+    }
+}
+
+#[tokio::test]
+async fn legacy_tag_eight_and_nested_resource_targets_remain_durably_filterable() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let domain = domain("main");
+
+    // Decode the pre-rename wire shape directly: kind=RESOURCE, tag 8 string.
+    let old_bytes = [
+        0x08,
+        TargetScopeKind::Resource as u8,
+        0x42,
+        0x09,
+        b'p', b'r', b'i', b'n', b'c', b'i', b'p', b'a', b'l',
+    ];
+    let legacy = TargetScope::decode(old_bytes.as_slice()).unwrap();
+    let mut legacy_draft = draft(AuditEventKind::ControlSurfacePrincipalRevoked, "principal_revoked");
+    legacy_draft.target_scope = Some(legacy.clone());
+    storage.append_audit(&domain, legacy_draft).await.unwrap();
+
+    let nested = TargetScope {
+        kind: TargetScopeKind::Resource as i32,
+        resource: Some(ResourceIdentity {
+            adapter_id: Some(AdapterId { value: "adapter-a".to_owned() }),
+            resource_id: Some(ResourceId { value: "shared".to_owned() }),
+            resource_kind: Some(ResourceKind { value: "pool".to_owned() }),
+        }),
+        ..TargetScope::default()
+    };
+    let mut nested_draft = draft(AuditEventKind::CommandSubmissionAccepted, "resource_query");
+    nested_draft.target_scope = Some(nested.clone());
+    storage.append_audit(&domain, nested_draft).await.unwrap();
+
+    for expected in [legacy, nested] {
+        let mut filter = page(10);
+        filter.target = Some(target_key(&expected));
+        let result = storage.query_audit(&domain, filter).await.unwrap();
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0].target_scope.as_ref(), Some(&expected));
     }
 }
 

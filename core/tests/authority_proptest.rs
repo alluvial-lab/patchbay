@@ -393,6 +393,7 @@ impl CommandStateLookup for AlwaysAcceptedCommandState {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Accepted,
+            target_scope: None,
             correlations: vec![],
             terminal_lsn: None,
         })

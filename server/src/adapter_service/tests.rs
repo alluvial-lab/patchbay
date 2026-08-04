@@ -223,6 +223,88 @@ fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
 }
 
 #[tokio::test]
+async fn authenticated_resource_result_cannot_cross_kind_or_id_within_one_adapter() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    let operation = Operation {
+        command_id: Some(CommandId { value: "resource-observation-command".into() }),
+        authority_domain_id: Some(domain.clone()),
+        kind: OperationKind::Query as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource: Some(ResourceIdentity {
+                adapter_id: Some(adapter_id()),
+                resource_id: Some(ResourceId { value: "expected".into() }),
+                resource_kind: Some(ResourceKind { value: "pool".into() }),
+            }),
+            ..TargetScope::default()
+        }),
+        idempotency_key: "resource-observation-key".into(),
+        ..Operation::default()
+    };
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation_bytes(&operation),
+            },
+        )
+        .await
+        .expect("operation appends");
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), &operation),
+            &attachment_token,
+        ))
+        .await
+        .expect("exact delivery acknowledgement succeeds");
+
+    for (kind, id) in [("window", "expected"), ("pool", "other")] {
+        let before = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len();
+        let mismatched = ObservationRequest {
+            authority_domain_id: Some(domain.clone()),
+            observation: Some(observation_request::Observation::Event(Observation {
+                authority_domain_id: Some(domain.clone()),
+                kind: ObservationKind::Result as i32,
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::Resource as i32,
+                    resource: Some(ResourceIdentity {
+                        adapter_id: Some(adapter_id()),
+                        resource_id: Some(ResourceId { value: id.into() }),
+                        resource_kind: Some(ResourceKind { value: kind.into() }),
+                    }),
+                    ..TargetScope::default()
+                }),
+                correlations: vec![TypedCorrelation {
+                    r#ref: Some(typed_correlation::Ref::CommandId(
+                        operation.command_id.clone().unwrap(),
+                    )),
+                }],
+                ..Observation::default()
+            })),
+        };
+        let error = service
+            .ingest_observation(authenticated_with_attachment_token(
+                mismatched,
+                &attachment_token,
+            ))
+            .await
+            .expect_err("same-adapter tuple mismatch must reject");
+        assert!(error.message().contains("target does not match"));
+        assert_eq!(storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len(), before);
+    }
+}
+
+#[tokio::test]
 async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
     let directory = tempfile::tempdir().expect("temp directory");
     let database = directory.path().join("core.sqlite3");

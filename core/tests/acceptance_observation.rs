@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::future::ready;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Lsn,
-    Observation, ObservationKind, OperationState, StoredEventKind, TypedCorrelation,
+    typed_correlation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Lsn,
+    Observation, ObservationKind, OperationState, ResourceId, ResourceIdentity, ResourceKind,
+    StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     ingest_observation, AcceptanceError, CommandSnapshot, CommandStateLookup, IngestResult,
@@ -31,6 +32,7 @@ impl CommandStateLookup for TestCommandStates {
     ) -> impl std::future::Future<Output = Option<CommandSnapshot>> + Send {
         ready(self.states.get(command_id).map(|state| CommandSnapshot {
             state: *state,
+            target_scope: None,
             correlations: vec![],
             terminal_lsn: None,
         }))
@@ -72,6 +74,18 @@ fn observation(kind: ObservationKind, failure_code: FailureCode) -> Observation 
     }
 }
 
+fn resource_scope(kind: &str, id: &str) -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Resource as i32,
+        resource: Some(ResourceIdentity {
+            adapter_id: Some(AdapterId { value: "adapter-a".to_owned() }),
+            resource_id: Some(ResourceId { value: id.to_owned() }),
+            resource_kind: Some(ResourceKind { value: kind.to_owned() }),
+        }),
+        ..TargetScope::default()
+    }
+}
+
 async fn events(storage: &RusqliteStorage) -> Vec<patchbay_core::storage::RecordedEvent> {
     storage
         .read_after(&authority_domain(), Lsn { value: 0 })
@@ -85,6 +99,35 @@ fn decode_transition(event: &patchbay_core::storage::RecordedEvent) -> CommandTr
         StoredEventKind::CommandTransition
     );
     CommandTransition::decode(event.payload.payload.as_slice()).unwrap()
+}
+
+#[tokio::test]
+async fn status_and_result_observations_require_the_exact_command_target_before_append() {
+    struct TargetedLookup;
+    impl CommandStateLookup for TargetedLookup {
+        async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+            Some(CommandSnapshot {
+                state: OperationState::Delivered,
+                target_scope: Some(resource_scope("pool", "expected")),
+                correlations: vec![],
+                terminal_lsn: None,
+            })
+        }
+    }
+
+    for mismatched in [
+        resource_scope("window", "expected"),
+        resource_scope("pool", "other"),
+    ] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut submitted = observation(ObservationKind::Result, FailureCode::Unspecified);
+        submitted.target_scope = Some(mismatched);
+        let error = ingest_observation(&storage, &TargetedLookup, submitted)
+            .await
+            .expect_err("mismatched target must reject");
+        assert!(error.to_string().contains("target does not match"));
+        assert!(events(&storage).await.is_empty());
+    }
 }
 
 #[tokio::test]
@@ -359,6 +402,7 @@ async fn transition_carries_command_elicitation_correlation() {
         async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
             Some(CommandSnapshot {
                 state: OperationState::Delivered,
+                target_scope: None,
                 correlations: vec![TypedCorrelation {
                     r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
                         value: "elicitation-from-op".to_owned(),

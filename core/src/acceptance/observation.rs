@@ -7,7 +7,7 @@
 
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, EventId, FailureCode,
-    Observation, ObservationKind, OperationState, StoredEventKind, StoredEventPayload,
+    Observation, ObservationKind, OperationState, StoredEventKind, StoredEventPayload, TargetScope,
     TypedCorrelation,
 };
 use prost::Message;
@@ -31,6 +31,9 @@ use super::{allowed_transition, AcceptanceError, OperationStateExt};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSnapshot {
     pub state: OperationState,
+    /// Exact target carried by the accepted Operation. Status/result evidence
+    /// must bind to this target before it can append or derive a transition.
+    pub target_scope: Option<TargetScope>,
     /// The originating Operation's correlations (e.g. ElicitationId for
     /// response Operations). Carried into derived transitions.
     pub correlations: Vec<TypedCorrelation>,
@@ -132,6 +135,12 @@ where
             )));
         }
     };
+    if observation.target_scope != snapshot.target_scope {
+        return Err(AcceptanceError::CorruptRecord(format!(
+            "observation target does not match command {:?}",
+            candidate.command_id
+        )));
+    }
     if snapshot.state.is_terminal() {
         let mut audit = crate::storage::AuditRecordDraft::new(
             crate::acceptance::SystemClock.now(),

@@ -116,6 +116,7 @@ impl CommandStateLookup for AlwaysAccepted {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Accepted,
+            target_scope: None,
             correlations: vec![],
             terminal_lsn: None,
         })
@@ -904,6 +905,7 @@ impl CommandStateLookup for CompletedLookup {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Completed,
+            target_scope: None,
             correlations: vec![],
             terminal_lsn: Some(5),
         })

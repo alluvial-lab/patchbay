@@ -49,6 +49,17 @@ test("audit target parsing separates legacy audit ids from canonical operational
   const legacy = parseAuditTarget("resource=principal%2Fone", DOMAIN)!;
   assert.equal(legacy.legacyAuditResourceId, "principal/one");
   assert.equal(legacy.resource, undefined);
+  assert.deepEqual(targetScopeView(legacy), {
+    kind: "resource",
+    actorId: null,
+    adapterId: null,
+    runtimeSessionId: null,
+    sessionGeneration: null,
+    deploymentScope: null,
+    projectOrGroup: null,
+    legacyAuditResourceId: "principal/one",
+    resource: null,
+  });
 
   const operational = parseAuditTarget(
     "adapter=token%2Fcommune;resource-kind=provider%20pool;resource=shared%2Fone",

@@ -314,6 +314,7 @@ impl crate::acceptance::CommandStateLookup for CommandIndex {
             .get(command_id)
             .map(|record| crate::acceptance::CommandSnapshot {
                 state: record.state,
+                target_scope: record.operation.target_scope.clone(),
                 correlations: record.operation.correlations.clone(),
                 terminal_lsn: record.terminal_lsn,
             })
