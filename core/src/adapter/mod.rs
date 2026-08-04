@@ -18,6 +18,7 @@ use prost::Message;
 use crate::{
     acceptance::{Clock, CommandIndex},
     storage::{RecordedEvent, Storage},
+    target::target_adapter_id,
 };
 
 const REGISTRATION_SCHEMA: &str = "patchbay.AdapterRegistration";
@@ -260,7 +261,7 @@ pub async fn fail_running_commands_for_adapter<S: Storage>(
                     .operation
                     .target_scope
                     .as_ref()
-                    .and_then(|target| target.adapter_id.as_ref())
+                    .and_then(target_adapter_id)
                     == Some(adapter_id)
         })
         .map(|record| {

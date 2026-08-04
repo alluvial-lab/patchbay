@@ -900,8 +900,9 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
     };
     let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
     let running = targeted_operation(domain.clone(), "command-running");
+    let resource_running = resource_targeted_operation(domain.clone(), "resource-command-running");
     let delivered = targeted_operation(domain.clone(), "command-delivered");
-    for operation in [&running, &delivered] {
+    for operation in [&running, &resource_running, &delivered] {
         storage
             .append(
                 &domain,
@@ -915,7 +916,7 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
     }
 
     let mut subscription = receive_from_start(&service, &attachment_token).await;
-    for operation in [&running, &delivered] {
+    for operation in [&running, &resource_running, &delivered] {
         subscription
             .next()
             .await
@@ -929,21 +930,30 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
             .await
             .expect("delivery acknowledgement");
     }
-    service
-        .ingest_observation(authenticated_with_attachment_token(
-            lifecycle_observation(
-                domain.clone(),
-                &running,
-                ObservationKind::Status,
-                FailureCode::Unspecified,
-            ),
-            &attachment_token,
-        ))
-        .await
-        .expect("running observation");
+    for operation in [&running, &resource_running] {
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                lifecycle_observation(
+                    domain.clone(),
+                    operation,
+                    ObservationKind::Status,
+                    FailureCode::Unspecified,
+                ),
+                &attachment_token,
+            ))
+            .await
+            .expect("running observation");
+    }
 
     drop(subscription);
     wait_for_command_state(&storage, &domain, "command-running", OperationState::Failed).await;
+    wait_for_command_state(
+        &storage,
+        &domain,
+        "resource-command-running",
+        OperationState::Failed,
+    )
+    .await;
 
     let rebuilt = acceptance::rebuild_from_log(&storage, &domain)
         .await
@@ -955,6 +965,15 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
         .expect("running command remains indexed");
     assert_eq!(
         running_record.failure_code,
+        Some(FailureCode::ExecutionOutcomeUnknown)
+    );
+    assert_eq!(
+        rebuilt
+            .get_command(&CommandId {
+                value: "resource-command-running".into(),
+            })
+            .expect("running resource command remains indexed")
+            .failure_code,
         Some(FailureCode::ExecutionOutcomeUnknown)
     );
     assert_eq!(
@@ -1147,6 +1166,25 @@ fn targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
         }),
         idempotency_key: format!("{command}-key"),
         ..Default::default()
+    }
+}
+
+fn resource_targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
+    Operation {
+        command_id: Some(CommandId { value: command.into() }),
+        authority_domain_id: Some(domain),
+        kind: OperationKind::Query as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource: Some(ResourceIdentity {
+                adapter_id: Some(adapter_id()),
+                resource_id: Some(ResourceId { value: "shared".into() }),
+                resource_kind: Some(ResourceKind { value: "pool".into() }),
+            }),
+            ..TargetScope::default()
+        }),
+        idempotency_key: format!("{command}-key"),
+        ..Operation::default()
     }
 }
 
