@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer
 kind: epic
-stage: drafting
+stage: implementing
 tags: [adapter, protocol, ux, integration]
 parent: null
 depends_on: [epic-agent-operations-resource-plane]
@@ -27,6 +27,17 @@ The first delivery is deliberately read-only and independently useful. The cockp
 - **How are humans represented?** Each Patchbay deployment remains personal and uses its operator's token-commune credential. The shared gateway retains upstream member/admin policy; Patchbay grants add local defense in depth rather than replacing gateway authorization.
 - **How rich is the UI?** The adapter gets a purpose-built pool/resource panel composed with Patchbay's shared primitives; it is not reduced to a generic session list.
 
+## Design decisions
+
+Resolved during epic decomposition (2026-08-05) from a codebase + external-API mapping: the Pi adapter blueprint, the core/server adapter-ingress map, and a token-commune external API survey. These align the child features; routine/signature-level choices are deferred to each feature's design pass.
+
+- **Snapshot tier = PARTIAL today, not authoritative.** The pitch's claim that "the gateway's state is fully queryable" is not supported by token-commune's current external API: no pool ID, no complete inventory endpoint, `/commune/pool` omits contribution IDs/owners and may return empty capacity, no atomic snapshot envelope, no completeness declaration. AUTHORITATIVE is reserved pending upstream additions. (See External collaboration boundary.)
+- **Identity = composite local IDs now; stable source-issued IDs are an external prerequisite.** token-commune exposes no stable pool/member IDs; `/commune/me` returns a display name. Identities are synthesized from gateway-deployment + provider/contribution, with documented collision/durability risk and a swappable synthesis for future upstream IDs.
+- **Adapter lives in patchbay's repo** as `token-commune-adapter/`, consuming token-commune's external API over the network. Matches the Pi precedent and the brief; no filesystem coupling to token-commune `packages/shared`.
+- **Read-only observer keeps `ReceiveDeliveries` open** for liveness/degradation detection (the core infers adapter loss from stream drop). v1 has no operation translator; unexpected deliveries are acknowledged and failed as unsupported rather than silently ignored. This also reserves the seam for the control-attention epic.
+- **Gateway credential = adapter-local, fully redacted** (0600 file / env / OS secret store), never in durable log, Observations, resource payloads, or diagnostics. The exact store is a feature-design choice in `adapter-foundation`.
+- **No upstream read-scope distinction today.** Any member key reads all metadata and also authorizes inference/mutations; the adapter holds an overprivileged key now and applies Patchbay grants as local defense-in-depth. Scoped read-only credentials are an external prerequisite.
+
 ## Arc position
 
 Depends on `epic-agent-operations-resource-plane`. It is the implementation consumer that validates resource identity, snapshots, polling/Observation ingestion, adapter credential handling, and adapter-shaped cockpit projection. `epic-token-commune-control-attention` depends on this observer and adds mutations and human-action workflows.
@@ -43,9 +54,53 @@ Depends on `epic-agent-operations-resource-plane`. It is the implementation cons
 - adapter conformance vectors and end-to-end tests proving reconnect, snapshot, source authentication, redaction, and adapter-failure behavior;
 - a documented external API contract boundary with token-commune, including any required cursor, identity, or read-scope additions.
 
+## Decomposition
+
+Split by capability along the adapter's natural seams: the integration foundation (attach + manifest + credential + external API port) lands first; the projection core (endpoint state → honest PARTIAL resource snapshots) consumes it; the polling runtime (schedule + Observations + gap/staleness) drives the projection; the cockpit panel renders the flowing state; conformance evidence closes the arc. The chain is largely linear — inherent to a single cohesive adapter — but feature-design can pipeline design-of-next while implementing-current.
+
+### Child features
+
+- `epic-token-commune-observer-adapter-foundation` — process, attach/registration lifecycle, capability manifest (ResourceKinds + PARTIAL tiers + schemas), gateway client port, credential handling, documented external contract boundary. depends on: `[]`
+- `epic-token-commune-observer-snapshot-mapping` — endpoint state → canonical identities + PARTIAL snapshot reports with honest completeness/omission. depends on: `[adapter-foundation]`
+- `epic-token-commune-observer-polling-ingestion` — polling schedule + `IngestObservation` reports + PoolEvent→Observation + dedup/gap/stale-on-disconnect. depends on: `[adapter-foundation, snapshot-mapping]`
+- `epic-token-commune-observer-cockpit-panel` — surface-declared resource panel + CLI projections + grant-gated views. depends on: `[snapshot-mapping, polling-ingestion]`
+- `epic-token-commune-observer-conformance` — conformance vectors + real-core E2E proving honest reconnect/snapshot/gap/redaction/adapter-failure. depends on: `[adapter-foundation, snapshot-mapping, polling-ingestion, cockpit-panel]`
+
+### Simplification arcs
+
+- All five reuse the core's already-generic resource ingestion/reconciliation/freshness/tombstone machinery and the Pi adapter's attach/report/diagnostics/delivery-stream machinery — no new core RPC, resource enum, registry, or storage path.
+- The token-commune resource space is collapsed to the minimum honest kinds rather than mirroring every upstream concept; richer kinds wait for the upstream inventory endpoint.
+
+### Decomposition risks
+
+- **Linear critical path** (foundation → mapping → ingestion → cockpit → conformance): limited parallelism, inherent to a single-adapter epic. Mitigation: autopilot pipelines design/implement across the chain.
+- **External-API dependency**: mapping + ingestion depend on token-commune's current API shape (no stable IDs, latest-50 events, poll-only). The consumer-owned port isolates this; conformance pins the assumed behavior; stronger tiers are external prerequisites.
+- **Identity durability**: composite IDs are emitted durably; a future upstream stable-ID addition requires a migration. Mitigation: identity synthesis is designed to be swappable.
+- **Pitch-vs-reality gap**: the pitch assumed authoritative snapshots and a queryable-complete gateway; the external API supports only PARTIAL today. The decomposition is scoped to what is honestly buildable now; authoritative/streaming/cursor tiers are reserved pending upstream work.
+
 ## External collaboration boundary
 
-Patchbay work items cannot own token-commune's repository state. Any gateway API additions—such as stable resource identifiers, event cursors, scoped read credentials, or snapshot completeness guarantees—must be scoped and delivered in token-commune's own substrate. This epic records those as external prerequisites and consumes only an explicit external contract, never `packages/shared` internals by filesystem coupling.
+Patchbay work items cannot own token-commune's repository state. Any gateway API additions must be scoped and delivered in token-commune's own substrate; this epic consumes only an explicit external contract, never `packages/shared` internals by filesystem coupling. The 2026-08-05 external API survey confirmed the concrete prerequisites below; the adapter consumes only what exists today and degrades honestly on the rest.
+
+### Confirmed external prerequisites
+
+For reliable resource snapshots:
+- A source-issued gateway/pool identifier stable across hostname/tailnet changes (none exists today).
+- A complete contribution/provider inventory endpoint exposing stable `contribution_id`, owner reference, provider, health, declared share, contribute-only status, and latest capacity — distinguishing zero telemetry from omitted.
+- A stable externally-exposed member identity (`/commune/me` returns a display name today).
+- Stronger contribution-ID generation (UUID/ULID; today it is member-name + `Date.now() % 100000`, with collision risk).
+- A snapshot envelope/completeness contract (revision id, server timestamp, `complete|partial` declaration, omission reasons, per-reading freshness; ideally one atomic endpoint).
+
+For durable Observations:
+- Cursor-based event retrieval (today: latest 50, no cursor/pagination/replay).
+- Documented polling semantics or push delivery (SSE/webhook); defined max lag, retention, dedup id, gap behavior.
+- Full lifecycle-event coverage (today `window_exhausted` and `calibration` are declared but have no production emitter).
+- A history/reconciliation guarantee so a reconnecting observer can detect missed events.
+
+For least-privilege integration:
+- Scoped read-only credentials (today a member key also authorizes inference, contribution registration, and fingerprint mutation).
+- Explicit member-vs-admin read policy and any required redaction.
+- Documented credential issuance/rotation/revocation procedure (today bootstrap keys are local/out-of-band).
 
 ## Scope boundaries
 
@@ -61,7 +116,7 @@ Reuse Patchbay's adapter lifecycle, query lifecycle, Observation ingestion, reso
 
 ## Mockups
 
-Epic design must produce responsive mockups for the token-commune pool/resource surface and its composition with the existing session cockpit. Existing design-system tokens and components are inherited; domain-specific capacity, contribution-health, and fingerprint components may extend the showcase before screen work.
+The token-commune pool/resource panel is the epic's one net-new screen surface, owned by the `cockpit-panel` feature. Responsive mockups are **pending** the epic-level UI alignment pass (`/ux-ui-design:screens epic-token-commune-observer-cockpit-panel`, plus a flow only if the panel spans a multi-step journey). They inherit design-system tokens from `.mockups/design-system/tokens.css` and the cockpit-composition primitives from the resource-plane epic; domain-specific capacity / contribution-health / fingerprint components may extend the showcase (`/ux-ui-design:components`) before screen work. If the epic-level pass has not run, `cockpit-panel` feature-design produces them as the fallback.
 
 ## Extension pressure classification
 
