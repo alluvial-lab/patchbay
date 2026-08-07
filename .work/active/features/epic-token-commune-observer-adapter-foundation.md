@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol, integration]
 parent: epic-token-commune-observer
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # token-commune adapter foundation
@@ -802,6 +802,78 @@ is needed here.
   in the Rust core, importing token-commune repository internals, per-row fake
   contribution identities, claiming upstream streaming/authoritative state, or
   loading adapter-provided renderer code.
+
+## Implementation summary
+
+### Ownership and execution
+
+- Resolved scope: this feature plus its five ordered child-story checkpoints;
+  no dependencies were excluded and the graph was acyclic.
+- Ownership shape: one cohesive feature-owning worker, with direct reads only.
+  The package boundary, generated contract seam, diagnostics registry, gateway
+  DTOs, and lifecycle tests overlap heavily, so splitting by story would have
+  increased integration and secret-handling risk without independent write
+  ownership.
+- Chosen execution capability: `openai-codex/gpt-5.6-sol` (highest; explicit
+  caller override). No sub-worker fan-out was available on this harness surface.
+- Effective review weight remains **thorough** (explicit caller); implementation
+  stops at `review` for the active autopilot review phase rather than
+  self-approving.
+
+### Delivered
+
+- Added `token-commune-adapter/` as a strict Node 22 TypeScript package with
+  fail-fast environment configuration, process/signal lifecycle, and an
+  idempotent disposal path.
+- Added the single two-kind resource/schema registry, four closed JSON schemas,
+  deterministic `local:` identity synthesis, and the exact read-only
+  operational-resource manifest. Both kinds are `PARTIAL`; no session tier,
+  streaming guarantee, OperationKind support, polling, mapping, aggregation, or
+  mutation was added.
+- Added 0600 no-follow credential loading, bearer-only injection, exact-secret
+  diagnostic redaction, bounded rotating local JSONL, and bounded non-retrying
+  core forwarding from one diagnostic-code registry.
+- Added the six-method consumer-owned gateway port over the current external
+  wire shapes with immutable DTOs, byte bounds, redirect rejection, strict
+  runtime validation, opaque live model ids, and safe fingerprint summaries
+  that discard raw templates/captures/diffs.
+- Added the narrowed Connect attachment client, token interceptor, same-
+  generation single-flight reattach, failed-token fencing, observation wrapper,
+  held-open delivery subscription, cursor preservation, and acknowledge-then-
+  unsupported behavior without Pi session/transcript/translator machinery.
+- Added 18 unit/interface/real-process tests. The real-core test validates the
+  durable manifest and unsupported terminal failure code while scanning core-
+  visible and local diagnostic material for both secrets.
+
+### Implementation discoveries and deviations for review
+
+- The current token-commune `/v1/models` response omits the catalog's
+  `upstreamModel`. The client and local model schema keep `upstreamModel`
+  nullable instead of inventing aliases; all exposed model ids pass through
+  byte-for-byte. A stronger external field remains an upstream prerequisite.
+- The current core refuses an ordinary adapter-scope `Submit` as
+  `target_not_found`, although its delivery router can route an already-accepted
+  adapter target. The real-core test therefore seeds one durable accepted
+  adapter Operation, following the existing Pi stale-delivery fixture pattern,
+  rather than fabricating an out-of-scope resource report.
+- The current core maps every adapter RESULT with a failure code to
+  `CommandState.FAILED`. The delivered unsupported Operation therefore becomes
+  `FAILED` with canonical `UNSUPPORTED_COMMAND`, not `REJECTED`. The adapter
+  implements the caller-requested acknowledge-and-fail stub; changing the
+  core-wide lifecycle mapping was intentionally kept outside this sibling-
+  package feature and is called out for thorough review.
+
+### Verification
+
+- `cd token-commune-adapter && npm install`: completed; 0 vulnerabilities.
+- `npm run build`: passed clean with strict, no-unchecked-indexed-access, and
+  exact-optional-property TypeScript checks.
+- `npm test`: 18/18 passed, including the serial real-core lifecycle test.
+- `git diff --check`: passed before item transitions; generated `dist/` and
+  `node_modules/` remain ignored.
+- Child checkpoints advanced directly to `done` after the integrated green run:
+  `contract-foundation`, `credential-diagnostics`, `gateway-client`,
+  `attachment-lifecycle`, and `unsupported-delivery-loop`.
 
 ## Review handoff
 

@@ -15,7 +15,7 @@ export interface TokenCommuneAdapterConfig {
 export function loadTokenCommuneAdapterConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): TokenCommuneAdapterConfig {
-  const coreAddress = required(env, "PATCHBAY_CORE_ADDR");
+  const coreAddress = httpBaseUrl(required(env, "PATCHBAY_CORE_ADDR"), "PATCHBAY_CORE_ADDR").href.replace(/\/$/, "");
   const attachmentEvidence = required(env, "PATCHBAY_ADAPTER_ATTACHMENT_SECRET");
   const gatewayText = required(env, "PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL");
   const gatewayCredentialFile = required(env, "PATCHBAY_TOKEN_COMMUNE_MEMBER_KEY_FILE");
@@ -60,6 +60,16 @@ export function loadTokenCommuneAdapterConfig(
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   return nonEmpty(env[name], name);
+}
+
+function httpBaseUrl(value: string, name: string): URL {
+  let parsed: URL;
+  try { parsed = new URL(value); }
+  catch { throw new Error(`${name} must be a credential-free http(s) URL`); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${name} must be a credential-free http(s) URL`);
+  }
+  return parsed;
 }
 
 function nonEmpty(value: string | undefined, name: string): string {

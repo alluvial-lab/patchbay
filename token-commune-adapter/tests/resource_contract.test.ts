@@ -87,6 +87,7 @@ test("configuration fails fast by environment key and never echoes values", () =
     delete (env as Record<string, string>)[name];
     assert.throws(() => loadTokenCommuneAdapterConfig(env), (error: unknown) => error instanceof Error && error.message.includes(name) && !error.message.includes("attachment-secret-value"));
   }
+  assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_CORE_ADDR: "not-a-url" }), /PATCHBAY_CORE_ADDR/);
   assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_ADAPTER_GENERATION: "1.5" }), /PATCHBAY_ADAPTER_GENERATION/);
   assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_POLL_INTERVAL_MS: "0" }), /PATCHBAY_TOKEN_COMMUNE_POLL_INTERVAL_MS/);
   assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL: "https://gateway.example/?key=secret" }), /PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL/);
