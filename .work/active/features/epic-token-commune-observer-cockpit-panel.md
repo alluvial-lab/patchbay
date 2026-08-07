@@ -8,7 +8,7 @@ depends_on: [epic-token-commune-observer-snapshot-mapping, epic-token-commune-ob
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # token-commune cockpit resource panel and CLI projection
@@ -74,11 +74,29 @@ out of scope for the read-only observer.
 
 ## Mockups
 
-Net-new surface — mockups are **pending** the epic-level UI alignment pass
-(`/ux-ui-design:screens epic-token-commune-observer-cockpit-panel`, plus a flow
-if the panel spans a multi-step journey). Inherit design-system tokens from
-`.mockups/design-system/tokens.css`. See the parent epic's `## Mockups` section.
-Feature-design falls back to producing them if the epic pass has not run.
+- Screens: `.mockups/screens/epic-token-commune-observer-cockpit-panel/option-7.html` — **selected MVP direction** (2026-08-05)
+- Comparison set: `option-1`..`option-6` are exploratory iterations (busy → calm → per-provider); `option-7` is canonical.
+- Design system: inherits `.mockups/design-system/tokens.css` + `components.css` (Nostromo/LCARS amber console).
+
+**Selected direction — calm per-pool list (MVP).** One row per provider-pool, three Patchbay-summarized signals:
+1. **draw allowance** — `limitFraction` from `/commune/me`; the operator's per-provider allowance against others' pooled capacity (may be admin-set via decree).
+2. **credential-health distribution** — count of the pool's contributions by health state (fresh / exhausted / auth_broken); native token-commune data.
+3. **capacity** — the highest `5h`-window `usedFraction` among the pool's anonymous contributions; `5h` is Patchbay's display window, not necessarily the provider's binding window.
+
+Plus a Patchbay-synthesized verdict (runnable / pool exhausted / telemetry stale / auth broken) — owned as a synthesis of credential health + capacity + model availability, not a native state.
+
+**Honesty model (locked during mockup):**
+- **No derived pool-aggregate %.** A pool-level "% remaining" was explicitly rejected as a fabricated metric; capacity shows only a real per-window reading (highest 5h utilization), honestly labeled.
+- Capacity readings are per-contribution × per-window × individually nullable; null/stale/auth-broken states render distinctly (e.g. "no readings", "7m old · stale").
+- Credential freshness vs telemetry staleness are distinct axes (a pool can be credential-fresh with stale capacity telemetry) — never presented as contradictory.
+- Model IDs come from the live `/v1/models` catalog (the mock's are illustrative placeholders; note `gpt-5.6` aliases are rejected upstream — use `gpt-5.5` / `gpt-5.3-codex-spark` etc.).
+- The footer owns every derivation ("Patchbay summaries from per-contribution readings; no native pool aggregate; verdicts are a Patchbay synthesis; polled/partial; contributor identities + stable contribution IDs not exposed").
+
+**Out of MVP (parked):**
+- Per-contribution × per-window drill-down — omitted by Patchbay MVP choice (anonymous per-contribution readings already exist upstream; the drill-down is buildable now and gains contributor names when attribution lands).
+- Draw-enforcement/calibration status — reported honestly when present but **not** a required UI element.
+
+Adversarially reviewed (cross-model) + visually self-verified via headless render; passed.
 
 <!-- The design pass fills in the panel composition, the domain-projection
 decoder, grant-gating rules, and implementation units. -->

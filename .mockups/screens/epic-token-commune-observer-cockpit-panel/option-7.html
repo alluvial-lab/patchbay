@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>token-commune Resources — MVP pool list</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-inverse); opacity: 0.72; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+    .app-header { justify-content: space-between; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail nav { display: grid; gap: var(--space-1); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .col { width: min(1040px, calc(100% - var(--space-16))); margin: 0 auto; padding: var(--space-8) 0 var(--space-12); display: grid; gap: var(--space-6); }
+    .eyebrow { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
+    .page-head h1 { margin: var(--space-1) 0 0; font: var(--font-weight-semibold) var(--font-size-xl)/1 var(--font-sans); }
+    .summary { margin-top: var(--space-2); font: var(--font-size-sm)/1.5 var(--font-mono); color: var(--color-text-secondary); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+    .summary .dot { color: var(--color-text-tertiary); }
+
+    .pools { display: grid; gap: var(--space-3); }
+    .pool-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 88px 132px 176px 128px;
+      column-gap: var(--space-6);
+      align-items: center;
+      padding: var(--space-4) var(--space-6);
+      background: var(--color-bg-primary); color: var(--color-text-primary);
+      border: 1px solid var(--color-border);
+    }
+    .pool-row--stale { background: var(--color-stale-surface); }
+    .pool-left { display: grid; gap: 3px; min-width: 0; }
+    .pool-name { font: var(--font-weight-semibold) var(--font-size-base)/1.2 var(--font-mono); }
+    .pool-models { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pool-models .no { color: var(--color-danger); }
+    .draw { text-align: right; }
+    .draw-v { font: var(--font-weight-semibold) var(--font-size-lg)/1 var(--font-mono); }
+    .draw-l { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); margin-top: 4px; }
+    .health { text-align: right; }
+    .health-v { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); }
+    .health-v .warn { color: var(--color-warning); }
+    .health-v .stop { color: var(--color-danger); }
+    .health-l { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); margin-top: 4px; }
+    .cap { text-align: right; }
+    .cap-v { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); white-space: nowrap; }
+    .cap-v .soft { color: var(--color-text-secondary); font-style: italic; font-weight: var(--font-weight-regular); }
+    .cap-l { font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cap-l .warn { color: var(--color-warning); }
+    .vcol { display: flex; }
+    .verdict { font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+    .verdict::before { content: ""; width: 8px; height: 8px; border-radius: var(--radius-full); display: inline-block; flex: none; }
+    .v-run { color: var(--color-success); } .v-run::before { background: var(--color-success); }
+    .v-warn { color: var(--color-warning); } .v-warn::before { background: var(--color-warning); }
+    .v-stop { color: var(--color-danger); } .v-stop::before { background: var(--color-danger); }
+
+    .note { font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); }
+    .note code { color: var(--color-text-primary); }
+    .honesty-foot { font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); }
+    .honesty-foot code { color: var(--color-text-primary); }
+    @media (max-width: 760px) {
+      .col { width: calc(100% - var(--space-6)); }
+      .pool-row { grid-template-columns: minmax(0,1fr); gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+      .draw, .health, .cap, .vcol { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>token-commune Resources — MVP pool list</strong><span>Patchbay summaries derived from per-contribution token-commune readings. Per pool: draw allowance, credential-health distribution, and the highest 5h capacity utilization. No native pool aggregate; verdicts are a Patchbay synthesis.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav aria-label="Cockpit destinations">
+          <button class="btn btn-ghost destination" data-tip="Sessions" aria-label="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span></button>
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Resources" aria-label="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span></button>
+          <button class="btn btn-ghost destination" data-tip="Security" aria-label="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+        </nav>
+      </aside>
+      <section class="workspace" aria-labelledby="resources-title">
+        <div class="col">
+          <header class="page-head">
+            <span class="eyebrow" id="resources-title">Resources · token-commune</span>
+            <h1>Pools</h1>
+            <div class="summary">
+              <span><strong>2</strong> runnable</span><span class="dot">·</span>
+              <span><strong>1</strong> pool exhausted</span><span class="dot">·</span>
+              <span><strong>1</strong> telemetry stale</span><span class="dot">·</span>
+              <span><strong>1</strong> auth broken</span>
+            </div>
+          </header>
+
+          <div class="pools">
+            <div class="pool-row">
+              <div class="pool-left"><span class="pool-name">anthropic</span><span class="pool-models">claude-sonnet-4-5 · claude-opus-4-5</span></div>
+              <div class="draw"><div class="draw-v">42%</div><div class="draw-l">draw allowance</div></div>
+              <div class="health"><div class="health-v">3 fresh</div><div class="health-l">3 contributions</div></div>
+              <div class="cap"><div class="cap-v">5h · 35% used</div><div class="cap-l">highest 5h utilization</div></div>
+              <div class="vcol"><span class="verdict v-run">runnable</span></div>
+            </div>
+
+            <div class="pool-row">
+              <div class="pool-left"><span class="pool-name">openai-codex</span><span class="pool-models">gpt-5.5 · gpt-5.3-codex-spark</span></div>
+              <div class="draw"><div class="draw-v">25%</div><div class="draw-l">draw allowance</div></div>
+              <div class="health"><div class="health-v"><span class="warn">2 exhausted</span></div><div class="health-l">2 contributions</div></div>
+              <div class="cap"><div class="cap-v">5h · 100% used</div><div class="cap-l">highest 5h utilization</div></div>
+              <div class="vcol"><span class="verdict v-warn">pool exhausted</span></div>
+            </div>
+
+            <div class="pool-row">
+              <div class="pool-left"><span class="pool-name">zai</span><span class="pool-models">glm-5</span></div>
+              <div class="draw"><div class="draw-v">20%</div><div class="draw-l">draw allowance</div></div>
+              <div class="health"><div class="health-v">1 fresh</div><div class="health-l">1 contribution</div></div>
+              <div class="cap"><div class="cap-v">5h · 39% used</div><div class="cap-l">highest 5h utilization</div></div>
+              <div class="vcol"><span class="verdict v-run">runnable</span></div>
+            </div>
+
+            <div class="pool-row pool-row--stale">
+              <div class="pool-left"><span class="pool-name">kimi</span><span class="pool-models">kimi-for-coding</span></div>
+              <div class="draw"><div class="draw-v">20%</div><div class="draw-l">draw allowance</div></div>
+              <div class="health"><div class="health-v">1 fresh</div><div class="health-l">credentials</div></div>
+              <div class="cap"><div class="cap-v">5h · 52% used</div><div class="cap-l"><span class="warn">7m old · stale</span></div></div>
+              <div class="vcol"><span class="verdict v-warn">telemetry stale</span></div>
+            </div>
+
+            <div class="pool-row">
+              <div class="pool-left"><span class="pool-name">umans</span><span class="pool-models"><span class="no">umans-coder · unavailable</span></span></div>
+              <div class="draw"><div class="draw-v">10%</div><div class="draw-l">draw allowance</div></div>
+              <div class="health"><div class="health-v"><span class="stop">1 auth broken</span></div><div class="health-l">1 contribution</div></div>
+              <div class="cap"><div class="cap-v"><span class="soft">no readings</span></div><div class="cap-l">reading unavailable</div></div>
+              <div class="vcol"><span class="verdict v-stop">auth broken</span></div>
+            </div>
+          </div>
+
+          <div class="note">Patchbay summaries derived from per-contribution token-commune readings — no native pool-level aggregate exists. <code>draw allowance</code> = <code>limitFraction</code> from <code>/commune/me</code> (your per-provider allowance against others' pooled capacity; may be admin-set via decree). <code>capacity</code> = the highest <code>5h</code>-window <code>usedFraction</code> among anonymous contributions; <code>5h</code> is Patchbay's display window, not necessarily the provider's binding window. Verdicts are a Patchbay synthesis of credential health, capacity, and model availability.</div>
+          <div class="honesty-foot">polled, not streamed · Patchbay completeness: partial (nullable readings, no pool aggregate) · panel refreshed 18s ago; underlying reading ages vary · contributor identities and stable contribution IDs are not exposed; counts and readings are anonymous · per-contribution drill-down omitted from MVP by Patchbay choice</div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

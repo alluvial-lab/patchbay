@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>token-commune cockpit panel — pick a direction</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-inverse); color: var(--color-text-inverse); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .mock-meta { padding: var(--space-3) var(--space-6); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-sm)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border-strong); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    .grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: var(--space-2); padding: var(--space-2); }
+    .cell { min-width: 0; min-height: 0; background: var(--color-bg-secondary); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); overflow: hidden; display: flex; flex-direction: column; }
+    .cell-head { padding: var(--space-2) var(--space-3); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-bottom: 1px solid var(--color-border); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
+    .cell-copy { min-width: 0; display: grid; gap: var(--space-1); }
+    .cell-copy strong { font: var(--font-weight-semibold) var(--font-size-sm)/1.2 var(--font-mono); }
+    .cell-copy span { font: var(--font-size-xs)/1.3 var(--font-sans); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell a { color: var(--color-text-link); text-decoration: none; font: var(--font-weight-medium) var(--font-size-xs)/1 var(--font-mono); white-space: nowrap; }
+    .cell a:hover { color: var(--color-text-link-hover); }
+    iframe { border: 0; flex: 1; width: 100%; min-height: 0; background: var(--color-bg-primary); }
+    @media (max-width: 900px) { body { height: auto; min-height: 100%; } .grid { grid-template-columns: 1fr; grid-template-rows: repeat(4, 680px); } .cell { min-height: 680px; } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>token-commune cockpit panel — pick a direction</strong><span>Four layout answers inside the locked Patchbay Nostromo/LCARS cockpit; open any option for a full-size review.</span></header>
+  <main class="grid">
+    <section class="cell">
+      <header class="cell-head"><div class="cell-copy"><strong>Option 1 — Pool-health command deck</strong><span>Dense split-console triage for an admin watching contribution health.</span></div><a href="option-1.html" target="_blank" rel="noopener">open ↗</a></header>
+      <iframe src="option-1.html" title="Option 1 — Pool-health command deck"></iframe>
+    </section>
+    <section class="cell">
+      <header class="cell-head"><div class="cell-copy"><strong>Option 2 — Member-draw cockpit</strong><span>Calm self-service view centered on personal draw and model availability.</span></div><a href="option-2.html" target="_blank" rel="noopener">open ↗</a></header>
+      <iframe src="option-2.html" title="Option 2 — Member-draw cockpit"></iframe>
+    </section>
+    <section class="cell">
+      <header class="cell-head"><div class="cell-copy"><strong>Option 3 — Activity timeline</strong><span>Sparse content-first chronology for understanding what changed.</span></div><a href="option-3.html" target="_blank" rel="noopener">open ↗</a></header>
+      <iframe src="option-3.html" title="Option 3 — Activity timeline"></iframe>
+    </section>
+    <section class="cell">
+      <header class="cell-head"><div class="cell-copy"><strong>Option 4 — Tabbed resource browser</strong><span>Industrial progressive disclosure: one resource kind at a time.</span></div><a href="option-4.html" target="_blank" rel="noopener">open ↗</a></header>
+      <iframe src="option-4.html" title="Option 4 — Tabbed resource browser"></iframe>
+    </section>
+  </main>
+</body>
+</html>

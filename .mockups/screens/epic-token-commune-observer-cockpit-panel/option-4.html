@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>token-commune Resources — Option 4: Tabbed resource browser</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+    .app-header { justify-content: space-between; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail nav { display: grid; gap: var(--space-1); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); }
+    .resource-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-6); }
+    .resource-head h1 { margin: 0 0 var(--space-1); font-size: var(--font-size-xl); }
+    .resource-head p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+    .attach { display: grid; gap: var(--space-2); justify-items: end; font: var(--font-size-xs)/1.3 var(--font-mono); color: var(--color-text-secondary); }
+    .honesty-line { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-2) var(--space-6); background: var(--color-bg-secondary); border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .honesty-line strong { color: var(--color-text-primary); }
+    .tabs { padding: 0 var(--space-6); background: var(--color-bg-secondary); }
+    .tab-panels { overflow: auto; min-height: 0; }
+    .panel { padding: var(--space-6); max-width: 1160px; }
+    .panel[hidden] { display: none; }
+    .panel-head { display: flex; justify-content: space-between; gap: var(--space-4); align-items: baseline; margin-bottom: var(--space-4); }
+    .panel-head h2 { margin: 0; font-size: var(--font-size-lg); }
+    .panel-head span { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .table-wrap { border: 1px solid var(--color-border); overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font: var(--font-size-xs)/1.4 var(--font-mono); }
+    th { padding: var(--space-2) var(--space-3); text-align: left; background: var(--color-bg-tertiary); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: .04em; font-weight: var(--font-weight-medium); border-bottom: 1px solid var(--color-border-strong); white-space: nowrap; }
+    td { padding: var(--space-3); border-bottom: 1px solid var(--color-border); vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    tr.stale { background: var(--color-stale-surface); opacity: var(--opacity-stale); }
+    .mono-stack { display: grid; gap: var(--space-1); }
+    .muted { color: var(--color-text-tertiary); }
+    .pool-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); margin-bottom: var(--space-4); }
+    .summary-cell { display: grid; gap: var(--space-2); }
+    .summary-cell span { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; }
+    .summary-cell strong { font: var(--font-weight-semibold) var(--font-size-xl)/1 var(--font-mono); }
+    .model-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
+    .model-row h3 { margin: 0 0 var(--space-1); font: var(--font-weight-semibold) var(--font-size-sm)/1.3 var(--font-mono); }
+    .model-row p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+    .draw-layout { display: grid; grid-template-columns: 1.2fr .8fr; gap: var(--space-4); }
+    .draw-value { font: var(--font-weight-semibold) var(--font-size-3xl)/1 var(--font-mono); }
+    .draw-track { height: 20px; margin: var(--space-4) 0; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); }
+    .draw-fill { width: 42%; height: 100%; background: var(--color-accent); }
+    .kv { display: grid; grid-template-columns: 1fr auto; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); font: var(--font-size-sm)/1.4 var(--font-mono); }
+    .events { display: grid; border-top: 1px solid var(--color-border); }
+    .event { display: grid; grid-template-columns: 110px 130px minmax(0, 1fr) 110px; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); font-size: var(--font-size-sm); }
+    .event time, .event strong, .event span { font-family: var(--font-mono); font-size: var(--font-size-xs); }
+    .gap { margin-top: var(--space-4); padding: var(--space-3); background: var(--color-stale-surface); border: 1px dashed var(--color-border-strong); font: var(--font-size-xs)/1.4 var(--font-mono); }
+    @media (max-width: 760px) { .panel { padding: var(--space-4); } .resource-head, .honesty-line { padding-left: var(--space-4); padding-right: var(--space-4); } .tabs { padding: 0; overflow-x: auto; } .pool-summary { grid-template-columns: repeat(2, 1fr); } .model-list, .draw-layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 4 — Tabbed resource browser</strong><span>An industrial one-kind-at-a-time browser uses progressive disclosure for operators who prefer clean, focused inspection.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav aria-label="Cockpit destinations">
+          <button class="btn btn-ghost destination" data-tip="Sessions" aria-label="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span></button>
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Resources" aria-label="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span></button>
+          <button class="btn btn-ghost destination" data-tip="Security" aria-label="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+        </nav>
+      </aside>
+      <section class="workspace" aria-labelledby="resources-title">
+        <header class="resource-head">
+          <div><h1 id="resources-title">Resources / token-commune</h1><p>Read-only gateway observer · adapter <code>tc-gateway</code> · metadata plane only</p></div>
+          <div class="attach"><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>adapter attached</span><span>attachment observed_at 12s ago</span></div>
+        </header>
+        <div class="honesty-line">
+          <strong title="Gateway state is partially observable; polled, not streamed.">completeness: PARTIAL</strong>
+          <span>gateway reads are polled, not streamed</span>
+          <span>provider readings may be upstream-gated or backoff-delayed</span>
+          <span><strong>event gap:</strong> latest 50 · no cursor · older history not reconstructable</span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Resource kinds">
+          <button class="tabs__tab" role="tab" aria-selected="true" aria-controls="panel-pools" id="tab-pools" data-tab="pools">Pools</button>
+          <button class="tabs__tab" role="tab" aria-selected="false" aria-controls="panel-models" id="tab-models" data-tab="models" tabindex="-1">Models</button>
+          <button class="tabs__tab" role="tab" aria-selected="false" aria-controls="panel-draw" id="tab-draw" data-tab="draw" tabindex="-1">Draw</button>
+          <button class="tabs__tab" role="tab" aria-selected="false" aria-controls="panel-fingerprint" id="tab-fingerprint" data-tab="fingerprint" tabindex="-1">Fingerprint</button>
+          <button class="tabs__tab" role="tab" aria-selected="false" aria-controls="panel-events" id="tab-events" data-tab="events" tabindex="-1">Events</button>
+        </div>
+        <div class="tab-panels">
+          <section class="panel" role="tabpanel" id="panel-pools" aria-labelledby="tab-pools">
+            <div class="panel-head"><h2>Provider pools and contributions</h2><span>source /commune/pool · per-row observed_at</span></div>
+            <div class="pool-summary">
+              <article class="card summary-cell"><span>contributions</span><strong>5</strong></article>
+              <article class="card summary-cell"><span>healthy / fresh</span><strong>2</strong></article>
+              <article class="card summary-cell"><span>attention</span><strong>2</strong></article>
+              <article class="card summary-cell"><span>stale</span><strong>1</strong></article>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>provider / display key</th><th>declaredShare</th><th>health</th><th>capacity reading</th><th>fingerprint</th><th>observed_at</th></tr></thead>
+              <tbody>
+                <tr><td><span class="mono-stack"><strong>anthropic</strong><span class="muted">anthropic·pool-a</span></span></td><td>0.25</td><td>fresh</td><td>680k remaining / 1M window</td><td>ok · anthropic-probe</td><td>14s ago</td></tr>
+                <tr><td><span class="mono-stack"><strong>openai-codex</strong><span class="muted">openai-codex·pool-b</span></span></td><td>0.25</td><td>exhausted</td><td>0 remaining / 900k window</td><td>held · 8m · diff present</td><td>31s ago</td></tr>
+                <tr><td><span class="mono-stack"><strong>zai</strong><span class="muted">zai·pool-c</span></span></td><td>0.20</td><td>fresh</td><td>305k remaining / 500k window</td><td><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown · no probe</span></td><td>44s ago</td></tr>
+                <tr class="stale"><td><span class="mono-stack"><strong>kimi</strong><span class="muted">kimi·pool-d</span></span></td><td>0.20</td><td><span class="resource-freshness resource-freshness--stale"><span class="resource-freshness__dot"></span>stale</span></td><td>last: 190k / 400k · upstream backoff</td><td>unknown · no probe</td><td>7m ago</td></tr>
+                <tr><td><span class="mono-stack"><strong>umans</strong><span class="muted">umans·pool-e</span></span></td><td>0.10</td><td>auth_broken</td><td>no telemetry yet — unknown, not zero</td><td>unknown · no probe</td><td>2m ago</td></tr>
+              </tbody>
+            </table></div>
+            <div class="alert alert--warning" style="margin-top:var(--space-4)"><div><p class="alert__title">Display identity only</p><p class="alert__body">Contribution IDs and owners are not exposed by the gateway. Composite labels such as <code>zai·pool-c</code> are synthesized for orientation and are not routable upstream identities.</p></div></div>
+          </section>
+
+          <section class="panel" role="tabpanel" id="panel-models" aria-labelledby="tab-models" hidden>
+            <div class="panel-head"><h2>Model availability</h2><span>source /v1/models · boolean availability only · no per-model capacity</span></div>
+            <div class="model-list">
+              <article class="card model-row"><div><h3>claude-sonnet-4</h3><p>anthropic · observed_at 14s ago</p></div><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></article>
+              <article class="card model-row"><div><h3>claude-opus-4</h3><p>anthropic · observed_at 14s ago</p></div><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></article>
+              <article class="card model-row"><div><h3>gpt-5.6</h3><p>openai-codex · observed_at 31s ago</p></div><span class="resource-freshness resource-freshness--stale"><span class="resource-freshness__dot"></span>unavailable</span></article>
+              <article class="card model-row"><div><h3>glm-5.2</h3><p>zai · observed_at 44s ago</p></div><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></article>
+              <article class="card model-row" style="background:var(--color-stale-surface);opacity:var(--opacity-stale)"><div><h3>kimi-k3</h3><p>kimi · last known true · observed_at 7m ago</p></div><span class="resource-freshness resource-freshness--stale"><span class="resource-freshness__dot"></span>stale</span></article>
+            </div>
+          </section>
+
+          <section class="panel" role="tabpanel" id="panel-draw" aria-labelledby="tab-draw" hidden>
+            <div class="panel-head"><h2>Your member draw</h2><span>source /commune/me · self only · observed_at 18s ago</span></div>
+            <div class="draw-layout">
+              <article class="card card--raised"><span class="muted">Nate · display name, not stable identity</span><div class="draw-value" style="margin-top:var(--space-4)">38.6%</div><div class="draw-track" role="img" aria-label="42 percent of limit fraction consumed"><div class="draw-fill"></div></div><span class="muted">calibrated draw against limitFraction 0.42</span></article>
+              <article class="card"><div class="kv"><span>consumedUnits</span><strong>128,430</strong></div><div class="kv"><span>exceeded</span><strong>false</strong></div><div class="kv"><span>enforceable</span><strong>true</strong></div><div class="kv"><span>resetTimestamp</span><strong>in 2h 14m</strong></div></article>
+            </div>
+          </section>
+
+          <section class="panel" role="tabpanel" id="panel-fingerprint" aria-labelledby="tab-fingerprint" hidden>
+            <div class="panel-head"><h2>Fingerprint watchdog</h2><span>Anthropic + OpenAI Codex have probes; other providers are honestly unknown</span></div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>provider</th><th>state</th><th>source</th><th>detail</th><th>holdTime</th><th>diff</th><th>observed_at</th></tr></thead>
+              <tbody>
+                <tr><td>anthropic</td><td>ok</td><td>anthropic-probe</td><td>canonical response stable</td><td>—</td><td>none</td><td>23s ago</td></tr>
+                <tr><td>openai-codex</td><td>held</td><td>openai-codex-probe</td><td>response-shape change</td><td>8m</td><td>headers + model family</td><td>31s ago</td></tr>
+                <tr><td>zai</td><td><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span></td><td>no probe</td><td>not observed</td><td>—</td><td>—</td><td>44s ago</td></tr>
+                <tr class="stale"><td>kimi</td><td><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span></td><td>no probe</td><td>provider reading stale</td><td>—</td><td>—</td><td>7m ago</td></tr>
+                <tr><td>umans</td><td><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span></td><td>no probe</td><td>auth broken</td><td>—</td><td>—</td><td>2m ago</td></tr>
+              </tbody>
+            </table></div>
+          </section>
+
+          <section class="panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" hidden>
+            <div class="panel-head"><h2>Recent events</h2><span>source /commune/events · polled list, not a stream</span></div>
+            <div class="events">
+              <article class="event"><time>14s ago</time><strong>capacity_shift</strong><p>Anthropic remaining rose from 612k to 680k units.</p><span>pool</span></article>
+              <article class="event"><time>31s ago</time><strong>fingerprint</strong><p>OpenAI Codex probe diffed; contribution held for 8 minutes.</p><span>watchdog</span></article>
+              <article class="event"><time>2m ago</time><strong>auth_broken</strong><p>umans authentication failed; telemetry is unknown.</p><span>pool</span></article>
+              <article class="event"><time>6m ago</time><strong>windfall</strong><p>Anthropic reconciliation added 92k usable units.</p><span>pool</span></article>
+              <article class="event"><time>7m ago</time><strong>capacity_shift</strong><p>Kimi provider reading entered upstream backoff and is stale.</p><span>pool</span></article>
+              <article class="event"><time>9m ago</time><strong>capacity_shift</strong><p>OpenAI Codex current window reached zero remaining.</p><span>pool</span></article>
+            </div>
+            <footer class="gap"><strong>Gap boundary:</strong> showing latest 50 events · no cursor · older history is not reconstructable. No live-stream or complete-history claim is made.</footer>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    function activate(tab) {
+      tabs.forEach(item => {
+        const selected = item === tab;
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        item.tabIndex = selected ? 0 : -1;
+        document.getElementById('panel-' + item.dataset.tab).hidden = !selected;
+      });
+      tab.focus();
+    }
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activate(tab));
+      tab.addEventListener('keydown', event => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        event.preventDefault();
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+        activate(tabs[next]);
+      });
+    });
+  </script>
+</body>
+</html>

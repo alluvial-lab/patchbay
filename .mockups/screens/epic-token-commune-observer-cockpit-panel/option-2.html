@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>token-commune Resources — Option 2: Member-draw cockpit</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+    .app-header { justify-content: space-between; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail nav { display: grid; gap: var(--space-1); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    .page { width: min(880px, calc(100% - var(--space-8))); margin: 0 auto; padding: var(--space-6) 0 var(--space-12); display: grid; gap: var(--space-6); }
+    .resource-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+    .resource-head h1 { margin: 0 0 var(--space-1); font-size: var(--font-size-xl); }
+    .quiet-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .draw-hero { padding: var(--space-8); display: grid; gap: var(--space-6); }
+    .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-6); }
+    .hero-top h2 { margin: 0 0 var(--space-1); font-size: var(--font-size-lg); }
+    .identity-note { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+    .hero-value { text-align: right; }
+    .hero-value strong { display: block; font: var(--font-weight-semibold) var(--font-size-3xl)/1 var(--font-mono); }
+    .hero-value span { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .draw-track { height: 24px; display: grid; grid-template-columns: 42fr 58fr; background: var(--color-bg-tertiary); border: 1px solid var(--color-border-strong); }
+    .draw-fill { background: var(--color-accent); border-right: 1px solid var(--color-border-strong); }
+    .draw-scale { position: relative; margin-top: var(--space-2); height: var(--font-size-sm); font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .draw-scale .s-min { position: absolute; left: 0; }
+    .draw-scale .s-max { position: absolute; right: 0; }
+    .draw-scale .s-mid { position: absolute; left: 42%; transform: translateX(-50%); padding: 0 var(--space-1); background: var(--color-bg-primary); color: var(--color-text-secondary); }
+    .hero-stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--color-border); }
+    .stat { padding: var(--space-4) var(--space-3) 0; border-right: 1px solid var(--color-border); }
+    .stat:last-child { border-right: 0; }
+    .stat span { display: block; font: var(--font-size-xs)/1.2 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; }
+    .stat strong { display: block; margin-top: var(--space-2); font: var(--font-weight-semibold) var(--font-size-base)/1.2 var(--font-mono); }
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+    .section-title h2 { margin: 0; font-size: var(--font-size-lg); }
+    .section-title span { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+    .model { display: grid; gap: var(--space-3); min-height: 118px; }
+    .model-head { display: flex; justify-content: space-between; gap: var(--space-2); align-items: flex-start; }
+    .model h3 { margin: 0; font: var(--font-weight-semibold) var(--font-size-sm)/1.3 var(--font-mono); }
+    .model p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+    .model-foot { margin-top: auto; display: flex; justify-content: space-between; gap: var(--space-2); font: var(--font-size-xs)/1.3 var(--font-mono); color: var(--color-text-tertiary); }
+    .secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    details.card { padding: 0; }
+    details summary { padding: var(--space-4); cursor: pointer; font-weight: var(--font-weight-semibold); }
+    .detail-body { padding: 0 var(--space-4) var(--space-4); display: grid; gap: var(--space-2); }
+    .compact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; border-top: 1px solid var(--color-border); font: var(--font-size-xs)/1.4 var(--font-mono); }
+    .compact-row--stale { background: var(--color-stale-surface); opacity: var(--opacity-stale); }
+    .events { display: grid; }
+    .event { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); }
+    .event time, .event-source { font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    .event strong { font: var(--font-weight-semibold) var(--font-size-xs)/1.4 var(--font-mono); }
+    .event p { margin: var(--space-1) 0 0; font-size: var(--font-size-sm); }
+    .gap-line { padding: var(--space-3); border: 1px solid var(--color-border); background: var(--color-bg-secondary); font: var(--font-size-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+    @media (max-width: 760px) { .page { width: calc(100% - var(--space-6)); } .models { grid-template-columns: 1fr; } .secondary { grid-template-columns: 1fr; } .hero-stats { grid-template-columns: repeat(2, 1fr); } .draw-hero { padding: var(--space-4); } }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 2 — Member-draw cockpit</strong><span>A calm single-column view makes personal fuel and model choices primary, with pool mechanics available as quiet supporting evidence.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav aria-label="Cockpit destinations">
+          <button class="btn btn-ghost destination" data-tip="Sessions" aria-label="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span></button>
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Resources" aria-label="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span></button>
+          <button class="btn btn-ghost destination" data-tip="Security" aria-label="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+        </nav>
+      </aside>
+      <section class="workspace" aria-labelledby="resources-title">
+        <div class="page">
+          <header class="resource-head">
+            <div><h1 id="resources-title">Resources</h1><span class="nav-bar__brand">token-commune / your member view</span></div>
+            <div class="quiet-meta">
+              <span title="Gateway state is partially observable; polled, not streamed.">completeness: PARTIAL</span>
+              <span>polled, not streamed</span>
+              <span>observed_at 18s ago</span>
+            </div>
+          </header>
+
+          <article class="card card--raised draw-hero">
+            <div class="hero-top">
+              <div><h2>Your draw</h2><p class="identity-note"><strong>Nate</strong> · display name from <code>/commune/me</code>, not a stable member id</p></div>
+              <div class="hero-value"><strong>38.6%</strong><span>calibrated draw · observed 18s ago</span></div>
+            </div>
+            <div>
+              <div class="draw-track" role="img" aria-label="42 percent of member limit fraction consumed"><div class="draw-fill"></div><div></div></div>
+              <div class="draw-scale"><span class="s-min">0</span><span class="s-mid">0.42</span><span class="s-max">1.00</span></div>
+            </div>
+            <div class="hero-stats">
+              <div class="stat"><span>consumed units</span><strong>128,430</strong></div>
+              <div class="stat"><span>status</span><strong>not exceeded</strong></div>
+              <div class="stat"><span>enforcement</span><strong>enforceable</strong></div>
+              <div class="stat"><span>reset</span><strong>in 2h 14m</strong></div>
+            </div>
+          </article>
+
+          <section aria-labelledby="models-title">
+            <div class="section-title"><h2 id="models-title">Models you can ask for</h2><span>availability boolean only · no per-model capacity is exposed</span></div>
+            <div class="models" style="margin-top:var(--space-3)">
+              <article class="card model"><div class="model-head"><h3>claude-sonnet-4</h3><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></div><p>anthropic</p><div class="model-foot"><span>provider fresh</span><span>observed 14s ago</span></div></article>
+              <article class="card model"><div class="model-head"><h3>claude-opus-4</h3><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></div><p>anthropic</p><div class="model-foot"><span>provider fresh</span><span>observed 14s ago</span></div></article>
+              <article class="card model"><div class="model-head"><h3>gpt-5.6</h3><span class="resource-freshness resource-freshness--stale"><span class="resource-freshness__dot"></span>unavailable</span></div><p>openai-codex · pool exhausted</p><div class="model-foot"><span>capacity 0</span><span>observed 31s ago</span></div></article>
+              <article class="card model"><div class="model-head"><h3>glm-5.2</h3><span class="resource-freshness resource-freshness--current"><span class="resource-freshness__dot"></span>available</span></div><p>zai</p><div class="model-foot"><span>provider fresh</span><span>observed 44s ago</span></div></article>
+              <article class="card model" style="background:var(--color-stale-surface);opacity:var(--opacity-stale)"><div class="model-head"><h3>kimi-k3</h3><span class="resource-freshness resource-freshness--stale"><span class="resource-freshness__dot"></span>stale</span></div><p>kimi · last known available</p><div class="model-foot"><span>upstream backoff</span><span>observed 7m ago</span></div></article>
+            </div>
+          </section>
+
+          <section class="secondary" aria-label="Secondary resource detail">
+            <details class="card" open>
+              <summary>Pools · 1 exhausted, 1 stale</summary>
+              <div class="detail-body">
+                <div class="compact-row"><span>anthropic · anthropic·pool-a</span><strong>0.25 · fresh</strong><time>14s ago</time></div>
+                <div class="compact-row"><span>openai-codex · openai-codex·pool-b</span><strong>0.25 · exhausted</strong><time>31s ago</time></div>
+                <div class="compact-row"><span>zai · zai·pool-c</span><strong>0.20 · fresh</strong><time>44s ago</time></div>
+                <div class="compact-row compact-row--stale"><span>kimi · kimi·pool-d</span><strong>0.20 · stale</strong><time>7m ago</time></div>
+                <div class="compact-row"><span>umans · umans·pool-e</span><strong>0.10 · auth_broken</strong><time>2m ago</time></div>
+                <p class="identity-note">Composite labels are synthesized; contribution IDs and owners are not exposed. umans has no capacity telemetry yet.</p>
+              </div>
+            </details>
+            <details class="card" open>
+              <summary>Fingerprint · 3 unknown</summary>
+              <div class="detail-body">
+                <div class="compact-row"><span>anthropic · anthropic-probe</span><strong>ok</strong><time>23s ago</time></div>
+                <div class="compact-row"><span>openai-codex · openai-codex-probe</span><strong>held · 8m</strong><time>31s ago</time></div>
+                <div class="compact-row"><span>zai · no probe</span><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span><time>44s ago</time></div>
+                <div class="compact-row"><span>kimi · no probe</span><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span><time>7m ago</time></div>
+                <div class="compact-row"><span>umans · no probe</span><span class="resource-freshness resource-freshness--unknown"><span class="resource-freshness__dot"></span>unknown</span><time>2m ago</time></div>
+              </div>
+            </details>
+          </section>
+
+          <section aria-labelledby="events-title">
+            <div class="section-title"><h2 id="events-title">Recent changes</h2><span>compact polled feed · observed_at shown per event</span></div>
+            <div class="events">
+              <article class="event"><time>14s ago</time><div><strong>capacity_shift</strong><p>Anthropic remaining increased from 612k to 680k units.</p></div><span class="event-source">pool</span></article>
+              <article class="event"><time>31s ago</time><div><strong>fingerprint</strong><p>OpenAI Codex probe diffed; contribution held for 8 minutes.</p></div><span class="event-source">watchdog</span></article>
+              <article class="event"><time>2m ago</time><div><strong>auth_broken</strong><p>umans authentication failed; capacity remains unknown, not zero.</p></div><span class="event-source">pool</span></article>
+              <article class="event"><time>6m ago</time><div><strong>windfall</strong><p>Anthropic window reconciliation added 92k usable units.</p></div><span class="event-source">pool</span></article>
+              <article class="event"><time>9m ago</time><div><strong>capacity_shift</strong><p>OpenAI Codex reached zero remaining units for its current window.</p></div><span class="event-source">pool</span></article>
+            </div>
+            <footer class="gap-line"><strong>Event gap:</strong> showing latest 50 events · no cursor · older history is not reconstructable. This list is not a live stream.</footer>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

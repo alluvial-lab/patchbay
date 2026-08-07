@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>token-commune Resources — Option 5: Calm member view</title>
+  <link rel="stylesheet" href="../../design-system/tokens.css">
+  <link rel="stylesheet" href="../../design-system/components.css">
+  <style>
+    .mock-meta { padding: var(--space-2) var(--space-4); background: var(--color-bg-inverse); color: var(--color-text-inverse); display: flex; gap: var(--space-4); align-items: baseline; font: var(--font-size-xs)/var(--line-height-base) var(--font-sans); border-bottom: 1px solid var(--color-border); }
+    .mock-meta strong { font-weight: var(--font-weight-semibold); }
+    .mock-meta span { color: var(--color-text-secondary); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--color-bg-primary); color: var(--color-text-primary); font-family: var(--font-sans); display: flex; flex-direction: column; }
+    .cockpit { flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+    .app-header { justify-content: space-between; }
+    .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; }
+    .rail { width: 56px; padding: var(--space-3) var(--space-2); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail nav { display: grid; gap: var(--space-1); }
+    .destination { justify-content: center; width: 100%; position: relative; border-radius: 0; }
+    .destination[aria-current] { box-shadow: inset 3px 0 0 var(--color-accent); }
+    .destination__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .destination::after { content: attr(data-tip); position: absolute; left: calc(100% + var(--space-2)); top: 50%; transform: translateY(-50%); padding: var(--space-1) var(--space-2); background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: var(--font-size-xs)/1.4 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; opacity: 0; pointer-events: none; z-index: 3; }
+    .destination:hover::after { opacity: 1; }
+    .workspace { min-width: 0; overflow: auto; }
+    /* one narrow column, generous air */
+    .calm { width: min(560px, calc(100% - var(--space-12))); margin: 0 auto; padding: var(--space-16) 0 var(--space-12); display: grid; gap: var(--space-12); }
+    .eyebrow { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: .08em; }
+    /* hero */
+    .hero { display: grid; gap: var(--space-3); }
+    .hero-num { font: var(--font-weight-semibold) var(--font-size-3xl)/1 var(--font-mono); color: var(--color-text-primary); }
+    .hero-sub { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+    .meter { height: 8px; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); overflow: hidden; }
+    .meter-fill { height: 100%; background: var(--color-accent); }
+    .meter-axis { display: flex; justify-content: space-between; font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); }
+    .verdict { font-size: var(--font-size-base); color: var(--color-success); display: flex; align-items: center; gap: var(--space-2); }
+    .verdict::before { content: ""; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-success); display: inline-block; }
+    /* models: quiet one-line list */
+    .models { display: grid; gap: 0; }
+    .model-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); font: var(--font-size-sm)/1.3 var(--font-mono); }
+    .model-line .name { color: var(--color-text-primary); }
+    .model-line .name small { color: var(--color-text-tertiary); }
+    .avail { font: var(--font-size-xs)/1 var(--font-mono); color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: .04em; }
+    .avail--no { color: var(--color-danger); }
+    .avail--stale { color: var(--color-warning); }
+    /* collapsed everything-else */
+    details.more { border-top: 1px solid var(--color-border); }
+    details.more summary { padding: var(--space-4) 0; cursor: pointer; font: var(--font-size-sm)/1.3 var(--font-mono); color: var(--color-text-secondary); list-style: none; display: flex; justify-content: space-between; align-items: center; }
+    details.more summary::-webkit-details-marker { display: none; }
+    details.more summary::after { content: "show"; color: var(--color-text-link); }
+    details.more[open] summary::after { content: "hide"; }
+    .more-body { padding-bottom: var(--space-4); display: grid; gap: var(--space-1); font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); }
+    .more-body .row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-3); padding: var(--space-1) 0; }
+    /* quiet honesty footer */
+    .honesty-foot { font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--color-text-tertiary); }
+    .honesty-foot code { color: var(--color-text-secondary); }
+  </style>
+</head>
+<body>
+  <header class="mock-meta"><strong>Option 5 — Calm member view</strong><span>One thing primary (can my agents keep running?), everything else one click away. Restraint by removal, not styling.</span></header>
+  <main class="cockpit">
+    <header class="nav-bar app-header">
+      <span class="nav-bar__brand">PATCHBAY / default</span>
+      <span class="connectivity-indicator connectivity-indicator--live"><span class="connectivity-indicator__dot"></span>core live</span>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <nav aria-label="Cockpit destinations">
+          <button class="btn btn-ghost destination" data-tip="Sessions" aria-label="Sessions"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 8h10M7 12h6"></path></svg><span class="destination__label">Sessions</span></button>
+          <button class="btn btn-ghost destination" aria-current="page" data-tip="Resources" aria-label="Resources"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5M20 17a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM10 7a3 3 0 1 0-6 0 3 3 0 0 0 6 0Z"></path></svg><span class="destination__label">Resources</span></button>
+          <button class="btn btn-ghost destination" data-tip="Security" aria-label="Security"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8.5 7 10 3.5-1.5 7-5 7-10V6l-7-3Z"></path></svg><span class="destination__label">Security</span></button>
+        </nav>
+      </aside>
+      <section class="workspace" aria-labelledby="resources-title">
+        <div class="calm">
+          <span class="eyebrow" id="resources-title">Resources · token-commune</span>
+
+          <div class="hero">
+            <div class="eyebrow">Your draw</div>
+            <div class="hero-num">38.6%</div>
+            <div class="hero-sub">calibrated · resets in 2h 14m · <span style="color:var(--color-text-tertiary)">Nate</span></div>
+            <div class="meter" role="img" aria-label="42 percent of member limit consumed"><div class="meter-fill" style="width:42%"></div></div>
+            <div class="meter-axis"><span>0</span><span>limitFraction 1.00</span></div>
+            <div class="verdict">Your agents can keep running.</div>
+          </div>
+
+          <section aria-label="Models">
+            <div class="eyebrow" style="margin-bottom:var(--space-3)">Models you can ask for</div>
+            <div class="models">
+              <div class="model-line"><span class="name">claude-sonnet-4 <small>· anthropic</small></span><span class="avail">available</span></div>
+              <div class="model-line"><span class="name">claude-opus-4 <small>· anthropic</small></span><span class="avail">available</span></div>
+              <div class="model-line"><span class="name">glm-5.2 <small>· zai</small></span><span class="avail">available</span></div>
+              <div class="model-line"><span class="name">kimi-k3 <small>· kimi</small></span><span class="avail avail--stale">stale</span></div>
+              <div class="model-line"><span class="name">gpt-5.6 <small>· openai-codex</small></span><span class="avail avail--no">unavailable</span></div>
+            </div>
+          </section>
+
+          <details class="more">
+            <summary>Pool health, fingerprint &amp; recent events</summary>
+            <div class="more-body">
+              <div class="row"><span>anthropic · pool-a</span><span>fresh · 68%</span></div>
+              <div class="row"><span>openai-codex · pool-b</span><span>exhausted · held 8m</span></div>
+              <div class="row"><span>zai · pool-c</span><span>fresh · 61%</span></div>
+              <div class="row" style="opacity:var(--opacity-stale)"><span>kimi · pool-d</span><span>stale · upstream backoff</span></div>
+              <div class="row"><span>umans · pool-e</span><span>auth_broken · no telemetry</span></div>
+              <div class="row" style="margin-top:var(--space-3);color:var(--color-text-tertiary)"><span>latest event · 14s ago</span><span>capacity_shift</span></div>
+              <div style="margin-top:var(--space-2);color:var(--color-text-tertiary)">Composite labels are synthesized — the gateway exposes no contribution IDs or owners.</div>
+            </div>
+          </details>
+
+          <div class="honesty-foot">
+            polled, not streamed · <code>completeness: partial</code> · observed 18s ago · events limited to latest 50
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

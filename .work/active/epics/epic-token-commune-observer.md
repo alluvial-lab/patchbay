@@ -118,7 +118,7 @@ Reuse Patchbay's adapter lifecycle, query lifecycle, Observation ingestion, reso
 
 ## Mockups
 
-The token-commune pool/resource panel is the epic's one net-new screen surface, owned by the `cockpit-panel` feature. Responsive mockups are **pending** the epic-level UI alignment pass (`/ux-ui-design:screens epic-token-commune-observer-cockpit-panel`, plus a flow only if the panel spans a multi-step journey). They inherit design-system tokens from `.mockups/design-system/tokens.css` and the cockpit-composition primitives from the resource-plane epic; domain-specific capacity / contribution-health / fingerprint components may extend the showcase (`/ux-ui-design:components`) before screen work. If the epic-level pass has not run, `cockpit-panel` feature-design produces them as the fallback.
+The token-commune pool/resource panel is the epic's one net-new screen surface, owned by the `cockpit-panel` feature. The epic-level UI alignment pass ran (2026-08-05); `.mockups/screens/epic-token-commune-observer-cockpit-panel/option-7.html` is the **selected MVP direction** (calm per-pool list; see the feature's `## Mockups` for the locked honesty model and parked drill-down). Mockups inherit design-system tokens from `.mockups/design-system/tokens.css` and the cockpit-composition primitives from the resource-plane epic. `option-1`..`option-6` remain as exploratory iteration history.
 
 ## Extension pressure classification
 
