@@ -4,6 +4,8 @@ import { loadTokenCommuneAdapterConfig, type TokenCommuneAdapterConfig } from ".
 import { loadGatewayCredential } from "./credential.js";
 import { createHttpTokenCommuneGatewayClient, type TokenCommuneGatewayClient } from "./gateway_client.js";
 import { PatchbayCoreClient } from "./core_client.js";
+import { createCompositeLocalIdentitySynthesizer } from "./identity.js";
+import { TokenCommunePoller } from "./poller.js";
 import {
   diagnosticError, NOOP_ADAPTER_DIAGNOSTICS, openAdapterDiagnostics,
   type AdapterDiagnostics,
@@ -15,12 +17,13 @@ export interface AdapterProcessOptions extends TokenCommuneAdapterConfig {
   diagnostics?: AdapterDiagnostics;
   forwardDiagnostics?: boolean;
   coreClient?: PatchbayCoreClient;
+  poller?: TokenCommunePoller;
   retryDelayMs?: number;
 }
 
 export class AdapterProcess {
   readonly #core: PatchbayCoreClient;
-  readonly #gateway: TokenCommuneGatewayClient;
+  readonly #poller: TokenCommunePoller;
   readonly #retryDelayMs: number;
   #diagnostics: AdapterDiagnostics;
   #cursor = 0n;
@@ -30,8 +33,6 @@ export class AdapterProcess {
   #runController: AbortController | undefined;
 
   constructor(readonly options: AdapterProcessOptions) {
-    this.#gateway = options.gateway;
-    void this.#gateway; // Composed now; polling is intentionally a later feature.
     this.#retryDelayMs = options.retryDelayMs ?? 100;
     const local = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
     this.#diagnostics = local;
@@ -44,6 +45,19 @@ export class AdapterProcess {
       this.#diagnostics = composeAdapterDiagnostics([local, forwarder]);
       this.#core.setDiagnostics(this.#diagnostics);
     }
+    this.#poller = options.poller ?? new TokenCommunePoller({
+      adapterId: options.adapterId,
+      adapterGeneration: options.adapterGeneration,
+      authorityDomainId: options.authorityDomainId,
+      pollIntervalMs: options.pollIntervalMs,
+      gateway: options.gateway,
+      core: this.#core,
+      identities: createCompositeLocalIdentitySynthesizer({
+        adapterId: options.adapterId,
+        gatewayBaseUrl: options.gatewayBaseUrl,
+      }),
+      diagnostics: this.#diagnostics,
+    });
   }
 
   async start(): Promise<void> {
@@ -57,29 +71,23 @@ export class AdapterProcess {
 
   async run(signal?: AbortSignal): Promise<void> {
     await this.start();
-    if (this.#runController) throw new Error("adapter delivery loop is already running");
+    if (this.#runController) throw new Error("adapter process is already running");
     const controller = new AbortController();
     this.#runController = controller;
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+    const supervise = async (name: string, child: Promise<void>): Promise<void> => {
+      await child;
+      if (!controller.signal.aborted) throw new Error(`${name} exited without shutdown`);
+    };
+    const deliveries = supervise("delivery loop", this.#runDeliveries(controller.signal));
+    const polling = supervise("poller", this.#poller.run(controller.signal));
     try {
-      while (!controller.signal.aborted) {
-        try {
-          await this.#consume(controller.signal);
-          if (!controller.signal.aborted) throw new ConnectError("delivery subscription ended without shutdown", Code.Unavailable);
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          const retryable = isRetryableTransportFailure(error);
-          this.#record({
-            event: retryable ? "delivery.subscription.retrying" : "delivery.subscription.failed",
-            level: retryable ? "warn" : "error",
-            error: diagnosticError(error),
-            failureCode: retryable ? FailureCode.TRANSPORT_TIMEOUT : FailureCode.ADAPTER_UNAVAILABLE,
-          });
-          if (!retryable) throw error;
-          await delay(this.#retryDelayMs, controller.signal);
-        }
-      }
+      await Promise.all([deliveries, polling]);
+    } catch (error) {
+      controller.abort(error);
+      await Promise.allSettled([deliveries, polling]);
+      throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
       controller.abort();
@@ -96,6 +104,26 @@ export class AdapterProcess {
     this.#record({ event: "adapter.stopped", level: "info" });
     try { await this.#diagnostics.flush(); } catch { /* diagnostics are non-interfering */ }
     try { await this.#diagnostics.close(); } catch { /* diagnostics are non-interfering */ }
+  }
+
+  async #runDeliveries(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await this.#consume(signal);
+        if (!signal.aborted) throw new ConnectError("delivery subscription ended without shutdown", Code.Unavailable);
+      } catch (error) {
+        if (signal.aborted) return;
+        const retryable = isRetryableTransportFailure(error);
+        this.#record({
+          event: retryable ? "delivery.subscription.retrying" : "delivery.subscription.failed",
+          level: retryable ? "warn" : "error",
+          error: diagnosticError(error),
+          failureCode: retryable ? FailureCode.TRANSPORT_TIMEOUT : FailureCode.ADAPTER_UNAVAILABLE,
+        });
+        if (!retryable) throw error;
+        await delay(this.#retryDelayMs, signal);
+      }
+    }
   }
 
   async #consume(signal: AbortSignal): Promise<void> {

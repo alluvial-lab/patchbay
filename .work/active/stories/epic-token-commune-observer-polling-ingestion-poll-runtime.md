@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-poll-runtime
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: []
@@ -47,3 +47,17 @@ source cache belongs in this checkpoint.
 This establishes the time/network boundary consumed by every later checkpoint.
 Report ingress, event mapping, and tracker state must not be folded into this
 scheduler before their dependent checkpoints land.
+
+## Implementation notes
+
+Implemented the injected `PollClock`/`PollWaiter`/core/gateway boundary in
+`src/poller.ts`. `run` executes immediately, awaits each whole cycle before its
+completion-to-start wait, and shares one abort signal across all six concurrent
+reads. Gateway failures settle independently into unavailable source evidence;
+valid normalized backoff can only extend the configured minimum.
+
+This feature was delivered by one cohesive owner, so the final poller contains
+the dependent report/event/tracker integration while preserving the scheduler
+boundary as an injected port. Fake-time tests prove immediate execution,
+concurrency without cycle overlap, minimum cadence, backoff extension, abort,
+and no source-value reuse.

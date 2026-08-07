@@ -8,7 +8,7 @@
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, EventId, FailureCode,
     Observation, ObservationKind, OperationState, StoredEventKind, StoredEventPayload, TargetScope,
-    TypedCorrelation,
+    TargetScopeKind, TypedCorrelation,
 };
 use prost::Message;
 
@@ -93,10 +93,10 @@ where
     let authority_domain_id = validate_authority_domain(&observation)?;
     let observation_kind = ObservationKind::try_from(observation.kind).ok();
     let Some(candidate) = derive_transition(&observation) else {
-        if matches!(
-            observation_kind,
-            Some(ObservationKind::Status | ObservationKind::Result)
-        ) {
+        if matches!(observation_kind, Some(ObservationKind::Result))
+            || (matches!(observation_kind, Some(ObservationKind::Status))
+                && !is_resource_status_fact(&observation))
+        {
             return Err(AcceptanceError::CorruptRecord(
                 "status/result observation is missing one unambiguous, non-empty command correlation or carries an unknown failure code"
                     .to_owned(),
@@ -227,6 +227,20 @@ where
         transition_event_id,
         to_state: candidate.to_state,
     })
+}
+
+fn is_resource_status_fact(observation: &Observation) -> bool {
+    if !observation.correlations.is_empty()
+        || FailureCode::try_from(observation.failure_code).ok() != Some(FailureCode::Unspecified)
+    {
+        return false;
+    }
+    let Some(target) = observation.target_scope.as_ref() else { return false; };
+    let Some(resource) = target.resource.as_ref() else { return false; };
+    TargetScopeKind::try_from(target.kind).ok() == Some(TargetScopeKind::Resource)
+        && resource.adapter_id.as_ref().is_some_and(|value| !value.value.trim().is_empty())
+        && resource.resource_kind.as_ref().is_some_and(|value| !value.value.trim().is_empty())
+        && resource.resource_id.as_ref().is_some_and(|value| !value.value.trim().is_empty())
 }
 
 /// Map an observation to the command transition it implies.

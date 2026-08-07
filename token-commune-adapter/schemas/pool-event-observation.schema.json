@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "patchbay.token_commune.pool_event.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sourceEventId", "kind", "provider", "contributionId", "message", "occurredAt", "deliveryModel", "historyMode"],
+  "properties": {
+    "sourceEventId": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "kind": { "enum": ["capacity_shift", "auth_broken", "windfall", "fingerprint", "member"] },
+    "provider": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "contributionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+    "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "deliveryModel": { "const": "polling" },
+    "historyMode": { "const": "latest-50-no-cursor" }
+  }
+}

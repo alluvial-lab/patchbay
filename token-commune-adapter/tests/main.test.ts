@@ -7,12 +7,19 @@ import { AdapterProcess } from "../src/main.js";
 import type { PatchbayCoreClient } from "../src/core_client.js";
 import type { AdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import type { TokenCommuneGatewayClient } from "../src/gateway_client.js";
+import type { TokenCommunePoller } from "../src/poller.js";
 
 const gateway = {} as TokenCommuneGatewayClient;
+const quietPoller = {
+  async run(signal: AbortSignal) {
+    if (signal.aborted) return;
+    await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+  },
+} as TokenCommunePoller;
 const baseOptions = {
   coreAddress: "http://core", adapterId: "token-commune", adapterGeneration: 1,
   authorityDomainId: "default", attachmentEvidence: "secret", gatewayBaseUrl: new URL("https://gateway.example/"),
-  gatewayCredentialFile: "/unused", pollIntervalMs: 30_000, diagnosticPath: "/unused", gateway,
+  gatewayCredentialFile: "/unused", pollIntervalMs: 30_000, diagnosticPath: "/unused", gateway, poller: quietPoller,
 };
 
 function delivery(lsn: bigint) {
@@ -87,6 +94,54 @@ test("unsupported terminalization retries after acknowledgement without acknowle
     { state: OperationState.DELIVERED, failureCode: FailureCode.UNSPECIFIED },
     { state: OperationState.FAILED, failureCode: FailureCode.UNSUPPORTED_COMMAND },
   ]);
+  await host.dispose();
+});
+
+test("process starts exactly one delivery loop and one poller under the same abort scope", async () => {
+  let subscriptions = 0;
+  let polls = 0;
+  let pollAborted = false;
+  const core = {
+    setDiagnostics() {}, async attach() { return create(EventIdSchema); },
+    async acknowledgeDelivery() { return undefined; }, async failUnsupported() { return undefined; },
+    async *receiveDeliveries(_cursor: bigint, signal: AbortSignal) {
+      subscriptions += 1;
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+    },
+    async reportDiagnostic() { throw new Error("unused"); },
+  } as unknown as PatchbayCoreClient;
+  const composedPoller = {
+    async run(signal: AbortSignal) {
+      polls += 1;
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => { pollAborted = true; resolve(); }, { once: true }));
+    },
+  } as unknown as TokenCommunePoller;
+  const controller = new AbortController();
+  const host = new AdapterProcess({ ...baseOptions, coreClient: core, poller: composedPoller });
+  const running = host.run(controller.signal);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(subscriptions, 1);
+  assert.equal(polls, 1);
+  controller.abort();
+  await running;
+  assert.equal(pollAborted, true);
+  await host.dispose();
+});
+
+test("a fatal poller exit aborts the held-open delivery sibling and rejects supervision", async () => {
+  let deliveryAborted = false;
+  const core = {
+    setDiagnostics() {}, async attach() { return create(EventIdSchema); },
+    async acknowledgeDelivery() { return undefined; }, async failUnsupported() { return undefined; },
+    async *receiveDeliveries(_cursor: bigint, signal: AbortSignal) {
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => { deliveryAborted = true; resolve(); }, { once: true }));
+    },
+    async reportDiagnostic() { throw new Error("unused"); },
+  } as unknown as PatchbayCoreClient;
+  const fatalPoller = { async run() { throw new Error("projection invariant failed"); } } as unknown as TokenCommunePoller;
+  const host = new AdapterProcess({ ...baseOptions, coreClient: core, poller: fatalPoller });
+  await assert.rejects(host.run(), /projection invariant failed/);
+  assert.equal(deliveryAborted, true);
   await host.dispose();
 });
 

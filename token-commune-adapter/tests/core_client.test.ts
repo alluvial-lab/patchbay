@@ -3,9 +3,11 @@ import test from "node:test";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
-  AttachResultSchema, CommandIdSchema, EventIdSchema, FailureCode, LsnSchema,
-  ObservationResultSchema, OperationKind, OperationSchema, TargetScopeKind,
-  TargetScopeSchema, type AttachRequest, type ObservationRequest,
+  ActorEndpointRefSchema, ActorIdSchema, AdapterIdSchema, AttachResultSchema,
+  AuthorityDomainIdSchema, CommandIdSchema, EventIdSchema, FailureCode, GenerationSchema,
+  LsnSchema, ObservationKind, ObservationResultSchema, ObservationSchema, OperationKind,
+  OperationSchema, ResourceReportSchema, TargetScopeKind, TargetScopeSchema,
+  type AttachRequest, type ObservationRequest,
 } from "@patchbay/contracts";
 import { PatchbayCoreClient } from "../src/core_client.js";
 
@@ -44,6 +46,43 @@ test("attach sends exact identity, evidence, generation, and honest manifest and
     coreAddress: "http://core", adapterId: "token-commune", authorityDomainId: "default", attachmentEvidence: "attach-secret", testClient: fake,
   });
   await assert.rejects(missingToken.attach(1), /missing the adapter attachment token/);
+});
+
+test("poller ingress uses resource_report/event arms on the authenticated current attachment", async () => {
+  let token: string | undefined;
+  const requests: ObservationRequest[] = [];
+  const fake = {
+    attach: async () => { token = "token"; return create(AttachResultSchema, { accepted: true, attachEventId: event(1n) }); },
+    ingestObservation: async (request: ObservationRequest) => { requests.push(request); return create(ObservationResultSchema, { eventId: event(BigInt(requests.length + 1)) }); },
+    reportDiagnostics: async () => { throw new Error("unused"); },
+    receiveDeliveries: async function* () {},
+  } as any;
+  const client = new PatchbayCoreClient({
+    coreAddress: "http://core", adapterId: "token-commune", authorityDomainId: "default", attachmentEvidence: "attach-secret",
+    testClient: fake, testAttachmentToken: () => token,
+  });
+  await client.attach(3);
+  const report = create(ResourceReportSchema, {
+    adapterId: create(AdapterIdSchema, { value: "token-commune" }),
+    adapterGeneration: create(GenerationSchema, { value: 3n }),
+  });
+  const observation = create(ObservationSchema, {
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: "default" }),
+    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "token-commune" }) }),
+    kind: ObservationKind.STATUS,
+  });
+  assert.equal((await client.ingestResourceReport(report))?.lsn?.value, 2n);
+  assert.equal((await client.ingestEvent(observation))?.lsn?.value, 3n);
+  assert.deepEqual(requests.map((request) => [request.authorityDomainId?.value, request.observation.case]), [
+    ["default", "resourceReport"], ["default", "event"],
+  ]);
+  await assert.rejects(client.ingestResourceReport(create(ResourceReportSchema, {
+    adapterId: create(AdapterIdSchema, { value: "other" }), adapterGeneration: create(GenerationSchema, { value: 3n }),
+  })), /identity/);
+  await assert.rejects(client.ingestEvent(create(ObservationSchema, {
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: "other" }),
+    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "token-commune" }) }),
+  })), /identity/);
 });
 
 test("concurrent unauthenticated calls single-flight same-generation reattach and retry", async () => {

@@ -161,6 +161,42 @@ async fn every_observation_kind_is_recorded_as_observation() {
 }
 
 #[tokio::test]
+async fn uncorrelated_resource_status_is_recorded_as_a_domain_fact() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let states = TestCommandStates::default();
+    let mut submitted = observation(ObservationKind::Status, FailureCode::Unspecified);
+    submitted.correlations.clear();
+    submitted.target_scope = Some(resource_scope("token-commune.provider-pool", "pool-zai"));
+
+    let result = ingest_observation(&storage, &states, submitted.clone())
+        .await
+        .unwrap();
+
+    assert!(matches!(result, IngestResult::Recorded { .. }));
+    let recorded = events(&storage).await;
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        Observation::decode(recorded[0].payload.payload.as_slice()).unwrap(),
+        submitted
+    );
+}
+
+#[tokio::test]
+async fn malformed_uncorrelated_status_still_fails_closed() {
+    for target_scope in [None, Some(resource_scope("", "pool-zai"))] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut submitted = observation(ObservationKind::Status, FailureCode::Unspecified);
+        submitted.correlations.clear();
+        submitted.target_scope = target_scope;
+        let error = ingest_observation(&storage, &TestCommandStates::default(), submitted)
+            .await
+            .expect_err("non-resource or malformed status must not bypass lifecycle validation");
+        assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
+        assert!(events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn result_without_failure_emits_completed_transition() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let states = TestCommandStates::with(command_id(), OperationState::Delivered);

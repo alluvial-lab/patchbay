@@ -1,4 +1,5 @@
 import type { GatewayCredential } from "./credential.js";
+import { parseGatewayEventKind, type GatewayEventKind } from "./event_observation.js";
 
 export const GATEWAY_ENDPOINTS = {
   status: "/commune/status", pool: "/commune/pool", me: "/commune/me",
@@ -7,15 +8,30 @@ export const GATEWAY_ENDPOINTS = {
 export type GatewayEndpoint = (typeof GATEWAY_ENDPOINTS)[keyof typeof GATEWAY_ENDPOINTS];
 export type GatewayErrorKind = "unauthorized" | "forbidden" | "transport" | "timeout" | "http" | "invalid-response";
 
+export interface GatewayBackoffSignal {
+  readonly retryAfterMs?: number;
+  readonly retryAt?: string;
+  readonly invalid?: true;
+}
+
 export class GatewayClientError extends Error {
   readonly name = "GatewayClientError";
-  constructor(readonly kind: GatewayErrorKind, readonly endpoint: GatewayEndpoint, readonly status?: number) {
+  constructor(
+    readonly kind: GatewayErrorKind,
+    readonly endpoint: GatewayEndpoint,
+    readonly status?: number,
+    readonly backoff?: GatewayBackoffSignal,
+  ) {
     super(status === undefined ? `token-commune gateway ${endpoint} ${kind}` : `token-commune gateway ${endpoint} ${kind} (${status})`);
   }
-  toJSON(): { name: string; kind: GatewayErrorKind; endpoint: GatewayEndpoint; status?: number } {
-    return this.status === undefined
-      ? { name: this.name, kind: this.kind, endpoint: this.endpoint }
-      : { name: this.name, kind: this.kind, endpoint: this.endpoint, status: this.status };
+  toJSON(): { name: string; kind: GatewayErrorKind; endpoint: GatewayEndpoint; status?: number; backoff?: GatewayBackoffSignal } {
+    return {
+      name: this.name,
+      kind: this.kind,
+      endpoint: this.endpoint,
+      ...(this.status === undefined ? {} : { status: this.status }),
+      ...(this.backoff === undefined ? {} : { backoff: this.backoff }),
+    };
   }
 }
 
@@ -69,7 +85,7 @@ export interface GatewayDrawReport {
 }
 export interface GatewayMe { displayName: string; reports: readonly GatewayDrawReport[] }
 export interface GatewayEvent {
-  id: string; occurredAt: string; kind: string; provider: string;
+  id: string; occurredAt: string; kind: GatewayEventKind; provider: string;
   contributionId: string | null; message: string;
 }
 export interface GatewayEventsPage { events: readonly GatewayEvent[]; historyMode: "latest-50-no-cursor" }
@@ -125,7 +141,12 @@ export function createHttpTokenCommuneGatewayClient(options: {
     if (response.status === 401) throw new GatewayClientError("unauthorized", endpoint, 401);
     if (response.status === 403) throw new GatewayClientError("forbidden", endpoint, 403);
     if (response.status >= 300 && response.status < 400) throw new GatewayClientError("http", endpoint, response.status);
-    if (!response.ok) throw new GatewayClientError("http", endpoint, response.status);
+    if (!response.ok) {
+      const backoff = response.status === 429 || response.status >= 500
+        ? parseRetryAfter(response.headers.get("retry-after"))
+        : undefined;
+      throw new GatewayClientError("http", endpoint, response.status, backoff);
+    }
     try {
       const text = await boundedText(response, maximum);
       return deepFreeze(decode(JSON.parse(text) as unknown));
@@ -214,7 +235,7 @@ function decodeEvents(value: unknown): GatewayEventsPage {
   if (events.length > 50) throw new Error("too many events");
   return { historyMode: "latest-50-no-cursor", events: events.map((item) => {
     const row = object(item);
-    return { id: string(row, "id"), occurredAt: epochTimestamp(row, "at"), kind: eventKind(row, "kind"), provider: canonicalProvider(row, "provider"), contributionId: nullableString(row, "contributionId"), message: boundedString(row, "message", 1024) };
+    return { id: string(row, "id"), occurredAt: epochTimestamp(row, "at"), kind: parseGatewayEventKind(row["kind"]), provider: canonicalProvider(row, "provider"), contributionId: nullableString(row, "contributionId"), message: boundedString(row, "message", 1024) };
   }) };
 }
 function decodeFingerprints(value: unknown): GatewayFingerprints {
@@ -312,8 +333,20 @@ function health(row: Record<string, unknown>, key: string): GatewayContributionH
 function capacitySource(row: Record<string, unknown>, key: string): GatewayCapacityReading["source"] {
   return enumString(row, key, ["headers", "usage_endpoint", "observed_429", "declared"] as const);
 }
-function eventKind(row: Record<string, unknown>, key: string): string {
-  return enumString(row, key, ["capacity_shift", "auth_broken", "window_exhausted", "calibration", "member", "windfall", "fingerprint"] as const);
+function parseRetryAfter(value: string | null): GatewayBackoffSignal | undefined {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (/^[0-9]+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (Number.isSafeInteger(seconds) && seconds <= Math.floor(Number.MAX_SAFE_INTEGER / 1000)) {
+      return { retryAfterMs: seconds * 1000 };
+    }
+    return { invalid: true };
+  }
+  const milliseconds = Date.parse(trimmed);
+  return Number.isFinite(milliseconds)
+    ? { retryAt: new Date(milliseconds).toISOString() }
+    : { invalid: true };
 }
 function enumString<const T extends readonly string[]>(row: Record<string, unknown>, key: string, allowed: T): T[number] {
   const value = row[key];

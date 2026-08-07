@@ -59,7 +59,7 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
       coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 1,
       authorityDomainId: domainId, attachmentEvidence: adapterEvidence,
       gatewayBaseUrl: new URL("https://gateway.invalid/"), gatewayCredentialFile: "/not-read",
-      pollIntervalMs: 30_000, diagnosticPath, gateway: {} as TokenCommuneGatewayClient,
+      pollIntervalMs: 30_000, diagnosticPath, gateway: emptyGateway(),
       diagnostics, forwardDiagnostics: true,
     });
     await host.start();
@@ -75,8 +75,8 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
 
     // The current core does not admit ordinary adapter-scope Submit targets;
     // seed one already-accepted adapter delivery, matching the core's own durable
-    // inbox shape, so this adapter-only feature can exercise its delivery seam
-    // without fabricating a resource report before snapshot mapping exists.
+    // inbox shape, so this adapter-only feature can exercise its delivery seam.
+    // The polling runtime independently emits its honest empty PARTIAL report.
     appendAcceptedOperation(databasePath, operation("unsupported-query"), auth.grantId);
     let terminal = commandTransitions(await readAfter(control, 0n), "unsupported-query").at(-1);
     await waitFor(async () => {
@@ -115,6 +115,21 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function emptyGateway(): TokenCommuneGatewayClient {
+  const fingerprints = {
+    anthropic: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
+    codex: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
+  };
+  return {
+    getStatus: async () => ({ ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
+    getPool: async () => ({ contributions: [] }),
+    getMe: async () => ({ displayName: "Ada", reports: [] }),
+    getEvents: async () => ({ historyMode: "latest-50-no-cursor", events: [] }),
+    getFingerprints: async () => fingerprints,
+    getModels: async () => ({ models: [] }),
+  };
+}
 
 function operation(commandId: string) {
   return create(OperationSchema, {

@@ -87,6 +87,32 @@ test("client rejects redirects, oversized/malformed bodies, invalid values, and 
   });
 });
 
+test("retryable HTTP failures expose only normalized Retry-After advice", async () => {
+  const cases = [
+    ["120", { retryAfterMs: 120_000 }],
+    ["Fri, 07 Aug 2026 12:02:00 GMT", { retryAt: "2026-08-07T12:02:00.000Z" }],
+    ["member-key secret response-body", { invalid: true }],
+    ["999999999999999999999999", { invalid: true }],
+  ] as const;
+  for (const [header, expected] of cases) {
+    const client = createHttpTokenCommuneGatewayClient({
+      baseUrl: new URL("https://gateway.example/"), credential,
+      fetch: async () => new Response("response-body-secret", { status: 429, headers: { "Retry-After": header } }),
+    });
+    await assert.rejects(client.getStatus(), (error: unknown) => {
+      assert.ok(error instanceof GatewayClientError);
+      assert.deepEqual(error.backoff, expected);
+      const serialized = JSON.stringify(error);
+      return !serialized.includes("response-body-secret") && !serialized.includes("member-key secret");
+    });
+  }
+  const notRetryable = createHttpTokenCommuneGatewayClient({
+    baseUrl: new URL("https://gateway.example/"), credential,
+    fetch: async () => new Response(null, { status: 400, headers: { "Retry-After": "120" } }),
+  });
+  await assert.rejects(notRetryable.getStatus(), (error: unknown) => error instanceof GatewayClientError && error.backoff === undefined);
+});
+
 test("transport errors cannot retain bearer credentials or thrown response-body details", async () => {
   const sentinel = "response-body-transport-sentinel";
   const client = createHttpTokenCommuneGatewayClient({

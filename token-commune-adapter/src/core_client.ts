@@ -8,7 +8,8 @@ import {
   ObservationKind, ObservationRequestSchema, ObservationSchema, PayloadContentType,
   PayloadEnvelopeSchema, ReceiveRequestSchema, TypedCorrelationSchema,
   type AdapterDiagnosticReport, type AdapterDiagnosticReportResult, type Delivery,
-  type EventId, type ObservationRequest, type ObservationResult, type Operation,
+  type EventId, type Observation, type ObservationRequest, type ObservationResult, type Operation,
+  type ResourceReport,
 } from "@patchbay/contracts";
 import { diagnosticError, NOOP_ADAPTER_DIAGNOSTICS, type AdapterDiagnostics } from "./adapter_diagnostics.js";
 import { tokenCommuneCapabilityManifest } from "./manifest.js";
@@ -96,6 +97,30 @@ export class PatchbayCoreClient {
 
   async ingestObservation(request: ObservationRequest): Promise<ObservationResult> {
     return this.#postAttach(() => this.#client.ingestObservation(request));
+  }
+
+  async ingestResourceReport(report: ResourceReport): Promise<EventId | undefined> {
+    if (
+      report.adapterId?.value !== this.#options.adapterId
+      || report.adapterGeneration?.value !== BigInt(this.#adapterGeneration ?? 0)
+    ) throw new Error("resource report identity does not match the current adapter attachment");
+    const result = await this.ingestObservation(create(ObservationRequestSchema, {
+      authorityDomainId: this.#authorityDomainId(),
+      observation: { case: "resourceReport", value: report },
+    }));
+    return result.eventId;
+  }
+
+  async ingestEvent(observation: Observation): Promise<EventId | undefined> {
+    if (
+      observation.authorityDomainId?.value !== this.#options.authorityDomainId
+      || observation.sender?.actorId?.value !== this.#options.adapterId
+    ) throw new Error("event identity does not match the current adapter attachment");
+    const result = await this.ingestObservation(create(ObservationRequestSchema, {
+      authorityDomainId: this.#authorityDomainId(),
+      observation: { case: "event", value: observation },
+    }));
+    return result.eventId;
   }
 
   async acknowledgeDelivery(operation: Operation, deliveryEventId?: EventId): Promise<EventId | undefined> {

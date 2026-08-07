@@ -127,7 +127,7 @@ pub fn audit_draft_for_source(
                 AuditEventKind::CommandDelivered
             } else {
                 match ObservationKind::try_from(observation.kind).ok() {
-                    Some(ObservationKind::Status) => AuditEventKind::CommandRunning,
+                    Some(ObservationKind::Status) if draft.command_id.is_some() => AuditEventKind::CommandRunning,
                     Some(ObservationKind::Result) if observation.failure_code == FailureCode::Unspecified as i32 => {
                         AuditEventKind::CommandCompleted
                     }

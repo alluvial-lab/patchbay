@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "patchbay.token_commune.event_gap.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason", "previousWindowSize", "visibleWindowSize", "overlapCount", "detectedAt", "deliveryModel", "historyMode", "reconstruction", "continuity"],
+  "properties": {
+    "reason": { "enum": ["initial-baseline", "window-discontinuity", "window-saturated-without-anchor", "history-became-empty"] },
+    "previousWindowSize": { "type": "integer", "minimum": 0, "maximum": 50 },
+    "visibleWindowSize": { "type": "integer", "minimum": 0, "maximum": 50 },
+    "overlapCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+    "detectedAt": { "type": "string", "format": "date-time" },
+    "deliveryModel": { "const": "polling" },
+    "historyMode": { "const": "latest-50-no-cursor" },
+    "reconstruction": { "const": "visible-window-only" },
+    "continuity": { "const": "unknown-before-visible-window" }
+  }
+}

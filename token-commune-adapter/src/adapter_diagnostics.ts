@@ -9,7 +9,8 @@ export const ADAPTER_DIAGNOSTIC_EVENTS = [
   "credential.load.failed", "gateway.auth.failed", "gateway.request.failed",
   "gateway.response.invalid", "delivery.subscription.failed",
   "delivery.subscription.retrying", "delivery.received", "delivery.acknowledged",
-  "delivery.unsupported", "log.records_dropped",
+  "delivery.unsupported", "poll.retry_after.invalid", "event.declared_only",
+  "event.gap.detected", "log.records_dropped",
 ] as const;
 
 export type AdapterDiagnosticEvent = (typeof ADAPTER_DIAGNOSTIC_EVENTS)[number];
