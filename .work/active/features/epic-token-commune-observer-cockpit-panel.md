@@ -20,14 +20,24 @@ conformance floor using Patchbay's shared presentation primitives, plus CLI
 text-table projections over the same metadata. This is the UI-bearing feature of
 the epic and the one net-new screen surface.
 
-It delivers: adapter-shaped domain projection (capacity gauges / pool cards /
-member-draw meter / fingerprint-watchdog views) nested beneath the canonical
-Patchbay wrapper — using a local known decoder/compositor for the manifest-bound
-projection schema, never loading adapter-supplied renderer code; grant-gated
-member/admin view affordances as local defense-in-depth (upstream has no
-read-scope distinction today — any member key reads all metadata); honest
-stale/unknown/partial presentation that never styles stale data as live; and CLI
-query/inspect projections as text tables over the same metadata.
+It delivers: a calm **per-provider** panel — one row per provider, each
+showing commune health (pool capacity remaining + fresh/exhausted/auth_broken
+state + reset), the operator's **per-provider draw** (`limitFraction` +
+`consumedUnits`), model availability, and fingerprint state — nested beneath
+the canonical Patchbay wrapper via a local known decoder/compositor for the
+manifest-bound projection schema (never loading adapter-supplied renderer code).
+There is deliberately **no aggregate-draw hero**: draw is meaningfully
+per-provider (an operator can be flush on anthropic and dry on openai-codex),
+and `/commune/me` already returns draw as a per-provider array. Per-pool
+**contributions are shown as unattributed aggregates** (count + total declared
+share) with an honest "contributors not exposed" note until token-commune adds
+attribution (the lead external prerequisite); the contributor roster is an
+additive future promotion, not blocked on this feature. Grant-gated member/admin
+view affordances apply as local defense-in-depth (upstream has no read-scope
+distinction today). Honest stale/unknown/partial presentation never styles stale
+data as live. CLI query/inspect projections are text tables over the same
+metadata. (Draw-enforcement/calibration status is reported honestly when present
+but is **not** a required UI element.)
 
 It does NOT cover mutations, approval cards, re-onboarding elicitations, or
 admin command affordances — those belong to the `control-attention` epic and are

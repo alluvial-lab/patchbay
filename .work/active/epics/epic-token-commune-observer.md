@@ -84,6 +84,8 @@ Patchbay work items cannot own token-commune's repository state. Any gateway API
 
 ### Confirmed external prerequisites
 
+**Lead prerequisite (operator-confirmed 2026-08-05): per-pool contributor attribution.** The operator's primary unmet need is to see *who* is contributing and *how much* (`declaredShare`) to each pool, and to identify their own contributions. `/commune/pool` lists every contribution but omits owners entirely, and no admin read endpoint adds attribution (all read endpoints require only "any member"). The observer therefore ships **honest-limited** — unattributed contribution counts/aggregates per pool — and gains a contributor view as an additive promotion once token-commune exposes, per pool, contributors with member identity + `declaredShare` + health. This subsumes the inventory-endpoint and stable-member-identity items below.
+
 For reliable resource snapshots:
 - A source-issued gateway/pool identifier stable across hostname/tailnet changes (none exists today).
 - A complete contribution/provider inventory endpoint exposing stable `contribution_id`, owner reference, provider, health, declared share, contribute-only status, and latest capacity — distinguishing zero telemetry from omitted.
