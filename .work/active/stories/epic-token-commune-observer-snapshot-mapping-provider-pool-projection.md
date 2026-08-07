@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping-provider-pool-projection
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: [epic-token-commune-observer-snapshot-mapping-envelope-construction]
@@ -38,3 +38,11 @@ Generate snapshot-local anonymous contribution sub-keys from canonical gateway d
 ## Ordering
 
 Depends on manifest-bound envelope construction. The member-draw checkpoint follows after the common report assembly and deterministic mapping conventions are established.
+
+## Implementation notes
+
+- Built the provider union from pool, status (including Anthropic's status axis), and model-catalog evidence; fingerprints remain non-discovering.
+- Preserved every anonymous contribution/window/null/health field with deterministic snapshot-local content-hash sub-keys and explicit unavailable attribution.
+- Kept status contribution ids in a separately labeled unjoinable slice, folded models by exact provider with nullable upstream ids, and mapped only the Anthropic/Codex fingerprint probes.
+- Provider roots carry native health/share counts but no capacity aggregate, selected window, fabricated 5h reading, model alias, or provider ownership.
+- Verification: `npm run build` and `npm test` passed (27 tests), including source-row reordering and identity-mismatch cases.

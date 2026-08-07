@@ -9,6 +9,7 @@ import {
   SnapshotProjectionError,
   type TokenCommuneSnapshotProjectionInput,
 } from "../src/snapshot_projection.js";
+import { allSourcesGateway } from "./fixtures/snapshot_projection.js";
 
 const providerPayload = {
   identityStrategy: "composite-local",
@@ -66,8 +67,31 @@ const baseInput: TokenCommuneSnapshotProjectionInput = {
   },
 };
 
-function decoded(envelope: { payload: Uint8Array }): unknown {
+function decoded(envelope: { payload: Uint8Array }): any {
   return JSON.parse(new TextDecoder().decode(envelope.payload));
+}
+
+function providerRows(input: TokenCommuneSnapshotProjectionInput): Array<{
+  identity: string;
+  payload: any;
+  projection: any;
+}> {
+  const report = projectTokenCommuneSnapshot(input);
+  assert.equal(report.report.case, "snapshot");
+  if (report.report.case !== "snapshot") assert.fail("expected snapshot report");
+  const view = report.report.value.views[0];
+  assert.equal(view?.resourceKind?.value, "token-commune.provider-pool");
+  return (view?.mutations ?? []).map((mutation) => {
+    assert.equal(mutation.mutation.case, "upsert");
+    if (mutation.mutation.case !== "upsert") assert.fail("expected upsert");
+    assert.ok(mutation.mutation.value.resourcePayload);
+    assert.ok(mutation.mutation.value.projectionPayload);
+    return {
+      identity: mutation.identity?.resourceId?.value ?? "",
+      payload: decoded(mutation.mutation.value.resourcePayload),
+      projection: decoded(mutation.mutation.value.projectionPayload),
+    };
+  });
 }
 
 test("manifest-bound envelope construction validates JSON and selects literal descriptors", () => {
@@ -112,5 +136,99 @@ test("invalid projection context fails before returning a report", () => {
   assert.throws(
     () => projectTokenCommuneSnapshot({ ...baseInput, adapterId: " " }),
     (error: unknown) => error instanceof SnapshotProjectionError && error.code === "invalid-context",
+  );
+});
+
+test("provider-pool projection preserves raw readings, health detail, models, and exact probe coverage", () => {
+  const rows = providerRows({ ...baseInput, gateway: allSourcesGateway });
+  assert.deepEqual(rows.map(({ projection }) => projection.provider), [
+    "anthropic", "kimi-coding", "openai-codex", "status-only", "zai",
+  ]);
+
+  const anthropic = rows.find(({ projection }) => projection.provider === "anthropic");
+  assert.ok(anthropic);
+  assert.deepEqual(anthropic.projection.credentialHealthCounts, { fresh: 0, exhausted: 2, authBroken: 1 });
+  assert.equal(anthropic.projection.totalDeclaredShare, 0.7);
+  const contributions = anthropic.projection.contributionListing.contributions;
+  const noReadings = contributions.filter((row: any) => row.telemetryState === "no-readings");
+  assert.equal(noReadings.length, 2);
+  assert.ok(noReadings.every((row: any) => row.capacityReadings.length === 0));
+  assert.deepEqual(noReadings.map((row: any) => row.health.exhaustedUntil), [
+    "2026-08-08T00:00:00.000Z", "2026-08-08T00:00:00.000Z",
+  ]);
+  assert.match(noReadings[0].subKey, /^local:anonymous-contribution:[0-9a-f]{24}:1$/);
+  assert.match(noReadings[1].subKey, /^local:anonymous-contribution:[0-9a-f]{24}:2$/);
+  assert.equal(noReadings[0].subKey.replace(/:1$/, ""), noReadings[1].subKey.replace(/:2$/, ""));
+  assert.ok(noReadings.every((row: any) => row.subKeySource === "synthesized-content-hash" && row.subKeyStability === "snapshot-local" && row.attribution === "unavailable"));
+
+  const sevenDay = contributions.find((row: any) => row.capacityReadings.some((reading: any) => reading.window === "7d"));
+  assert.ok(sevenDay);
+  assert.equal(sevenDay.health.state, "auth_broken");
+  assert.equal(sevenDay.health.reason, "revoked key");
+  assert.equal(sevenDay.telemetryState, "readings");
+  assert.equal(sevenDay.capacityReadings.some((reading: any) => reading.window === "5h"), false);
+  assert.deepEqual(sevenDay.capacityReadings[0], {
+    window: "7d", usedFraction: 0, usedUnits: 0, limitUnits: null, resetsAt: null,
+    source: "usage_endpoint", observedAt: "2026-08-07T11:57:00.000Z",
+  });
+  assert.equal(Object.hasOwn(sevenDay, "contributionId"), false, "status ids are not joined to anonymous pool rows");
+  assert.deepEqual(anthropic.projection.statusTelemetry.anthropicHealth, {
+    state: "auth_broken", reason: "upstream credential expired",
+  });
+  assert.deepEqual(anthropic.projection.statusTelemetry.contributions.map((row: any) => row.contributionId), ["status-anthropic"]);
+  assert.deepEqual(anthropic.projection.modelCatalog.models.map((model: any) => [model.id, model.upstreamModel, model.available]), [
+    ["claude-sonnet-4-5", null, false],
+  ]);
+  assert.equal(anthropic.projection.fingerprint.status, "reported");
+  assert.equal(anthropic.projection.fingerprint.probe, "anthropic");
+
+  const modelOnly = rows.find(({ projection }) => projection.provider === "kimi-coding");
+  assert.ok(modelOnly);
+  assert.deepEqual(modelOnly.projection.contributionListing, { status: "not-reported", contributions: [] });
+  assert.deepEqual(modelOnly.projection.statusTelemetry, { status: "not-reported", contributions: [] });
+  assert.deepEqual(modelOnly.projection.modelCatalog.models.map((model: any) => [model.id, model.upstreamModel]), [["k3", null]]);
+  assert.deepEqual(modelOnly.projection.fingerprint, { status: "unknown", probe: null, reason: "not-probed" });
+
+  const codex = rows.find(({ projection }) => projection.provider === "openai-codex");
+  assert.ok(codex);
+  assert.equal(codex.projection.fingerprint.status, "reported");
+  assert.equal(codex.projection.fingerprint.probe, "openai-codex");
+  assert.deepEqual(codex.projection.modelCatalog.models.map((model: any) => model.id), ["gpt-5.5"]);
+  assert.equal(codex.projection.modelCatalog.models.some((model: any) => model.id === "gpt-5.6"), false);
+
+  const unprobed = rows.find(({ projection }) => projection.provider === "zai");
+  assert.ok(unprobed);
+  assert.deepEqual(unprobed.projection.fingerprint, { status: "unknown", probe: null, reason: "not-probed" });
+  assert.equal(unprobed.projection.fingerprint.value, undefined, "no-probe providers cannot fabricate fingerprint ok");
+
+  for (const { identity, payload, projection } of rows) {
+    assert.match(identity, /^local:provider-pool:/);
+    assert.equal(payload.provider, projection.provider);
+    assert.equal(payload.limitations.capacityAggregation, "none");
+    assert.equal(projection.capacityAggregation, "none");
+    assert.equal(["usedFraction", "remainingPercentage", "selectedWindow", "highest5h"].some((key) => Object.hasOwn(projection, key)), false);
+    assert.equal(projection.contributionListing.contributions.some((row: any) => row.subKey === identity), false);
+  }
+});
+
+test("provider mapping is deterministic across source-row reordering and rejects synthesized identity mismatch", () => {
+  const reversedGateway = structuredClone(allSourcesGateway);
+  if (reversedGateway.pool.status === "reported") (reversedGateway.pool.value.contributions as any[]).reverse();
+  if (reversedGateway.status.status === "reported") (reversedGateway.status.value.contributions as any[]).reverse();
+  if (reversedGateway.models.status === "reported") (reversedGateway.models.value.models as any[]).reverse();
+  assert.deepEqual(
+    providerRows({ ...baseInput, gateway: allSourcesGateway }),
+    providerRows({ ...baseInput, gateway: reversedGateway }),
+  );
+
+  const mismatchedIdentities = {
+    ...identities,
+    providerPool(provider: string) {
+      return { ...identities.providerPool(provider), adapterId: "wrong-adapter" };
+    },
+  };
+  assert.throws(
+    () => projectTokenCommuneSnapshot({ ...baseInput, identities: mismatchedIdentities, gateway: allSourcesGateway }),
+    (error: unknown) => error instanceof SnapshotProjectionError && error.code === "identity-mismatch",
   );
 });
