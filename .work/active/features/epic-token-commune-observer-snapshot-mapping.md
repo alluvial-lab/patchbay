@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping
 kind: feature
-stage: review
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-adapter-foundation]
@@ -720,3 +720,12 @@ pass yields no receiver-confirmed material current-cycle blockers. Reviewer
 findings are proposals, not authority. The active autopilot final-completion
 review must receive the same `thorough` weight unchanged, and a pass is labeled
 cross-model only when the harness actually selects a different model class.
+
+## Review (thorough, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), convergence.
+
+- **Pass 1 (BLOCK):** 2 blockers + 1 important. (1) provider canonicalization gap — whitespace-differing providers (`"zai"` vs `" zai "`) produced duplicate `ResourceIdentity` mutations, which core ingress rejects (failing the whole poll); (2) schema permitted contradictory telemetry taxonomy (`telemetryState:"readings"` with empty `capacityReadings` and vice-versa), breaking the no-readings-vs-readings distinction; (3) time validation weaker than declared/core (Ajv accepted arbitrary date strings + out-of-range Protobuf seconds). All fixed at `d378ce6` — provider normalized at gateway ingress + duplicate-identity rejection; telemetry discriminated union (schema + TS); ajv-formats RFC 3339 + Protobuf seconds bounds. 32→34 tests; mutation-checked.
+- **Pass 2 (APPROVE):** all three fixes verified correct + mutation-sensitive (5 independent mutation checks); no-aggregate rule, attribution, fingerprint honesty, non-joinability all re-confirmed intact; 34/34 tests, clean build.
+
+Converged. Advanced to `done`.
