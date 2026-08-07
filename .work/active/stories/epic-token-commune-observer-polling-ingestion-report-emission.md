@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-report-emission
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: [epic-token-commune-observer-polling-ingestion-poll-runtime]
@@ -52,3 +52,21 @@ tombstone, or synthetic zero belongs here.
 
 Depends on the non-overlapping scheduler. The event mapper consumes this
 report-before-event ordering but does not alter projection semantics.
+
+## Implementation notes
+
+Added safe delta-seconds/HTTP-date `Retry-After` normalization, exact
+`ObservationRequest.resource_report` ingress on the authenticated attachment,
+and report-before-event ordering. Every cycle passes fresh settled endpoint
+states into `projectTokenCommuneSnapshot`; all-source failure still sends the
+projector's empty two-view PARTIAL report. Tests independently preserve nested
+capacity `observedAt` while asserting the fake completion clock is only the
+report refresh timestamp.
+
+Implementation discovery: the core previously treated every STATUS Observation
+as a command-lifecycle candidate. Foundation semantics already permit generic
+resource STATUS facts, so the acceptance boundary now admits only the narrow
+uncorrelated, exact-resource, `FailureCode.UNSPECIFIED` shape and keeps malformed
+or lifecycle-shaped STATUS evidence fail-closed. Its audit projection no longer
+mislabels that shape as `CommandRunning`. Core acceptance tests and the real-core
+adapter test cover the seam.
