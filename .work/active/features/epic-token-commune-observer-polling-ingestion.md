@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion
 kind: feature
-stage: review
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-adapter-foundation, epic-token-commune-observer-snapshot-mapping]
@@ -725,3 +725,12 @@ feature then runs review → receiver adjudication → fix/verify → fresh-cont
 review until a pass yields no receiver-confirmed material current-cycle blocker.
 Reviewer findings are proposals, not authority. The active autopilot final
 completion review must receive the same weight unchanged.
+
+## Review (thorough, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), convergence.
+
+- **Pass 1 (REQUEST CHANGES):** 2 blockers + 2 importants. (1) the core STATUS exception (`core/src/acceptance/observation.rs`) reimplemented resource-shape validation and accepted noncanonical mixed resource/session scopes (resource + runtime_session_id/adapter/legacy_audit) — an ontology leak; (2) Retry-After parsing/scheduling was unbounded (permissive Date.parse accepted "-1"/year-9999; huge values stalled for days or exceeded Node's setTimeout max → hot poll loop) — remotely steerable. Importants: the new core STATUS seam lacked authenticated service-path coverage (direct core test only); dedup accepted acknowledgement from the wrong authority domain. All fixed at `1afc46f` — core now derives validity via `ResourceIdentity::try_from_scope` (canonical, adapter-neutral); strict Retry-After parsing + 1h cap below Node's timer ceiling; authenticated server/service test (attach→report→STATUS→one Observation, cross-adapter + mixed-target rejection); dedup requires exact domain equality + positive LSN. Adapter 55→57 tests; cargo core tests + server service test green; mutation-checked.
+- **Pass 2 (APPROVE):** all four fixes verified correct + mutation-sensitive; polling≠streaming, bounded-gap, source-time, declared-only-kind, disconnect→stale honesty invariants re-confirmed intact; no core-ontology leak; 57/57 adapter tests, cargo core green, server test green.
+
+Note: this feature added narrow, adapter-neutral core support for uncorrelated resource STATUS observations (canonical source-authenticated status facts are core ontology per `docs/PROTOCOL.md`); review confirmed no token-commune vocabulary entered core. Converged. Advanced to `done`.
