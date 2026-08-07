@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation-attachment-lifecycle
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, integration]
 parent: epic-token-commune-observer-adapter-foundation
 depends_on: [epic-token-commune-observer-adapter-foundation-gateway-client]
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # Attach the adapter and compose its long-lived process
@@ -44,3 +44,20 @@ and core client, but starts no poll scheduler in this feature.
 Depends on the complete gateway client so the composition root is final-shaped.
 The next checkpoint adds the held-open delivery behavior; do not add polling,
 resource mapping, or successful Operation execution here.
+
+## Implementation notes
+
+- Added the narrowed generated Connect client with evidence/token interception,
+  exact manifest attachment, token-required success, same-generation
+  single-flight reattachment, failed-token fencing, one authenticated retry,
+  generic observation ingestion, and diagnostic-reporting bypass.
+- Added the process composition root with attach-before-started ordering, one
+  abort-owned run, signal cleanup in the environment bootstrap, and idempotent
+  diagnostic flush/close. The gateway port is composed but never invoked or
+  scheduled by this feature.
+- No Pi session, transcript, runtime report, delivery translator, running, or
+  successful-result code was carried into the package.
+- Verification: integrated `npm test` passed with exact attachment evidence,
+  identity/generation/manifest assertions, missing-token rejection, concurrent
+  auth-refresh single flight, diagnostics bypass, start ordering, abort, and
+  repeated-disposal coverage.
