@@ -22,6 +22,7 @@ const fixtures: Record<string, unknown> = {
   [GATEWAY_ENDPOINTS.pool]: { providers: [
     { provider: "anthropic", declaredShare: 0.5, health: { state: "fresh" }, capacity, fingerprint: poolFingerprint },
     { provider: "anthropic", declaredShare: 0.25, health: { state: "exhausted", exhaustedUntil: "2026-08-06T00:00:00Z" }, capacity, fingerprint: poolFingerprint },
+    { provider: "anthropic", declaredShare: 0.25, health: { state: "auth_broken", reason: "revoked credential" }, capacity, fingerprint: poolFingerprint },
   ] },
   [GATEWAY_ENDPOINTS.me]: { member: "Ada", draw: [{ provider: "anthropic", limitFraction: 0.5, fromDecree: false, consumedUnits: 5, drawUnits: null, exceeded: false, enforceable: true, resetsAt: null }] },
   [GATEWAY_ENDPOINTS.events]: { events: [{ id: "event-1", at: 1_786_060_800_000, kind: "window_exhausted", provider: "anthropic", contributionId: null, message: "window exhausted" }] },
@@ -58,7 +59,11 @@ test("all gateway methods use exact authenticated GET paths and return immutable
     state: "exhausted",
     exhaustedUntil: "2026-08-06T00:00:00Z",
   }, "native exhausted-until metadata survives decoding");
-  assert.equal(pool.contributions.length, 2, "duplicate provider contributions remain explicit");
+  assert.deepEqual(pool.contributions[2]?.health, {
+    state: "auth_broken",
+    reason: "revoked credential",
+  }, "native auth-broken reason survives decoding");
+  assert.equal(pool.contributions.length, 3, "duplicate provider contributions remain explicit");
   assert.equal(me.reports[0]?.drawUnits, null);
   assert.equal(events.historyMode, "latest-50-no-cursor");
   assert.equal(fingerprints.codex.capturePresent, false);

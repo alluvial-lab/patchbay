@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping-completeness-mutation-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: [epic-token-commune-observer-snapshot-mapping-member-draw-projection]
@@ -35,3 +35,10 @@ Close the pure projection seam with fixture-driven, mutation-sensitive evidence 
 ## Ordering
 
 Depends on both completed kind mappings and is the final implementation checkpoint before feature-level thorough review.
+
+## Implementation notes
+
+- Added independent fixture evidence for reported-empty, unavailable-source, current upsert, PARTIAL omission, no-readings, zero telemetry, missing-5h, nullable calibration, probe coverage, and malformed constructed evidence.
+- Every current mutation is asserted as `upsert`; the projector has no emitted `unknown`, tombstone, or replacement path, and omitted identities remain absent from PARTIAL views for core-owned stale degradation.
+- Mutation witnesses were executed and reverted: PARTIAL→AUTHORITATIVE failed the completeness test; collapsing same-provider draws to one row failed the row-retention test; fabricating an Anthropic `reported` fingerprint for an unprobed provider failed the exact-probe test. Each mutant exited non-zero as intended.
+- Verification: standalone `npm run build`, full `npm test` (32 tests), and `git diff --check` passed.

@@ -286,3 +286,81 @@ test("member-draw omission and display-name churn never infer aggregate, unknown
   assert.equal(before.length, after.length);
   assert.ok(before.every((row, index) => row.identity !== after[index]?.identity));
 });
+
+test("PARTIAL completeness emits only classifiable upserts and leaves omission to core staleness", () => {
+  const current = projectTokenCommuneSnapshot({ ...baseInput, gateway: allSourcesGateway });
+  assert.equal(current.report.case, "snapshot");
+  if (current.report.case !== "snapshot") assert.fail("expected snapshot report");
+  for (const view of current.report.value.views) {
+    assert.equal(view.completeness, AdapterSnapshotSupport.PARTIAL);
+    assert.ok(view.mutations.length > 0);
+    assert.ok(view.mutations.every((mutation) => mutation.mutation.case === "upsert"));
+    assert.equal(view.mutations.some((mutation) => mutation.mutation.case === "unknown"), false);
+    assert.equal(view.mutations.some((mutation) => mutation.mutation.case === "tombstone"), false);
+  }
+
+  const reportedEmpty = projectTokenCommuneSnapshot({
+    ...baseInput,
+    gateway: {
+      status: { status: "unavailable" },
+      pool: { status: "reported", value: { contributions: [] } },
+      me: { status: "reported", value: { displayName: "Ada", reports: [] } },
+      fingerprints: {
+        status: "reported",
+        value: {
+          anthropic: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
+          codex: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
+        },
+      },
+      models: { status: "reported", value: { models: [] } },
+    },
+  });
+  assert.equal(reportedEmpty.report.case, "snapshot");
+  if (reportedEmpty.report.case !== "snapshot") assert.fail("expected snapshot report");
+  assert.ok(reportedEmpty.report.value.views.every((view) => view.completeness === AdapterSnapshotSupport.PARTIAL));
+  assert.ok(reportedEmpty.report.value.views.every((view) => view.mutations.length === 0), "omitted identities are not encoded as stale/unknown/tombstone");
+});
+
+test("honesty invariants distinguish zero telemetry and no readings without aggregate or probe fabrication", () => {
+  const rows = providerRows({ ...baseInput, gateway: allSourcesGateway });
+  const anthropic = rows.find(({ projection }) => projection.provider === "anthropic");
+  assert.ok(anthropic);
+  const contributions = anthropic.projection.contributionListing.contributions;
+  assert.ok(contributions.some((row: any) => row.telemetryState === "no-readings" && row.capacityReadings.length === 0));
+  assert.ok(contributions.some((row: any) => row.telemetryState === "readings" && row.capacityReadings.some((reading: any) => reading.usedFraction === 0)));
+  assert.equal(Object.hasOwn(anthropic.projection, "usedFraction"), false, "a provider-level capacity percentage is forbidden");
+
+  const unavailablePool = providerRows({
+    ...baseInput,
+    gateway: { ...allSourcesGateway, pool: { status: "unavailable" } },
+  });
+  assert.deepEqual(
+    unavailablePool.find(({ projection }) => projection.provider === "anthropic")?.projection.contributionListing,
+    { status: "unavailable", contributions: [] },
+  );
+
+  const unavailableFingerprints = providerRows({
+    ...baseInput,
+    gateway: { ...allSourcesGateway, fingerprints: { status: "unavailable" } },
+  });
+  const anthropicUnavailable = unavailableFingerprints.find(({ projection }) => projection.provider === "anthropic");
+  const zaiUnavailable = unavailableFingerprints.find(({ projection }) => projection.provider === "zai");
+  assert.deepEqual(anthropicUnavailable?.projection.fingerprint, {
+    status: "unknown", probe: "anthropic", reason: "probe-unavailable",
+  });
+  assert.deepEqual(zaiUnavailable?.projection.fingerprint, {
+    status: "unknown", probe: null, reason: "not-probed",
+  });
+});
+
+test("cast-malformed typed capacity evidence fails the atomic projection boundary", () => {
+  const malformed = structuredClone(allSourcesGateway) as any;
+  malformed.pool.value.contributions[0].capacity = [{
+    window: "5h", usedFraction: -1, usedUnits: null, limitUnits: null, resetsAt: null,
+    source: "headers", observedAt: "2026-08-07T11:00:00.000Z",
+  }];
+  assert.throws(
+    () => projectTokenCommuneSnapshot({ ...baseInput, gateway: malformed }),
+    (error: unknown) => error instanceof SnapshotProjectionError && error.code === "contract-validation-failed",
+  );
+});
