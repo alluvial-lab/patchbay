@@ -180,7 +180,7 @@ function decodeStatus(value: unknown): GatewayStatus {
       const row = object(item);
       return {
         contributionId: string(row, "contributionId"),
-        provider: string(row, "provider"),
+        provider: canonicalProvider(row, "provider"),
         readings: capacityArray(row, "readings"),
       };
     }),
@@ -191,7 +191,7 @@ function decodePool(value: unknown): GatewayPool {
   return { contributions: array(root, "providers").map((item) => {
     const row = object(item);
     return {
-      provider: string(row, "provider"), declaredShare: fraction(row, "declaredShare"),
+      provider: canonicalProvider(row, "provider"), declaredShare: fraction(row, "declaredShare"),
       health: health(row, "health"), capacity: capacityArray(row, "capacity"),
       fingerprint: poolFingerprint(row["fingerprint"]),
     };
@@ -202,7 +202,7 @@ function decodeMe(value: unknown): GatewayMe {
   return { displayName: string(root, "member"), reports: array(root, "draw").map((item) => {
     const row = object(item);
     return {
-      provider: string(row, "provider"), limitFraction: fraction(row, "limitFraction"), fromDecree: boolean(row, "fromDecree"),
+      provider: canonicalProvider(row, "provider"), limitFraction: fraction(row, "limitFraction"), fromDecree: boolean(row, "fromDecree"),
       consumedUnits: nonnegative(row, "consumedUnits"), drawUnits: nullableNumber(row, "drawUnits"), exceeded: boolean(row, "exceeded"),
       enforceable: boolean(row, "enforceable"), resetsAt: nullableEpochTimestamp(row, "resetsAt"),
     };
@@ -214,7 +214,7 @@ function decodeEvents(value: unknown): GatewayEventsPage {
   if (events.length > 50) throw new Error("too many events");
   return { historyMode: "latest-50-no-cursor", events: events.map((item) => {
     const row = object(item);
-    return { id: string(row, "id"), occurredAt: epochTimestamp(row, "at"), kind: eventKind(row, "kind"), provider: string(row, "provider"), contributionId: nullableString(row, "contributionId"), message: boundedString(row, "message", 1024) };
+    return { id: string(row, "id"), occurredAt: epochTimestamp(row, "at"), kind: eventKind(row, "kind"), provider: canonicalProvider(row, "provider"), contributionId: nullableString(row, "contributionId"), message: boundedString(row, "message", 1024) };
   }) };
 }
 function decodeFingerprints(value: unknown): GatewayFingerprints {
@@ -228,7 +228,7 @@ function decodeModels(value: unknown): GatewayModels {
   return { models: rows.map((item) => {
     const row = object(item);
     return {
-      id: string(row, "id"), provider: string(row, "provider"), surface: string(row, "surface"),
+      id: string(row, "id"), provider: canonicalProvider(row, "provider"), surface: string(row, "surface"),
       upstreamModel: row["upstream_model"] === undefined ? null : string(row, "upstream_model"),
       contextWindow: positiveNumber(row, "context_window"), maxTokens: positiveNumber(row, "max_tokens"),
       reasoning: boolean(row, "reasoning"), available: boolean(row, "available"),
@@ -276,6 +276,7 @@ function nullableObject(row: Record<string, unknown>, key: string): Record<strin
 function array(row: Record<string, unknown>, key: string): unknown[] { const value = row[key]; if (!Array.isArray(value)) throw new Error(`${key} must be an array`); return value; }
 function string(row: Record<string, unknown>, key: string): string { return boundedString(row, key, 512); }
 function boundedString(row: Record<string, unknown>, key: string, max: number): string { const value = row[key]; if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${key} must be a bounded string`); return value; }
+function canonicalProvider(row: Record<string, unknown>, key: string): string { return boundedString(row, key, 512).trim(); }
 function nullableString(row: Record<string, unknown>, key: string): string | null { return row[key] === null ? null : string(row, key); }
 function boolean(row: Record<string, unknown>, key: string): boolean { if (typeof row[key] !== "boolean") throw new Error(`${key} must be boolean`); return row[key]; }
 function number(row: Record<string, unknown>, key: string): number { const value = row[key]; if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${key} must be finite`); return value; }

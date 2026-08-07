@@ -36,17 +36,23 @@ export const TOKEN_COMMUNE_SCHEMAS = {
 export type TokenCommuneResourceKind =
   (typeof TOKEN_COMMUNE_RESOURCE_KINDS)[keyof typeof TOKEN_COMMUNE_RESOURCE_KINDS];
 
-export interface AnonymousPoolContribution {
+interface AnonymousPoolContributionBase {
   readonly subKey: string;
   readonly subKeySource: "synthesized-content-hash";
   readonly subKeyStability: "snapshot-local";
   readonly attribution: "unavailable";
   readonly declaredShare: number;
   readonly health: GatewayContributionHealth;
-  readonly telemetryState: "readings" | "no-readings";
-  readonly capacityReadings: readonly GatewayCapacityReading[];
   readonly fingerprint: GatewayPoolFingerprint;
 }
+
+export type AnonymousPoolContribution = AnonymousPoolContributionBase & (
+  | { readonly telemetryState: "no-readings"; readonly capacityReadings: readonly [] }
+  | {
+      readonly telemetryState: "readings";
+      readonly capacityReadings: readonly [GatewayCapacityReading, ...GatewayCapacityReading[]];
+    }
+);
 
 export type ContributionListing =
   | { readonly status: "reported"; readonly contributions: readonly AnonymousPoolContribution[] }

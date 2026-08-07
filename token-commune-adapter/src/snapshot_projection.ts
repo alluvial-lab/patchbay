@@ -48,6 +48,9 @@ import {
   type ProviderStatusTelemetry,
 } from "./resource_contract.js";
 
+const PROTOBUF_TIMESTAMP_MIN_SECONDS = -62_135_596_800n;
+const PROTOBUF_TIMESTAMP_MAX_SECONDS = 253_402_300_799n;
+
 export type EndpointSnapshot<T> =
   | { readonly status: "reported"; readonly value: T }
   | { readonly status: "unavailable" };
@@ -74,6 +77,7 @@ export class SnapshotProjectionError extends Error {
     readonly code:
       | "invalid-context"
       | "identity-mismatch"
+      | "duplicate-identity"
       | "contract-validation-failed",
   ) {
     super(`token-commune snapshot projection ${code}`);
@@ -89,6 +93,7 @@ export function projectTokenCommuneSnapshot(
       providerPool: projectProviderPools(input),
       memberDraw: projectMemberDraws(input),
     };
+    assertUniqueMutationIdentities(Object.values(mutations).flat());
     const views = (Object.keys(TOKEN_COMMUNE_RESOURCES) as TokenCommuneResourceName[]).map((name) =>
       create(ResourceViewReportSchema, {
         resourceKind: create(ResourceKindSchema, { value: TOKEN_COMMUNE_RESOURCES[name].kind }),
@@ -214,28 +219,39 @@ function contributionListingFor(
     contributions: canonicalRows.map(({ key, row }) => {
       const occurrence = (occurrences.get(key) ?? 0) + 1;
       occurrences.set(key, occurrence);
-      return {
+      const common = {
         subKey: `local:anonymous-contribution:${digest(stableJson({
           gatewayDeploymentKey: input.identities.gatewayDeploymentKey,
           provider,
           row,
         }))}:${occurrence}`,
-        subKeySource: "synthesized-content-hash",
-        subKeyStability: "snapshot-local",
-        attribution: "unavailable",
+        subKeySource: "synthesized-content-hash" as const,
+        subKeyStability: "snapshot-local" as const,
+        attribution: "unavailable" as const,
         declaredShare: row.declaredShare,
         health: row.health,
-        telemetryState: row.capacityReadings.length === 0 ? "no-readings" : "readings",
-        capacityReadings: row.capacityReadings,
         fingerprint: row.fingerprint,
-      } satisfies AnonymousPoolContribution;
+      };
+      const [firstReading, ...remainingReadings] = row.capacityReadings;
+      return firstReading === undefined
+        ? { ...common, telemetryState: "no-readings", capacityReadings: [] } satisfies AnonymousPoolContribution
+        : {
+            ...common,
+            telemetryState: "readings",
+            capacityReadings: [firstReading, ...remainingReadings],
+          } satisfies AnonymousPoolContribution;
     }),
   };
 }
 
 function canonicalPoolRow(row: GatewayPoolContribution): {
   readonly key: string;
-  readonly row: Omit<AnonymousPoolContribution, "subKey" | "subKeySource" | "subKeyStability" | "attribution" | "telemetryState">;
+  readonly row: {
+    readonly declaredShare: number;
+    readonly health: GatewayPoolContribution["health"];
+    readonly capacityReadings: readonly GatewayCapacityReading[];
+    readonly fingerprint: GatewayPoolContribution["fingerprint"];
+  };
 } {
   const canonical = {
     declaredShare: row.declaredShare,
@@ -330,6 +346,23 @@ function upsertMutation(
   });
 }
 
+function assertUniqueMutationIdentities(mutations: readonly ResourceReportMutation[]): void {
+  const seen = new Set<string>();
+  for (const mutation of mutations) {
+    const identity = mutation.identity;
+    if (!identity?.adapterId || !identity.resourceKind || !identity.resourceId) {
+      throw new SnapshotProjectionError("identity-mismatch");
+    }
+    const key = JSON.stringify([
+      identity.adapterId.value,
+      identity.resourceKind.value,
+      identity.resourceId.value,
+    ]);
+    if (seen.has(key)) throw new SnapshotProjectionError("duplicate-identity");
+    seen.add(key);
+  }
+}
+
 function sortCapacityReadings(readings: readonly GatewayCapacityReading[]): GatewayCapacityReading[] {
   return readings.map((reading) => ({ ...reading })).sort((left, right) => compareText(stableJson(left), stableJson(right)));
 }
@@ -371,6 +404,8 @@ function validateContext(input: TokenCommuneSnapshotProjectionInput): void {
     || input.adapterGeneration <= 0
     || !input.identities.gatewayDeploymentKey.trim()
     || typeof input.observedAt?.seconds !== "bigint"
+    || input.observedAt.seconds < PROTOBUF_TIMESTAMP_MIN_SECONDS
+    || input.observedAt.seconds > PROTOBUF_TIMESTAMP_MAX_SECONDS
     || !Number.isInteger(input.observedAt.nanos)
     || input.observedAt.nanos < 0
     || input.observedAt.nanos > 999_999_999

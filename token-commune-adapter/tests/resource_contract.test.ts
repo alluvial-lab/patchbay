@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AdapterSnapshotSupport, AdapterTargetCategory, IdempotencyStrength, PayloadContentType } from "@patchbay/contracts";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import ajvFormatsModule from "ajv-formats";
 import { loadTokenCommuneAdapterConfig } from "../src/config.js";
 import { createCompositeLocalIdentitySynthesizer } from "../src/identity.js";
 import { tokenCommuneCapabilityManifest } from "../src/manifest.js";
@@ -148,7 +149,8 @@ test("manifest pins the two literal resource kinds and four literal schema descr
 });
 
 test("Draft 2020-12 resource schemas compile and reject every independently listed required-field deletion", () => {
-  const ajv = new Ajv2020({ allErrors: true, strict: true, formats: { "date-time": true } });
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajvFormatsModule.default(ajv);
   for (const { file } of schemaDescriptors) ajv.addSchema(loadSchema(file), file);
   for (const { file } of schemaDescriptors) {
     const schema = loadSchema(file);
@@ -166,6 +168,20 @@ test("Draft 2020-12 resource schemas compile and reject every independently list
     }
   }
   const pool = loadSchema("provider-pool-payload.schema.json");
+  const validatePool = ajv.getSchema(pool.$id);
+  assert.ok(validatePool);
+  for (const [telemetryState, capacityReadings] of [
+    ["readings", []],
+    ["no-readings", [capacityFixture]],
+  ] as const) {
+    const contradictory = structuredClone(schemaFixtures["provider-pool-payload.schema.json"]) as any;
+    contradictory.contributionListing.contributions[0].telemetryState = telemetryState;
+    contradictory.contributionListing.contributions[0].capacityReadings = capacityReadings;
+    assert.equal(validatePool(contradictory), false, `${telemetryState} must agree with capacityReadings cardinality`);
+  }
+  const invalidDate = structuredClone(schemaFixtures["provider-pool-payload.schema.json"]) as any;
+  invalidDate.contributionListing.contributions[0].capacityReadings[0].observedAt = "not-a-date";
+  assert.equal(validatePool(invalidDate), false, "date-time fields require RFC 3339 values");
   assert.deepEqual(pool.$defs.capacity.properties.usedFraction.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.usedUnits.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.limitUnits.type, ["number", "null"]);

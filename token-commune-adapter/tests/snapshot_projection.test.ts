@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { AdapterSnapshotSupport, PayloadContentType } from "@patchbay/contracts";
+import type { GatewayCredential } from "../src/credential.js";
+import { createHttpTokenCommuneGatewayClient } from "../src/gateway_client.js";
 import { createCompositeLocalIdentitySynthesizer } from "../src/identity.js";
 import { encodeResourceEnvelope, ResourceEnvelopeValidationError } from "../src/resource_envelope.js";
 import {
@@ -118,6 +120,40 @@ test("manifest-bound envelope construction validates JSON and selects literal de
     () => encodeResourceEnvelope("providerPool", "projection", { ...providerProjection, usedFraction: 0.5 }),
     ResourceEnvelopeValidationError,
   );
+
+  const capacityReading = {
+    window: "5h", usedFraction: null, usedUnits: null, limitUnits: 100, resetsAt: null,
+    source: "usage_endpoint", observedAt: "2026-08-07T11:57:00.000Z",
+  };
+  const contribution = {
+    subKey: "local:anonymous-contribution:0123456789abcdef01234567:1",
+    subKeySource: "synthesized-content-hash", subKeyStability: "snapshot-local", attribution: "unavailable",
+    declaredShare: 0.5, health: { state: "fresh" }, telemetryState: "readings",
+    capacityReadings: [capacityReading],
+    fingerprint: { state: "unknown", templateSource: "compiled", since: null, diffPresent: false },
+  };
+  const payloadWithContribution = {
+    ...providerPayload,
+    contributionListing: { status: "reported", contributions: [contribution] },
+  };
+  for (const [telemetryState, capacityReadings] of [
+    ["readings", []],
+    ["no-readings", [capacityReading]],
+  ] as const) {
+    const contradictory = structuredClone(payloadWithContribution);
+    contradictory.contributionListing.contributions[0]!.telemetryState = telemetryState;
+    contradictory.contributionListing.contributions[0]!.capacityReadings = [...capacityReadings];
+    assert.throws(
+      () => encodeResourceEnvelope("providerPool", "payload", contradictory),
+      ResourceEnvelopeValidationError,
+    );
+  }
+  const invalidDate = structuredClone(payloadWithContribution);
+  invalidDate.contributionListing.contributions[0]!.capacityReadings[0]!.observedAt = "not-a-date";
+  assert.throws(
+    () => encodeResourceEnvelope("providerPool", "payload", invalidDate),
+    ResourceEnvelopeValidationError,
+  );
 });
 
 test("pure report factory emits two registry-ordered PARTIAL snapshot views", () => {
@@ -144,6 +180,21 @@ test("invalid projection context fails before returning a report", () => {
     () => projectTokenCommuneSnapshot({ ...baseInput, adapterId: " " }),
     (error: unknown) => error instanceof SnapshotProjectionError && error.code === "invalid-context",
   );
+  for (const seconds of [-62_135_596_801n, 253_402_300_800n]) {
+    assert.throws(
+      () => projectTokenCommuneSnapshot({
+        ...baseInput,
+        observedAt: { ...baseInput.observedAt, seconds },
+      }),
+      (error: unknown) => error instanceof SnapshotProjectionError && error.code === "invalid-context",
+    );
+  }
+  for (const seconds of [-62_135_596_800n, 253_402_300_799n]) {
+    assert.doesNotThrow(() => projectTokenCommuneSnapshot({
+      ...baseInput,
+      observedAt: { ...baseInput.observedAt, seconds },
+    }));
+  }
 });
 
 test("provider-pool projection preserves raw readings, health detail, models, and exact probe coverage", () => {
@@ -216,6 +267,52 @@ test("provider-pool projection preserves raw readings, health detail, models, an
     assert.equal(["usedFraction", "remainingPercentage", "selectedWindow", "highest5h"].some((key) => Object.hasOwn(projection, key)), false);
     assert.equal(projection.contributionListing.contributions.some((row: any) => row.subKey === identity), false);
   }
+});
+
+test("gateway provider canonicalization prevents whitespace aliases from emitting colliding mutations", async () => {
+  const credential: GatewayCredential = {
+    apply() {}, redactionSecrets: () => [], dispose() {},
+  };
+  const client = createHttpTokenCommuneGatewayClient({
+    baseUrl: new URL("https://gateway.example/"),
+    credential,
+    fetch: async (request) => {
+      const path = new URL(request instanceof URL ? request.href : request.toString()).pathname;
+      if (path === "/commune/pool") {
+        const fingerprint = { state: "unknown", templateSource: "compiled", since: null, diff: null };
+        return Response.json({ providers: [
+          { provider: "zai", declaredShare: 0.5, health: { state: "fresh" }, capacity: [], fingerprint },
+          { provider: " zai ", declaredShare: 0.5, health: { state: "fresh" }, capacity: [], fingerprint },
+        ] });
+      }
+      if (path === "/v1/models") {
+        return Response.json({ data: [{
+          id: "glm-5", provider: " zai ", surface: "chat",
+          context_window: 200_000, max_tokens: 8_192, reasoning: true, available: true,
+        }] });
+      }
+      assert.fail(`unexpected gateway path ${path}`);
+    },
+  });
+  const [pool, models] = await Promise.all([client.getPool(), client.getModels()]);
+  const rows = providerRows({
+    ...baseInput,
+    gateway: { ...baseInput.gateway, pool: { status: "reported", value: pool }, models: { status: "reported", value: models } },
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.payload.provider, "zai");
+  assert.equal(rows[0]?.projection.contributionListing.contributions.length, 2);
+});
+
+test("projection rejects duplicate synthesized resource identities", () => {
+  const duplicatingIdentities = {
+    ...identities,
+    providerPool() { return identities.providerPool("duplicate"); },
+  };
+  assert.throws(
+    () => projectTokenCommuneSnapshot({ ...baseInput, identities: duplicatingIdentities, gateway: allSourcesGateway }),
+    (error: unknown) => error instanceof SnapshotProjectionError && error.code === "duplicate-identity",
+  );
 });
 
 test("provider mapping is deterministic across source-row reordering and rejects synthesized identity mismatch", () => {

@@ -68,7 +68,21 @@
         "telemetryState": { "enum": ["readings", "no-readings"] },
         "capacityReadings": { "type": "array", "items": { "$ref": "#/$defs/capacity" } },
         "fingerprint": { "$ref": "#/$defs/poolFingerprint" }
-      }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "telemetryState": { "const": "no-readings" },
+            "capacityReadings": { "type": "array", "maxItems": 0 }
+          }
+        },
+        {
+          "properties": {
+            "telemetryState": { "const": "readings" },
+            "capacityReadings": { "type": "array", "minItems": 1 }
+          }
+        }
+      ]
     },
     "contributionListing": {
       "oneOf": [

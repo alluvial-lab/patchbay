@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { PayloadContentType, PayloadEnvelopeSchema, type PayloadEnvelope } from "@patchbay/contracts";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
+import ajvFormatsModule from "ajv-formats";
 import memberDrawPayloadSchema from "../schemas/member-draw-payload.schema.json" with { type: "json" };
 import memberDrawProjectionSchema from "../schemas/member-draw-projection.schema.json" with { type: "json" };
 import providerPoolPayloadSchema from "../schemas/provider-pool-payload.schema.json" with { type: "json" };
@@ -17,11 +18,8 @@ const schemas = [
   ["member-draw-projection.schema.json", memberDrawProjectionSchema],
 ] as const;
 
-const ajv = new Ajv2020({
-  allErrors: true,
-  strict: true,
-  formats: { "date-time": true },
-});
+const ajv = new Ajv2020({ allErrors: true, strict: true });
+ajvFormatsModule.default(ajv);
 for (const [key, schema] of schemas) ajv.addSchema(schema, key);
 
 const validators: Record<TokenCommuneResourceName, Record<EnvelopeRole, ValidateFunction>> = {
