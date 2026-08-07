@@ -53,6 +53,11 @@ test("all gateway methods use exact authenticated GET paths and return immutable
   const models = await client.getModels();
   assert.deepEqual(seen, Object.values(GATEWAY_ENDPOINTS));
   assert.equal(status.contributions[0]?.readings[0]?.usedFraction, null);
+  assert.deepEqual(status.anthropicHealth, { state: "fresh" });
+  assert.deepEqual(pool.contributions[1]?.health, {
+    state: "exhausted",
+    exhaustedUntil: "2026-08-06T00:00:00Z",
+  }, "native exhausted-until metadata survives decoding");
   assert.equal(pool.contributions.length, 2, "duplicate provider contributions remain explicit");
   assert.equal(me.reports[0]?.drawUnits, null);
   assert.equal(events.historyMode, "latest-50-no-cursor");
@@ -129,8 +134,14 @@ test("fingerprint presence projections require explicit object-or-null source fi
   }
 });
 
-test("runtime decoders reject malformed arrays, timestamps, fractions, and non-finite fields", async () => {
+test("runtime decoders reject malformed arrays, health details, timestamps, fractions, and non-finite fields", async () => {
+  const missingExhaustedUntil = structuredClone(fixtures[GATEWAY_ENDPOINTS.pool]) as any;
+  delete missingExhaustedUntil.providers[1].health.exhaustedUntil;
+  const missingAuthReason = structuredClone(fixtures[GATEWAY_ENDPOINTS.pool]) as any;
+  missingAuthReason.providers[0].health = { state: "auth_broken" };
   const cases: Array<[keyof typeof GATEWAY_ENDPOINTS, unknown]> = [
+    ["pool", missingExhaustedUntil],
+    ["pool", missingAuthReason],
     ["status", { ok: true, anthropicHealth: { state: "fresh" }, contributions: {} }],
     ["pool", { providers: [{ provider: "anthropic", declaredShare: 2, health: { state: "fresh" }, capacity: [], fingerprint: poolFingerprint }] }],
     ["me", { member: "Ada", draw: [{ provider: "anthropic", limitFraction: 0.5, fromDecree: false, consumedUnits: 0, drawUnits: null, exceeded: false, enforceable: false, resetsAt: "tomorrow" }] }],

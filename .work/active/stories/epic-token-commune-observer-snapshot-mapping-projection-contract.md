@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping-projection-contract
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: []
@@ -41,3 +41,10 @@ The gateway DTO correction is additive to the stable method seam: `GatewayContri
 ## Ordering
 
 This checkpoint establishes the typed and schema source of truth consumed by envelope construction and both kind mappings.
+
+## Implementation notes
+
+- Replaced the lossy health scalar with the native discriminated health value; exhausted timestamps and auth-broken reasons now survive boundary decoding.
+- Tightened both provider schemas around explicit reported/not-reported/unavailable source slices, snapshot-local anonymous contribution provenance, nullable readings, and no capacity aggregate.
+- Removed the derived member enforcement state from the projection contract while preserving every native draw field.
+- Verification: `npm run build` and `npm test` passed (22 tests) after the contract change.

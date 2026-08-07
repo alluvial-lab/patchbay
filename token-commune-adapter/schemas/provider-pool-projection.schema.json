@@ -3,17 +3,18 @@
   "$id": "patchbay.token_commune.provider_pool.projection.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["provider", "contributionCount", "totalDeclaredShare", "healthCounts", "anonymousContributions", "models", "fingerprint"],
+  "required": ["provider", "contributionListing", "credentialHealthCounts", "totalDeclaredShare", "statusTelemetry", "modelCatalog", "fingerprint", "capacityAggregation"],
   "properties": {
     "provider": { "type": "string", "minLength": 1 },
-    "contributionCount": { "type": "integer", "minimum": 0 },
-    "totalDeclaredShare": { "type": "number", "minimum": 0 },
-    "healthCounts": {
+    "contributionListing": { "$ref": "provider-pool-payload.schema.json#/$defs/contributionListing" },
+    "credentialHealthCounts": {
       "type": "object", "additionalProperties": false, "required": ["fresh", "exhausted", "authBroken"],
       "properties": { "fresh": { "type": "integer", "minimum": 0 }, "exhausted": { "type": "integer", "minimum": 0 }, "authBroken": { "type": "integer", "minimum": 0 } }
     },
-    "anonymousContributions": { "type": "array", "items": { "$ref": "provider-pool-payload.schema.json#/$defs/contribution" } },
-    "models": { "type": "array", "items": { "$ref": "provider-pool-payload.schema.json#/$defs/model" } },
-    "fingerprint": { "$ref": "provider-pool-payload.schema.json#/$defs/fingerprintSummary" }
+    "totalDeclaredShare": { "type": "number", "minimum": 0 },
+    "statusTelemetry": { "$ref": "provider-pool-payload.schema.json#/$defs/statusTelemetry" },
+    "modelCatalog": { "$ref": "provider-pool-payload.schema.json#/$defs/modelCatalog" },
+    "fingerprint": { "$ref": "provider-pool-payload.schema.json#/$defs/providerFingerprint" },
+    "capacityAggregation": { "const": "none" }
   }
 }

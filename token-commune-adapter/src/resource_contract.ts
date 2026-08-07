@@ -1,9 +1,11 @@
 import type {
+  GatewayCapacityReading,
+  GatewayContributionHealth,
   GatewayDrawReport,
-  GatewayFingerprintSummary,
+  GatewayFingerprintState,
   GatewayModel,
-  GatewayPoolContribution,
-  GatewayStatusSummary,
+  GatewayPoolFingerprint,
+  GatewayStatusContribution,
 } from "./gateway_client.js";
 
 export const TOKEN_COMMUNE_RESOURCES = {
@@ -34,46 +36,95 @@ export const TOKEN_COMMUNE_SCHEMAS = {
 export type TokenCommuneResourceKind =
   (typeof TOKEN_COMMUNE_RESOURCE_KINDS)[keyof typeof TOKEN_COMMUNE_RESOURCE_KINDS];
 
+export interface AnonymousPoolContribution {
+  readonly subKey: string;
+  readonly subKeySource: "synthesized-content-hash";
+  readonly subKeyStability: "snapshot-local";
+  readonly attribution: "unavailable";
+  readonly declaredShare: number;
+  readonly health: GatewayContributionHealth;
+  readonly telemetryState: "readings" | "no-readings";
+  readonly capacityReadings: readonly GatewayCapacityReading[];
+  readonly fingerprint: GatewayPoolFingerprint;
+}
+
+export type ContributionListing =
+  | { readonly status: "reported"; readonly contributions: readonly AnonymousPoolContribution[] }
+  | { readonly status: "not-reported"; readonly contributions: readonly [] }
+  | { readonly status: "unavailable"; readonly contributions: readonly [] };
+
+export type ProviderStatusTelemetry =
+  | {
+      readonly status: "reported";
+      readonly gatewayOk: boolean;
+      readonly anthropicHealth: GatewayContributionHealth | null;
+      readonly joinability: "unjoinable-with-pool-rows";
+      readonly contributions: readonly GatewayStatusContribution[];
+    }
+  | { readonly status: "not-reported" | "unavailable"; readonly contributions: readonly [] };
+
+export type ProviderModelCatalog =
+  | { readonly status: "reported"; readonly models: readonly GatewayModel[] }
+  | { readonly status: "unavailable"; readonly models: readonly [] };
+
+export type ProviderFingerprint =
+  | {
+      readonly status: "reported";
+      readonly probe: "anthropic" | "openai-codex";
+      readonly value: GatewayFingerprintState;
+    }
+  | {
+      readonly status: "unknown";
+      readonly probe: "anthropic" | "openai-codex" | null;
+      readonly reason: "probe-unavailable" | "not-probed";
+    };
+
 export interface ProviderPoolPayload {
-  identityStrategy: "composite-local";
-  gatewayDeploymentKey: string;
-  provider: string;
-  contributions: readonly GatewayPoolContribution[];
-  models: readonly GatewayModel[];
-  fingerprint: GatewayFingerprintSummary;
-  sourceStatus: GatewayStatusSummary;
-  limitations: {
-    snapshotCompleteness: "partial";
-    contributorAttribution: "unavailable";
-    contributionIdentity: "unjoinable";
+  readonly identityStrategy: "composite-local";
+  readonly gatewayDeploymentKey: string;
+  readonly provider: string;
+  readonly contributionListing: ContributionListing;
+  readonly statusTelemetry: ProviderStatusTelemetry;
+  readonly modelCatalog: ProviderModelCatalog;
+  readonly fingerprint: ProviderFingerprint;
+  readonly limitations: {
+    readonly snapshotCompleteness: "partial";
+    readonly contributorAttribution: "unavailable";
+    readonly contributionIdentity: "snapshot-local-synthesized";
+    readonly statusPoolJoin: "unavailable";
+    readonly capacityAggregation: "none";
   };
 }
 
 export interface ProviderPoolProjection {
-  provider: string;
-  contributionCount: number;
-  totalDeclaredShare: number;
-  healthCounts: { fresh: number; exhausted: number; authBroken: number };
-  anonymousContributions: readonly GatewayPoolContribution[];
-  models: readonly GatewayModel[];
-  fingerprint: GatewayFingerprintSummary;
+  readonly provider: string;
+  readonly contributionListing: ContributionListing;
+  readonly credentialHealthCounts: {
+    readonly fresh: number;
+    readonly exhausted: number;
+    readonly authBroken: number;
+  };
+  readonly totalDeclaredShare: number;
+  readonly statusTelemetry: ProviderStatusTelemetry;
+  readonly modelCatalog: ProviderModelCatalog;
+  readonly fingerprint: ProviderFingerprint;
+  readonly capacityAggregation: "none";
 }
 
 export interface MemberDrawPayload {
-  identityStrategy: "composite-local";
-  gatewayDeploymentKey: string;
-  memberDisplayName: string;
-  provider: string;
-  reports: readonly GatewayDrawReport[];
-  limitations: {
-    snapshotCompleteness: "partial";
-    stableMemberIdentity: "unavailable";
+  readonly identityStrategy: "composite-local";
+  readonly gatewayDeploymentKey: string;
+  readonly memberDisplayName: string;
+  readonly provider: string;
+  readonly reports: readonly GatewayDrawReport[];
+  readonly limitations: {
+    readonly snapshotCompleteness: "partial";
+    readonly stableMemberIdentity: "unavailable";
   };
 }
 
 export interface MemberDrawProjection {
-  memberDisplayName: string;
-  provider: string;
-  reports: readonly GatewayDrawReport[];
-  enforcementState: "unknown" | "within-limit" | "exceeded";
+  readonly memberDisplayName: string;
+  readonly provider: string;
+  readonly reports: readonly GatewayDrawReport[];
 }

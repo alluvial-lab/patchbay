@@ -19,7 +19,10 @@ export class GatewayClientError extends Error {
   }
 }
 
-export type GatewayContributionHealth = "fresh" | "exhausted" | "auth-broken";
+export type GatewayContributionHealth =
+  | { readonly state: "fresh" }
+  | { readonly state: "exhausted"; readonly exhaustedUntil: string }
+  | { readonly state: "auth_broken"; readonly reason: string };
 export interface GatewayCapacityReading {
   window: string;
   usedFraction: number | null;
@@ -294,15 +297,14 @@ function nullableEpochTimestamp(row: Record<string, unknown>, key: string): stri
 function health(row: Record<string, unknown>, key: string): GatewayContributionHealth {
   const value = object(row[key]);
   const state = value["state"];
-  if (state === "fresh") return state;
+  if (state === "fresh") return { state };
   if (state === "exhausted") {
-    const until = string(value, "exhaustedUntil");
-    if (!Number.isFinite(Date.parse(until))) throw new Error(`${key}.exhaustedUntil must be a timestamp`);
-    return state;
+    const exhaustedUntil = string(value, "exhaustedUntil");
+    if (!Number.isFinite(Date.parse(exhaustedUntil))) throw new Error(`${key}.exhaustedUntil must be a timestamp`);
+    return { state, exhaustedUntil };
   }
   if (state === "auth_broken") {
-    boundedString(value, "reason", 512);
-    return "auth-broken";
+    return { state, reason: boundedString(value, "reason", 512) };
   }
   throw new Error(`${key} is unknown`);
 }

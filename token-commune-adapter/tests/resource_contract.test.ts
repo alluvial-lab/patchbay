@@ -32,13 +32,24 @@ const fingerprintStateFixture = {
   holdReason: null, heldAt: null, diffPresent: false,
 };
 const contributionFixture = {
-  provider: "anthropic", declaredShare: 0.5, health: "fresh", capacity: [capacityFixture],
+  subKey: "local:anonymous-contribution:0123456789abcdef01234567:1",
+  subKeySource: "synthesized-content-hash", subKeyStability: "snapshot-local", attribution: "unavailable",
+  declaredShare: 0.5, health: { state: "exhausted", exhaustedUntil: "2026-08-06T01:00:00.000Z" },
+  telemetryState: "readings", capacityReadings: [capacityFixture],
   fingerprint: { state: "unknown", templateSource: "compiled", since: null, diffPresent: false },
+};
+const contributionListing = { status: "reported", contributions: [contributionFixture] };
+const statusTelemetry = {
+  status: "reported", gatewayOk: true, anthropicHealth: { state: "auth_broken", reason: "expired credential" },
+  joinability: "unjoinable-with-pool-rows",
+  contributions: [{ contributionId: "contribution-1", provider: "anthropic", readings: [capacityFixture] }],
 };
 const modelFixture = {
   id: "claude-sonnet-4-5", provider: "anthropic", surface: "messages", upstreamModel: null,
   contextWindow: 200_000, maxTokens: 8_192, reasoning: true, available: true,
 };
+const modelCatalog = { status: "reported", models: [modelFixture] };
+const providerFingerprint = { status: "reported", probe: "anthropic", value: fingerprintStateFixture };
 const drawReportFixture = {
   provider: "anthropic", limitFraction: 0.5, fromDecree: false, consumedUnits: 5,
   drawUnits: null, exceeded: false, enforceable: true, resetsAt: null,
@@ -46,19 +57,16 @@ const drawReportFixture = {
 const schemaFixtures: Record<string, unknown> = {
   "provider-pool-payload.schema.json": {
     identityStrategy: "composite-local", gatewayDeploymentKey: "deployment", provider: "anthropic",
-    contributions: [contributionFixture], models: [modelFixture],
-    fingerprint: { anthropic: fingerprintStateFixture, codex: fingerprintStateFixture },
-    sourceStatus: {
-      ok: true, anthropicHealth: "fresh",
-      contributions: [{ contributionId: "contribution-1", provider: "anthropic", readings: [capacityFixture] }],
+    contributionListing, statusTelemetry, modelCatalog, fingerprint: providerFingerprint,
+    limitations: {
+      snapshotCompleteness: "partial", contributorAttribution: "unavailable",
+      contributionIdentity: "snapshot-local-synthesized", statusPoolJoin: "unavailable", capacityAggregation: "none",
     },
-    limitations: { snapshotCompleteness: "partial", contributorAttribution: "unavailable", contributionIdentity: "unjoinable" },
   },
   "provider-pool-projection.schema.json": {
-    provider: "anthropic", contributionCount: 1, totalDeclaredShare: 0.5,
-    healthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
-    anonymousContributions: [contributionFixture], models: [modelFixture],
-    fingerprint: { anthropic: fingerprintStateFixture, codex: fingerprintStateFixture },
+    provider: "anthropic", contributionListing,
+    credentialHealthCounts: { fresh: 0, exhausted: 1, authBroken: 0 }, totalDeclaredShare: 0.5,
+    statusTelemetry, modelCatalog, fingerprint: providerFingerprint, capacityAggregation: "none",
   },
   "member-draw-payload.schema.json": {
     identityStrategy: "composite-local", gatewayDeploymentKey: "deployment", memberDisplayName: "Ada",
@@ -66,28 +74,30 @@ const schemaFixtures: Record<string, unknown> = {
     limitations: { snapshotCompleteness: "partial", stableMemberIdentity: "unavailable" },
   },
   "member-draw-projection.schema.json": {
-    memberDisplayName: "Ada", provider: "anthropic", reports: [drawReportFixture], enforcementState: "within-limit",
+    memberDisplayName: "Ada", provider: "anthropic", reports: [drawReportFixture],
   },
 };
 
 const requiredMutationPaths: Record<string, readonly string[]> = {
   "provider-pool-payload.schema.json": [
-    "identityStrategy", "gatewayDeploymentKey", "provider", "contributions", "models", "fingerprint", "sourceStatus", "limitations",
-    "limitations.snapshotCompleteness", "limitations.contributorAttribution", "limitations.contributionIdentity",
-    "contributions.0.provider", "contributions.0.declaredShare", "contributions.0.health", "contributions.0.capacity", "contributions.0.fingerprint",
-    "contributions.0.capacity.0.window", "contributions.0.capacity.0.usedFraction", "contributions.0.capacity.0.usedUnits",
-    "contributions.0.capacity.0.limitUnits", "contributions.0.capacity.0.resetsAt", "contributions.0.capacity.0.source", "contributions.0.capacity.0.observedAt",
-    "contributions.0.fingerprint.state", "contributions.0.fingerprint.templateSource", "contributions.0.fingerprint.since", "contributions.0.fingerprint.diffPresent",
-    "models.0.id", "models.0.provider", "models.0.surface", "models.0.upstreamModel", "models.0.contextWindow", "models.0.maxTokens", "models.0.reasoning", "models.0.available",
-    "fingerprint.anthropic.templateSource", "fingerprint.anthropic.capturedAt", "fingerprint.anthropic.capturePresent",
-    "fingerprint.anthropic.holdReason", "fingerprint.anthropic.heldAt", "fingerprint.anthropic.diffPresent",
-    "fingerprint.anthropic", "fingerprint.codex",
-    "sourceStatus.ok", "sourceStatus.anthropicHealth", "sourceStatus.contributions",
-    "sourceStatus.contributions.0.contributionId", "sourceStatus.contributions.0.provider", "sourceStatus.contributions.0.readings",
+    "identityStrategy", "gatewayDeploymentKey", "provider", "contributionListing", "statusTelemetry", "modelCatalog", "fingerprint", "limitations",
+    "limitations.snapshotCompleteness", "limitations.contributorAttribution", "limitations.contributionIdentity", "limitations.statusPoolJoin", "limitations.capacityAggregation",
+    "contributionListing.status", "contributionListing.contributions", "contributionListing.contributions.0.subKey",
+    "contributionListing.contributions.0.subKeySource", "contributionListing.contributions.0.subKeyStability", "contributionListing.contributions.0.attribution",
+    "contributionListing.contributions.0.declaredShare", "contributionListing.contributions.0.health",
+    "contributionListing.contributions.0.health.exhaustedUntil", "contributionListing.contributions.0.telemetryState",
+    "contributionListing.contributions.0.capacityReadings", "contributionListing.contributions.0.fingerprint",
+    "contributionListing.contributions.0.capacityReadings.0.window", "contributionListing.contributions.0.capacityReadings.0.usedFraction",
+    "contributionListing.contributions.0.capacityReadings.0.usedUnits", "contributionListing.contributions.0.capacityReadings.0.limitUnits",
+    "contributionListing.contributions.0.capacityReadings.0.resetsAt", "contributionListing.contributions.0.capacityReadings.0.source",
+    "contributionListing.contributions.0.capacityReadings.0.observedAt", "statusTelemetry.gatewayOk", "statusTelemetry.anthropicHealth",
+    "statusTelemetry.anthropicHealth.reason", "statusTelemetry.joinability", "statusTelemetry.contributions",
+    "modelCatalog.status", "modelCatalog.models", "modelCatalog.models.0.id", "modelCatalog.models.0.upstreamModel",
+    "fingerprint.status", "fingerprint.probe", "fingerprint.value",
   ],
   "provider-pool-projection.schema.json": [
-    "provider", "contributionCount", "totalDeclaredShare", "healthCounts", "anonymousContributions", "models", "fingerprint",
-    "healthCounts.fresh", "healthCounts.exhausted", "healthCounts.authBroken",
+    "provider", "contributionListing", "credentialHealthCounts", "totalDeclaredShare", "statusTelemetry", "modelCatalog", "fingerprint", "capacityAggregation",
+    "credentialHealthCounts.fresh", "credentialHealthCounts.exhausted", "credentialHealthCounts.authBroken",
   ],
   "member-draw-payload.schema.json": [
     "identityStrategy", "gatewayDeploymentKey", "memberDisplayName", "provider", "reports", "limitations",
@@ -95,7 +105,7 @@ const requiredMutationPaths: Record<string, readonly string[]> = {
     "reports.0.provider", "reports.0.limitFraction", "reports.0.fromDecree", "reports.0.consumedUnits",
     "reports.0.drawUnits", "reports.0.exceeded", "reports.0.enforceable", "reports.0.resetsAt",
   ],
-  "member-draw-projection.schema.json": ["memberDisplayName", "provider", "reports", "enforcementState"],
+  "member-draw-projection.schema.json": ["memberDisplayName", "provider", "reports"],
 };
 
 test("manifest pins the two literal resource kinds and four literal schema descriptors", () => {
@@ -144,7 +154,7 @@ test("Draft 2020-12 resource schemas compile and reject every independently list
     const schema = loadSchema(file);
     assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
     assert.equal(schema.additionalProperties, false);
-    assert.equal(/credential|password|prompt|response|diagnostic/i.test(JSON.stringify(schema)), false);
+    assert.equal(/password|prompt|response|diagnostic|accessToken|apiKey/i.test(JSON.stringify(schema)), false);
     const validate = ajv.getSchema(schema.$id);
     assert.ok(validate, `${file} must compile`);
     const fixture = schemaFixtures[file];
@@ -160,6 +170,12 @@ test("Draft 2020-12 resource schemas compile and reject every independently list
   assert.deepEqual(pool.$defs.capacity.properties.usedUnits.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.limitUnits.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.resetsAt.type, ["string", "null"]);
+  assert.deepEqual(pool.$defs.health.oneOf.map((variant: any) => variant.properties.state.const), ["fresh", "exhausted", "auth_broken"]);
+  assert.deepEqual(pool.$defs.contributionListing.oneOf.map((variant: any) => variant.properties.status.const), ["reported", "not-reported", "unavailable"]);
+  for (const file of ["provider-pool-payload.schema.json", "provider-pool-projection.schema.json"]) {
+    const rootProperties = Object.keys(loadSchema(file).properties);
+    assert.equal(rootProperties.some((key) => /usedFraction|remaining|selectedWindow|percentage|percent/i.test(key)), false);
+  }
   const draw = loadSchema("member-draw-payload.schema.json");
   assert.deepEqual(draw.$defs.drawReport.properties.drawUnits.type, ["number", "null"]);
 });

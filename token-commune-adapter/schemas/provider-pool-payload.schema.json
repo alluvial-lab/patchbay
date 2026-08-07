@@ -3,26 +3,35 @@
   "$id": "patchbay.token_commune.provider_pool.payload.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["identityStrategy", "gatewayDeploymentKey", "provider", "contributions", "models", "fingerprint", "sourceStatus", "limitations"],
+  "required": ["identityStrategy", "gatewayDeploymentKey", "provider", "contributionListing", "statusTelemetry", "modelCatalog", "fingerprint", "limitations"],
   "properties": {
     "identityStrategy": { "const": "composite-local" },
     "gatewayDeploymentKey": { "type": "string", "minLength": 1 },
     "provider": { "type": "string", "minLength": 1 },
-    "contributions": { "type": "array", "items": { "$ref": "#/$defs/contribution" } },
-    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
-    "fingerprint": { "$ref": "#/$defs/fingerprintSummary" },
-    "sourceStatus": { "$ref": "#/$defs/status" },
+    "contributionListing": { "$ref": "#/$defs/contributionListing" },
+    "statusTelemetry": { "$ref": "#/$defs/statusTelemetry" },
+    "modelCatalog": { "$ref": "#/$defs/modelCatalog" },
+    "fingerprint": { "$ref": "#/$defs/providerFingerprint" },
     "limitations": {
       "type": "object", "additionalProperties": false,
-      "required": ["snapshotCompleteness", "contributorAttribution", "contributionIdentity"],
+      "required": ["snapshotCompleteness", "contributorAttribution", "contributionIdentity", "statusPoolJoin", "capacityAggregation"],
       "properties": {
         "snapshotCompleteness": { "const": "partial" },
         "contributorAttribution": { "const": "unavailable" },
-        "contributionIdentity": { "const": "unjoinable" }
+        "contributionIdentity": { "const": "snapshot-local-synthesized" },
+        "statusPoolJoin": { "const": "unavailable" },
+        "capacityAggregation": { "const": "none" }
       }
     }
   },
   "$defs": {
+    "health": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "fresh" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "exhaustedUntil"], "properties": { "state": { "const": "exhausted" }, "exhaustedUntil": { "type": "string", "format": "date-time" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "auth_broken" }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } } }
+      ]
+    },
     "capacity": {
       "type": "object", "additionalProperties": false,
       "required": ["window", "usedFraction", "usedUnits", "limitUnits", "resetsAt", "source", "observedAt"],
@@ -36,25 +45,62 @@
         "observedAt": { "type": "string", "format": "date-time" }
       }
     },
-    "contribution": {
+    "poolFingerprint": {
       "type": "object", "additionalProperties": false,
-      "required": ["provider", "declaredShare", "health", "capacity", "fingerprint"],
+      "required": ["state", "templateSource", "since", "diffPresent"],
       "properties": {
-        "provider": { "type": "string", "minLength": 1 },
-        "declaredShare": { "type": "number", "minimum": 0, "maximum": 1 },
-        "health": { "enum": ["fresh", "exhausted", "auth-broken"] },
-        "capacity": { "type": "array", "items": { "$ref": "#/$defs/capacity" } },
-        "fingerprint": {
-          "type": "object", "additionalProperties": false,
-          "required": ["state", "templateSource", "since", "diffPresent"],
-          "properties": {
-            "state": { "enum": ["ok", "held", "unknown"] },
-            "templateSource": { "enum": ["compiled", "override"] },
-            "since": { "type": ["string", "null"], "format": "date-time" },
-            "diffPresent": { "type": "boolean" }
-          }
-        }
+        "state": { "enum": ["ok", "held", "unknown"] },
+        "templateSource": { "enum": ["compiled", "override"] },
+        "since": { "type": ["string", "null"], "format": "date-time" },
+        "diffPresent": { "type": "boolean" }
       }
+    },
+    "anonymousContribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["subKey", "subKeySource", "subKeyStability", "attribution", "declaredShare", "health", "telemetryState", "capacityReadings", "fingerprint"],
+      "properties": {
+        "subKey": { "type": "string", "pattern": "^local:anonymous-contribution:[0-9a-f]{24}:[1-9][0-9]*$" },
+        "subKeySource": { "const": "synthesized-content-hash" },
+        "subKeyStability": { "const": "snapshot-local" },
+        "attribution": { "const": "unavailable" },
+        "declaredShare": { "type": "number", "minimum": 0, "maximum": 1 },
+        "health": { "$ref": "#/$defs/health" },
+        "telemetryState": { "enum": ["readings", "no-readings"] },
+        "capacityReadings": { "type": "array", "items": { "$ref": "#/$defs/capacity" } },
+        "fingerprint": { "$ref": "#/$defs/poolFingerprint" }
+      }
+    },
+    "contributionListing": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["status", "contributions"], "properties": { "status": { "const": "reported" }, "contributions": { "type": "array", "items": { "$ref": "#/$defs/anonymousContribution" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["status", "contributions"], "properties": { "status": { "const": "not-reported" }, "contributions": { "type": "array", "maxItems": 0 } } },
+        { "type": "object", "additionalProperties": false, "required": ["status", "contributions"], "properties": { "status": { "const": "unavailable" }, "contributions": { "type": "array", "maxItems": 0 } } }
+      ]
+    },
+    "statusContribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contributionId", "provider", "readings"],
+      "properties": {
+        "contributionId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "readings": { "type": "array", "items": { "$ref": "#/$defs/capacity" } }
+      }
+    },
+    "statusTelemetry": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "gatewayOk", "anthropicHealth", "joinability", "contributions"],
+          "properties": {
+            "status": { "const": "reported" }, "gatewayOk": { "type": "boolean" },
+            "anthropicHealth": { "oneOf": [{ "$ref": "#/$defs/health" }, { "type": "null" }] },
+            "joinability": { "const": "unjoinable-with-pool-rows" },
+            "contributions": { "type": "array", "items": { "$ref": "#/$defs/statusContribution" } }
+          }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["status", "contributions"], "properties": { "status": { "const": "not-reported" }, "contributions": { "type": "array", "maxItems": 0 } } },
+        { "type": "object", "additionalProperties": false, "required": ["status", "contributions"], "properties": { "status": { "const": "unavailable" }, "contributions": { "type": "array", "maxItems": 0 } } }
+      ]
     },
     "model": {
       "type": "object", "additionalProperties": false,
@@ -66,6 +112,12 @@
         "reasoning": { "type": "boolean" }, "available": { "type": "boolean" }
       }
     },
+    "modelCatalog": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["status", "models"], "properties": { "status": { "const": "reported" }, "models": { "type": "array", "items": { "$ref": "#/$defs/model" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["status", "models"], "properties": { "status": { "const": "unavailable" }, "models": { "type": "array", "maxItems": 0 } } }
+      ]
+    },
     "fingerprintState": {
       "type": "object", "additionalProperties": false,
       "required": ["templateSource", "capturedAt", "capturePresent", "holdReason", "heldAt", "diffPresent"],
@@ -75,24 +127,11 @@
         "heldAt": { "type": ["string", "null"], "format": "date-time" }, "diffPresent": { "type": "boolean" }
       }
     },
-    "fingerprintSummary": {
-      "type": "object", "additionalProperties": false, "required": ["anthropic", "codex"],
-      "properties": { "anthropic": { "$ref": "#/$defs/fingerprintState" }, "codex": { "$ref": "#/$defs/fingerprintState" } }
-    },
-    "status": {
-      "type": "object", "additionalProperties": false, "required": ["ok", "anthropicHealth", "contributions"],
-      "properties": {
-        "ok": { "type": "boolean" },
-        "anthropicHealth": { "enum": ["fresh", "exhausted", "auth-broken"] },
-        "contributions": { "type": "array", "items": {
-          "type": "object", "additionalProperties": false, "required": ["contributionId", "provider", "readings"],
-          "properties": {
-            "contributionId": { "type": "string", "minLength": 1 },
-            "provider": { "type": "string", "minLength": 1 },
-            "readings": { "type": "array", "items": { "$ref": "#/$defs/capacity" } }
-          }
-        } }
-      }
+    "providerFingerprint": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["status", "probe", "value"], "properties": { "status": { "const": "reported" }, "probe": { "enum": ["anthropic", "openai-codex"] }, "value": { "$ref": "#/$defs/fingerprintState" } } },
+        { "type": "object", "additionalProperties": false, "required": ["status", "probe", "reason"], "properties": { "status": { "const": "unknown" }, "probe": { "type": ["string", "null"], "enum": ["anthropic", "openai-codex", null] }, "reason": { "enum": ["probe-unavailable", "not-probed"] } } }
+      ]
     }
   }
 }
