@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-adapter-foundation]
@@ -698,6 +698,18 @@ The locked no-aggregate and per-provider honesty model is incorporated above.
   the existing operational-resource manifest. No Pi/core enum, surface-only
   state, second operator assumption, federation key change, or parked UI/mesh
   direction is introduced.
+
+## Implementation summary
+
+- **Execution capability:** `openai-codex/gpt-5.6-sol` (explicit caller override), executed by one owning worker with no sub-worker fan-out. The five-story chain shared the same projection/schema/test write set, so cohesive sequential ownership avoided integration handoffs.
+- Added `src/resource_envelope.ts` and `src/snapshot_projection.ts`: one pure, timestamp-injected projector over typed endpoint states, plus manifest-bound Ajv JSON validation and generated Protobuf report construction.
+- Tightened gateway health decoding and the four existing `.v1` JSON contracts in place. The two existing ResourceKinds, four schema refs, and PARTIAL manifest declarations remain the single source of truth.
+- Provider-pool output preserves anonymous contribution × window readings and nulls, native exhausted/auth-broken detail, unjoinable status rows, exact model ids/null upstream ids, and only the Anthropic/Codex fingerprint probes. Anonymous sub-keys are labeled snapshot-local content hashes and never become resource identities or ownership.
+- Member-draw output preserves every same-provider report and all native provenance/calibration fields without aggregate enforcement state.
+- Completeness is deliberately narrow: current classifiable evidence emits only upserts; absent identities are omitted from PARTIAL views; no `unknown`, tombstone, replacement, provider-level capacity percentage, or selected-window aggregate is emitted.
+- **Verification:** final standalone `npm run build` passed; final `npm test` passed 32/32; `git diff --check` passed; the feature-transition worktree was clean before this item update.
+- **Mutation evidence:** three production mutants were applied, observed failing, and reverted: PARTIAL→AUTHORITATIVE, same-provider draw collapse to one row, and fabricated reported fingerprint evidence for a no-probe provider. The corresponding focused tests each exited non-zero; the restored tree then passed the full suite.
+- **Deviations/blockers:** none. Polling, RPC emission, cockpit code, Observations, and conformance-vector promotion remain outside this feature as designed.
 
 ## Review handoff
 
