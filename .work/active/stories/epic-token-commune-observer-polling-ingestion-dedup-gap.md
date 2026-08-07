@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-dedup-gap
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: [epic-token-commune-observer-polling-ingestion-event-observation-map]
@@ -51,3 +51,14 @@ or history older than the source window.
 
 Depends on the stable event mapper. Process supervision must preserve this
 tracker across same-process core reconnect and reset it only on process start.
+
+## Implementation notes
+
+Implemented `LatestEventWindowTracker` as bounded process-local state. The
+first page is a non-replayed baseline; overlapping pages emit only newly visible
+ids; empty-to-short remains continuous; empty-to-50, no-anchor rollover, and
+history-empty transitions produce explicit measured gaps. Event ids and gap
+targets advance only after core acknowledgement, accepted partial output is not
+duplicated, failed output remains retryable, and the visible page commits only
+after all planned work completes. Tests cover same-timestamp ordering,
+duplicate-page rejection, declared-only consumption, and the no-cursor boundary.
