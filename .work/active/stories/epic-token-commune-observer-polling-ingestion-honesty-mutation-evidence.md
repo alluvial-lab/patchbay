@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-honesty-mutation-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, testing]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: [epic-token-commune-observer-polling-ingestion-disconnect-reconnect]
@@ -53,3 +53,26 @@ downstream real-core conformance feature.
 Final checkpoint: it depends on the complete supervised runtime. Child stories
 advance directly to done only with green evidence; thorough review occurs at the
 integrated parent feature boundary.
+
+## Implementation notes
+
+The deterministic suite now has 55 package tests. Independent fixtures protect
+polling/non-overlap and Retry-After, PARTIAL/source omission, refresh versus
+source timestamps, exact five-kind STATUS/resource mapping, declared-only
+handling, initial/no-overlap gap honesty, acknowledgement-aware dedup, and
+no-liveness reconnect behavior.
+
+Executed and reverted three production mutants:
+
+- `PARTIAL -> AUTHORITATIVE` in snapshot projection: focused poller tests exited
+  1 with two PARTIAL-honesty failures.
+- event-id acknowledgement moved before core ingress: focused poller tests exited
+  1 at the pre-ack retry assertion.
+- `calibration` removed from the declared-only branch: focused mapper tests
+  exited 1 at declared-only coverage.
+
+After restoration, `npm run build`, all 55 `npm test` cases,
+`cargo test -p patchbay-core --test acceptance_observation`, and
+`git diff --check` pass. `cargo test -p patchbay-core --tests` also passes; the
+repository-wide doctest lane remains separately broken by its pre-existing
+rustdoc dependency-resolution failure and is not part of the package gate.
