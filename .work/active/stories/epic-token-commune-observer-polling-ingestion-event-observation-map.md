@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-event-observation-map
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: [epic-token-commune-observer-polling-ingestion-report-emission]
@@ -54,3 +54,14 @@ result and diagnostic; do not claim production coverage or silently map them.
 
 Depends on report ingress so observations are emitted only after their resource
 report. The latest-window tracker decides which mapped facts are eligible next.
+
+## Implementation notes
+
+Added the single event-kind disposition registry, two closed Draft 2020-12 JSON
+schemas, and pure pool-event/gap mappers. Exactly the five production kinds map
+to STATUS with authenticated adapter sender, exact provider-pool resource scope,
+adapter-owned schema refs, polling/latest-50 labels, and source `occurredAt`.
+`window_exhausted` and `calibration` remain decodable declared-only outcomes;
+unknown kinds and malformed values fail closed. Independent literal tests also
+prove gap payloads expose measured window evidence without a missed count or
+authoritative continuity claim.
