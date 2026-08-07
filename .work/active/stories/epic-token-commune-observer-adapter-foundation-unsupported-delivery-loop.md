@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation-unsupported-delivery-loop
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, integration]
 parent: epic-token-commune-observer-adapter-foundation
 depends_on: [epic-token-commune-observer-adapter-foundation-attachment-lifecycle]
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # Keep delivery liveness open and reject all Operations honestly
@@ -52,3 +52,27 @@ later conformance feature.
 Final checkpoint in this feature. Do not implement snapshot mapping, polling,
 resource reports, cockpit UI, mutation translation, or promoted conformance
 vectors.
+
+## Implementation notes
+
+- The delivery loop holds one subscription open, treats finite completion as
+  unavailable, reconnects only the established retryable Connect failures,
+  acknowledges before advancing its LSN cursor, and emits exactly one
+  `UNSUPPORTED_COMMAND` result without running, translating, invoking the
+  gateway, or claiming success.
+- Added serial real-core evidence for the durable registration, idle stream,
+  accepted adapter delivery, delivered→unsupported terminalization, secret
+  absence, and clean abort/disposal. The current core does not resolve an
+  adapter-scope target through ordinary `Submit`, so the test seeds one
+  already-accepted durable adapter Operation using the same fixture technique
+  as the Pi adapter's stale-delivery test; it does not fabricate a resource
+  report before snapshot mapping exists.
+- Implementation discovery: current core ingestion maps every adapter RESULT
+  carrying a failure code to `CommandState.FAILED`; consequently the real-core
+  terminal is `FAILED` with canonical `UNSUPPORTED_COMMAND`, not `REJECTED`.
+  Changing that core-wide lifecycle mapping is outside this sibling-package
+  feature. The adapter still performs the requested acknowledge-then-fail
+  unsupported behavior, and the discrepancy is explicit for feature review.
+- Verification: integrated `npm test` passed, including acknowledge-before-
+  unsupported ordering, finite-tail retry, abort/dispose behavior, exact real
+  manifest assertions, core terminal failure code, and secret scans.
