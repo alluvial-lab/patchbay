@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping-member-draw-projection
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: [epic-token-commune-observer-snapshot-mapping-provider-pool-projection]
@@ -35,3 +35,10 @@ Map reported `/commune/me` state into one member-draw resource per `(display nam
 ## Ordering
 
 Depends on provider-pool projection so both kinds share one settled deterministic report assembly and envelope contract.
+
+## Implementation notes
+
+- Grouped `/commune/me` reports only by exact provider for identity selection and retained every deterministically ordered same-provider row.
+- Preserved `limitFraction`, `fromDecree`, consumed/draw units, exceeded/enforceable booleans, and nullable reset values without derived enforcement or cross-provider totals.
+- Empty/unavailable member reads emit no mutations; display-name churn synthesizes distinct identities and never emits replacement/tombstone evidence.
+- Verification: `npm run build` and `npm test` passed (29 tests).

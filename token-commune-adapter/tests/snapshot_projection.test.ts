@@ -71,7 +71,7 @@ function decoded(envelope: { payload: Uint8Array }): any {
   return JSON.parse(new TextDecoder().decode(envelope.payload));
 }
 
-function providerRows(input: TokenCommuneSnapshotProjectionInput): Array<{
+function projectedRows(input: TokenCommuneSnapshotProjectionInput, viewIndex: number): Array<{
   identity: string;
   payload: any;
   projection: any;
@@ -79,8 +79,7 @@ function providerRows(input: TokenCommuneSnapshotProjectionInput): Array<{
   const report = projectTokenCommuneSnapshot(input);
   assert.equal(report.report.case, "snapshot");
   if (report.report.case !== "snapshot") assert.fail("expected snapshot report");
-  const view = report.report.value.views[0];
-  assert.equal(view?.resourceKind?.value, "token-commune.provider-pool");
+  const view = report.report.value.views[viewIndex];
   return (view?.mutations ?? []).map((mutation) => {
     assert.equal(mutation.mutation.case, "upsert");
     if (mutation.mutation.case !== "upsert") assert.fail("expected upsert");
@@ -92,6 +91,14 @@ function providerRows(input: TokenCommuneSnapshotProjectionInput): Array<{
       projection: decoded(mutation.mutation.value.projectionPayload),
     };
   });
+}
+
+function providerRows(input: TokenCommuneSnapshotProjectionInput) {
+  return projectedRows(input, 0);
+}
+
+function memberRows(input: TokenCommuneSnapshotProjectionInput) {
+  return projectedRows(input, 1);
 }
 
 test("manifest-bound envelope construction validates JSON and selects literal descriptors", () => {
@@ -231,4 +238,51 @@ test("provider mapping is deterministic across source-row reordering and rejects
     () => projectTokenCommuneSnapshot({ ...baseInput, identities: mismatchedIdentities, gateway: allSourcesGateway }),
     (error: unknown) => error instanceof SnapshotProjectionError && error.code === "identity-mismatch",
   );
+});
+
+test("member-draw projection retains every same-provider row and native provenance/calibration nulls", () => {
+  const rows = memberRows({ ...baseInput, gateway: allSourcesGateway });
+  assert.deepEqual(rows.map(({ projection }) => projection.provider), ["anthropic", "openai-codex"]);
+  const anthropic = rows[0];
+  assert.ok(anthropic);
+  assert.match(anthropic.identity, /^local:member-draw:/);
+  assert.equal(anthropic.projection.memberDisplayName, "Ada");
+  assert.equal(anthropic.projection.reports.length, 2, "same-provider reports are not collapsed");
+  assert.deepEqual(anthropic.projection.reports, [
+    {
+      provider: "anthropic", limitFraction: 0.2, fromDecree: false, consumedUnits: 0,
+      drawUnits: 0, exceeded: false, enforceable: true, resetsAt: "2026-08-09T00:00:00.000Z",
+    },
+    {
+      provider: "anthropic", limitFraction: 0.6, fromDecree: true, consumedUnits: 11,
+      drawUnits: null, exceeded: false, enforceable: false, resetsAt: null,
+    },
+  ]);
+  assert.deepEqual(anthropic.payload.reports, anthropic.projection.reports);
+  assert.equal(Object.hasOwn(anthropic.projection, "enforcementState"), false);
+  assert.equal(["total", "average", "selectedReport", "usedFraction"].some((key) => Object.hasOwn(anthropic.projection, key)), false);
+
+  const codex = rows[1];
+  assert.ok(codex);
+  assert.deepEqual(codex.projection.reports, [{
+    provider: "openai-codex", limitFraction: 0.4, fromDecree: false, consumedUnits: 3,
+    drawUnits: 4.5, exceeded: true, enforceable: true, resetsAt: "2026-08-08T00:00:00.000Z",
+  }]);
+});
+
+test("member-draw omission and display-name churn never infer aggregate, unknown, or retirement", () => {
+  const emptyGateway = structuredClone(allSourcesGateway);
+  if (emptyGateway.me.status === "reported") (emptyGateway.me.value as any).reports = [];
+  assert.deepEqual(memberRows({ ...baseInput, gateway: emptyGateway }), []);
+  assert.deepEqual(memberRows({
+    ...baseInput,
+    gateway: { ...allSourcesGateway, me: { status: "unavailable" } },
+  }), []);
+
+  const renamedGateway = structuredClone(allSourcesGateway);
+  if (renamedGateway.me.status === "reported") (renamedGateway.me.value as any).displayName = "Grace";
+  const before = memberRows({ ...baseInput, gateway: allSourcesGateway });
+  const after = memberRows({ ...baseInput, gateway: renamedGateway });
+  assert.equal(before.length, after.length);
+  assert.ok(before.every((row, index) => row.identity !== after[index]?.identity));
 });

@@ -66,7 +66,26 @@ export const allSourcesGateway: TokenCommuneGatewaySnapshot = {
       ],
     },
   },
-  me: { status: "reported", value: { displayName: "Ada", reports: [] } },
+  me: {
+    status: "reported",
+    value: {
+      displayName: "Ada",
+      reports: [
+        {
+          provider: "anthropic", limitFraction: 0.6, fromDecree: true, consumedUnits: 11,
+          drawUnits: null, exceeded: false, enforceable: false, resetsAt: null,
+        },
+        {
+          provider: "openai-codex", limitFraction: 0.4, fromDecree: false, consumedUnits: 3,
+          drawUnits: 4.5, exceeded: true, enforceable: true, resetsAt: "2026-08-08T00:00:00.000Z",
+        },
+        {
+          provider: "anthropic", limitFraction: 0.2, fromDecree: false, consumedUnits: 0,
+          drawUnits: 0, exceeded: false, enforceable: true, resetsAt: "2026-08-09T00:00:00.000Z",
+        },
+      ],
+    },
+  },
   fingerprints: {
     status: "reported",
     value: {

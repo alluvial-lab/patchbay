@@ -18,6 +18,7 @@ import {
 } from "@patchbay/contracts";
 import type {
   GatewayCapacityReading,
+  GatewayDrawReport,
   GatewayFingerprints,
   GatewayMe,
   GatewayModel,
@@ -38,6 +39,8 @@ import {
   TOKEN_COMMUNE_RESOURCES,
   type AnonymousPoolContribution,
   type ContributionListing,
+  type MemberDrawPayload,
+  type MemberDrawProjection,
   type ProviderFingerprint,
   type ProviderModelCatalog,
   type ProviderPoolPayload,
@@ -84,7 +87,7 @@ export function projectTokenCommuneSnapshot(
   try {
     const mutations: Record<TokenCommuneResourceName, ResourceReportMutation[]> = {
       providerPool: projectProviderPools(input),
-      memberDraw: [],
+      memberDraw: projectMemberDraws(input),
     };
     const views = (Object.keys(TOKEN_COMMUNE_RESOURCES) as TokenCommuneResourceName[]).map((name) =>
       create(ResourceViewReportSchema, {
@@ -161,6 +164,39 @@ function projectProviderPools(input: TokenCommuneSnapshotProjectionInput): Resou
       capacityAggregation: "none",
     };
     return upsertMutation(input, "providerPool", input.identities.providerPool(provider), payload, projection);
+  });
+}
+
+function projectMemberDraws(input: TokenCommuneSnapshotProjectionInput): ResourceReportMutation[] {
+  if (input.gateway.me.status === "unavailable" || input.gateway.me.value.reports.length === 0) return [];
+  const memberDisplayName = input.gateway.me.value.displayName;
+  const providers = new Set(input.gateway.me.value.reports.map(({ provider }) => provider));
+  return [...providers].sort(compareText).map((provider) => {
+    const reports = input.gateway.me.status === "reported"
+      ? input.gateway.me.value.reports
+        .filter((report) => report.provider === provider)
+        .map(copyDrawReport)
+        .sort((left, right) => compareText(stableJson(left), stableJson(right)))
+      : [];
+    const payload: MemberDrawPayload = {
+      identityStrategy: "composite-local",
+      gatewayDeploymentKey: input.identities.gatewayDeploymentKey,
+      memberDisplayName,
+      provider,
+      reports,
+      limitations: {
+        snapshotCompleteness: "partial",
+        stableMemberIdentity: "unavailable",
+      },
+    };
+    const projection: MemberDrawProjection = { memberDisplayName, provider, reports };
+    return upsertMutation(
+      input,
+      "memberDraw",
+      input.identities.memberDraw(memberDisplayName, provider),
+      payload,
+      projection,
+    );
   });
 }
 
@@ -305,6 +341,10 @@ function sortStatusContributions(rows: readonly GatewayStatusContribution[]): Ga
 
 function copyModel(model: GatewayModel): GatewayModel {
   return { ...model };
+}
+
+function copyDrawReport(report: GatewayDrawReport): GatewayDrawReport {
+  return { ...report };
 }
 
 function stableJson(value: unknown): string {
