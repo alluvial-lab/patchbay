@@ -11,6 +11,8 @@ web-server/node_modules/
 web-server/dist/
 pi-adapter/node_modules/
 pi-adapter/dist/
+token-commune-adapter/node_modules/
+token-commune-adapter/dist/
 
 # local output: generated artifacts, scratch docs, anything not source
 out/

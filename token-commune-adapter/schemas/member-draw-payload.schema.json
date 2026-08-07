@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "patchbay.token_commune.member_draw.payload.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identityStrategy", "gatewayDeploymentKey", "memberDisplayName", "provider", "reports", "limitations"],
+  "properties": {
+    "identityStrategy": { "const": "composite-local" },
+    "gatewayDeploymentKey": { "type": "string", "minLength": 1 },
+    "memberDisplayName": { "type": "string", "minLength": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "reports": { "type": "array", "items": { "$ref": "#/$defs/drawReport" } },
+    "limitations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshotCompleteness", "stableMemberIdentity"],
+      "properties": { "snapshotCompleteness": { "const": "partial" }, "stableMemberIdentity": { "const": "unavailable" } }
+    }
+  },
+  "$defs": {
+    "drawReport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "limitFraction", "fromDecree", "consumedUnits", "drawUnits", "exceeded", "enforceable", "resetsAt"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "limitFraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "fromDecree": { "type": "boolean" },
+        "consumedUnits": { "type": "number", "minimum": 0 },
+        "drawUnits": { "type": ["number", "null"], "minimum": 0 },
+        "exceeded": { "type": "boolean" },
+        "enforceable": { "type": "boolean" },
+        "resetsAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}

@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation-contract-foundation
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, integration]
 parent: epic-token-commune-observer-adapter-foundation
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # Establish the token-commune package and stable resource contract
@@ -55,3 +55,18 @@ and capacity rows.
 This checkpoint owns the stable seams used by every later story and by the
 `snapshot-mapping` and `polling-ingestion` features. Do not implement HTTP
 polling or resource reports here.
+
+## Implementation notes
+
+- Created the strict Node 22 sibling package, fail-fast environment loader,
+  single resource/schema registry, four closed Draft 2020-12 schemas, composite
+  local identity synthesizer, and exact operational-resource manifest.
+- Kept both kinds at `PARTIAL`, the session tier unspecified, and the supported
+  OperationKind set empty. No polling, resource report, or capacity aggregation
+  was introduced.
+- Implemented the feature as one cohesive owning-worker change because the five
+  checkpoints share generated contracts, manifest registries, and one package
+  build; later story commits record their separately verified checkpoint
+  transitions.
+- Verification: `npm run build` and the integrated `npm test` suite passed (18
+  tests, including manifest/config/schema/identity coverage).

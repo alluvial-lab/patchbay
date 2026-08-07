@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "patchbay.token_commune.member_draw.projection.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["memberDisplayName", "provider", "reports", "enforcementState"],
+  "properties": {
+    "memberDisplayName": { "type": "string", "minLength": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "reports": { "type": "array", "items": { "$ref": "member-draw-payload.schema.json#/$defs/drawReport" } },
+    "enforcementState": { "enum": ["unknown", "within-limit", "exceeded"] }
+  }
+}

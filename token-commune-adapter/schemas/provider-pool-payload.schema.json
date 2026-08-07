@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "patchbay.token_commune.provider_pool.payload.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identityStrategy", "gatewayDeploymentKey", "provider", "contributions", "models", "fingerprint", "sourceStatus", "limitations"],
+  "properties": {
+    "identityStrategy": { "const": "composite-local" },
+    "gatewayDeploymentKey": { "type": "string", "minLength": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "contributions": { "type": "array", "items": { "$ref": "#/$defs/contribution" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+    "fingerprint": { "$ref": "#/$defs/fingerprintSummary" },
+    "sourceStatus": { "$ref": "#/$defs/status" },
+    "limitations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshotCompleteness", "contributorAttribution", "contributionIdentity"],
+      "properties": {
+        "snapshotCompleteness": { "const": "partial" },
+        "contributorAttribution": { "const": "unavailable" },
+        "contributionIdentity": { "const": "unjoinable" }
+      }
+    }
+  },
+  "$defs": {
+    "capacity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["window", "usedFraction", "usedUnits", "limitUnits", "resetsAt", "source", "observedAt"],
+      "properties": {
+        "window": { "type": "string", "minLength": 1 },
+        "usedFraction": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "usedUnits": { "type": ["number", "null"], "minimum": 0 },
+        "limitUnits": { "type": ["number", "null"], "minimum": 0 },
+        "resetsAt": { "type": ["string", "null"], "format": "date-time" },
+        "source": { "enum": ["headers", "usage_endpoint", "observed_429", "declared"] },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "contribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "declaredShare", "health", "capacity", "fingerprint"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "declaredShare": { "type": "number", "minimum": 0, "maximum": 1 },
+        "health": { "enum": ["fresh", "exhausted", "auth-broken"] },
+        "capacity": { "type": "array", "items": { "$ref": "#/$defs/capacity" } },
+        "fingerprint": {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "templateSource", "since", "diffPresent"],
+          "properties": {
+            "state": { "enum": ["ok", "held", "unknown"] },
+            "templateSource": { "enum": ["compiled", "override"] },
+            "since": { "type": ["string", "null"], "format": "date-time" },
+            "diffPresent": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "provider", "surface", "upstreamModel", "contextWindow", "maxTokens", "reasoning", "available"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "provider": { "type": "string", "minLength": 1 },
+        "surface": { "type": "string", "minLength": 1 }, "upstreamModel": { "type": ["string", "null"] },
+        "contextWindow": { "type": "number", "exclusiveMinimum": 0 }, "maxTokens": { "type": "number", "exclusiveMinimum": 0 },
+        "reasoning": { "type": "boolean" }, "available": { "type": "boolean" }
+      }
+    },
+    "fingerprintState": {
+      "type": "object", "additionalProperties": false,
+      "required": ["templateSource", "capturedAt", "capturePresent", "holdReason", "heldAt", "diffPresent"],
+      "properties": {
+        "templateSource": { "type": ["string", "null"] }, "capturedAt": { "type": ["string", "null"], "format": "date-time" },
+        "capturePresent": { "type": "boolean" }, "holdReason": { "type": ["string", "null"] },
+        "heldAt": { "type": ["string", "null"], "format": "date-time" }, "diffPresent": { "type": "boolean" }
+      }
+    },
+    "fingerprintSummary": {
+      "type": "object", "additionalProperties": false, "required": ["anthropic", "codex"],
+      "properties": { "anthropic": { "$ref": "#/$defs/fingerprintState" }, "codex": { "$ref": "#/$defs/fingerprintState" } }
+    },
+    "status": {
+      "type": "object", "additionalProperties": false, "required": ["ok", "anthropicHealth", "contributions"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "anthropicHealth": { "enum": ["fresh", "exhausted", "auth-broken"] },
+        "contributions": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["contributionId", "provider", "readings"],
+          "properties": {
+            "contributionId": { "type": "string", "minLength": 1 },
+            "provider": { "type": "string", "minLength": 1 },
+            "readings": { "type": "array", "items": { "$ref": "#/$defs/capacity" } }
+          }
+        } }
+      }
+    }
+  }
+}
