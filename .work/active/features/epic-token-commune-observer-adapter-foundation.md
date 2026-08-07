@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-adapter-foundation
 kind: feature
-stage: review
+stage: done
 tags: [adapter, protocol, integration]
 parent: epic-token-commune-observer
 depends_on: []
@@ -900,3 +900,12 @@ Effective implementation review weight is **thorough** (source: explicit caller)
 Feature review and the autopilot final-completion review must receive that value
 unchanged. Reviewer findings are proposals for receiver adjudication; a pass is
 cross-model only when the harness actually selects a different model class.
+
+## Review (thorough, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), convergence.
+
+- **Pass 1 (BLOCK):** 5 blockers + 3 importants + 1 nit. Blockers: (1) lost unsupported terminalization after ack (cursor advanced before the failing RESULT retry); (2) fingerprint decoding fabricated presence from omitted fields (`undefined !== null`); (3) vacuous acknowledgement test (`-1 < indexOf(...)`); (4) self-referential manifest/schema tests (production data as own oracle); (5) no mutation-sensitive transport-error redaction test. Importants: no intrinsic request deadline; retry abort-listener accumulation; diagnostic timeout re-awaited the timed-out request. All fixed at `54679ea`; 18→22 tests; mutation-checked.
+- **Pass 2 (APPROVE):** all nine remediations verified correct + mutation-sensitive (six independent mutation checks confirmed failures); no new material blocker; 22/22 tests, clean build. One doc-consistency nit (stale "rejected" wording in the done delivery-loop child story) fixed.
+
+Converged. Advanced to `done`.

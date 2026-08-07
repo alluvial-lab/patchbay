@@ -26,7 +26,7 @@ successful execution.
 
 Add one bounded serial real-core E2E test that reads back the durable manifest,
 keeps an idle stream open, delivers one adapter-targeted committed `query`
-Operation, observes acknowledgement plus canonical unsupported rejection, scans all
+Operation, observes acknowledgement plus canonical unsupported failure terminalization, scans all
 visible payload/diagnostic material for both secrets, and shuts down cleanly.
 This is implementation evidence only; promoted conformance belongs to the
 later conformance feature.
@@ -35,7 +35,7 @@ later conformance feature.
 
 - Idle subscription remains pending until abort; a finite tail reconnects and is
   never accepted as liveness.
-- Unsupported delivery is acknowledged then rejected once with
+- Unsupported delivery is acknowledged then failed once with
   `FailureCode.UNSUPPORTED_COMMAND`, without a `running` state or gateway call.
 - Cursor/reattach tests prove acknowledged history is not re-acknowledged after
   stream replacement or token refresh.
