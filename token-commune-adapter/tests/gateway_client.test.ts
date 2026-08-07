@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createHttpTokenCommuneGatewayClient, GATEWAY_ENDPOINTS, GatewayClientError } from "../src/gateway_client.js";
+import {
+  createHttpTokenCommuneGatewayClient,
+  GATEWAY_ENDPOINTS,
+  GatewayClientError,
+  MAX_RETRY_AFTER_MS,
+} from "../src/gateway_client.js";
 import type { GatewayCredential } from "../src/credential.js";
 
 const credential: GatewayCredential = {
@@ -87,16 +92,20 @@ test("client rejects redirects, oversized/malformed bodies, invalid values, and 
   });
 });
 
-test("retryable HTTP failures expose only normalized Retry-After advice", async () => {
+test("retryable HTTP failures expose only bounded strict Retry-After advice", async () => {
   const cases = [
     ["120", { retryAfterMs: 120_000 }],
     ["Fri, 07 Aug 2026 12:02:00 GMT", { retryAt: "2026-08-07T12:02:00.000Z" }],
+    ["-1", { invalid: true }],
+    ["2026-08-07T12:02:00Z", { invalid: true }],
     ["member-key secret response-body", { invalid: true }],
-    ["999999999999999999999999", { invalid: true }],
+    ["999999999999999999999999", { retryAfterMs: MAX_RETRY_AFTER_MS, invalid: true }],
+    ["Fri, 31 Dec 9999 23:59:59 GMT", { retryAfterMs: MAX_RETRY_AFTER_MS, invalid: true }],
   ] as const;
   for (const [header, expected] of cases) {
     const client = createHttpTokenCommuneGatewayClient({
       baseUrl: new URL("https://gateway.example/"), credential,
+      now: () => new Date("2026-08-07T12:00:00.000Z"),
       fetch: async () => new Response("response-body-secret", { status: 429, headers: { "Retry-After": header } }),
     });
     await assert.rejects(client.getStatus(), (error: unknown) => {

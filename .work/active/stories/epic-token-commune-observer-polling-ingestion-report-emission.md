@@ -68,5 +68,10 @@ as a command-lifecycle candidate. Foundation semantics already permit generic
 resource STATUS facts, so the acceptance boundary now admits only the narrow
 uncorrelated, exact-resource, `FailureCode.UNSPECIFIED` shape and keeps malformed
 or lifecycle-shaped STATUS evidence fail-closed. Its audit projection no longer
-mislabels that shape as `CommandRunning`. Core acceptance tests and the real-core
-adapter test cover the seam.
+mislabels that shape as `CommandRunning`. Direct core acceptance tests cover the
+canonical STATUS shape. Authenticated adapter-service coverage now attaches the
+resource adapter, reports the target,
+ingests the uncorrelated resource STATUS, and verifies one Observation with no
+command transition plus cross-adapter and mixed-target rejection. The adapter's
+real-process e2e still uses an empty event page and does not itself exercise
+STATUS emission.

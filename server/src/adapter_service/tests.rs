@@ -515,6 +515,145 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
 }
 
 #[tokio::test]
+async fn authenticated_resource_status_records_one_observation_and_fences_invalid_targets() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let mut resource_registration = registration(domain.clone());
+    resource_registration.capability = Some(AdapterCapability {
+        target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
+        resource_capabilities: vec![resource_declaration(
+            "provider_pool",
+            AdapterSnapshotSupport::Partial,
+        )],
+        ..AdapterCapability::default()
+    });
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(resource_registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("resource adapter attaches");
+    let token = attachment_token(&attached);
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(
+                    resource_snapshot_report(
+                        1,
+                        &[("provider_pool", AdapterSnapshotSupport::Partial)],
+                    ),
+                )),
+            },
+            &token,
+        ))
+        .await
+        .expect("resource is admitted before status ingestion");
+
+    let status = Observation {
+        authority_domain_id: Some(domain.clone()),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId { value: adapter_id().value.clone() }),
+            ..ActorEndpointRef::default()
+        }),
+        kind: ObservationKind::Status as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Resource as i32,
+            resource: Some(resource_identity("provider_pool", "resource-1")),
+            ..TargetScope::default()
+        }),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    };
+    let before = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read")
+        .len();
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(status.clone())),
+            },
+            &token,
+        ))
+        .await
+        .expect("authenticated resource status succeeds");
+    let after_status = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read");
+    let appended = &after_status[before..];
+    assert_eq!(appended.len(), 1, "status appends exactly one durable event");
+    assert_eq!(appended[0].payload.kind, StoredEventKind::Observation as i32);
+    assert!(appended
+        .iter()
+        .all(|event| event.payload.kind != StoredEventKind::CommandTransition as i32));
+
+    let mut cross_adapter = status.clone();
+    cross_adapter
+        .target_scope
+        .as_mut()
+        .and_then(|target| target.resource.as_mut())
+        .and_then(|resource| resource.adapter_id.as_mut())
+        .expect("resource adapter id")
+        .value = "other-adapter".into();
+    assert_eq!(
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::Event(cross_adapter)),
+                },
+                &token,
+            ))
+            .await
+            .expect_err("cross-adapter status rejects")
+            .code(),
+        tonic::Code::PermissionDenied
+    );
+
+    let mut mixed_target = status;
+    mixed_target
+        .target_scope
+        .as_mut()
+        .expect("target scope")
+        .runtime_session_id = Some(RuntimeSessionId { value: "session-1".into() });
+    assert_eq!(
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::Event(mixed_target)),
+                },
+                &token,
+            ))
+            .await
+            .expect_err("mixed resource/session target rejects")
+            .code(),
+        tonic::Code::PermissionDenied
+    );
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .expect("events read")
+            .len(),
+        after_status.len(),
+        "target fencing rejects before durable append"
+    );
+}
+
+#[tokio::test]
 async fn same_generation_manifest_redeclaration_atomically_degrades_affected_resources() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId { value: "authority-main".into() };

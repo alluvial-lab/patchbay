@@ -14,6 +14,12 @@ export interface GatewayBackoffSignal {
   readonly invalid?: true;
 }
 
+/**
+ * One hour is safely below Node's 2^31-1 ms timer ceiling and keeps a malformed
+ * upstream delay from silencing an operator-facing observer for days.
+ */
+export const MAX_RETRY_AFTER_MS = 60 * 60 * 1000;
+
 export class GatewayClientError extends Error {
   readonly name = "GatewayClientError";
   constructor(
@@ -112,7 +118,7 @@ export interface TokenCommuneGatewayClient {
 
 export function createHttpTokenCommuneGatewayClient(options: {
   baseUrl: URL; credential: GatewayCredential; fetch?: typeof globalThis.fetch;
-  maxResponseBytes?: number; requestTimeoutMs?: number;
+  maxResponseBytes?: number; requestTimeoutMs?: number; now?: () => Date;
 }): TokenCommuneGatewayClient {
   const fetcher = options.fetch ?? globalThis.fetch;
   const maximum = options.maxResponseBytes ?? 1024 * 1024;
@@ -143,7 +149,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
     if (response.status >= 300 && response.status < 400) throw new GatewayClientError("http", endpoint, response.status);
     if (!response.ok) {
       const backoff = response.status === 429 || response.status >= 500
-        ? parseRetryAfter(response.headers.get("retry-after"))
+        ? parseRetryAfter(response.headers.get("retry-after"), options.now?.() ?? new Date())
         : undefined;
       throw new GatewayClientError("http", endpoint, response.status, backoff);
     }
@@ -333,20 +339,29 @@ function health(row: Record<string, unknown>, key: string): GatewayContributionH
 function capacitySource(row: Record<string, unknown>, key: string): GatewayCapacityReading["source"] {
   return enumString(row, key, ["headers", "usage_endpoint", "observed_429", "declared"] as const);
 }
-function parseRetryAfter(value: string | null): GatewayBackoffSignal | undefined {
+const HTTP_DATE_PATTERNS = [
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$/,
+  /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [0-9]{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$/,
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?: [1-9]|[12][0-9]|3[01]) [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$/,
+] as const;
+
+function parseRetryAfter(value: string | null, now: Date): GatewayBackoffSignal | undefined {
   if (value === null) return undefined;
   const trimmed = value.trim();
   if (/^[0-9]+$/.test(trimmed)) {
-    const seconds = Number(trimmed);
-    if (Number.isSafeInteger(seconds) && seconds <= Math.floor(Number.MAX_SAFE_INTEGER / 1000)) {
-      return { retryAfterMs: seconds * 1000 };
-    }
-    return { invalid: true };
+    const seconds = BigInt(trimmed);
+    const maximumSeconds = BigInt(Math.floor(MAX_RETRY_AFTER_MS / 1000));
+    return seconds > maximumSeconds
+      ? { retryAfterMs: MAX_RETRY_AFTER_MS, invalid: true }
+      : { retryAfterMs: Number(seconds) * 1000 };
   }
+  if (!HTTP_DATE_PATTERNS.some((pattern) => pattern.test(trimmed))) return { invalid: true };
   const milliseconds = Date.parse(trimmed);
-  return Number.isFinite(milliseconds)
-    ? { retryAt: new Date(milliseconds).toISOString() }
-    : { invalid: true };
+  if (!Number.isFinite(milliseconds) || !Number.isFinite(now.getTime())) return { invalid: true };
+  if (milliseconds - now.getTime() > MAX_RETRY_AFTER_MS) {
+    return { retryAfterMs: MAX_RETRY_AFTER_MS, invalid: true };
+  }
+  return { retryAt: new Date(milliseconds).toISOString() };
 }
 function enumString<const T extends readonly string[]>(row: Record<string, unknown>, key: string, allowed: T): T[number] {
   const value = row[key];

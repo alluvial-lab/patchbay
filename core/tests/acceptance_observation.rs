@@ -183,7 +183,11 @@ async fn uncorrelated_resource_status_is_recorded_as_a_domain_fact() {
 
 #[tokio::test]
 async fn malformed_uncorrelated_status_still_fails_closed() {
-    for target_scope in [None, Some(resource_scope("", "pool-zai"))] {
+    for target_scope in [
+        None,
+        Some(resource_scope("", "pool-zai")),
+        Some(resource_scope("   ", "pool-zai")),
+    ] {
         let storage = RusqliteStorage::open_in_memory().unwrap();
         let mut submitted = observation(ObservationKind::Status, FailureCode::Unspecified);
         submitted.correlations.clear();
@@ -193,6 +197,43 @@ async fn malformed_uncorrelated_status_still_fails_closed() {
             .expect_err("non-resource or malformed status must not bypass lifecycle validation");
         assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
         assert!(events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn resource_status_rejects_every_mixed_target_shape_before_append() {
+    let mut mixed_scopes = Vec::new();
+
+    let mut with_runtime_session = resource_scope("token-commune.provider-pool", "pool-zai");
+    with_runtime_session.runtime_session_id = Some(patchbay_contracts::patchbay::RuntimeSessionId {
+        value: "session-1".to_owned(),
+    });
+    mixed_scopes.push(with_runtime_session);
+
+    let mut with_top_level_adapter =
+        resource_scope("token-commune.provider-pool", "pool-zai");
+    with_top_level_adapter.adapter_id = Some(AdapterId {
+        value: "adapter-a".to_owned(),
+    });
+    mixed_scopes.push(with_top_level_adapter);
+
+    let mut with_legacy_audit_resource =
+        resource_scope("token-commune.provider-pool", "pool-zai");
+    with_legacy_audit_resource.legacy_audit_resource_id = "legacy-resource".to_owned();
+    mixed_scopes.push(with_legacy_audit_resource);
+
+    for target_scope in mixed_scopes {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut submitted = observation(ObservationKind::Status, FailureCode::Unspecified);
+        submitted.correlations.clear();
+        submitted.target_scope = Some(target_scope);
+
+        let error = ingest_observation(&storage, &TestCommandStates::default(), submitted)
+            .await
+            .expect_err("mixed resource/session scope must reject");
+
+        assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
+        assert!(events(&storage).await.is_empty(), "rejection must precede append");
     }
 }
 

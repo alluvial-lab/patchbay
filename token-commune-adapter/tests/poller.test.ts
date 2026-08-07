@@ -4,7 +4,13 @@ import { create } from "@bufbuild/protobuf";
 import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { AdapterSnapshotSupport, EventIdSchema, LsnSchema, type Observation, type ResourceReport } from "@patchbay/contracts";
-import { GatewayClientError, type GatewayEventsPage, type TokenCommuneGatewayClient } from "../src/gateway_client.js";
+import type { AdapterDiagnostics } from "../src/adapter_diagnostics.js";
+import {
+  GatewayClientError,
+  MAX_RETRY_AFTER_MS,
+  type GatewayEventsPage,
+  type TokenCommuneGatewayClient,
+} from "../src/gateway_client.js";
 import { createCompositeLocalIdentitySynthesizer } from "../src/identity.js";
 import { TokenCommunePoller, type PollClock, type PollerCoreSink, type PollWaiter } from "../src/poller.js";
 
@@ -63,6 +69,7 @@ function poller(options: {
   clock?: PollClock;
   waiter?: PollWaiter;
   interval?: number;
+  diagnostics?: AdapterDiagnostics;
 }) {
   return new TokenCommunePoller({
     adapterId: "token-commune",
@@ -74,6 +81,7 @@ function poller(options: {
     identities,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.waiter ? { waiter: options.waiter } : {}),
+    ...(options.diagnostics ? { diagnostics: options.diagnostics } : {}),
   });
 }
 function body(observation: Observation): any {
@@ -126,8 +134,12 @@ test("valid Retry-After extends but never shortens the configured minimum", asyn
     new GatewayClientError("http", "/commune/status", 429, { retryAfterMs: 60_000 }),
     new GatewayClientError("http", "/commune/status", 503, { retryAt: "2026-08-07T12:00:45.000Z" }),
     new GatewayClientError("http", "/commune/status", 503, { invalid: true }),
+    new GatewayClientError("http", "/commune/status", 503, {
+      retryAfterMs: Number.MAX_SAFE_INTEGER,
+      invalid: true,
+    }),
   ];
-  const expected = [60_000, 45_000, 30_000];
+  const expected = [60_000, 45_000, 30_000, MAX_RETRY_AFTER_MS];
   for (let index = 0; index < errors.length; index += 1) {
     const result = await poller({
       gateway: gateway({ getStatus: async () => { throw errors[index]; } }),
@@ -136,6 +148,38 @@ test("valid Retry-After extends but never shortens the configured minimum", asyn
     }).pollOnce(new AbortController().signal);
     assert.equal(result.nextDelayMs, expected[index]);
   }
+});
+
+test("oversized Retry-After is diagnosed and the final waiter delay stays bounded", async () => {
+  const diagnostics: Parameters<AdapterDiagnostics["record"]>[0][] = [];
+  const controller = new AbortController();
+  const waits: number[] = [];
+  await poller({
+    gateway: gateway({
+      getStatus: async () => {
+        throw new GatewayClientError("http", "/commune/status", 429, {
+          retryAfterMs: Number.MAX_SAFE_INTEGER,
+          invalid: true,
+        });
+      },
+    }),
+    core: core(),
+    diagnostics: {
+      record(input) { diagnostics.push(input); },
+      async flush() {},
+      async close() {},
+    },
+    waiter: {
+      async wait(milliseconds) {
+        waits.push(milliseconds);
+        controller.abort();
+      },
+    },
+  }).run(controller.signal);
+
+  assert.deepEqual(waits, [MAX_RETRY_AFTER_MS]);
+  assert.ok(waits[0]! < 2 ** 31 - 1, "Node must never clamp the poll timer to a hot loop");
+  assert.equal(diagnostics.filter((item) => item.event === "poll.retry_after.invalid").length, 1);
 });
 
 test("failed endpoints become unavailable without reusing prior-cycle source values", async () => {
@@ -272,6 +316,45 @@ test("core disconnect accepts no event and reconnect emits a fresh report before
   await runtime.pollOnce(new AbortController().signal);
   assert.equal(eventCalls, afterBaseline + 1);
   assert.deepEqual(order.slice(-2), ["report:3", "patchbay.token_commune.pool_event.v1"]);
+});
+
+test("wrong-domain and nonpositive event acknowledgements leave the event retryable", async () => {
+  let page: GatewayEventsPage = emptyValues.events;
+  let eventAttempts = 0;
+  let invalidAcknowledgement = 0;
+  let lsn = 0n;
+  const sink: PollerCoreSink = {
+    async ingestResourceReport() { return eventId(++lsn); },
+    async ingestEvent(observation) {
+      const acknowledged = eventId(++lsn);
+      if (observation.payload?.schemaRef.endsWith("pool_event.v1")) {
+        eventAttempts += 1;
+        invalidAcknowledgement += 1;
+        if (invalidAcknowledgement === 1) acknowledged.authorityDomainId!.value = "other-domain";
+        if (invalidAcknowledgement === 2) acknowledged.lsn!.value = 0n;
+      }
+      return acknowledged;
+    },
+  };
+  const runtime = poller({ gateway: gateway({ getEvents: async () => page }), core: sink });
+  await runtime.pollOnce(new AbortController().signal);
+  page = { historyMode: "latest-50-no-cursor", events: [{
+    id: "new", occurredAt: "2026-08-07T12:01:00.000Z", kind: "member",
+    provider: "zai", contributionId: null, message: "new",
+  }] };
+
+  await assert.rejects(
+    runtime.pollOnce(new AbortController().signal),
+    /authority domain/,
+  );
+  await assert.rejects(
+    runtime.pollOnce(new AbortController().signal),
+    /authority domain or LSN/,
+  );
+  await runtime.pollOnce(new AbortController().signal);
+  await runtime.pollOnce(new AbortController().signal);
+
+  assert.equal(eventAttempts, 3, "invalid acknowledgements must not consume the source event");
 });
 
 test("partially accepted multi-target gap retry does not duplicate accepted targets", async () => {

@@ -8,11 +8,11 @@
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, EventId, FailureCode,
     Observation, ObservationKind, OperationState, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind, TypedCorrelation,
+    TypedCorrelation,
 };
 use prost::Message;
 
-use crate::{acceptance::Clock, storage::Storage};
+use crate::{acceptance::Clock, resource::ResourceIdentity, storage::Storage};
 
 use super::{allowed_transition, AcceptanceError, OperationStateExt};
 
@@ -236,11 +236,10 @@ fn is_resource_status_fact(observation: &Observation) -> bool {
         return false;
     }
     let Some(target) = observation.target_scope.as_ref() else { return false; };
-    let Some(resource) = target.resource.as_ref() else { return false; };
-    TargetScopeKind::try_from(target.kind).ok() == Some(TargetScopeKind::Resource)
-        && resource.adapter_id.as_ref().is_some_and(|value| !value.value.trim().is_empty())
-        && resource.resource_kind.as_ref().is_some_and(|value| !value.value.trim().is_empty())
-        && resource.resource_id.as_ref().is_some_and(|value| !value.value.trim().is_empty())
+    let Ok(identity) = ResourceIdentity::try_from_scope(target) else { return false; };
+    !identity.adapter_id().value.trim().is_empty()
+        && !identity.resource_kind().value.trim().is_empty()
+        && !identity.resource_id().value.trim().is_empty()
 }
 
 /// Map an observation to the command transition it implies.

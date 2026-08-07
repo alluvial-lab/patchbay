@@ -8,6 +8,7 @@ import { mapEventGap, mapPoolEvent } from "./event_observation.js";
 import { LatestEventWindowTracker } from "./event_window.js";
 import {
   GatewayClientError,
+  MAX_RETRY_AFTER_MS,
   type GatewayBackoffSignal,
   type GatewayEventsPage,
   type TokenCommuneGatewayClient,
@@ -66,7 +67,8 @@ export class TokenCommunePoller {
       || options.adapterGeneration <= 0
       || !Number.isSafeInteger(options.pollIntervalMs)
       || options.pollIntervalMs <= 0
-    ) throw new Error("poller identity, generation, and positive interval are required");
+      || options.pollIntervalMs > MAX_RETRY_AFTER_MS
+    ) throw new Error("poller identity, generation, and bounded positive interval are required");
     this.#clock = options.clock ?? { now: () => new Date() };
     this.#waiter = options.waiter ?? SYSTEM_POLLER_WAITER;
     this.#diagnostics = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
@@ -102,7 +104,11 @@ export class TokenCommunePoller {
     });
 
     try {
-      requireAcknowledgement(await this.options.core.ingestResourceReport(report), "resource report");
+      requireAcknowledgement(
+        await this.options.core.ingestResourceReport(report),
+        "resource report",
+        this.options.authorityDomainId,
+      );
     } catch (error) {
       if (isRetryableCoreFailure(error)) return { nextDelayMs };
       throw error;
@@ -175,7 +181,11 @@ export class TokenCommunePoller {
           const targetKey = observation.targetScope?.resource?.resourceId?.value;
           if (!targetKey) throw new Error("gap observation is missing its resource target");
           if (acknowledged.has(targetKey)) continue;
-          requireAcknowledgement(await this.options.core.ingestEvent(observation), "event gap");
+          requireAcknowledgement(
+            await this.options.core.ingestEvent(observation),
+            "event gap",
+            this.options.authorityDomainId,
+          );
           acknowledged.add(targetKey);
         }
       }
@@ -202,7 +212,11 @@ export class TokenCommunePoller {
         this.#tracker.consumeDeclaredOnly(event.id);
         continue;
       }
-      requireAcknowledgement(await this.options.core.ingestEvent(mapped.observation), "pool event");
+      requireAcknowledgement(
+        await this.options.core.ingestEvent(mapped.observation),
+        "pool event",
+        this.options.authorityDomainId,
+      );
       this.#tracker.acknowledgeEvent(event.id);
     }
     this.#tracker.commitWindow(page);
@@ -255,16 +269,26 @@ function checkedTimestamp(date: Date): Timestamp {
 }
 
 function backoffMilliseconds(signal: GatewayBackoffSignal | undefined, completedAt: Date): number {
-  if (!signal || signal.invalid) return 0;
+  if (!signal) return 0;
   const delta = signal.retryAfterMs ?? 0;
   const absolute = signal.retryAt === undefined ? 0 : Math.max(0, Date.parse(signal.retryAt) - completedAt.getTime());
   const result = Math.max(delta, absolute);
-  return Number.isSafeInteger(result) && result >= 0 ? result : 0;
+  return Number.isSafeInteger(result) && result >= 0
+    ? Math.min(result, MAX_RETRY_AFTER_MS)
+    : 0;
 }
 
-function requireAcknowledgement(eventId: EventId | undefined, name: string): void {
-  if (!eventId?.authorityDomainId?.value || eventId.lsn?.value === undefined) {
-    throw new Error(`core ${name} acknowledgement is missing its event id`);
+function requireAcknowledgement(
+  eventId: EventId | undefined,
+  name: string,
+  expectedAuthorityDomainId: string,
+): void {
+  if (
+    eventId?.authorityDomainId?.value !== expectedAuthorityDomainId
+    || eventId.lsn?.value === undefined
+    || eventId.lsn.value <= 0n
+  ) {
+    throw new Error(`core ${name} acknowledgement has an invalid authority domain or LSN`);
   }
 }
 
