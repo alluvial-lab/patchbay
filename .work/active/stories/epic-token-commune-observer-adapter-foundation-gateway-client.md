@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation-gateway-client
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, integration]
 parent: epic-token-commune-observer-adapter-foundation
 depends_on: [epic-token-commune-observer-adapter-foundation-credential-diagnostics]
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # Implement the consumer-owned token-commune gateway client
@@ -56,3 +56,22 @@ rewrite model aliases.
 
 Depends on credential/redaction so HTTP has one authorization path. It produces
 the stable port later mapping/polling consume, but starts no polling loop here.
+
+## Implementation notes
+
+- Implemented the six-method consumer-owned HTTP port with bearer-only GETs,
+  redirect rejection, byte-bounded streaming reads before JSON parse,
+  immutable normalized DTOs, and fixed endpoint/category/status-only errors.
+- Runtime decoding was reconciled against the current external gateway wire
+  shapes without importing its modules: `providers`, `member`/`draw`, epoch-ms
+  telemetry/events, structured contribution health, raw fingerprint watchdog
+  records, and OpenAI-style `data` model rows.
+- Implementation discovery: current `/v1/models` does not expose the catalog's
+  `upstreamModel`; the port returns `upstreamModel: null` rather than inventing
+  an alias. This is an honest external-contract limitation for downstream
+  mapping. Model ids remain opaque and unchanged, including the live `gpt-5.5`,
+  `gpt-5.3-codex-spark`, Claude, GLM, Kimi, and Umans shapes.
+- Verification: integrated `npm test` passed with exact path/method/header/abort
+  checks, all six decoded fixtures, duplicate-provider preservation, nullable
+  multi-window telemetry, redirect/size/error taxonomy, malformed-array,
+  timestamp, fraction, and number rejection, and error redaction.
