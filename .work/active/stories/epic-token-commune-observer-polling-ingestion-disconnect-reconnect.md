@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion-disconnect-reconnect
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-polling-ingestion
 depends_on: [epic-token-commune-observer-polling-ingestion-dedup-gap]
@@ -51,3 +51,15 @@ uses the fresh-baseline rule.
 
 Depends on tracker transaction semantics. Mutation evidence validates the
 integrated honesty boundary after this composition exists.
+
+## Implementation notes
+
+`AdapterProcess` now supervises exactly one held-open delivery loop and one
+poller under a shared child abort scope. External shutdown stops both; a fatal
+child aborts its sibling and rejects. Retryable delivery reconnect remains the
+core-owned stale signal—no adapter heartbeat, stale/current mutation, or
+poll-cadence liveness state was added. Poll ingress failure accepts no event or
+tracker acknowledgement; the next successful cycle sends a fresh PARTIAL report
+before overlap/gap reconciliation. Fake process/core tests cover coordinated
+abort, fatal propagation, outage, same-process recovery, and restart-baseline
+behavior without wall-clock/network dependencies.
