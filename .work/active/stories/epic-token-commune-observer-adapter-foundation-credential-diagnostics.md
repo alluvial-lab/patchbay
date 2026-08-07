@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-adapter-foundation-credential-diagnostics
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, security, integration]
 parent: epic-token-commune-observer-adapter-foundation
 depends_on: [epic-token-commune-observer-adapter-foundation-contract-foundation]
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-07
 ---
 
 # Load the gateway credential and enforce diagnostic redaction
@@ -49,3 +49,18 @@ local/forwarded structures have no arbitrary message/body/header/path field.
 
 Depends on the config/manifest registry. The gateway client consumes the opaque
 credential interface and must not gain another key-reading path.
+
+## Implementation notes
+
+- Added the single opaque credential source with `lstat` + no-follow open +
+  `fstat` identity consistency, exact 0600 regular-file enforcement, one-line
+  parsing, bearer-only application, and idempotent reference disposal.
+- Ported bounded rotating 0600 JSONL diagnostics and bounded non-retrying core
+  forwarding. The manifest and forwarder derive from the same token-commune
+  code registry; forwarding structurally drops local error detail.
+- The bootstrap registers the attachment evidence, credential path, raw member
+  key, and full bearer value as exact local-redaction inputs. No raw-key
+  environment option exists.
+- Verification: integrated `npm test` passed, including symlink/permission/
+  empty/multiline rejection, exact/pattern redaction, forwarder structural
+  safety, no retry, and non-interference coverage.
