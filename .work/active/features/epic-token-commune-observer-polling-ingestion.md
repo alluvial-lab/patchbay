@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-polling-ingestion
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-adapter-foundation, epic-token-commune-observer-snapshot-mapping]
@@ -658,6 +658,64 @@ feature-level fallback mockup is needed.
   schemas; exact resource identities retain the existing adapter/kind/id tuple;
   no Pi-specific/core enum, surface-only state, second-operator assumption,
   federation key, dynamic renderer, or parked UI/mesh direction is introduced.
+
+## Implementation summary
+
+Implemented the complete polling ingestion runtime with one cohesive owner and
+no sub-worker fan-out. `TokenCommunePoller` runs immediate non-overlapping
+cycles over six concurrent reads, converts failed snapshot sources to explicit
+unavailable evidence, honors only normalized safe Retry-After advice, projects
+and ingests a fresh PARTIAL report, and then performs acknowledgement-aware
+latest-50 event reconciliation. The process supervises the poller beside the
+held-open delivery subscription under one abort scope.
+
+The event boundary now has one disposition registry and two adapter-owned closed
+JSON schemas. Exactly `capacity_shift`, `auth_broken`, `windfall`, `fingerprint`,
+and `member` become resource-scoped STATUS Observations. `window_exhausted` and
+`calibration` stay declared-only. The first visible page is a non-replayed
+baseline; overlap emits newly visible ids; unanchored/saturated/history-empty
+transitions emit measured gaps with no missed count or continuity claim.
+Acknowledged state is bounded and process-local and advances only after a core
+event id. Reconnect always accepts a new PARTIAL report before event repair, and
+no heartbeat, stale/current mutation, or polling-as-streaming signal was added.
+
+Implementation discovery: the existing core classified every STATUS Observation
+as command-lifecycle evidence and therefore rejected the designed generic
+resource status shape. The foundation and generated Observation contract already
+commit generic source-authenticated status emissions, so implementation added a
+narrow fail-closed acceptance case: no command correlation, exact RESOURCE
+target, complete non-empty identity, and `FailureCode.UNSPECIFIED`. Correlated
+STATUS remains command lifecycle; malformed uncorrelated STATUS still rejects.
+The audit projection also avoids labeling generic resource status as
+`CommandRunning`. This was the smallest change that made the existing foundation
+contract executable without weakening command transition validation.
+
+### Execution and verification
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, reasoning `high` (explicit
+  caller worker capability). Direct host ownership was used because the feature
+  is one tightly coupled scheduler/projector/tracker/process seam and the caller
+  explicitly prohibited sub-worker fan-out.
+- Effective review weight: `thorough` (explicit caller/autopilot override).
+  Per the explicit boundary, implementation stops at feature `review`; this
+  worker did not self-review.
+- `cd token-commune-adapter && npm run build`: pass.
+- `cd token-commune-adapter && npm test`: pass, 55/55 tests (34 baseline + 21).
+- `cargo test -p patchbay-core --test acceptance_observation`: pass, 16/16.
+- `cargo test -p patchbay-core --tests`: pass. The separate repository doctest
+  invocation remains pre-existingly broken by rustdoc dependency resolution and
+  is not part of this package's requested gate.
+- `git diff --check`: pass.
+- Mutation self-checks, all observed failing and reverted: PARTIAL promoted to
+  AUTHORITATIVE (2 focused failures); event dedup advanced before core ack (1
+  focused retry failure); `calibration` promoted out of declared-only handling
+  (1 focused coverage failure). The restored tree passed the full suite.
+
+All six child checkpoints advanced directly from `implementing` to `done` after
+integrated verification. No foundation assertion became false: polling remains
+explicitly non-streaming, resource reports remain PARTIAL, stale authority stays
+with core stream loss, and stronger replay/exactly-once behavior remains a
+reserved external prerequisite.
 
 ## Review handoff
 
