@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AdapterSnapshotSupport, AdapterTargetCategory, IdempotencyStrength, PayloadContentType } from "@patchbay/contracts";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { loadTokenCommuneAdapterConfig } from "../src/config.js";
 import { createCompositeLocalIdentitySynthesizer } from "../src/identity.js";
 import { tokenCommuneCapabilityManifest } from "../src/manifest.js";
@@ -11,7 +12,105 @@ import { TOKEN_COMMUNE_RESOURCES } from "../src/resource_contract.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("manifest derives two honest PARTIAL operational-resource contracts from one registry", () => {
+const schemaDescriptors = [
+  { kind: "token-commune.provider-pool", descriptor: "payloadSchema", schemaRef: "patchbay.token_commune.provider_pool.payload.v1", file: "provider-pool-payload.schema.json" },
+  { kind: "token-commune.provider-pool", descriptor: "projectionSchema", schemaRef: "patchbay.token_commune.provider_pool.projection.v1", file: "provider-pool-projection.schema.json" },
+  { kind: "token-commune.member-draw", descriptor: "payloadSchema", schemaRef: "patchbay.token_commune.member_draw.payload.v1", file: "member-draw-payload.schema.json" },
+  { kind: "token-commune.member-draw", descriptor: "projectionSchema", schemaRef: "patchbay.token_commune.member_draw.projection.v1", file: "member-draw-projection.schema.json" },
+] as const;
+
+function loadSchema(file: string): any {
+  return JSON.parse(readFileSync(join(root, "schemas", file), "utf8"));
+}
+
+const capacityFixture = {
+  window: "5h", usedFraction: null, usedUnits: null, limitUnits: 100, resetsAt: null,
+  source: "usage_endpoint", observedAt: "2026-08-06T00:00:00.000Z",
+};
+const fingerprintStateFixture = {
+  templateSource: "compiled", capturedAt: null, capturePresent: false,
+  holdReason: null, heldAt: null, diffPresent: false,
+};
+const contributionFixture = {
+  provider: "anthropic", declaredShare: 0.5, health: "fresh", capacity: [capacityFixture],
+  fingerprint: { state: "unknown", templateSource: "compiled", since: null, diffPresent: false },
+};
+const modelFixture = {
+  id: "claude-sonnet-4-5", provider: "anthropic", surface: "messages", upstreamModel: null,
+  contextWindow: 200_000, maxTokens: 8_192, reasoning: true, available: true,
+};
+const drawReportFixture = {
+  provider: "anthropic", limitFraction: 0.5, fromDecree: false, consumedUnits: 5,
+  drawUnits: null, exceeded: false, enforceable: true, resetsAt: null,
+};
+const schemaFixtures: Record<string, unknown> = {
+  "provider-pool-payload.schema.json": {
+    identityStrategy: "composite-local", gatewayDeploymentKey: "deployment", provider: "anthropic",
+    contributions: [contributionFixture], models: [modelFixture],
+    fingerprint: { anthropic: fingerprintStateFixture, codex: fingerprintStateFixture },
+    sourceStatus: {
+      ok: true, anthropicHealth: "fresh",
+      contributions: [{ contributionId: "contribution-1", provider: "anthropic", readings: [capacityFixture] }],
+    },
+    limitations: { snapshotCompleteness: "partial", contributorAttribution: "unavailable", contributionIdentity: "unjoinable" },
+  },
+  "provider-pool-projection.schema.json": {
+    provider: "anthropic", contributionCount: 1, totalDeclaredShare: 0.5,
+    healthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
+    anonymousContributions: [contributionFixture], models: [modelFixture],
+    fingerprint: { anthropic: fingerprintStateFixture, codex: fingerprintStateFixture },
+  },
+  "member-draw-payload.schema.json": {
+    identityStrategy: "composite-local", gatewayDeploymentKey: "deployment", memberDisplayName: "Ada",
+    provider: "anthropic", reports: [drawReportFixture],
+    limitations: { snapshotCompleteness: "partial", stableMemberIdentity: "unavailable" },
+  },
+  "member-draw-projection.schema.json": {
+    memberDisplayName: "Ada", provider: "anthropic", reports: [drawReportFixture], enforcementState: "within-limit",
+  },
+};
+
+const requiredMutationPaths: Record<string, readonly string[]> = {
+  "provider-pool-payload.schema.json": [
+    "identityStrategy", "gatewayDeploymentKey", "provider", "contributions", "models", "fingerprint", "sourceStatus", "limitations",
+    "limitations.snapshotCompleteness", "limitations.contributorAttribution", "limitations.contributionIdentity",
+    "contributions.0.provider", "contributions.0.declaredShare", "contributions.0.health", "contributions.0.capacity", "contributions.0.fingerprint",
+    "contributions.0.capacity.0.window", "contributions.0.capacity.0.usedFraction", "contributions.0.capacity.0.usedUnits",
+    "contributions.0.capacity.0.limitUnits", "contributions.0.capacity.0.resetsAt", "contributions.0.capacity.0.source", "contributions.0.capacity.0.observedAt",
+    "contributions.0.fingerprint.state", "contributions.0.fingerprint.templateSource", "contributions.0.fingerprint.since", "contributions.0.fingerprint.diffPresent",
+    "models.0.id", "models.0.provider", "models.0.surface", "models.0.upstreamModel", "models.0.contextWindow", "models.0.maxTokens", "models.0.reasoning", "models.0.available",
+    "fingerprint.anthropic.templateSource", "fingerprint.anthropic.capturedAt", "fingerprint.anthropic.capturePresent",
+    "fingerprint.anthropic.holdReason", "fingerprint.anthropic.heldAt", "fingerprint.anthropic.diffPresent",
+    "fingerprint.anthropic", "fingerprint.codex",
+    "sourceStatus.ok", "sourceStatus.anthropicHealth", "sourceStatus.contributions",
+    "sourceStatus.contributions.0.contributionId", "sourceStatus.contributions.0.provider", "sourceStatus.contributions.0.readings",
+  ],
+  "provider-pool-projection.schema.json": [
+    "provider", "contributionCount", "totalDeclaredShare", "healthCounts", "anonymousContributions", "models", "fingerprint",
+    "healthCounts.fresh", "healthCounts.exhausted", "healthCounts.authBroken",
+  ],
+  "member-draw-payload.schema.json": [
+    "identityStrategy", "gatewayDeploymentKey", "memberDisplayName", "provider", "reports", "limitations",
+    "limitations.snapshotCompleteness", "limitations.stableMemberIdentity",
+    "reports.0.provider", "reports.0.limitFraction", "reports.0.fromDecree", "reports.0.consumedUnits",
+    "reports.0.drawUnits", "reports.0.exceeded", "reports.0.enforceable", "reports.0.resetsAt",
+  ],
+  "member-draw-projection.schema.json": ["memberDisplayName", "provider", "reports", "enforcementState"],
+};
+
+test("manifest pins the two literal resource kinds and four literal schema descriptors", () => {
+  assert.deepEqual(TOKEN_COMMUNE_RESOURCES, {
+    providerPool: {
+      kind: "token-commune.provider-pool",
+      payloadSchema: "patchbay.token_commune.provider_pool.payload.v1",
+      projectionSchema: "patchbay.token_commune.provider_pool.projection.v1",
+    },
+    memberDraw: {
+      kind: "token-commune.member-draw",
+      payloadSchema: "patchbay.token_commune.member_draw.payload.v1",
+      projectionSchema: "patchbay.token_commune.member_draw.projection.v1",
+    },
+  });
   const manifest = tokenCommuneCapabilityManifest();
   assert.deepEqual(manifest.targetCategories, [AdapterTargetCategory.OPERATIONAL_RESOURCE]);
   assert.deepEqual(manifest.supportedOperationKinds, []);
@@ -23,38 +122,57 @@ test("manifest derives two honest PARTIAL operational-resource contracts from on
   assert.equal(manifest.attachmentMethod?.kind, "configured-local-material");
   assert.equal(manifest.attachmentMethod?.descriptor.byteLength, 0);
   assert.equal(manifest.attachmentMethod?.descriptorContentType, PayloadContentType.BINARY);
-  assert.equal(manifest.resourceCapabilities.length, Object.keys(TOKEN_COMMUNE_RESOURCES).length);
-  for (const [index, contract] of Object.values(TOKEN_COMMUNE_RESOURCES).entries()) {
-    const capability = manifest.resourceCapabilities[index];
-    assert.equal(capability?.resourceKind?.value, contract.kind);
-    assert.equal(capability?.snapshotSupport, AdapterSnapshotSupport.PARTIAL);
-    assert.equal(capability?.projectionContract?.targetCategory, AdapterTargetCategory.OPERATIONAL_RESOURCE);
-    assert.equal(capability?.projectionContract?.payloadSchema?.schemaRef, contract.payloadSchema);
-    assert.equal(capability?.projectionContract?.payloadSchema?.contentType, PayloadContentType.JSON);
-    assert.equal(capability?.projectionContract?.projectionSchema?.schemaRef, contract.projectionSchema);
+  assert.deepEqual(manifest.resourceCapabilities.map((item) => item.resourceKind?.value), [
+    "token-commune.provider-pool", "token-commune.member-draw",
+  ]);
+  for (const expected of schemaDescriptors) {
+    const capability = manifest.resourceCapabilities.find((item) => item.resourceKind?.value === expected.kind);
+    assert.ok(capability);
+    assert.equal(capability.snapshotSupport, AdapterSnapshotSupport.PARTIAL);
+    assert.equal(capability.projectionContract?.targetCategory, AdapterTargetCategory.OPERATIONAL_RESOURCE);
+    const descriptor = capability.projectionContract?.[expected.descriptor];
+    assert.equal(descriptor?.schemaRef, expected.schemaRef);
+    assert.equal(descriptor?.contentType, PayloadContentType.JSON);
+    assert.equal(loadSchema(expected.file).$id, expected.schemaRef);
   }
 });
 
-test("resource schemas close secret-bearing fields and keep nullable telemetry explicit", () => {
-  const files = [
-    "provider-pool-payload.schema.json", "provider-pool-projection.schema.json",
-    "member-draw-payload.schema.json", "member-draw-projection.schema.json",
-  ];
-  for (const file of files) {
-    const schema = JSON.parse(readFileSync(join(root, "schemas", file), "utf8")) as Record<string, unknown>;
-    assert.equal(schema["$schema"], "https://json-schema.org/draft/2020-12/schema");
-    assert.equal(schema["additionalProperties"], false);
-    assert.ok(Array.isArray(schema["required"]));
+test("Draft 2020-12 resource schemas compile and reject every independently listed required-field deletion", () => {
+  const ajv = new Ajv2020({ allErrors: true, strict: true, formats: { "date-time": true } });
+  for (const { file } of schemaDescriptors) ajv.addSchema(loadSchema(file), file);
+  for (const { file } of schemaDescriptors) {
+    const schema = loadSchema(file);
+    assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+    assert.equal(schema.additionalProperties, false);
     assert.equal(/credential|password|prompt|response|diagnostic/i.test(JSON.stringify(schema)), false);
+    const validate = ajv.getSchema(schema.$id);
+    assert.ok(validate, `${file} must compile`);
+    const fixture = schemaFixtures[file];
+    assert.equal(validate(fixture), true, `${file} fixture must be valid: ${JSON.stringify(validate.errors)}`);
+    for (const path of requiredMutationPaths[file] ?? []) {
+      const mutated = structuredClone(fixture);
+      deleteAtPath(mutated, path);
+      assert.equal(validate(mutated), false, `${file} must reject missing ${path}`);
+    }
   }
-  const pool = JSON.parse(readFileSync(join(root, "schemas/provider-pool-payload.schema.json"), "utf8")) as any;
+  const pool = loadSchema("provider-pool-payload.schema.json");
   assert.deepEqual(pool.$defs.capacity.properties.usedFraction.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.usedUnits.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.limitUnits.type, ["number", "null"]);
   assert.deepEqual(pool.$defs.capacity.properties.resetsAt.type, ["string", "null"]);
-  const draw = JSON.parse(readFileSync(join(root, "schemas/member-draw-payload.schema.json"), "utf8")) as any;
+  const draw = loadSchema("member-draw-payload.schema.json");
   assert.deepEqual(draw.$defs.drawReport.properties.drawUnits.type, ["number", "null"]);
 });
+
+function deleteAtPath(value: unknown, path: string): void {
+  const parts = path.split(".");
+  const key = parts.pop();
+  assert.ok(key);
+  let target = value as Record<string, unknown>;
+  for (const part of parts) target = target[part] as Record<string, unknown>;
+  assert.equal(Object.hasOwn(target, key), true, `fixture is missing mutation target ${path}`);
+  delete target[key];
+}
 
 test("composite-local identity is canonical, deterministic, and collision-fenced", () => {
   const left = createCompositeLocalIdentitySynthesizer({ adapterId: "tc-a", gatewayBaseUrl: new URL("HTTPS://EXAMPLE.com:443/base") });

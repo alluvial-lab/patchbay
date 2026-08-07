@@ -197,12 +197,10 @@ function positive(value: number | undefined, fallback: number): number {
 }
 async function reportWithTimeout(request: Promise<unknown>, controller: AbortController, timeoutMs: number): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
-  let timedOut = false;
   try {
     await Promise.race([request, new Promise<void>((resolve) => {
-      timer = setTimeout(() => { timedOut = true; controller.abort(new Error("diagnostic report timed out")); resolve(); }, timeoutMs);
+      timer = setTimeout(() => { controller.abort(new Error("diagnostic report timed out")); resolve(); }, timeoutMs);
     })]);
-    if (timedOut) await request;
   } finally { if (timer) clearTimeout(timer); }
 }
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

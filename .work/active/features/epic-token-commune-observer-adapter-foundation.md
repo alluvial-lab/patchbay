@@ -147,8 +147,8 @@ exists today and degrades honestly on the rest.
   OperationKinds, `streaming_support = false`, no runtime-session tier, and no
   cancellation/replacement guarantees. `ReceiveDeliveries` still stays open as
   the attachment-liveness mechanism. Any delivered Operation is durably
-  acknowledged and then rejected with `unsupported_command`; no translator or
-  `running` transition exists.
+  acknowledged and then failed as unsupported with `unsupported_command`; no
+  translator or `running` transition exists.
 - **Dispatch rationale:** direct-read design was sufficient after mapping the
   Pi process, generated adapter/resource contracts, core manifest validator,
   resource ingress, and the already-surveyed gateway endpoints. Exploratory
@@ -497,6 +497,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
   credential: GatewayCredential;
   fetch?: typeof globalThis.fetch;
   maxResponseBytes?: number;
+  requestTimeoutMs?: number;
 }): TokenCommuneGatewayClient;
 ```
 
@@ -518,10 +519,10 @@ Patchbay-owned DTOs preserve the consumed fields:
   or rewrites aliases.
 
 Every method performs GET with `redirect: "error"`, `accept: application/json`,
-and bearer auth, bounds bytes before JSON parse, validates the decoded object,
-and returns immutable normalized data. It never sends the key as a query
-parameter or `x-api-key`. HTTP/parse errors do not retain response bodies or
-headers.
+and bearer auth, combines the caller signal with a bounded default request
+deadline, bounds bytes before JSON parse, validates the decoded object, and
+returns immutable normalized data. It never sends the key as a query parameter
+or `x-api-key`. HTTP/parse errors do not retain response bodies or headers.
 
 **Acceptance criteria:**
 
@@ -556,7 +557,7 @@ export class PatchbayCoreClient {
   setDiagnostics(diagnostics: AdapterDiagnostics): void;
   attach(adapterGeneration: number): Promise<EventId>;
   acknowledgeDelivery(operation: Operation, deliveryEventId?: EventId): Promise<EventId | undefined>;
-  rejectUnsupported(operation: Operation): Promise<EventId | undefined>;
+  failUnsupported(operation: Operation): Promise<EventId | undefined>;
   receiveDeliveries(cursor: bigint, signal?: AbortSignal): AsyncIterable<Delivery>;
   reportDiagnostic(report: AdapterDiagnosticReport, signal?: AbortSignal): Promise<AdapterDiagnosticReportResult>;
 }
@@ -618,8 +619,8 @@ and closes diagnostics.
 - [ ] An idle `ReceiveDeliveries` remains open until abort; finite completion is
       retried rather than treated as healthy liveness.
 - [ ] An unexpected committed Operation transitions through acknowledgement to
-      canonical `unsupported_command` rejection exactly once and advances the
-      local cursor only after acknowledgement succeeds.
+      `FAILED + UNSUPPORTED_COMMAND` exactly once and advances the local cursor
+      only after acknowledgement succeeds.
 - [ ] Stream replacement/unauthenticated reconnect does not re-acknowledge
       already acknowledged delivery history.
 - [ ] Signal shutdown and repeated disposal leave no active RPC, timer, file
@@ -841,7 +842,7 @@ is needed here.
   generation single-flight reattach, failed-token fencing, observation wrapper,
   held-open delivery subscription, cursor preservation, and acknowledge-then-
   unsupported behavior without Pi session/transcript/translator machinery.
-- Added 18 unit/interface/real-process tests. The real-core test validates the
+- Added 22 unit/interface/real-process tests. The real-core test validates the
   durable manifest and unsupported terminal failure code while scanning core-
   visible and local diagnostic material for both secrets.
 
@@ -868,12 +869,30 @@ is needed here.
 - `cd token-commune-adapter && npm install`: completed; 0 vulnerabilities.
 - `npm run build`: passed clean with strict, no-unchecked-indexed-access, and
   exact-optional-property TypeScript checks.
-- `npm test`: 18/18 passed, including the serial real-core lifecycle test.
+- `npm test`: 22/22 passed, including the serial real-core lifecycle test.
+- Review-remediation mutation checks: removing the pending-terminalization retry
+  failed the acknowledgement/terminalization regression; restoring fabricated
+  pool-fingerprint presence failed the object-or-null decoder regression.
 - `git diff --check`: passed before item transitions; generated `dist/` and
   `node_modules/` remain ignored.
 - Child checkpoints advanced directly to `done` after the integrated green run:
   `contract-foundation`, `credential-diagnostics`, `gateway-client`,
   `attachment-lifecycle`, and `unsupported-delivery-loop`.
+
+### Thorough-review remediation
+
+- Retained acknowledged-but-nonterminal Operations in memory and retry their
+  `FAILED + UNSUPPORTED_COMMAND` result before reopening the delivery stream;
+  acknowledgement remains exactly once.
+- Made pool and full-endpoint fingerprint presence decoding require explicit
+  object-or-null source fields, and pinned manifest/schema contracts to literal,
+  Draft 2020-12-compiled mutation-sensitive tests.
+- Added a default per-request gateway deadline with caller-signal composition,
+  fixed transport-error redaction coverage, removed retry-delay abort-listener
+  accumulation, and made timed-out diagnostic forwarding abandon the original
+  request rather than re-await it.
+- Renamed `rejectUnsupported()` to `failUnsupported()` to match the core's
+  actual failed terminal state.
 
 ## Review handoff
 

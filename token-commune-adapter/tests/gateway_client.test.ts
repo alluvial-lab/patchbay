@@ -77,6 +77,58 @@ test("client rejects redirects, oversized/malformed bodies, invalid values, and 
   });
 });
 
+test("transport errors cannot retain bearer credentials or thrown response-body details", async () => {
+  const sentinel = "response-body-transport-sentinel";
+  const client = createHttpTokenCommuneGatewayClient({
+    baseUrl: new URL("https://gateway.example/"), credential,
+    fetch: async () => { throw new Error(`transport failed for member-key with ${sentinel}`); },
+  });
+  let returned: unknown;
+  try { await client.getStatus(); } catch (error) { returned = error; }
+  assert.ok(returned instanceof GatewayClientError);
+  assert.equal(returned.kind, "transport");
+  assert.equal(returned.message, "token-commune gateway /commune/status transport");
+  const serialized = `${String(returned)} ${JSON.stringify(returned)}`;
+  assert.equal(serialized.includes("member-key"), false);
+  assert.equal(serialized.includes(sentinel), false);
+});
+
+test("fingerprint presence projections require explicit object-or-null source fields", async () => {
+  const invalid: Array<["pool" | "fingerprints", unknown]> = [];
+  for (const [field, value] of [["diff", undefined], ["diff", "raw-diff"]] as const) {
+    const body = structuredClone(fixtures[GATEWAY_ENDPOINTS.pool]) as any;
+    if (value === undefined) delete body.providers[0].fingerprint[field];
+    else body.providers[0].fingerprint[field] = value;
+    invalid.push(["pool", body]);
+  }
+  for (const [field, value] of [
+    ["lastCapture", undefined], ["lastCapture", "raw-capture"],
+    ["lastDiff", undefined], ["lastDiff", 1],
+  ] as const) {
+    const body = structuredClone(fixtures[GATEWAY_ENDPOINTS.fingerprints]) as any;
+    if (value === undefined) delete body.anthropic[field];
+    else body.anthropic[field] = value;
+    invalid.push(["fingerprints", body]);
+  }
+  for (const value of [undefined, false] as const) {
+    const body = structuredClone(fixtures[GATEWAY_ENDPOINTS.fingerprints]) as any;
+    body.anthropic.hold = { reason: "held", since: 1_786_060_800_000, diff: null };
+    if (value === undefined) delete body.anthropic.hold.diff;
+    else body.anthropic.hold.diff = value;
+    invalid.push(["fingerprints", body]);
+  }
+  for (const [method, body] of invalid) {
+    const client = createHttpTokenCommuneGatewayClient({
+      baseUrl: new URL("https://gateway.example/"), credential,
+      fetch: async () => Response.json(body),
+    });
+    await assert.rejects(
+      method === "pool" ? client.getPool() : client.getFingerprints(),
+      (error: unknown) => error instanceof GatewayClientError && error.kind === "invalid-response",
+    );
+  }
+});
+
 test("runtime decoders reject malformed arrays, timestamps, fractions, and non-finite fields", async () => {
   const cases: Array<[keyof typeof GATEWAY_ENDPOINTS, unknown]> = [
     ["status", { ok: true, anthropicHealth: { state: "fresh" }, contributions: {} }],
@@ -112,5 +164,15 @@ test("error taxonomy and abort propagation are explicit", async () => {
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(client.getModels(controller.signal), (error: unknown) => error instanceof GatewayClientError && error.kind === "timeout");
-  assert.equal(receivedSignal, controller.signal);
+  assert.equal(receivedSignal?.aborted, true);
+
+  const deadline = createHttpTokenCommuneGatewayClient({
+    baseUrl: new URL("https://gateway.example/"), credential, requestTimeoutMs: 5,
+    fetch: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      const requestSignal = init?.signal;
+      assert.ok(requestSignal);
+      requestSignal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }),
+  });
+  await assert.rejects(deadline.getStatus(), (error: unknown) => error instanceof GatewayClientError && error.kind === "timeout");
 });

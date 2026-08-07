@@ -95,3 +95,18 @@ test("forwarding failures are bounded, non-retrying, and sink isolation is non-i
   assert.equal(calls, 1);
   await assert.doesNotReject(forwarder.close());
 });
+
+test("timed-out never-settling diagnostic reports do not block draining later reports", async () => {
+  let calls = 0;
+  const forwarder = new CoreDiagnosticsForwarder(async () => {
+    calls += 1;
+    return new Promise<never>(() => {});
+  }, { authorityDomainId: "default", adapterId: "token-commune", adapterGeneration: 1 }, {
+    reportTimeoutMs: 5, maxFlushMs: 100, reportsPerSecond: 1_000,
+  });
+  forwarder.record({ event: "adapter.started", level: "info" });
+  forwarder.record({ event: "delivery.subscription.failed", level: "error" });
+  await forwarder.flush();
+  assert.equal(calls, 2, "the second pending report must be attempted after the first request times out");
+  await forwarder.close();
+});

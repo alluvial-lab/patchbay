@@ -24,6 +24,7 @@ export class AdapterProcess {
   readonly #retryDelayMs: number;
   #diagnostics: AdapterDiagnostics;
   #cursor = 0n;
+  #pendingTerminalization: Operation | undefined;
   #started = false;
   #disposed = false;
   #runController: AbortController | undefined;
@@ -98,6 +99,8 @@ export class AdapterProcess {
   }
 
   async #consume(signal: AbortSignal): Promise<void> {
+    await this.#finishPendingTerminalization();
+    if (signal.aborted) return;
     for await (const delivery of this.#core.receiveDeliveries(this.#cursor, signal)) {
       const operation = requiredOperation(delivery);
       const commandId = operation.commandId?.value;
@@ -105,16 +108,25 @@ export class AdapterProcess {
         event: "delivery.received", level: "info", ...(commandId ? { commandId } : {}), operationKind: operation.kind,
       });
       await this.#core.acknowledgeDelivery(operation, delivery.deliveryEventId);
+      this.#pendingTerminalization = operation;
       this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
       this.#record({
         event: "delivery.acknowledged", level: "info", ...(commandId ? { commandId } : {}), operationKind: operation.kind,
       });
-      await this.#core.rejectUnsupported(operation);
-      this.#record({
-        event: "delivery.unsupported", level: "warn", ...(commandId ? { commandId } : {}),
-        operationKind: operation.kind, failureCode: FailureCode.UNSUPPORTED_COMMAND,
-      });
+      await this.#finishPendingTerminalization();
     }
+  }
+
+  async #finishPendingTerminalization(): Promise<void> {
+    const operation = this.#pendingTerminalization;
+    if (!operation) return;
+    await this.#core.failUnsupported(operation);
+    this.#pendingTerminalization = undefined;
+    const commandId = operation.commandId?.value;
+    this.#record({
+      event: "delivery.unsupported", level: "warn", ...(commandId ? { commandId } : {}),
+      operationKind: operation.kind, failureCode: FailureCode.UNSUPPORTED_COMMAND,
+    });
   }
 
   #record(input: Parameters<AdapterDiagnostics["record"]>[0]): void {
@@ -132,8 +144,15 @@ function isRetryableTransportFailure(error: unknown): boolean {
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    let timer: NodeJS.Timeout;
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, milliseconds);
+    signal.addEventListener("abort", finish, { once: true });
+    if (signal.aborted) finish();
   });
 }
 

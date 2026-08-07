@@ -92,11 +92,14 @@ export interface TokenCommuneGatewayClient {
 }
 
 export function createHttpTokenCommuneGatewayClient(options: {
-  baseUrl: URL; credential: GatewayCredential; fetch?: typeof globalThis.fetch; maxResponseBytes?: number;
+  baseUrl: URL; credential: GatewayCredential; fetch?: typeof globalThis.fetch;
+  maxResponseBytes?: number; requestTimeoutMs?: number;
 }): TokenCommuneGatewayClient {
   const fetcher = options.fetch ?? globalThis.fetch;
   const maximum = options.maxResponseBytes ?? 1024 * 1024;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   if (!Number.isSafeInteger(maximum) || maximum <= 0) throw new Error("maxResponseBytes must be a positive safe integer");
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) throw new Error("requestTimeoutMs must be a positive safe integer");
   const base = new URL(options.baseUrl.href);
   if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error("gateway base URL must be a credential-free http(s) URL");
@@ -106,11 +109,14 @@ export function createHttpTokenCommuneGatewayClient(options: {
   const get = async <T>(endpoint: GatewayEndpoint, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> => {
     const headers = new Headers({ Accept: "application/json" });
     options.credential.apply(headers);
+    const requestSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)])
+      : AbortSignal.timeout(requestTimeoutMs);
     let response: Response;
     try {
-      response = await fetcher(new URL(endpoint.slice(1), base), { method: "GET", headers, redirect: "error", ...(signal ? { signal } : {}) });
+      response = await fetcher(new URL(endpoint.slice(1), base), { method: "GET", headers, redirect: "error", signal: requestSignal });
     } catch (error) {
-      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw new GatewayClientError("timeout", endpoint);
+      if (requestSignal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw new GatewayClientError("timeout", endpoint);
       throw new GatewayClientError("transport", endpoint);
     }
     if (response.status === 401) throw new GatewayClientError("unauthorized", endpoint, 401);
@@ -241,22 +247,29 @@ function poolFingerprint(value: unknown): GatewayPoolFingerprint {
   const row = object(value);
   const state = enumString(row, "state", ["ok", "held", "unknown"] as const);
   const templateSource = enumString(row, "templateSource", ["compiled", "override"] as const);
-  return { state, templateSource, since: nullableEpochTimestamp(row, "since"), diffPresent: row["diff"] !== null };
+  const diff = nullableObject(row, "diff");
+  return { state, templateSource, since: nullableEpochTimestamp(row, "since"), diffPresent: diff !== null };
 }
 function fingerprint(value: unknown): GatewayFingerprintState {
   const row = object(value);
   const templateSource = enumString(row, "templateSource", ["compiled", "override"] as const);
-  const hold = row["hold"] === null ? null : object(row["hold"]);
+  const capture = nullableObject(row, "lastCapture");
+  const lastDiff = nullableObject(row, "lastDiff");
+  const hold = nullableObject(row, "hold");
+  const holdDiff = hold ? nullableObject(hold, "diff") : null;
   return {
     templateSource,
     capturedAt: nullableEpochTimestamp(row, "lastCaptureAt"),
-    capturePresent: row["lastCapture"] !== null,
+    capturePresent: capture !== null,
     holdReason: hold ? boundedString(hold, "reason", 512) : null,
     heldAt: hold ? epochTimestamp(hold, "since") : null,
-    diffPresent: row["lastDiff"] !== null || (hold !== null && hold["diff"] !== null),
+    diffPresent: lastDiff !== null || holdDiff !== null,
   };
 }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected object"); return value as Record<string, unknown>; }
+function nullableObject(row: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  return row[key] === null ? null : object(row[key]);
+}
 function array(row: Record<string, unknown>, key: string): unknown[] { const value = row[key]; if (!Array.isArray(value)) throw new Error(`${key} must be an array`); return value; }
 function string(row: Record<string, unknown>, key: string): string { return boundedString(row, key, 512); }
 function boundedString(row: Record<string, unknown>, key: string, max: number): string { const value = row[key]; if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${key} must be a bounded string`); return value; }

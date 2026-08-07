@@ -88,6 +88,13 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
       OperationState.FAILED,
       `unexpected terminal transition: ${JSON.stringify(terminal, (_key, value) => typeof value === "bigint" ? value.toString() : value)}; diagnostics=${readFileSync(diagnosticPath, "utf8")}`,
     );
+    const transitions = commandTransitions(await readAfter(control, 0n), "unsupported-query");
+    const deliveredIndex = transitions.findIndex((item) => item.toState === OperationState.DELIVERED);
+    const failedIndex = transitions.findIndex((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND);
+    assert.equal(transitions.filter((item) => item.toState === OperationState.DELIVERED).length, 1, "delivery must be acknowledged exactly once");
+    assert.notEqual(deliveredIndex, -1, "transition sequence must contain DELIVERED");
+    assert.notEqual(failedIndex, -1, "transition sequence must contain FAILED + UNSUPPORTED_COMMAND");
+    assert.ok(deliveredIndex < failedIndex, "unsupported delivery must transition DELIVERED before FAILED");
 
     const visible = JSON.stringify(await readAfter(control, 0n), (_key, value) => typeof value === "bigint" ? value.toString() : value);
     assert.equal(visible.includes(adapterEvidence), false);
