@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-snapshot-mapping-envelope-construction
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: [epic-token-commune-observer-snapshot-mapping-projection-contract]
@@ -36,3 +36,11 @@ Add the token-commune-local envelope builder and generated-Protobuf report facto
 ## Ordering
 
 Depends on the projection contract checkpoint. Provider and member mapping build only through this envelope/report boundary.
+
+## Implementation notes
+
+- Added an Ajv 2020 manifest-bound JSON envelope encoder that imports the four package schemas, validates before encoding, and chooses schema refs/content type only from `TOKEN_COMMUNE_RESOURCES`.
+- Added the pure snapshot report seam with explicit adapter context, observation timestamp, endpoint availability states, and two registry-ordered PARTIAL views.
+- Invalid generation/id/timestamp context fails before report return; the package has no clock, fetch, polling, or RPC dependency in the projection path.
+- Moved Ajv to runtime dependencies so built `dist/` projection validation is deployable.
+- Verification: `npm run build` and `npm test` passed (25 tests).
