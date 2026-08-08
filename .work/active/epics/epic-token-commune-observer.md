@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer
 kind: epic
-stage: implementing
+stage: review
 tags: [adapter, protocol, ux, integration]
 parent: null
 depends_on: [epic-agent-operations-resource-plane]
