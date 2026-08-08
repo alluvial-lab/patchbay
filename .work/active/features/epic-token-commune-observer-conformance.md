@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance
 kind: feature
-stage: done
+stage: review
 tags: [adapter, verification]
 parent: epic-token-commune-observer
 depends_on:
