@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-cockpit-panel
 kind: feature
-stage: review
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-snapshot-mapping, epic-token-commune-observer-polling-ingestion]
@@ -395,3 +395,12 @@ Effective implementation review weight is **thorough** (explicit caller). Child 
 - Panel-local axe-core scan — **0 critical violations**.
 - Self-mutation check — **3/3 mutants killed and reverted**: adapter-less join, inverted highest-5h comparator, and removed freshness-first verdict.
 - `git diff --check` — passed. No formal/model-checked promotion is claimed.
+
+## Review (thorough, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), convergence.
+
+- **Pass 1 (BLOCK):** 1 blocker + 3 importants + 1 nit. Blocker: invalid/unavailable/unsupported provider-pool projections were *skipped* (disappeared) instead of rendering as honest all-unknown summaries — making the integration unknown-test vacuous. Importants: pool staleness contaminated independently-current draw (violating the pool/draw freshness contract); live model-catalog shape discarded (`upstreamModel:null` lost) + no `model.provider===pool.provider` check before `runnable` (a cross-provider model could falsely make a pool runnable); CLI text tables accepted terminal control chars (newline/ANSI) from adapter metadata → corruption/spoofing. Nit: undefined `--color-focus-ring` token. All fixed at `f27f59c`. operator-domain 7→9, web-cockpit 113→114, CLI 42→44; axe 0 critical; mutation-checked.
+- **Pass 2 (APPROVE):** all five fixes verified correct + mutation-sensitive; no regression in the locked honesty model (no aggregate, verdict-owned, stale≠live, contributor redaction, `gpt-5.6` rejection, no dynamic adapter renderer, exact join, grant-gating); option-7 structural match enforced.
+
+Converged. Advanced to `done`.
