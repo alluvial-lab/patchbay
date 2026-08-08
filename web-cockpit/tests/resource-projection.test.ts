@@ -49,11 +49,13 @@ function decode(
   );
 }
 
-test("the closed registry contains the two local v1 resource compositors", () => {
-  assert.equal(RESOURCE_PROJECTION_DECODERS.length, 2);
+test("the closed registry contains generic and manifest-bound local compositors", () => {
+  assert.equal(RESOURCE_PROJECTION_DECODERS.length, 4);
   assert.deepEqual(RESOURCE_PROJECTION_DECODERS.map((decoder) => decoder.resourceKind), [
     "provider_pool",
     "usage_window",
+    "token-commune.provider-pool",
+    "token-commune.member-draw",
   ]);
 });
 
@@ -141,4 +143,48 @@ test("semantic failures stay local invalid results without retaining raw payload
     envelope("provider_pool.projection.v1", '{"displayName":"Pool","providerLabel":"Provider","health":"serving","remainingPercent":1e400}'),
   );
   assert.equal(nonFinite.status, "invalid");
+});
+
+test("snapshot and live fold decoder path recognizes the exact token-commune manifest contract", () => {
+  const identity: ResourceIdentityView = {
+    adapterId: "token-commune",
+    resourceKind: "token-commune.provider-pool",
+    resourceId: "opaque",
+  };
+  const result = decode(
+    identity,
+    "patchbay.token_commune.provider_pool.payload.v1",
+    "patchbay.token_commune.provider_pool.projection.v1",
+    {
+      provider: "openai-codex",
+      contributionListing: {
+        status: "reported",
+        contributions: [{
+          subKey: "local:anonymous-contribution:0123456789abcdef01234567:1",
+          subKeySource: "synthesized-content-hash",
+          subKeyStability: "snapshot-local",
+          attribution: "unavailable",
+          declaredShare: 1,
+          health: { state: "fresh" },
+          telemetryState: "readings",
+          capacityReadings: [{
+            window: "5h", usedFraction: 0.2, usedUnits: 20, limitUnits: 100,
+            resetsAt: null, source: "headers", observedAt: "2026-08-07T10:00:00Z",
+          }],
+          fingerprint: { state: "ok", templateSource: "compiled", since: null, diffPresent: false },
+        }],
+      },
+      credentialHealthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
+      totalDeclaredShare: 1,
+      statusTelemetry: { status: "not-reported", contributions: [] },
+      modelCatalog: { status: "reported", models: [{
+        id: "gpt-5.5", provider: "openai-codex", surface: "codex", upstreamModel: null,
+        contextWindow: 200000, maxTokens: 8192, reasoning: true, available: true,
+      }] },
+      fingerprint: { status: "unknown", probe: null, reason: "not-probed" },
+      capacityAggregation: "none",
+    },
+  );
+  assert.equal(result.status, "decoded");
+  if (result.status === "decoded") assert.equal(result.value.kind, "token-commune-provider-pool");
 });

@@ -14,12 +14,14 @@
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",
     "@patchbay/contracts": "file:../contracts/ts",
+    "@patchbay/operator-domain": "file:../operator-domain",
     "dompurify": "^3.4.12",
     "marked": "^18.0.7"
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.7",
     "@types/node": "24.10.1",
+    "axe-core": "4.12.1",
     "esbuild": "0.25.12",
     "fast-check": "4.3.0",
     "jsdom": "^26.1.0",

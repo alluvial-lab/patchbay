@@ -1,7 +1,14 @@
 import {
   AdapterSnapshotSupport,
+  OperationKind,
   ResourceFreshnessState,
 } from "@patchbay/contracts";
+import {
+  TOKEN_COMMUNE_PRESENTATION_CONTRACT,
+  composeTokenCommunePools,
+  type TokenCommuneProjection,
+  type TokenCommuneResourceInput,
+} from "@patchbay/operator-domain";
 
 import {
   resourceCollectionKey,
@@ -15,6 +22,10 @@ import {
 import { renderIcon } from "./icons.js";
 import { operationKindLabel, renderOperationDelivery } from "./operation-delivery.js";
 import { formatTargetScope, scopeMayContainResource } from "./target-scope.js";
+import {
+  renderTokenCommunePanel,
+  type TokenCommunePanelInput,
+} from "./token-commune-panel.js";
 
 export interface ResourceDestinationOptions {
   selectedKey?: string;
@@ -37,22 +48,104 @@ export function renderResourceDestination(
   const element = document.createElement("section");
   element.className = "resources-view";
   const active = [...model.resources.values()].filter((resource) => !resource.tombstoned);
+  const tokenResources = active.filter((resource) => isTokenCommuneKind(resource.identity.resourceKind));
+  const genericResources = active.filter((resource) => !isTokenCommuneKind(resource.identity.resourceKind));
   const selected = options.selectedKey
     ? model.resources.get(options.selectedKey)
-    : preferredResource(active);
+    : preferredResource(genericResources);
 
-  const list = renderResourceList(document, active, selected, options.onSelect);
+  const list = renderResourceList(document, genericResources, selected, options.onSelect);
   const detail = renderResourceDetail(document, model, selected, options);
-  element.append(list, detail);
+  if (tokenResources.length > 0) {
+    element.classList.add("resources-view--token-commune");
+    const panelInput = tokenCommunePanelInput(model, options.selectedKey, new Date());
+    element.append(renderTokenCommunePanel(document, {
+      ...panelInput,
+      onSelect(summary) {
+        const resource = model.resources.get(resourceKey(summary.poolIdentity));
+        if (resource) options.onSelect(resource);
+      },
+    }));
+    if (genericResources.length > 0) {
+      const generic = document.createElement("div");
+      generic.className = "generic-resource-plane";
+      generic.append(list, detail);
+      element.append(generic);
+    }
+  } else {
+    element.append(list, detail);
+  }
 
   return {
     element,
     setMobile(mobile) {
       element.dataset.presentation = mobile ? "mobile-drill-in" : "desktop-two-pane";
-      list.hidden = mobile && options.mobileDetailOpen;
-      detail.hidden = mobile && !options.mobileDetailOpen;
+      if (tokenResources.length === 0 || genericResources.length > 0) {
+        list.hidden = mobile && options.mobileDetailOpen;
+        detail.hidden = mobile && !options.mobileDetailOpen;
+      }
     },
   };
+}
+
+export function resourceHasLocalQueryAffordance(
+  model: PresentationModel,
+  identity: ResourceIdentityView,
+  now: Date,
+): boolean {
+  return model.security.grants.some((grant) =>
+    !grant.revoked
+    && (!grant.expiresAt || grant.expiresAt.getTime() > now.getTime())
+    && grant.allowedOperationKinds.includes(OperationKind.QUERY)
+    && scopeMayContainResource(grant.targetScope, identity),
+  );
+}
+
+export function tokenCommunePanelInput(
+  model: PresentationModel,
+  selectedKey: string | undefined,
+  now: Date,
+): TokenCommunePanelInput {
+  const inputs: TokenCommuneResourceInput[] = [];
+  for (const resource of model.resources.values()) {
+    if (!isTokenCommuneKind(resource.identity.resourceKind)) continue;
+    if (!resourceHasLocalQueryAffordance(model, resource.identity, now)) continue;
+    const collection = model.resourceCollections.get(resourceCollectionKey(
+      resource.identity.adapterId,
+      resource.identity.resourceKind,
+    ));
+    inputs.push({
+      identity: resource.identity,
+      freshness: resource.freshness,
+      completeness: collection?.completeness ?? AdapterSnapshotSupport.UNSPECIFIED,
+      ...(resource.observedAt ? { observedAt: resource.observedAt } : {}),
+      reconciled: resource.reconciled && (collection?.reconciled ?? false),
+      tombstoned: resource.tombstoned,
+      projection: tokenProjection(resource),
+    });
+  }
+  const summaries = composeTokenCommunePools(inputs);
+  const selectedSummary = summaries.find((summary) => resourceKey(summary.poolIdentity) === selectedKey);
+  const refreshedAt = summaries.reduce<Date | undefined>((latest, summary) =>
+    !summary.poolObservedAt || (latest && latest >= summary.poolObservedAt) ? latest : summary.poolObservedAt,
+  undefined);
+  return {
+    summaries,
+    ...(refreshedAt ? { refreshedAt } : {}),
+    partial: summaries.some((summary) => summary.completeness !== AdapterSnapshotSupport.AUTHORITATIVE),
+    ...(selectedSummary ? { selectedKey: selectedSummary.key } : {}),
+  };
+}
+
+function tokenProjection(resource: ResourceView): TokenCommuneResourceInput["projection"] {
+  if (resource.projection.status !== "decoded") {
+    return resource.projection.status === "invalid"
+      ? { status: "invalid", reason: "projection_decode_failed" }
+      : resource.projection.status === "unsupported" ? { status: "unsupported" } : { status: "unavailable" };
+  }
+  return isTokenCommuneProjection(resource.projection.value)
+    ? { status: "decoded", value: resource.projection.value }
+    : { status: "unsupported" };
 }
 
 function renderResourceList(
@@ -77,7 +170,8 @@ function renderResourceList(
     const projection = resource.projection;
     if (projection.status !== "decoded") groups[2]!.resources.push(resource);
     else if (projection.value.kind === "pooled-provider-pool") groups[0]!.resources.push(resource);
-    else groups[1]!.resources.push(resource);
+    else if (projection.value.kind === "direct-provider-usage-window") groups[1]!.resources.push(resource);
+    else groups[2]!.resources.push(resource);
   }
 
   if (resources.length === 0) {
@@ -119,7 +213,7 @@ function renderResourceRow(
     renderFreshness(document, resource),
   );
   row.append(top, textElement(document, "span", "resource-row__identity", formatResourceIdentity(resource.identity)));
-  if (resource.projection.status === "decoded") {
+  if (resource.projection.status === "decoded" && isGenericProjection(resource.projection.value)) {
     const projection = resource.projection.value;
     row.append(textElement(
       document,
@@ -168,7 +262,7 @@ function renderResourceDetail(
   const body = document.createElement("div");
   body.className = "resource-detail__body";
   body.append(renderCanonicalWrapper(document, model, resource));
-  if (resource.projection.status === "decoded") {
+  if (resource.projection.status === "decoded" && isGenericProjection(resource.projection.value)) {
     body.append(renderAdapterProjection(document, resource));
   } else {
     body.append(emptyState(
@@ -265,7 +359,9 @@ function renderResourceOperations(
 }
 
 function renderAdapterProjection(document: Document, resource: ResourceView): HTMLElement {
-  if (resource.projection.status !== "decoded") throw new Error("decoded projection required");
+  if (resource.projection.status !== "decoded" || !isGenericProjection(resource.projection.value)) {
+    throw new Error("generic decoded projection required");
+  }
   const projection = resource.projection.value;
   const card = document.createElement("section");
   card.className = `card adapter-projection adapter-projection--${projection.kind}`;
@@ -394,9 +490,26 @@ function projectionStatusLabel(resource: ResourceView): string {
 }
 
 function resourceLabel(resource: ResourceView): string {
-  return resource.projection.status === "decoded"
+  if (resource.projection.status !== "decoded") return resource.identity.resourceId;
+  return isGenericProjection(resource.projection.value)
     ? resource.projection.value.displayName
-    : resource.identity.resourceId;
+    : resource.projection.value.provider;
+}
+
+function isTokenCommuneKind(kind: string): boolean {
+  return kind === TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.resourceKind
+    || kind === TOKEN_COMMUNE_PRESENTATION_CONTRACT.memberDraw.resourceKind;
+}
+
+function isTokenCommuneProjection(value: import("../domain/resource-projection.js").DecodedResourceProjection): value is TokenCommuneProjection {
+  return value.kind === "token-commune-provider-pool" || value.kind === "token-commune-member-draw";
+}
+
+function isGenericProjection(value: import("../domain/resource-projection.js").DecodedResourceProjection): value is Extract<
+  import("../domain/resource-projection.js").DecodedResourceProjection,
+  { kind: "pooled-provider-pool" | "direct-provider-usage-window" }
+> {
+  return value.kind === "pooled-provider-pool" || value.kind === "direct-provider-usage-window";
 }
 
 function formatResourceIdentity(identity: ResourceIdentityView): string {

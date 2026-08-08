@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel-cockpit-integration
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: [epic-token-commune-observer-cockpit-panel-verdict-synthesis]
 release_binding: null
 gate_origin: null
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # Cockpit data-layer and grant integration
@@ -37,3 +37,10 @@ Route the two token-commune contracts through the existing local resource decode
 ## Ordering
 
 Depends on verdict synthesis. The option-7 component depends on this complete input seam.
+
+## Implementation notes
+
+- Extended the existing `decodeResourceProjection` registry with the two exact token-commune descriptor pairs; snapshot and live folds continue to share that single ingress path.
+- Added `tokenCommunePanelInput` over canonical `PresentationModel.resources` and per-kind collection metadata. Pool and member-draw records are independently deny-by-default filtered by visible, unrevoked, unexpired `query` grants under strict resource/adapter/fleet/domain containment before the shared compositor runs.
+- Recognized token resource kinds render once through the local known panel path and are not duplicated into generic detail; no route, poller, cache, dynamic renderer, admin role, or core authority claim was added.
+- Verification: web type build plus 21 focused decoder/resource/panel tests passed, including exact adapter/provider joins, pool-vs-draw grant separation, expiry/revocation, and non-duplication.

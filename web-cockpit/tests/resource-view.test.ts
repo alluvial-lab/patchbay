@@ -30,7 +30,11 @@ import {
   type ResourceIdentityView,
   type ResourceView,
 } from "../src/domain/model.js";
-import { renderResourceDestination } from "../src/ui/resource-view.js";
+import {
+  renderResourceDestination,
+  resourceHasLocalQueryAffordance,
+  tokenCommunePanelInput,
+} from "../src/ui/resource-view.js";
 import { renderRuntimeResourceLink } from "../src/ui/runtime-resource-link.js";
 import { formatTargetScope, scopeMayContainResource } from "../src/ui/target-scope.js";
 
@@ -378,6 +382,126 @@ test("scope formatting and explanatory resource containment stay exact and non-a
   assert.equal(scopeMayContainResource(resourceScope(identity("provider_pool", "other")), resource), false);
   assert.equal(scopeMayContainResource(create(TargetScopeSchema, { kind: TargetScopeKind.RUNTIME_SESSION }), resource), false);
 });
+
+test("token-commune panel input deny-by-default gates pool and draw independently", () => {
+  const poolResource = tokenPoolResource();
+  const drawResource = tokenDrawResource();
+  const model = modelWith(poolResource, drawResource);
+  const now = new Date("2026-08-07T12:00:00Z");
+  assert.equal(resourceHasLocalQueryAffordance(model, poolResource.identity, now), false);
+  assert.deepEqual(tokenCommunePanelInput(model, undefined, now).summaries, []);
+
+  model.security.grants.push({
+    grantId: "pool-query",
+    subjectActorId: "operator",
+    targetScope: resourceScope(poolResource.identity),
+    allowedOperationKinds: [OperationKind.QUERY],
+    revoked: false,
+    revocationPolicy: 0,
+  });
+  const poolOnly = tokenCommunePanelInput(model, undefined, now);
+  assert.equal(poolOnly.summaries.length, 1);
+  assert.equal(poolOnly.summaries[0]!.draw.state, "unavailable");
+
+  model.security.grants.push({
+    grantId: "draw-query",
+    subjectActorId: "operator",
+    targetScope: resourceScope(drawResource.identity),
+    allowedOperationKinds: [OperationKind.QUERY],
+    expiresAt: new Date("2026-08-07T13:00:00Z"),
+    revoked: false,
+    revocationPolicy: 0,
+  });
+  const joined = tokenCommunePanelInput(model, undefined, now);
+  assert.equal(joined.summaries[0]!.draw.state, "current");
+  assert.equal(joined.summaries[0]!.verdict, "runnable");
+
+  model.security.grants[1]!.expiresAt = new Date("2026-08-07T11:00:00Z");
+  assert.equal(tokenCommunePanelInput(model, undefined, now).summaries[0]!.draw.state, "unavailable");
+  model.security.grants[0]!.revoked = true;
+  assert.deepEqual(tokenCommunePanelInput(model, undefined, now).summaries, []);
+});
+
+test("recognized token resources render once in the option-7 panel, not generic detail", () => {
+  const resource = tokenPoolResource();
+  const model = modelWith(resource);
+  model.security.grants.push({
+    grantId: "adapter-query",
+    subjectActorId: "operator",
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.ADAPTER,
+      adapterId: create(AdapterIdSchema, { value: "token-commune" }),
+    }),
+    allowedOperationKinds: [OperationKind.QUERY],
+    revoked: false,
+    revocationPolicy: 0,
+  });
+  const dom = new JSDOM();
+  const destination = renderResourceDestination(dom.window.document, model, {
+    mobileDetailOpen: false,
+    lockdownActive: false,
+    onSelect() {},
+    onBack() {},
+  });
+  assert.equal(destination.element.querySelectorAll(".token-commune-pool").length, 1);
+  assert.equal(destination.element.querySelector(".resource-row"), null);
+  assert.equal(destination.element.querySelector(".adapter-projection"), null);
+});
+
+function tokenPoolResource(): ResourceView {
+  return {
+    identity: identity("token-commune.provider-pool", "opaque-pool"),
+    freshness: ResourceFreshnessState.CURRENT,
+    sourceAdapterGeneration: 3n,
+    revisionLsn: 20n,
+    observedAt: new Date("2026-08-07T11:59:00Z"),
+    tombstoned: false,
+    hasCachedPayload: true,
+    reconciled: true,
+    projection: {
+      status: "decoded",
+      value: {
+        kind: "token-commune-provider-pool",
+        provider: "openai-codex",
+        contributionListing: {
+          status: "reported",
+          contributions: [{
+            health: "fresh",
+            telemetryState: "readings",
+            capacityReadings: [{
+              window: "5h", usedFraction: 0.2, resetsAt: null, observedAt: "2026-08-07T11:58:00Z",
+            }],
+          }],
+        },
+        credentialHealthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
+        modelCatalog: { status: "reported", models: [{ id: "gpt-5.5", available: true }] },
+        capacityAggregation: "none",
+      },
+    },
+  };
+}
+
+function tokenDrawResource(): ResourceView {
+  return {
+    identity: identity("token-commune.member-draw", "opaque-draw"),
+    freshness: ResourceFreshnessState.CURRENT,
+    sourceAdapterGeneration: 3n,
+    revisionLsn: 21n,
+    observedAt: new Date("2026-08-07T11:59:30Z"),
+    tombstoned: false,
+    hasCachedPayload: true,
+    reconciled: true,
+    projection: {
+      status: "decoded",
+      value: {
+        kind: "token-commune-member-draw",
+        memberDisplayName: "private member",
+        provider: "openai-codex",
+        reports: [{ provider: "openai-codex", limitFraction: 0.2, consumedUnits: 3, resetsAt: null }],
+      },
+    },
+  };
+}
 
 function resourceScope(identity: ResourceIdentityView) {
   return create(TargetScopeSchema, {

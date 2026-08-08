@@ -2,6 +2,11 @@ import {
   PayloadContentType,
   type PayloadEnvelope,
 } from "@patchbay/contracts";
+import {
+  TOKEN_COMMUNE_PRESENTATION_CONTRACT,
+  decodeTokenCommuneProjection,
+  type TokenCommuneProjection,
+} from "@patchbay/operator-domain";
 
 export interface ResourceIdentityView {
   adapterId: string;
@@ -41,7 +46,7 @@ export interface UsageWindowProjection {
   controlPosture: "read-only";
 }
 
-export type DecodedResourceProjection = ProviderPoolProjection | UsageWindowProjection;
+export type DecodedResourceProjection = ProviderPoolProjection | UsageWindowProjection | TokenCommuneProjection;
 
 export type ResourceProjectionResult =
   | { status: "decoded"; value: DecodedResourceProjection }
@@ -53,7 +58,11 @@ export interface ResourceProjectionDecoder {
   resourceKind: string;
   resourcePayload: ProjectionDescriptor;
   projectionPayload: ProjectionDescriptor;
-  decode(payload: Uint8Array): DecodedResourceProjection;
+  decode(
+    identity: ResourceIdentityView,
+    resourcePayload: PayloadEnvelope,
+    projectionPayload: PayloadEnvelope,
+  ): DecodedResourceProjection;
 }
 
 const JSON_DESCRIPTOR = PayloadContentType.JSON;
@@ -64,14 +73,16 @@ export const RESOURCE_PROJECTION_DECODERS: readonly ResourceProjectionDecoder[] 
     resourceKind: "provider_pool",
     resourcePayload: { schemaRef: "provider_pool.payload.v1", contentType: JSON_DESCRIPTOR },
     projectionPayload: { schemaRef: "provider_pool.projection.v1", contentType: JSON_DESCRIPTOR },
-    decode: decodeProviderPool,
+    decode: (_identity, _resourcePayload, projectionPayload) => decodeProviderPool(projectionPayload.payload),
   },
   {
     resourceKind: "usage_window",
     resourcePayload: { schemaRef: "usage_window.payload.v1", contentType: JSON_DESCRIPTOR },
     projectionPayload: { schemaRef: "usage_window.projection.v1", contentType: JSON_DESCRIPTOR },
-    decode: decodeUsageWindow,
+    decode: (_identity, _resourcePayload, projectionPayload) => decodeUsageWindow(projectionPayload.payload),
   },
+  tokenCommuneDecoder(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool),
+  tokenCommuneDecoder(TOKEN_COMMUNE_PRESENTATION_CONTRACT.memberDraw),
 ]);
 
 export function decodeResourceProjection(
@@ -90,10 +101,23 @@ export function decodeResourceProjection(
   if (!decoder) return { status: "unsupported", projection };
 
   try {
-    return { status: "decoded", value: decoder.decode(projectionPayload.payload) };
+    return { status: "decoded", value: decoder.decode(identity, resourcePayload, projectionPayload) };
   } catch {
     return { status: "invalid", projection, reason: "projection_decode_failed" };
   }
+}
+
+function tokenCommuneDecoder(contract: (typeof TOKEN_COMMUNE_PRESENTATION_CONTRACT)[keyof typeof TOKEN_COMMUNE_PRESENTATION_CONTRACT]): ResourceProjectionDecoder {
+  return {
+    resourceKind: contract.resourceKind,
+    resourcePayload: { schemaRef: contract.payloadSchema, contentType: JSON_DESCRIPTOR },
+    projectionPayload: { schemaRef: contract.projectionSchema, contentType: JSON_DESCRIPTOR },
+    decode(identity, resourcePayload, projectionPayload) {
+      const result = decodeTokenCommuneProjection(identity, resourcePayload, projectionPayload);
+      if (result?.status !== "decoded") throw new Error("token-commune projection failed semantic validation");
+      return result.value;
+    },
+  };
 }
 
 function registerDecoders(decoders: readonly ResourceProjectionDecoder[]): readonly ResourceProjectionDecoder[] {
