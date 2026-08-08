@@ -37,6 +37,19 @@ const fixtures: Record<string, unknown> = {
   ].map((id) => ({ id, object: "model", owned_by: "token-commune", provider: id.includes("claude") ? "anthropic" : "openai-codex", surface: "codex", context_window: 200000, max_tokens: 8192, reasoning: true, available: true })) },
 };
 
+test("credential reflection in a successful gateway body fails closed before decoding", async () => {
+  const client = createHttpTokenCommuneGatewayClient({
+    baseUrl: new URL("https://gateway.example/"), credential,
+    fetch: async () => Response.json({ member: "member-key", draw: [] }),
+  });
+  await assert.rejects(
+    client.getMe(),
+    (error: unknown) => error instanceof GatewayClientError
+      && error.kind === "invalid-response"
+      && !error.message.includes("member-key"),
+  );
+});
+
 test("all gateway methods use exact authenticated GET paths and return immutable typed DTOs", async () => {
   const seen: string[] = [];
   const fetcher: typeof fetch = async (input, init) => {

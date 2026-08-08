@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance-real-core-e2e
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, verification]
 parent: epic-token-commune-observer-conformance
 depends_on: [epic-token-commune-observer-conformance-phase-1-completeness-vectors]
@@ -47,3 +47,12 @@ sentinel and its common encodings.
 
 Depends on green phase-1 vectors. Phase-2 adversaries use this real process
 fixture rather than inventing a parallel E2E harness.
+
+## Implementation notes
+
+- Added a reusable scripted local HTTP gateway fixture with exact endpoint/Authorization assertions and drove it through the real `0600` credential loader and HTTP gateway decoder.
+- Expanded the serial E2E across the real Node adapter, generated RPC clients, Rust core, and SQLite: generation-1 mixed-success PARTIAL report; non-replayed baseline and one overlap event; all-endpoint missed poll; stale preservation; abnormal delivery-stream stop; generation-2 attach; 50-event unknown-continuity gap; listed-only current recovery; old-generation/token rejection; and cross-owner Observation rejection.
+- The actual resource snapshot proves two PARTIAL view revisions, current→stale transitions, generation-2 listed-current/omitted-stale behavior, and no fabricated missed count. Failed old/cross-owner attempts append no ResourceState or non-registration Observation.
+- Added a fail-closed gateway response-reflection boundary: a successful body containing any raw, bearer-derived, URL, base64, or JSON credential form is treated as `invalid-response` before decoding, so hostile upstream fields cannot enter a resource envelope.
+- The E2E scans subscription/event output, materialized ResourceSnapshot bytes, diagnostic query output, local diagnostics, and raw SQLite bytes with the independent secret oracle. Only outbound HTTP Authorization contains the sentinel.
+- Verification: focused real gateway/core E2E passed in 2.4s; full token-commune adapter suite passed 60/60, including both real-core tests.

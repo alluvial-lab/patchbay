@@ -1,30 +1,40 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { DatabaseSync } from "node:sqlite";
 import { createClient, type Interceptor } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
-  AcceptedOperationSchema, ActorEndpointRefSchema, ActorIdSchema, AdapterRegistrationSchema,
+  AcceptedOperationSchema, ActorEndpointRefSchema, ActorIdSchema, AdapterIdSchema, AdapterRegistrationSchema,
   AdapterSnapshotSupport, AdapterTargetCategory, AdminService, AuthorityDomainIdSchema,
   BootstrapRequestSchema, CommandIdSchema, CommandTransitionSchema, ControlService,
-  DeviceIdSchema, EndpointIdSchema, FailureCode, GenerationSchema, LsnSchema,
-  ObservationSchema, OperationKind, OperationSchema, OperationState,
-  PrincipalEnrollmentSchema, StoredEventKind, StoredEventPayloadSchema,
+  DeviceIdSchema, DiagnosticsQuerySchema, EndpointIdSchema, FailureCode, GenerationSchema,
+  LoadSnapshotRequestSchema, LsnSchema, ObservationKind, ObservationSchema, OperationKind,
+  OperationSchema, OperationState, PayloadContentType, PayloadEnvelopeSchema,
+  PrincipalEnrollmentSchema, QueryDiagnosticsRequestSchema, ResourceFreshnessState,
+  ResourceSnapshotSchema, SnapshotViewKind, StoredEventKind, StoredEventPayloadSchema,
   SubscribeRequestSchema, TargetScopeKind, TargetScopeSchema, TimeWindowSchema,
-  VerifyOperatorPasswordRequestSchema, type GrantId, type PrincipalCredential,
-  type StoredEventPayload,
+  VerifyOperatorPasswordRequestSchema, AdapterStatusQuerySchema, type GrantId,
+  type PrincipalCredential, type ResourceSnapshot, type StoredEventPayload,
 } from "@patchbay/contracts";
 import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess } from "../src/main.js";
-import type { TokenCommuneGatewayClient } from "../src/gateway_client.js";
+import { PatchbayCoreClient } from "../src/core_client.js";
+import { loadGatewayCredential } from "../src/credential.js";
+import { createHttpTokenCommuneGatewayClient, type TokenCommuneGatewayClient } from "../src/gateway_client.js";
+import { createCompositeLocalIdentitySynthesizer } from "../src/identity.js";
+import { projectTokenCommuneSnapshot } from "../src/snapshot_projection.js";
+import { assertSecretAbsent } from "./conformance-oracles.js";
+import { ScriptedTokenCommuneGateway, type ScriptedGatewayStep } from "./fixtures/conformance-gateway.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const encoder = new TextEncoder();
 const coreSecret = "token-commune-e2e-core-secret";
 const adapterEvidence = "token-commune-e2e-attachment-secret";
 const gatewayKey = "token-commune-e2e-member-key";
@@ -116,6 +126,163 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
   }
 });
 
+// Serial full-boundary evidence: local HTTP gateway + 0600 credential + real
+// adapter process + generated RPCs + Rust core/SQLite + resource cockpit payload.
+test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and member-key redaction", { timeout: 90_000 }, async () => {
+  const port = await freePort();
+  let adminPort = await freePort();
+  while (adminPort === port) adminPort = await freePort();
+  mkdirSync(join(repoRoot, "tmp"), { recursive: true });
+  const directory = mkdtempSync(join(repoRoot, "tmp", "token-commune-conformance-e2e-"));
+  const databasePath = join(directory, "core.sqlite3");
+  const diagnosticPath = join(directory, "adapter.log");
+  const credentialPath = join(directory, "member.key");
+  const sentinel = "tc_member_9Wv3mK8qR6xN2pH7dF4sT1zC";
+  writeFileSync(credentialPath, `${sentinel}\n`, { mode: 0o600 });
+  chmodSync(credentialPath, 0o600);
+  const gateway = new ScriptedTokenCommuneGateway();
+  const gatewayUrl = await gateway.start(conformanceGatewaySteps(sentinel));
+  const credential = await loadGatewayCredential(credentialPath);
+  const httpGateway = createHttpTokenCommuneGatewayClient({ baseUrl: gatewayUrl, credential, requestTimeoutMs: 2_000 });
+  const core = startCore(port, adminPort, databasePath);
+  const controller1 = new AbortController();
+  const controller2 = new AbortController();
+  let process1: AdapterProcess | undefined;
+  let process2: AdapterProcess | undefined;
+  let run1: Promise<void> | undefined;
+  let run2: Promise<void> | undefined;
+  try {
+    const setupSecret = await waitForCore(port, core);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const auth = await bootstrapAndLogin(baseUrl, `http://127.0.0.1:${adminPort}`, setupSecret);
+    const control = makeControlClient(baseUrl, auth);
+    const identities = createCompositeLocalIdentitySynthesizer({ adapterId: "token-commune", gatewayBaseUrl: gatewayUrl });
+    const openaiId = identities.providerPool("openai-codex").resourceId;
+    const anthropicId = identities.providerPool("anthropic").resourceId;
+    const diagnostics1 = await openAdapterDiagnostics({
+      path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 1,
+      secrets: [adapterEvidence, sentinel, `Bearer ${sentinel}`, credentialPath],
+    });
+    const oldClient = new PatchbayCoreClient({
+      coreAddress: baseUrl, adapterId: "token-commune", authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+    }, diagnostics1);
+    process1 = new AdapterProcess({
+      coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 1,
+      authorityDomainId: domainId, attachmentEvidence: adapterEvidence,
+      gatewayBaseUrl: gatewayUrl, gatewayCredentialFile: credentialPath,
+      pollIntervalMs: 100, diagnosticPath, gateway: httpGateway, diagnostics: diagnostics1,
+      forwardDiagnostics: true, coreClient: oldClient, retryDelayMs: 10,
+    });
+    await process1.start();
+    run1 = process1.run(controller1.signal);
+
+    let snapshot = await waitForResourceSnapshot(control, (candidate) =>
+      resource(candidate, openaiId)?.freshness === ResourceFreshnessState.CURRENT,
+    );
+    assert.equal(snapshot.viewRevisions.length, 2, "both exact token-commune views have revisions");
+    assert.ok(snapshot.viewRevisions.every((view) => view.completeness === AdapterSnapshotSupport.PARTIAL));
+    assert.ok(resource(snapshot, openaiId)?.projectionPayload, "mixed-success report installs listed provider evidence");
+
+    gateway.advance();
+    await waitFor(async () => observations(await readAfter(control, 0n), "patchbay.token_commune.pool_event.v1")
+      .some((observation) => JSON.parse(new TextDecoder().decode(observation.payload?.payload)).sourceEventId === "new"),
+    "overlapping latest-50 event to append exactly once");
+    assert.equal(observations(await readAfter(control, 0n), "patchbay.token_commune.pool_event.v1")
+      .filter((observation) => JSON.parse(new TextDecoder().decode(observation.payload?.payload)).sourceEventId === "new").length, 1);
+
+    gateway.advance();
+    snapshot = await waitForResourceSnapshot(control, (candidate) =>
+      resource(candidate, openaiId)?.freshness === ResourceFreshnessState.STALE,
+    );
+    assert.equal(resource(snapshot, openaiId)?.freshness, ResourceFreshnessState.STALE, "empty PARTIAL poll preserves the row as stale");
+    controller1.abort();
+    await run1;
+    await process1.dispose();
+    process1 = undefined;
+    run1 = undefined;
+
+    gateway.advance();
+    const diagnostics2 = await openAdapterDiagnostics({
+      path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 2,
+      secrets: [adapterEvidence, sentinel, `Bearer ${sentinel}`, credentialPath],
+    });
+    process2 = new AdapterProcess({
+      coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 2,
+      authorityDomainId: domainId, attachmentEvidence: adapterEvidence,
+      gatewayBaseUrl: gatewayUrl, gatewayCredentialFile: credentialPath,
+      pollIntervalMs: 100, diagnosticPath, gateway: httpGateway, diagnostics: diagnostics2,
+      forwardDiagnostics: true, retryDelayMs: 10,
+    });
+    await process2.start();
+    run2 = process2.run(controller2.signal);
+    snapshot = await waitForResourceSnapshot(control, (candidate) =>
+      resource(candidate, anthropicId)?.freshness === ResourceFreshnessState.CURRENT
+        && resource(candidate, openaiId)?.freshness === ResourceFreshnessState.STALE,
+    );
+    assert.equal(resource(snapshot, anthropicId)?.sourceAdapterGeneration?.value, 2n);
+    assert.equal(resource(snapshot, openaiId)?.freshness, ResourceFreshnessState.STALE, "generation-2 PARTIAL omission cannot promote prior identities");
+
+    const gap = observations(await readAfter(control, 0n), "patchbay.token_commune.event_gap.v1")
+      .map((observation) => JSON.parse(new TextDecoder().decode(observation.payload?.payload)) as Record<string, unknown>)
+      .find((payload) => payload["visibleWindowSize"] === 50);
+    assert.ok(gap, "the latest-50 rollover is externally visible as gap evidence");
+    assert.equal(gap["continuity"], "unknown-before-visible-window");
+    assert.equal(Object.hasOwn(gap, "missedCount"), false, "the adapter cannot fabricate a missed count");
+
+    const otherClient = new PatchbayCoreClient({
+      coreAddress: baseUrl, adapterId: "other-token-observer", authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+    });
+    await otherClient.attach(1);
+    const beforeFence = await readAfter(control, 0n);
+    const staleReport = projectTokenCommuneSnapshot({
+      adapterId: "token-commune", adapterGeneration: 1,
+      observedAt: timestampFromDate(new Date("2026-08-08T12:00:00.000Z")), identities,
+      gateway: { status: { status: "unavailable" }, pool: { status: "unavailable" }, me: { status: "unavailable" }, fingerprints: { status: "unavailable" }, models: { status: "unavailable" } },
+    });
+    await assert.rejects(oldClient.ingestResourceReport(staleReport), "generation-1 client remains fenced after generation 2 attaches");
+    await assert.rejects(otherClient.ingestEvent(create(ObservationSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+      sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "other-token-observer" }) }),
+      kind: ObservationKind.STATUS,
+      targetScope: create(TargetScopeSchema, {
+        kind: TargetScopeKind.RESOURCE,
+        resource: { adapterId: create(AdapterIdSchema, { value: "token-commune" }), resourceKind: { value: "token-commune.provider-pool" }, resourceId: { value: openaiId } },
+      }),
+      payload: create(PayloadEnvelopeSchema, { contentType: PayloadContentType.JSON, schemaRef: "patchbay.token_commune.cross_owner.v1", payload: encoder.encode("{}") }),
+    })), "cross-owner evidence remains inert");
+    const afterFence = await readAfter(control, 0n);
+    assert.equal(countKinds(afterFence, [StoredEventKind.RESOURCE_STATE]), countKinds(beforeFence, [StoredEventKind.RESOURCE_STATE]));
+    assert.equal(nonRegistrationObservationCount(afterFence), nonRegistrationObservationCount(beforeFence));
+
+    const diagnosticsQuery = await control.queryDiagnostics(create(QueryDiagnosticsRequestSchema, {
+      operation: adapterStatusOperation("redaction-adapter-status"),
+    }));
+    const finalEvents = await readAfter(control, 0n);
+    const finalSnapshot = await loadResourceSnapshot(control);
+    assertSecretAbsent(sentinel, [
+      { name: "subscription-events", bytes: encoder.encode(JSON.stringify(finalEvents, bigintJson)) },
+      { name: "resource-snapshot", bytes: toBinary(ResourceSnapshotSchema, finalSnapshot) },
+      { name: "diagnostic-query", bytes: encoder.encode(JSON.stringify(diagnosticsQuery, bigintJson)) },
+      { name: "adapter-diagnostics", bytes: readFileSync(diagnosticPath) },
+      { name: "sqlite-bytes", bytes: readFileSync(databasePath) },
+    ]);
+    assert.ok(gateway.requests.length > 0);
+    assert.ok(gateway.requests.every((request) => request.authorization === `Bearer ${sentinel}`));
+  } finally {
+    controller2.abort();
+    controller1.abort();
+    if (process2) await process2.dispose();
+    if (process1) await process1.dispose();
+    await Promise.allSettled([run2, run1].filter((run): run is Promise<void> => run !== undefined));
+    credential.dispose();
+    await gateway.close();
+    core.kill("SIGTERM");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function emptyGateway(): TokenCommuneGatewayClient {
   const fingerprints = {
     anthropic: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
@@ -129,6 +296,117 @@ function emptyGateway(): TokenCommuneGatewayClient {
     getFingerprints: async () => fingerprints,
     getModels: async () => ({ models: [] }),
   };
+}
+
+function conformanceGatewaySteps(secret: string): readonly ScriptedGatewayStep[] {
+  const authorization = `Bearer ${secret}`;
+  const fingerprint = { state: "unknown", templateSource: "compiled", since: null, diff: null };
+  const fingerprints = {
+    anthropic: { templateSource: "compiled", lastCapture: null, lastCaptureAt: null, lastDiff: null, hold: null },
+    "openai-codex": { templateSource: "compiled", lastCapture: null, lastCaptureAt: null, lastDiff: null, hold: null },
+  };
+  const contribution = (provider: string, usedFraction: number) => ({
+    provider, declaredShare: 1, health: { state: "fresh" },
+    capacity: [{ window: "5h", usedFraction, usedUnits: usedFraction * 100, limitUnits: 100, resetsAt: null, source: "usage_endpoint", observedAt: 1_786_190_100_000 }],
+    fingerprint,
+  });
+  const model = (provider: string, id: string) => ({
+    id, provider, surface: "chat", upstream_model: null,
+    context_window: 200000, max_tokens: 8192, reasoning: true, available: true,
+  });
+  const event = (id: string, at: number, provider: string) => ({
+    id, at, kind: "member", provider, contributionId: null, message: `visible-${id}`,
+  });
+  const response = (body: unknown, status = 200) => ({ status, body });
+  const step = (provider: string, usedFraction: number, events: unknown[], statusBody: unknown): ScriptedGatewayStep => ({
+    expectedAuthorization: authorization,
+    responses: {
+      "/commune/status": response(statusBody),
+      "/commune/pool": response({ providers: [contribution(provider, usedFraction)] }),
+      "/commune/me": response({ member: "Ada", draw: [{ provider, limitFraction: 0.25, fromDecree: false, consumedUnits: 5, drawUnits: null, exceeded: false, enforceable: false, resetsAt: null }] }),
+      "/commune/events": response({ events }),
+      "/commune/fingerprint": response(fingerprints),
+      "/v1/models": response({ data: [model(provider, provider === "openai-codex" ? "gpt-5.5" : "claude-sonnet-4-5")] }),
+    },
+  });
+  const initial = [event("old", 1_786_190_000_000, "openai-codex")];
+  const overlap = [...initial, event("new", 1_786_190_060_000, "openai-codex")];
+  const failed = Object.fromEntries(Object.values({
+    status: "/commune/status", pool: "/commune/pool", me: "/commune/me", events: "/commune/events",
+    fingerprints: "/commune/fingerprint", models: "/v1/models",
+  }).map((endpoint) => [endpoint, response({ error: "unavailable" }, 503)])) as ScriptedGatewayStep["responses"];
+  const latestFifty = Array.from({ length: 50 }, (_, index) => event(`g2-${String(index + 1).padStart(2, "0")}`, 1_786_190_200_000 + index, "anthropic"));
+  return [
+    step("openai-codex", 0.35, initial, { ok: false, anthropicHealth: { state: "auth_broken", reason: secret }, contributions: [] }),
+    step("openai-codex", 0.40, overlap, { ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
+    { expectedAuthorization: authorization, responses: failed },
+    step("anthropic", 0.20, latestFifty, { ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
+  ];
+}
+
+async function loadResourceSnapshot(control: ReturnType<typeof makeControlClient>): Promise<ResourceSnapshot> {
+  const loaded = await control.loadSnapshot(create(LoadSnapshotRequestSchema, {
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    viewKind: SnapshotViewKind.RESOURCE,
+  }));
+  assert.equal(loaded.present, true);
+  assert.equal(loaded.viewKind, SnapshotViewKind.RESOURCE);
+  return fromBinary(ResourceSnapshotSchema, loaded.snapshotPayload);
+}
+
+async function waitForResourceSnapshot(
+  control: ReturnType<typeof makeControlClient>,
+  predicate: (snapshot: ResourceSnapshot) => boolean,
+): Promise<ResourceSnapshot> {
+  let current: ResourceSnapshot | undefined;
+  await waitFor(async () => {
+    current = await loadResourceSnapshot(control);
+    return predicate(current);
+  }, "resource snapshot predicate", 15_000);
+  return current!;
+}
+
+function resource(snapshot: ResourceSnapshot, resourceId: string) {
+  return snapshot.resources.find((candidate) => candidate.identity?.resourceId?.value === resourceId);
+}
+
+function observations(payloads: readonly StoredEventPayload[], schemaRef: string) {
+  return payloads.filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+    .map((payload) => fromBinary(ObservationSchema, payload.payload))
+    .filter((observation) => observation.payload?.schemaRef === schemaRef);
+}
+
+function countKinds(payloads: readonly StoredEventPayload[], kinds: readonly StoredEventKind[]): number {
+  return payloads.filter((payload) => kinds.includes(payload.kind)).length;
+}
+
+function nonRegistrationObservationCount(payloads: readonly StoredEventPayload[]): number {
+  return payloads.filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+    .map((payload) => fromBinary(ObservationSchema, payload.payload))
+    .filter((observation) => observation.payload?.schemaRef !== "patchbay.AdapterRegistration").length;
+}
+
+function adapterStatusOperation(commandId: string) {
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: operatorId }) }),
+    kind: OperationKind.QUERY,
+    targetScope: create(TargetScopeSchema, { kind: TargetScopeKind.AUTHORITY_DOMAIN }),
+    validityWindow: create(TimeWindowSchema, { startsAt: { seconds: 1n }, expiresAt: { seconds: 2_534_023_007_99n } }),
+    submittedAt: { seconds: 1n }, idempotencyKey: `${commandId}-key`,
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.DiagnosticsQuery",
+      payload: toBinary(DiagnosticsQuerySchema, create(DiagnosticsQuerySchema, {
+        query: { case: "adapters", value: create(AdapterStatusQuerySchema, { adapterIds: [create(AdapterIdSchema, { value: "token-commune" })], limit: 10, recentDiagnosticLimit: 20 }) },
+      })),
+    }),
+  });
+}
+
+function bigintJson(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? value.toString() : value;
 }
 
 function operation(commandId: string) {

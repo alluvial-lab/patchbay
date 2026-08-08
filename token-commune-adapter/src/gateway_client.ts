@@ -155,6 +155,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
     }
     try {
       const text = await boundedText(response, maximum);
+      rejectCredentialReflection(text, options.credential.redactionSecrets());
       return deepFreeze(decode(JSON.parse(text) as unknown));
     } catch (error) {
       if (error instanceof GatewayClientError) throw error;
@@ -196,6 +197,20 @@ async function boundedText(response: Response, maximum: number): Promise<string>
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function rejectCredentialReflection(text: string, secrets: readonly string[]): void {
+  for (const secret of secrets.filter(Boolean)) {
+    const forms = [
+      secret,
+      encodeURIComponent(secret),
+      Buffer.from(secret).toString("base64"),
+      JSON.stringify(secret),
+    ];
+    if (forms.some((form) => text.includes(form))) {
+      throw new Error("gateway response reflected credential material");
+    }
+  }
 }
 
 function decodeStatus(value: unknown): GatewayStatus {
