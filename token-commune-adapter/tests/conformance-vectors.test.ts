@@ -385,14 +385,14 @@ class TerminalCore {
     if (!facts.some((fact) => fact.state === "delivered")) facts.push({ state: "delivered", eventLsn: ++this.#lsn });
     return eventId(this.#lsn);
   }
-  async failUnsupported(operation: Operation) {
+  async rejectUnsupported(operation: Operation) {
     if (!this.#failed && this.failMode !== "none") {
       this.#failed = true;
       if (this.failMode === "retry-once") throw new ConnectError("retry", Code.Unavailable);
       throw new Error("hard process loss");
     }
     const facts = this.for(operation);
-    if (!facts.some((fact) => fact.state === "failed")) facts.push({ state: "failed", failureCode: "unsupported_command", eventLsn: ++this.#lsn });
+    if (!facts.some((fact) => fact.state === "rejected")) facts.push({ state: "rejected", failureCode: "unsupported_command", eventLsn: ++this.#lsn });
     this.terminal.add(operation.commandId!.value);
     return eventId(this.#lsn);
   }
@@ -411,7 +411,7 @@ class TerminalCore {
   async appendDuplicateTransitions(operation: Operation) {
     const facts = this.for(operation);
     facts.push({ state: "delivered", eventLsn: ++this.#lsn });
-    facts.push({ state: "failed", failureCode: "unsupported_command", eventLsn: ++this.#lsn });
+    facts.push({ state: "rejected", failureCode: "unsupported_command", eventLsn: ++this.#lsn });
     this.terminal.add(operation.commandId!.value);
     return eventId(this.#lsn);
   }
@@ -655,13 +655,13 @@ async function killMutation(vector: ConformanceVector, mutationId: string): Prom
       to: "this.#record({\n                event: \"delivery.acknowledged\", level: \"info\", ...(commandId ? { commandId } : {}), operationKind: operation.kind,\n            });\n            if (!operation.commandId?.value.includes(\"later\")) continue;\n            await this.#finishPendingTerminalization();",
     },
     "terminalize-completed": {
-      file: "main.js", from: "await this.#core.failUnsupported(operation);", to: "await this.#core.completeUnsupported(operation);",
+      file: "main.js", from: "await this.#core.rejectUnsupported(operation);", to: "await this.#core.completeUnsupported(operation);",
     },
     "use-adapter-unavailable": {
-      file: "main.js", from: "await this.#core.failUnsupported(operation);", to: "await this.#core.failUnavailable(operation);",
+      file: "main.js", from: "await this.#core.rejectUnsupported(operation);", to: "await this.#core.failUnavailable(operation);",
     },
     "duplicate-delivery-or-terminal-transition": {
-      file: "main.js", from: "await this.#core.failUnsupported(operation);", to: "await this.#core.appendDuplicateTransitions(operation);",
+      file: "main.js", from: "await this.#core.rejectUnsupported(operation);", to: "await this.#core.appendDuplicateTransitions(operation);",
     },
   };
   if (terminalMutations[mutationId]) {

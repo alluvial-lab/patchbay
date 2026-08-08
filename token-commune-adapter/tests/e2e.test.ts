@@ -45,7 +45,7 @@ const operatorPassword = "correct-password";
 const operatorPasswordHash = "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g";
 
 // Serial real-process evidence for the generated registration and delivery seam.
-test("real core records the PARTIAL manifest and fails an unexpected operation with unsupported_command", { timeout: 60_000 }, async () => {
+test("real core records the PARTIAL manifest and rejects an unexpected operation with unsupported_command", { timeout: 60_000 }, async () => {
   const port = await freePort();
   let adminPort = await freePort();
   while (adminPort === port) adminPort = await freePort();
@@ -70,10 +70,10 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
       coreAddress: baseUrl, adapterId: "token-commune", authorityDomainId: domainId,
       attachmentEvidence: adapterEvidence,
     }, diagnostics);
-    const actualFailUnsupported = coreClient.failUnsupported.bind(coreClient);
+    const actualRejectUnsupported = coreClient.rejectUnsupported.bind(coreClient);
     let failRetryOnce = true;
     let crashNextTerminal = false;
-    coreClient.failUnsupported = async (operation) => {
+    coreClient.rejectUnsupported = async (operation) => {
       if (failRetryOnce) {
         failRetryOnce = false;
         throw new ConnectError("injected retryable terminal report loss", Code.Unavailable);
@@ -82,7 +82,7 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
         crashNextTerminal = false;
         throw new Error("injected hard process loss after delivery acknowledgement");
       }
-      return actualFailUnsupported(operation);
+      return actualRejectUnsupported(operation);
     };
     host = new AdapterProcess({
       coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 1,
@@ -114,16 +114,16 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     }, "unsupported operation terminalization");
     assert.equal(
       terminal?.toState,
-      OperationState.FAILED,
+      OperationState.REJECTED,
       `unexpected terminal transition: ${JSON.stringify(terminal, (_key, value) => typeof value === "bigint" ? value.toString() : value)}; diagnostics=${readFileSync(diagnosticPath, "utf8")}`,
     );
     const transitions = commandTransitions(await readAfter(control, 0n), "unsupported-query");
     const deliveredIndex = transitions.findIndex((item) => item.toState === OperationState.DELIVERED);
-    const failedIndex = transitions.findIndex((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND);
+    const rejectedIndex = transitions.findIndex((item) => item.toState === OperationState.REJECTED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND);
     assert.equal(transitions.filter((item) => item.toState === OperationState.DELIVERED).length, 1, "delivery must be acknowledged exactly once");
     assert.notEqual(deliveredIndex, -1, "transition sequence must contain DELIVERED");
-    assert.notEqual(failedIndex, -1, "transition sequence must contain FAILED + UNSUPPORTED_COMMAND");
-    assert.ok(deliveredIndex < failedIndex, "unsupported delivery must transition DELIVERED before FAILED");
+    assert.notEqual(rejectedIndex, -1, "transition sequence must contain REJECTED + UNSUPPORTED_COMMAND");
+    assert.ok(deliveredIndex < rejectedIndex, "unsupported delivery must transition DELIVERED before REJECTED");
     await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-later-retry")
       .some((item) => item.toState === OperationState.DELIVERED), "later retry-scenario delivery");
     assertPendingPrecedesLaterDelivery(databasePath, "unsupported-query", "unsupported-later-retry");
@@ -148,11 +148,11 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     await host.start();
     run = host.run(controller.signal);
     await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-replacement")
-      .some((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND),
+      .some((item) => item.toState === OperationState.REJECTED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND),
     "replacement process unsupported terminalization");
     const replacementTransitions = commandTransitions(await readAfter(control, 0n), "unsupported-replacement");
     assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.DELIVERED).length, 1);
-    assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND).length, 1);
+    assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.REJECTED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND).length, 1);
     assert.equal(replacementTransitions.some((item) => item.toState === OperationState.COMPLETED), false);
     await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-later-replacement")
       .some((item) => item.toState === OperationState.DELIVERED), "later replacement-scenario delivery");
@@ -340,7 +340,7 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     }));
     const finalEvents = await readAfter(control, 0n);
     const finalSnapshot = await loadResourceSnapshot(control);
-    await assertHonestCockpitRendering(finalSnapshot, anthropicId);
+    await assertHonestCockpitRendering(finalSnapshot, anthropicId, finalEvents);
     const liveSqlite = sqliteFiles(databasePath, "live");
     checkpointSqlite(databasePath);
     const checkpointedSqlite = sqliteFiles(databasePath, "checkpointed");
@@ -562,7 +562,11 @@ function readFileIfPresent(candidate: string): Uint8Array | undefined {
   }
 }
 
-async function assertHonestCockpitRendering(snapshot: ResourceSnapshot, resourceId: string): Promise<void> {
+async function assertHonestCockpitRendering(
+  snapshot: ResourceSnapshot,
+  resourceId: string,
+  events: readonly StoredEventPayload[],
+): Promise<void> {
   const operator = await import(pathToFileURL(join(repoRoot, "operator-domain/dist/src/token-commune.js")).href);
   const web = await import(pathToFileURL(join(repoRoot, "web-cockpit/dist/src/ui/token-commune-panel.js")).href);
   const { JSDOM } = await import(pathToFileURL(join(repoRoot, "web-cockpit/node_modules/jsdom/lib/api.js")).href);
@@ -585,13 +589,24 @@ async function assertHonestCockpitRendering(snapshot: ResourceSnapshot, resource
     };
   }).filter(Boolean);
   const summaries = operator.composeTokenCommunePools(inputs);
+  const recentEvents = events.flatMap((event) => {
+    if (event.kind !== StoredEventKind.OBSERVATION) return [];
+    const decoded = operator.decodeTokenCommuneResourceObservation(fromBinary(ObservationSchema, event.payload));
+    return decoded ? [{ ...decoded, occurredAt: new Date(decoded.occurredAt) }] : [];
+  }).reverse().slice(0, 12);
   const selected = summaries.find((summary: any) => summary.poolIdentity.resourceId === resourceId);
   assert.ok(selected, "real snapshot must compose into a token-commune pool summary");
   const dom = new JSDOM("<!doctype html><html><body><main></main></body></html>");
-  const panel = web.renderTokenCommunePanel(dom.window.document, { summaries, partial: true });
+  const panel = web.renderTokenCommunePanel(dom.window.document, { summaries, recentEvents, partial: true });
   dom.window.document.querySelector("main").append(panel);
   assert.match(panel.textContent ?? "", /anthropic/);
-  assert.match(panel.textContent ?? "", /Verdicts are a Patchbay synthesis/);
+  const text = panel.textContent ?? "";
+  assert.match(text, /Verdicts are a Patchbay synthesis/);
+  assert.match(text, /fingerprint/);
+  assert.match(text, /100% total declared share/);
+  assert.match(text, /5 units consumed · reset unavailable/);
+  assert.match(text, /reading .* ago · (?:current|stale) · reset unavailable/);
+  assert.match(text, /events: (?:gap|pool)/);
   assert.equal(panel.querySelector("script, img, .token-commune-pool--stale .token-commune-verdict--run"), null);
 }
 
@@ -653,7 +668,7 @@ function assertPendingPrecedesLaterDelivery(databasePath: string, pendingId: str
       const stored = fromBinary(StoredEventPayloadSchema, row.payload);
       if (stored.kind !== StoredEventKind.COMMAND_TRANSITION) continue;
       const transition = fromBinary(CommandTransitionSchema, stored.payload);
-      if (transition.commandId?.value === pendingId && transition.toState === OperationState.FAILED
+      if (transition.commandId?.value === pendingId && transition.toState === OperationState.REJECTED
           && transition.failureCode === FailureCode.UNSUPPORTED_COMMAND) pendingFailureLsn = row.lsn;
       if (transition.commandId?.value === laterId && transition.toState === OperationState.DELIVERED
           && laterDeliveredLsn === undefined) laterDeliveredLsn = row.lsn;

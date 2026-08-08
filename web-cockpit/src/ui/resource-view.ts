@@ -129,8 +129,14 @@ export function tokenCommunePanelInput(
   const refreshedAt = summaries.reduce<Date | undefined>((latest, summary) =>
     !summary.poolObservedAt || (latest && latest >= summary.poolObservedAt) ? latest : summary.poolObservedAt,
   undefined);
+  const recentEvents = model.resourceObservations
+    .filter((event) => resourceHasLocalQueryAffordance(model, event.poolIdentity, now))
+    .sort((left, right) => left.lsn > right.lsn ? -1 : left.lsn < right.lsn ? 1 : 0)
+    .slice(0, 12)
+    .map(({ poolIdentity, kind, code, occurredAt }) => ({ poolIdentity, kind, code, occurredAt }));
   return {
     summaries,
+    recentEvents,
     ...(refreshedAt ? { refreshedAt } : {}),
     partial: summaries.some((summary) => summary.completeness !== AdapterSnapshotSupport.AUTHORITATIVE),
     ...(selectedSummary ? { selectedKey: selectedSummary.key } : {}),

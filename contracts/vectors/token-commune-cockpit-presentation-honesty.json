@@ -34,6 +34,31 @@
       "invariant": "The removed gpt-5.6 alias fails closed and is withheld."
     },
     {
+      "mutation_id": "display-cross-provider-model",
+      "runner": "web-cockpit",
+      "invariant": "A model whose provider differs from the enclosing pool is omitted and leaves model evidence unknown."
+    },
+    {
+      "mutation_id": "drop-carried-capabilities",
+      "runner": "web-cockpit",
+      "invariant": "Safe fingerprint, total declared share, consumed units, and reset summaries survive decoding and presentation."
+    },
+    {
+      "mutation_id": "hide-current-wrapper-old-reading-age",
+      "runner": "web-cockpit",
+      "invariant": "The selected reading source age remains visible even when its canonical wrapper is current."
+    },
+    {
+      "mutation_id": "label-missing-reading-current",
+      "runner": "web-cockpit",
+      "invariant": "No-5h-reading and all-null-reading states render unavailable rather than current."
+    },
+    {
+      "mutation_id": "drop-resource-events",
+      "runner": "web-cockpit",
+      "invariant": "Bounded safe pool and gap Observations reach the grant-gated cockpit projection."
+    },
+    {
       "mutation_id": "expose-contributor-member-subkey",
       "runner": "web-cockpit",
       "invariant": "Private contributor/member/subkey material never reaches the panel."
@@ -55,13 +80,16 @@
     }
   ],
   "proto_fields_constrained": [
+    "patchbay.Observation.kind",
+    "patchbay.Observation.payload",
+    "patchbay.Observation.target_scope",
     "patchbay.Resource.freshness",
     "patchbay.Resource.projection_payload",
     "patchbay.ResourceViewRevision.completeness",
     "patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_STALE",
     "patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_UNKNOWN"
   ],
-  "description": "The exact adapter projection fixture crosses the local decoder, compositor, and option-7 panel with current, stale, unknown/invalid, cross-provider, forbidden-alias, and hostile renderer/contributor fields.",
+  "description": "The exact adapter projection fixture crosses the local decoder, compositor, bounded resource-Observation projection, and option-7 panel with carried safe capabilities, independent wrapper/reading ages, missing-reading states, current, stale, unknown/invalid, cross-provider, forbidden-alias, and hostile renderer/contributor fields.",
   "input": {
     "adapter_id": "token-commune",
     "gateway_base_url": "https://commune.example/",
@@ -263,6 +291,10 @@
       "unknown",
       "invalid",
       "cross-provider-model",
+      "old-reading-current-wrapper",
+      "no-5h-readings",
+      "all-null-5h-readings",
+      "pool-and-gap-events",
       "forbidden-alias",
       "hostile-fields"
     ],
@@ -287,6 +319,16 @@
     "stale_renders_live": false,
     "unknown_rows_visible": true,
     "cross_provider_model_runnable": false,
+    "cross_provider_model_visible": false,
+    "safe_fingerprint_visible": true,
+    "total_declared_share_visible": true,
+    "draw_consumed_units_visible": true,
+    "draw_reset_visible": true,
+    "capacity_reset_visible": true,
+    "old_reading_age_visible_under_current_wrapper": true,
+    "no_5h_readings_telemetry": "unavailable",
+    "all_null_5h_readings_telemetry": "unavailable",
+    "resource_events_visible": true,
     "forbidden_alias_visible": false,
     "private_fields_visible": false,
     "dynamic_renderer_executed": false,

@@ -1,7 +1,10 @@
 import {
   AdapterSnapshotSupport,
+  ObservationKind,
   PayloadContentType,
   ResourceFreshnessState,
+  TargetScopeKind,
+  type Observation,
   type PayloadEnvelope,
 } from "@patchbay/contracts";
 
@@ -63,7 +66,24 @@ export interface ProviderModel {
 
 export type ProviderModelCatalog =
   | { status: "reported"; models: readonly ProviderModel[] }
-  | { status: "unavailable"; models: readonly [] };
+  | { status: "unavailable" | "provider-mismatch"; models: readonly [] };
+
+export type ProviderFingerprint =
+  | {
+      status: "reported";
+      probe: "anthropic" | "openai-codex";
+      templateSource: string | null;
+      capturedAt: string | null;
+      capturePresent: boolean;
+      held: boolean;
+      heldAt: string | null;
+      diffPresent: boolean;
+    }
+  | {
+      status: "unknown";
+      probe: "anthropic" | "openai-codex" | null;
+      reason: "probe-unavailable" | "not-probed";
+    };
 
 export interface MemberDrawReport {
   provider: string;
@@ -78,7 +98,9 @@ export type TokenCommuneProjection =
       provider: string;
       contributionListing: ContributionListing;
       credentialHealthCounts: CredentialHealthCounts;
+      totalDeclaredShare: number;
       modelCatalog: ProviderModelCatalog;
+      fingerprint: ProviderFingerprint;
       capacityAggregation: "none";
     }
   | {
@@ -93,6 +115,78 @@ export type TokenCommuneDecodeResult =
   | { status: "invalid"; reason: "projection_decode_failed" }
   | { status: "unsupported" }
   | { status: "unavailable" };
+
+export interface TokenCommuneResourceObservation {
+  poolIdentity: SurfaceResourceIdentity;
+  kind: "pool-event" | "event-gap";
+  code: string;
+  occurredAt: string;
+}
+
+const TOKEN_COMMUNE_OBSERVATION_SCHEMAS = {
+  poolEvent: "patchbay.token_commune.pool_event.v1",
+  eventGap: "patchbay.token_commune.event_gap.v1",
+} as const;
+
+/** Decode only bounded, identity-free event summaries for operator surfaces. */
+export function decodeTokenCommuneResourceObservation(
+  observation: Observation,
+): TokenCommuneResourceObservation | undefined {
+  const envelope = observation.payload;
+  if (
+    observation.kind !== ObservationKind.STATUS
+    || !envelope
+    || envelope.contentType !== PayloadContentType.JSON
+    || (envelope.schemaRef !== TOKEN_COMMUNE_OBSERVATION_SCHEMAS.poolEvent
+      && envelope.schemaRef !== TOKEN_COMMUNE_OBSERVATION_SCHEMAS.eventGap)
+  ) return undefined;
+  const target = observation.targetScope;
+  const resource = target?.resource;
+  const adapterId = resource?.adapterId?.value;
+  const resourceKind = resource?.resourceKind?.value;
+  const resourceId = resource?.resourceId?.value;
+  if (
+    target?.kind !== TargetScopeKind.RESOURCE
+    || target.actorId || target.adapterId || target.runtimeSessionId || target.sessionGeneration
+    || target.deploymentScope || target.projectOrGroup || target.legacyAuditResourceId
+    || !adapterId || resourceKind !== TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.resourceKind || !resourceId
+    || observation.sender?.actorId?.value !== adapterId
+  ) return undefined;
+  try {
+    const value = jsonObject(envelope.payload);
+    const poolIdentity = { adapterId, resourceKind, resourceId };
+    if (envelope.schemaRef === TOKEN_COMMUNE_OBSERVATION_SCHEMAS.poolEvent) {
+      exactKeys(value, [
+        "sourceEventId", "kind", "provider", "contributionId", "message", "occurredAt",
+        "deliveryModel", "historyMode",
+      ]);
+      text(value.sourceEventId, "sourceEventId");
+      const code = member(value.kind, ["capacity_shift", "auth_broken", "windfall", "fingerprint", "member"] as const, "event kind");
+      text(value.provider, "provider");
+      if (value.contributionId !== null) text(value.contributionId, "contributionId");
+      boundedText(value.message, "message", 1024);
+      const occurredAt = time(value.occurredAt, "occurredAt");
+      if (value.deliveryModel !== "polling" || value.historyMode !== "latest-50-no-cursor") throw new Error("unsupported event delivery contract");
+      return { poolIdentity, kind: "pool-event", code, occurredAt };
+    }
+    exactKeys(value, [
+      "reason", "previousWindowSize", "visibleWindowSize", "overlapCount", "detectedAt",
+      "deliveryModel", "historyMode", "reconstruction", "continuity",
+    ]);
+    const code = member(value.reason, ["initial-baseline", "window-discontinuity", "window-saturated-without-anchor", "history-became-empty"] as const, "gap reason");
+    count(value.previousWindowSize, "previousWindowSize");
+    count(value.visibleWindowSize, "visibleWindowSize");
+    count(value.overlapCount, "overlapCount");
+    const occurredAt = time(value.detectedAt, "detectedAt");
+    if (
+      value.deliveryModel !== "polling" || value.historyMode !== "latest-50-no-cursor"
+      || value.reconstruction !== "visible-window-only" || value.continuity !== "unknown-before-visible-window"
+    ) throw new Error("unsupported gap delivery contract");
+    return { poolIdentity, kind: "event-gap", code, occurredAt };
+  } catch {
+    return undefined;
+  }
+}
 
 export function decodeTokenCommuneProjection(
   identity: SurfaceResourceIdentity,
@@ -166,11 +260,14 @@ export interface TokenCommunePoolSummary {
   poolIdentity: SurfaceResourceIdentity;
   drawIdentity?: SurfaceResourceIdentity;
   completeness: AdapterSnapshotSupport;
+  poolState: "current" | "stale" | "unknown";
   poolObservedAt?: Date;
   drawObservedAt?: Date;
   draw: DrawAllowance;
   credentials: CredentialHealthSummary;
+  totalDeclaredShare: number | null;
   capacity5h: Capacity5h;
+  fingerprint: ProviderFingerprint;
   models: readonly ProviderModel[];
   modelState: "current" | "stale" | "unknown";
   verdict: TokenCommuneVerdict;
@@ -196,10 +293,13 @@ export function composeTokenCommunePools(
         provider: "provider unavailable",
         poolIdentity: pool.identity,
         completeness: pool.completeness,
+        poolState: "unknown",
         ...(pool.observedAt ? { poolObservedAt: pool.observedAt } : {}),
         draw: { state: "unknown" },
         credentials: { state: "unknown", fresh: 0, exhausted: 0, authBroken: 0, contributionCount: 0 },
+        totalDeclaredShare: null,
         capacity5h: { state: "unknown" },
+        fingerprint: { status: "unknown", probe: null, reason: "not-probed" },
         models: [],
         modelState: "unknown",
         verdict: "unknown",
@@ -249,11 +349,14 @@ export function composeTokenCommunePools(
       poolIdentity: pool.identity,
       ...(uniqueDraw ? { drawIdentity: uniqueDraw.draw.identity } : {}),
       completeness: pool.completeness,
+      poolState: poolUnknown ? "unknown" : poolStale ? "stale" : "current",
       ...(pool.observedAt ? { poolObservedAt: pool.observedAt } : {}),
       ...(uniqueDraw?.draw.observedAt ? { drawObservedAt: uniqueDraw.draw.observedAt } : {}),
       draw,
       credentials,
+      totalDeclaredShare: value.totalDeclaredShare,
       capacity5h: capacity,
+      fingerprint: value.fingerprint,
       models,
       modelState,
       verdict,
@@ -405,17 +508,22 @@ function decodeProviderPool(value: Record<string, unknown>): TokenCommuneProject
   } else if (counts.fresh + counts.exhausted + counts.authBroken !== 0) {
     throw new Error("unreported contribution listing cannot carry health counts");
   }
-  nonNegative(value.totalDeclaredShare, "totalDeclaredShare");
+  const totalDeclaredShare = nonNegative(value.totalDeclaredShare, "totalDeclaredShare");
   validateStatusTelemetry(record(value.statusTelemetry, "statusTelemetry"));
-  const modelCatalog = decodeModelCatalog(record(value.modelCatalog, "modelCatalog"));
-  validateFingerprint(record(value.fingerprint, "fingerprint"));
+  let modelCatalog = decodeModelCatalog(record(value.modelCatalog, "modelCatalog"));
+  if (modelCatalog.status === "reported" && modelCatalog.models.some((model) => model.provider !== provider)) {
+    modelCatalog = { status: "provider-mismatch", models: [] };
+  }
+  const fingerprint = decodeFingerprint(record(value.fingerprint, "fingerprint"));
   if (value.capacityAggregation !== "none") throw new Error("capacityAggregation must be none");
   return {
     kind: "token-commune-provider-pool",
     provider,
     contributionListing: listing,
     credentialHealthCounts: counts,
+    totalDeclaredShare,
     modelCatalog,
+    fingerprint,
     capacityAggregation: "none",
   };
 }
@@ -562,23 +670,34 @@ function validateStatusTelemetry(value: Record<string, unknown>): void {
   }
 }
 
-function validateFingerprint(value: Record<string, unknown>): void {
+function decodeFingerprint(value: Record<string, unknown>): ProviderFingerprint {
   const status = member(value.status, ["reported", "unknown"] as const, "fingerprint status");
   if (status === "reported") {
     exactKeys(value, ["status", "probe", "value"]);
-    member(value.probe, ["anthropic", "openai-codex"] as const, "fingerprint probe");
+    const probe = member(value.probe, ["anthropic", "openai-codex"] as const, "fingerprint probe");
     const state = record(value.value, "fingerprint value");
     exactKeys(state, ["templateSource", "capturedAt", "capturePresent", "holdReason", "heldAt", "diffPresent"]);
-    if (state.templateSource !== null) text(state.templateSource, "templateSource");
-    nullableTime(state.capturedAt, "capturedAt");
-    bool(state.capturePresent, "capturePresent");
+    const templateSource = state.templateSource === null ? null : text(state.templateSource, "templateSource");
+    const capturedAt = nullableTime(state.capturedAt, "capturedAt");
+    const capturePresent = bool(state.capturePresent, "capturePresent");
     if (state.holdReason !== null) text(state.holdReason, "holdReason");
-    nullableTime(state.heldAt, "heldAt");
-    bool(state.diffPresent, "diffPresent");
+    const heldAt = nullableTime(state.heldAt, "heldAt");
+    const diffPresent = bool(state.diffPresent, "diffPresent");
+    return {
+      status,
+      probe,
+      templateSource,
+      capturedAt,
+      capturePresent,
+      held: state.holdReason !== null || heldAt !== null,
+      heldAt,
+      diffPresent,
+    };
   } else {
     exactKeys(value, ["status", "probe", "reason"]);
-    if (value.probe !== null) member(value.probe, ["anthropic", "openai-codex"] as const, "fingerprint probe");
-    member(value.reason, ["probe-unavailable", "not-probed"] as const, "fingerprint reason");
+    const probe = value.probe === null ? null : member(value.probe, ["anthropic", "openai-codex"] as const, "fingerprint probe");
+    const reason = member(value.reason, ["probe-unavailable", "not-probed"] as const, "fingerprint reason");
+    return { status, probe, reason };
   }
 }
 
@@ -611,7 +730,10 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new Error("unexpected object shape");
 }
 function text(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_TEXT) throw new Error(`${field} must be a bounded non-empty string`);
+  return boundedText(value, field, MAX_TEXT);
+}
+function boundedText(value: unknown, field: string, max: number): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) throw new Error(`${field} must be a bounded non-empty string`);
   return value;
 }
 function bool(value: unknown, field: string): boolean {

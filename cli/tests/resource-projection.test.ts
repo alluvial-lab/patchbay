@@ -11,6 +11,8 @@ import {
   LoadSecuritySnapshotResponseSchema,
   LoadSnapshotResponseSchema,
   LsnSchema,
+  ObservationKind,
+  ObservationSchema,
   OperationKind,
   PayloadContentType,
   PayloadEnvelopeSchema,
@@ -23,6 +25,7 @@ import {
   ResourceViewRevisionSchema,
   SecuritySnapshotSchema,
   SnapshotViewKind,
+  StoredEventKind,
   TargetScopeKind,
   TargetScopeSchema,
 } from "@patchbay/contracts";
@@ -55,8 +58,14 @@ function poolProjection(options: {
   modelId?: string;
   modelProvider?: string;
   upstreamModel?: string | null;
+  readingState?: "current" | "old" | "none" | "null";
 } = {}) {
   const provider = options.provider ?? "openai-codex";
+  const readingState = options.readingState ?? "current";
+  const capacityReadings = readingState === "none" ? [] : [{
+    ...reading(readingState === "null" ? null : 0.35),
+    observedAt: readingState === "old" ? "2026-08-07T04:00:00Z" : "2026-08-07T10:00:00Z",
+  }];
   return {
     provider,
     contributionListing: {
@@ -68,8 +77,8 @@ function poolProjection(options: {
         attribution: "unavailable",
         declaredShare: 1,
         health: { state: "fresh" },
-        telemetryState: "readings",
-        capacityReadings: [reading(0.35)],
+        telemetryState: capacityReadings.length ? "readings" : "no-readings",
+        capacityReadings,
         fingerprint: { state: "ok", templateSource: "compiled", since: null, diffPresent: false },
       }],
     },
@@ -118,6 +127,7 @@ type ProjectionOptions = {
   modelId?: string;
   modelProvider?: string;
   upstreamModel?: string | null;
+  readingState?: "current" | "old" | "none" | "null";
 };
 
 function resource(
@@ -196,6 +206,23 @@ function client(options: {
     })),
   });
   return {
+    async *subscribe() {
+      const poolEvent = create(ObservationSchema, {
+        authorityDomainId: domain,
+        sender: { actorId: { value: "token-commune" } },
+        kind: ObservationKind.STATUS,
+        targetScope: create(TargetScopeSchema, {
+          kind: TargetScopeKind.RESOURCE,
+          resource: identity("token-commune", "token-commune.provider-pool", "pool-opaque"),
+        }),
+        payload: envelope("patchbay.token_commune.pool_event.v1", {
+          sourceEventId: "event-safe", kind: "capacity_shift", provider: options.provider ?? "openai-codex",
+          contributionId: "private-contribution", message: "private source message",
+          occurredAt: "2026-08-07T10:02:00Z", deliveryModel: "polling", historyMode: "latest-50-no-cursor",
+        }),
+      });
+      yield { payload: { kind: StoredEventKind.OBSERVATION, payload: toBinary(ObservationSchema, poolEvent) } };
+    },
     async loadSnapshot() {
       return create(LoadSnapshotResponseSchema, {
         present: true,
@@ -214,10 +241,14 @@ test("resource-query text and JSON use the shared exact summary without private 
   const text = captureOutput();
   assert.equal(await resourceQueryCommand(client() as never, DOMAIN, { json: false }, text), 0);
   const rendered = text.out.join("\n");
-  assert.match(rendered, /PROVIDER\s+DRAW\s+CREDENTIALS\s+5H CAPACITY\s+VERDICT\s+FRESHNESS\s+MODELS/);
+  assert.match(rendered, /PROVIDER\s+DRAW\s+CONTRIBUTIONS\s+5H CAPACITY\s+FINGERPRINT\s+VERDICT\s+FRESHNESS\s+MODELS\s+EVENTS/);
   assert.match(rendered, /openai-codex/);
   assert.match(rendered, /25%/);
-  assert.match(rendered, /35% used/);
+  assert.match(rendered, /consumed 4; reset unavailable/);
+  assert.match(rendered, /1 anonymous \/ 100% declared share/);
+  assert.match(rendered, /35% used.*source .* ago; reset unavailable/);
+  assert.match(rendered, /unknown \(not-probed\)/);
+  assert.match(rendered, /pool:capacity_shift@2026-08-07T10:02:00Z/);
   assert.match(rendered, /runnable/);
   assert.match(rendered, /Patchbay synthesis/);
   assert.doesNotMatch(rendered, /private-member-name|subKey|anonymous-contribution|remaining|average|weighted/i);
@@ -227,6 +258,11 @@ test("resource-query text and JSON use the shared exact summary without private 
   const json = JSON.parse(jsonOutput.out[0]!);
   assert.equal(json.summaries[0].draw.limitFraction, "0.25");
   assert.equal(json.summaries[0].capacity5h.usedFraction, "0.35");
+  assert.equal(json.summaries[0].credentials.totalDeclaredShare, "1");
+  assert.equal(json.summaries[0].fingerprint.status, "unknown");
+  assert.equal(json.summaries[0].wrapperFreshness, "current");
+  assert.equal(json.summaries[0].readingFreshness, "current");
+  assert.equal(json.summaries[0].recentEvents[0].code, "capacity_shift");
   assert.equal(json.summaries[0].models[0].id, "gpt-5.5");
   assert.equal(json.summaries[0].models[0].upstreamModel, null);
   assert.equal(JSON.stringify(json).includes("private-member-name"), false);
@@ -250,6 +286,33 @@ test("wrong-adapter same-provider draw cannot redirect the join", async () => {
   assert.notEqual(json.summaries[0].draw.limitFraction, "0.8");
 });
 
+test("CLI keeps wrapper freshness separate from old source age and labels both missing-reading states unavailable", async () => {
+  const oldOutput = captureOutput();
+  await resourceQueryCommand(client({ readingState: "old" }) as never, DOMAIN, { json: true }, oldOutput);
+  const old = JSON.parse(oldOutput.out[0]!).summaries[0];
+  assert.equal(old.wrapperFreshness, "current");
+  assert.equal(old.readingFreshness, "current");
+  assert.equal(old.capacity5h.observedAt, "2026-08-07T04:00:00Z");
+
+  for (const readingState of ["none", "null"] as const) {
+    const output = captureOutput();
+    await resourceQueryCommand(client({ readingState }) as never, DOMAIN, { json: true }, output);
+    const summary = JSON.parse(output.out[0]!).summaries[0];
+    assert.equal(summary.wrapperFreshness, "current");
+    assert.equal(summary.readingFreshness, "unavailable");
+    assert.notEqual(summary.readingFreshness, "current");
+  }
+});
+
+test("cross-provider models are omitted instead of displayed under the enclosing pool", async () => {
+  const output = captureOutput();
+  await resourceQueryCommand(client({ modelProvider: "anthropic" }) as never, DOMAIN, { json: true }, output);
+  const json = JSON.parse(output.out[0]!);
+  assert.deepEqual(json.summaries[0].models, []);
+  assert.equal(json.summaries[0].verdict, "unknown");
+  assert.equal(JSON.stringify(json).includes("anthropic"), false);
+});
+
 test("invalid, unsupported, and unavailable canonical pools query and inspect as honest unknown summaries", async () => {
   for (const poolProjectionState of ["invalid", "unsupported", "unavailable"] as const) {
     const queryOutput = captureOutput();
@@ -265,7 +328,8 @@ test("invalid, unsupported, and unavailable canonical pools query and inspect as
     assert.equal(query.summaries[0].draw.state, "unknown");
     assert.equal(query.summaries[0].credentials.state, "unknown");
     assert.equal(query.summaries[0].capacity5h.state, "unknown");
-    assert.equal(query.summaries[0].freshness, "unknown");
+    assert.equal(query.summaries[0].wrapperFreshness, "unknown");
+    assert.equal(query.summaries[0].readingFreshness, "unknown");
     assert.deepEqual(query.summaries[0].models, []);
     assert.equal(query.summaries[0].verdict, "unknown");
 

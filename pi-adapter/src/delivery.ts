@@ -21,7 +21,47 @@ export interface DeliveryOutcome {
 
 /** Single registry-derived OperationKind dispatch point for Pi actions. */
 export class DeliveryTranslator {
+  /** Reject unsupported operation shapes before the adapter reports execution running. */
+  validate(operation: Operation): void {
+    switch (operation.kind) {
+      case OperationKind.INSTRUCT:
+      case OperationKind.CANCEL:
+      case OperationKind.INTERRUPT:
+        return;
+      case OperationKind.QUERY: {
+        const action = objectPayload(operation)["action"] ?? "state";
+        if (action === "state" || action === "entries" || action === "models") return;
+        throw new UnsupportedCommandError(`unknown Pi query action: ${String(action)}`);
+      }
+      case OperationKind.RECONFIGURE: {
+        const action = stringField(objectPayload(operation), "action");
+        if (action === "model" || action === "thinking") return;
+        throw new UnsupportedCommandError(`unknown Pi reconfigure action: ${action}`);
+      }
+      case OperationKind.SESSION_MANAGEMENT: {
+        const action = stringField(objectPayload(operation), "action");
+        if (action === "new" || action === "compact") return;
+        throw new UnsupportedCommandError(`unknown Pi session action: ${action}`);
+      }
+      case OperationKind.APPROVAL_RESPONSE: {
+        const decision = approvalPayload(operation).decision;
+        if (decision === ApprovalDecision.APPROVED || decision === ApprovalDecision.DENIED) return;
+        throw new UnsupportedCommandError(`approval decision ${decision} is not deliverable in v0.1.0`);
+      }
+      case OperationKind.SPAWN:
+        throw new UnsupportedCommandError("Pi spawn is unsupported in v0.1.0");
+      case OperationKind.ELICITATION_RESPONSE:
+        throw new UnsupportedCommandError("question Elicitation delivery is an explicit minimal-slice follow-on");
+      case OperationKind.ATTACH:
+      case OperationKind.RESERVED_ADAPTER_UTILITY_EXEC:
+      case OperationKind.RESERVED_AGENT_SEND:
+      case OperationKind.UNSPECIFIED:
+        throw new UnsupportedCommandError(`Pi cannot deliver OperationKind ${operation.kind}`);
+    }
+  }
+
   async deliver(operation: Operation, session: PiSession): Promise<DeliveryOutcome> {
+    this.validate(operation);
     switch (operation.kind) {
       case OperationKind.INSTRUCT:
         await session.prompt(requiredText(operation));

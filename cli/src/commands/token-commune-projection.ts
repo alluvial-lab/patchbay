@@ -3,10 +3,14 @@ import {
   AdapterSnapshotSupport,
   AuthorityDomainIdSchema,
   LoadSecuritySnapshotRequestSchema,
+  LsnSchema,
+  ObservationSchema,
   OperationKind,
   ResourceFreshnessState,
   ResourceSnapshotSchema,
   SnapshotViewKind,
+  StoredEventKind,
+  SubscribeRequestSchema,
   TargetScopeKind,
   type GrantSummary,
   type Resource,
@@ -15,8 +19,10 @@ import {
 import {
   composeTokenCommunePools,
   decodeTokenCommuneProjection,
+  decodeTokenCommuneResourceObservation,
   type SurfaceResourceIdentity,
   type TokenCommunePoolSummary,
+  type TokenCommuneResourceObservation,
   type TokenCommuneResourceInput,
 } from "@patchbay/operator-domain";
 
@@ -37,10 +43,11 @@ export interface LoadedTokenCommuneProjection {
   summaries: readonly TokenCommunePoolSummary[];
   wrappers: ReadonlyMap<string, CanonicalResourceWrapper>;
   snapshotLsn: string;
+  recentEvents: readonly TokenCommuneResourceObservation[];
 }
 
 export async function loadTokenCommuneProjection(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot">,
+  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
   authorityDomainId: string,
 ): Promise<LoadedTokenCommuneProjection> {
   const domain = create(AuthorityDomainIdSchema, { value: authorityDomainId });
@@ -48,7 +55,7 @@ export async function loadTokenCommuneProjection(
     client.loadSnapshot({ authorityDomainId: domain, viewKind: SnapshotViewKind.RESOURCE }),
     client.loadSecuritySnapshot(create(LoadSecuritySnapshotRequestSchema, { authorityDomainId: domain })),
   ]);
-  if (!resourceResponse.present) return { summaries: [], wrappers: new Map(), snapshotLsn: "0" };
+  if (!resourceResponse.present) return { summaries: [], wrappers: new Map(), snapshotLsn: "0", recentEvents: [] };
   if (resourceResponse.viewKind !== SnapshotViewKind.RESOURCE) throw new Error("core returned a non-resource snapshot view");
   if (resourceResponse.snapshotPayload.length === 0) throw new Error("core returned an empty resource snapshot payload");
   const snapshot = fromBinary(ResourceSnapshotSchema, resourceResponse.snapshotPayload);
@@ -90,10 +97,22 @@ export async function loadTokenCommuneProjection(
       projection,
     });
   }
+  const recentEvents: TokenCommuneResourceObservation[] = [];
+  for await (const event of client.subscribe(create(SubscribeRequestSchema, {
+    authorityDomainId: domain,
+    cursor: create(LsnSchema, { value: 0n }),
+  }))) {
+    if (event.payload?.kind !== StoredEventKind.OBSERVATION) continue;
+    const decoded = decodeTokenCommuneResourceObservation(fromBinary(ObservationSchema, event.payload.payload));
+    if (!decoded || !wrappers.has(identityKey(decoded.poolIdentity))) continue;
+    recentEvents.push(decoded);
+    if (recentEvents.length > 20) recentEvents.shift();
+  }
   return {
     summaries: composeTokenCommunePools(inputs),
     wrappers,
     snapshotLsn: requiredBigint(snapshot.snapshotLsn?.value, "resource snapshot LSN").toString(),
+    recentEvents: recentEvents.reverse(),
   };
 }
 
@@ -128,7 +147,10 @@ export function summaryForIdentity(
   );
 }
 
-export function tokenCommuneSummaryView(summary: TokenCommunePoolSummary) {
+export function tokenCommuneSummaryView(
+  summary: TokenCommunePoolSummary,
+  recentEvents: readonly TokenCommuneResourceObservation[] = [],
+) {
   return {
     provider: summary.provider,
     poolIdentity: canonicalResourceIdentity(summary.poolIdentity),
@@ -144,7 +166,9 @@ export function tokenCommuneSummaryView(summary: TokenCommunePoolSummary) {
       exhausted: summary.credentials.exhausted,
       authBroken: summary.credentials.authBroken,
       contributionCount: summary.credentials.contributionCount,
+      totalDeclaredShare: summary.totalDeclaredShare === null ? null : decimal(summary.totalDeclaredShare),
     },
+    fingerprint: summary.fingerprint,
     capacity5h: summary.capacity5h.state === "current" || summary.capacity5h.state === "stale" ? {
       state: summary.capacity5h.state,
       usedFraction: decimal(summary.capacity5h.usedFraction),
@@ -152,7 +176,9 @@ export function tokenCommuneSummaryView(summary: TokenCommunePoolSummary) {
       resetsAt: summary.capacity5h.resetsAt,
     } : { state: summary.capacity5h.state, usedFraction: null, observedAt: null, resetsAt: null },
     verdict: summary.verdict,
-    freshness: summary.verdict === "telemetry-stale" ? "stale" : summary.modelState,
+    freshness: summary.poolState,
+    wrapperFreshness: summary.poolState,
+    readingFreshness: capacityTelemetryState(summary),
     models: summary.models.map((model) => ({
       id: model.id,
       provider: model.provider,
@@ -164,6 +190,10 @@ export function tokenCommuneSummaryView(summary: TokenCommunePoolSummary) {
       available: model.available,
     })),
     completeness: completenessLabel(summary.completeness),
+    recentEvents: recentEvents
+      .filter((event) => sameIdentity(event.poolIdentity, summary.poolIdentity))
+      .slice(0, 5)
+      .map(({ kind, code, occurredAt }) => ({ kind, code, occurredAt })),
   };
 }
 
@@ -217,6 +247,15 @@ function resourceIdentity(resource: Resource): SurfaceResourceIdentity {
 }
 function identityKey(identity: SurfaceResourceIdentity): string {
   return `${identity.adapterId}\u0000${identity.resourceKind}\u0000${identity.resourceId}`;
+}
+function sameIdentity(left: SurfaceResourceIdentity, right: SurfaceResourceIdentity): boolean {
+  return identityKey(left) === identityKey(right);
+}
+function capacityTelemetryState(summary: TokenCommunePoolSummary): "current" | "stale" | "unknown" | "unavailable" {
+  if (summary.poolState === "stale" || summary.capacity5h.state === "stale") return "stale";
+  if (summary.poolState === "unknown" || summary.capacity5h.state === "unknown") return "unknown";
+  if (summary.capacity5h.state === "no-5h-readings" || summary.capacity5h.state === "reading-unavailable") return "unavailable";
+  return "current";
 }
 function collectionKey(adapterId: string, resourceKind: string): string {
   return `${adapterId}\u0000${resourceKind}`;

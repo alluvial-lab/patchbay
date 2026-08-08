@@ -217,6 +217,35 @@ test("Observation detail composes without changing durable activity", () => {
   assert.equal(registered.sessions.values().next().value!.activityDetail, undefined);
 });
 
+test("bounded safe token-commune resource observations reach the presentation model", () => {
+  let model = emptyPresentationModel();
+  model = fold(model, tokenResourceObservation(1n, "patchbay.token_commune.pool_event.v1", {
+    sourceEventId: "source-private", kind: "capacity_shift", provider: "openai-codex",
+    contributionId: "private-contribution", message: "private message", occurredAt: "2026-08-07T10:02:00Z",
+    deliveryModel: "polling", historyMode: "latest-50-no-cursor",
+  }));
+  model = fold(model, tokenResourceObservation(2n, "patchbay.token_commune.event_gap.v1", {
+    reason: "window-discontinuity", previousWindowSize: 2, visibleWindowSize: 3, overlapCount: 0,
+    detectedAt: "2026-08-07T10:03:00Z", deliveryModel: "polling", historyMode: "latest-50-no-cursor",
+    reconstruction: "visible-window-only", continuity: "unknown-before-visible-window",
+  }));
+  assert.deepEqual(model.resourceObservations.map(({ kind, code, lsn }) => ({ kind, code, lsn })), [
+    { kind: "pool-event", code: "capacity_shift", lsn: 1n },
+    { kind: "event-gap", code: "window-discontinuity", lsn: 2n },
+  ]);
+  assert.doesNotMatch(JSON.stringify(model.resourceObservations, (_key, value) => typeof value === "bigint" ? value.toString() : value), /private|source-private/);
+
+  for (let lsn = 3n; lsn <= 103n; lsn += 1n) {
+    model = fold(model, tokenResourceObservation(lsn, "patchbay.token_commune.pool_event.v1", {
+      sourceEventId: `source-${lsn}`, kind: "windfall", provider: "openai-codex",
+      contributionId: null, message: "safe", occurredAt: "2026-08-07T10:04:00Z",
+      deliveryModel: "polling", historyMode: "latest-50-no-cursor",
+    }));
+  }
+  assert.equal(model.resourceObservations.length, 100);
+  assert.equal(model.resourceObservations[0]!.lsn, 4n);
+});
+
 test("Operation targets project exact runtime-session or operational-resource identities", () => {
   const session = operationTargetFromScope(sessionTarget(1n));
   assert.deepEqual(session, {
@@ -442,6 +471,32 @@ function observationEvent(lsn: bigint, transcript: Record<string, unknown>): Sub
         contentType: PayloadContentType.JSON,
         schemaRef: "patchbay.pi.TranscriptEvent.v1",
         payload: encoder.encode(JSON.stringify(transcript)),
+      }),
+    }),
+  );
+}
+
+function tokenResourceObservation(lsn: bigint, schemaRef: string, payload: Record<string, unknown>): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.OBSERVATION,
+    ObservationSchema,
+    create(ObservationSchema, {
+      authorityDomainId: DOMAIN,
+      sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "token-commune" }) }),
+      kind: ObservationKind.STATUS,
+      targetScope: create(TargetScopeSchema, {
+        kind: TargetScopeKind.RESOURCE,
+        resource: create(ResourceIdentitySchema, {
+          adapterId: create(AdapterIdSchema, { value: "token-commune" }),
+          resourceKind: create(ResourceKindSchema, { value: "token-commune.provider-pool" }),
+          resourceId: create(ResourceIdSchema, { value: "pool-opaque" }),
+        }),
+      }),
+      payload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.JSON,
+        schemaRef,
+        payload: encoder.encode(JSON.stringify(payload)),
       }),
     }),
   );

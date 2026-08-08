@@ -389,8 +389,16 @@ test("token-commune panel input deny-by-default gates pool and draw independentl
   const drawResource = tokenDrawResource();
   const model = modelWith(poolResource, drawResource);
   const now = new Date("2026-08-07T12:00:00Z");
+  model.resourceObservations.push({
+    poolIdentity: poolResource.identity,
+    kind: "event-gap",
+    code: "window-discontinuity",
+    occurredAt: new Date("2026-08-07T11:58:00Z"),
+    lsn: 22n,
+  });
   assert.equal(resourceHasLocalQueryAffordance(model, poolResource.identity, now), false);
   assert.deepEqual(tokenCommunePanelInput(model, undefined, now).summaries, []);
+  assert.deepEqual(tokenCommunePanelInput(model, undefined, now).recentEvents, []);
 
   model.security.grants.push({
     grantId: "pool-query",
@@ -403,6 +411,7 @@ test("token-commune panel input deny-by-default gates pool and draw independentl
   const poolOnly = tokenCommunePanelInput(model, undefined, now);
   assert.equal(poolOnly.summaries.length, 1);
   assert.equal(poolOnly.summaries[0]!.draw.state, "unavailable");
+  assert.deepEqual(poolOnly.recentEvents.map((event) => event.code), ["window-discontinuity"]);
 
   model.security.grants.push({
     grantId: "draw-query",
@@ -540,6 +549,8 @@ function tokenPoolResource(): ResourceView {
           }],
         },
         credentialHealthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
+        totalDeclaredShare: 1,
+        fingerprint: { status: "unknown", probe: null, reason: "not-probed" },
         modelCatalog: { status: "reported", models: [{
           id: "gpt-5.5",
           provider: "openai-codex",

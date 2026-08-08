@@ -148,7 +148,7 @@ export class AdapterProcess {
   async #finishPendingTerminalization(): Promise<void> {
     const operation = this.#pendingTerminalization;
     if (!operation) return;
-    await this.#core.failUnsupported(operation);
+    await this.#core.rejectUnsupported(operation);
     this.#pendingTerminalization = undefined;
     const commandId = operation.commandId?.value;
     this.#record({

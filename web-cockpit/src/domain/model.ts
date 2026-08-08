@@ -39,6 +39,8 @@ import {
   TargetScopeKind,
 } from "@patchbay/contracts";
 
+import { decodeTokenCommuneResourceObservation } from "@patchbay/operator-domain";
+
 import type { ReconcileProjection } from "./reconcile.js";
 import { foldAdapterDiagnosticObservation } from "./adapter-diagnostics.js";
 import {
@@ -141,6 +143,14 @@ export interface ElicitationView {
   answer?: ElicitationAnswer;
 }
 
+export interface ResourceObservationView {
+  poolIdentity: ResourceIdentityView;
+  kind: "pool-event" | "event-gap";
+  code: string;
+  occurredAt: Date;
+  lsn: bigint;
+}
+
 export interface ObservationView {
   id: string;
   session?: SessionIdentity;
@@ -230,6 +240,7 @@ export interface PresentationModel {
   elicitations: Map<string, ElicitationView>;
   adapters: Map<string, AdapterView>;
   observations: ObservationView[];
+  resourceObservations: ResourceObservationView[];
   lockdown: LockdownView;
   security: SecurityInventoryView;
 }
@@ -245,6 +256,7 @@ export function emptyPresentationModel(): PresentationModel {
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    resourceObservations: [],
     lockdown: { active: false, submitting: false },
     security: emptySecurityInventory(),
   };
@@ -391,6 +403,7 @@ export function replaceFromSnapshots(
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    resourceObservations: [],
     lockdown: lockdownViewFromState(snapshots.session.lockdown),
     security: emptySecurityInventory(),
   };
@@ -681,6 +694,17 @@ function foldElicitation(model: PresentationModel, elicitation: Elicitation, lsn
 function foldObservation(model: PresentationModel, observation: Observation, lsn: bigint): void {
   if (observation.payload?.schemaRef === "patchbay.AdapterDiagnosticPayload") {
     foldAdapterDiagnosticObservation(model, observation, lsn);
+    return;
+  }
+  const resourceObservation = decodeTokenCommuneResourceObservation(observation);
+  if (resourceObservation) {
+    model.resourceObservations.push({
+      ...resourceObservation,
+      occurredAt: new Date(resourceObservation.occurredAt),
+      lsn,
+    });
+    model.resourceObservations.sort((left, right) => left.lsn < right.lsn ? -1 : left.lsn > right.lsn ? 1 : 0);
+    if (model.resourceObservations.length > 100) model.resourceObservations.splice(0, model.resourceObservations.length - 100);
     return;
   }
   const target = runtimeSessionFromScope(observation.targetScope);
@@ -1500,6 +1524,7 @@ function cloneModel(model: PresentationModel): PresentationModel {
     elicitations: new Map(model.elicitations),
     adapters: new Map(model.adapters),
     observations: [...model.observations],
+    resourceObservations: [...model.resourceObservations],
   };
 }
 

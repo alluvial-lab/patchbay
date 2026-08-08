@@ -43,7 +43,7 @@ test("delivery loop acknowledges then fails unsupported without invoking gateway
     setDiagnostics() {},
     async attach(generation: number) { calls.push(`attach:${generation}`); return create(EventIdSchema); },
     async acknowledgeDelivery() { calls.push("acknowledge"); return create(EventIdSchema); },
-    async failUnsupported() { calls.push("unsupported"); controller.abort(); return create(EventIdSchema); },
+    async rejectUnsupported() { calls.push("unsupported"); controller.abort(); return create(EventIdSchema); },
     async *receiveDeliveries(cursor: bigint) { calls.push(`receive:${cursor}`); yield delivery(9n); },
     async reportDiagnostic() { throw new Error("unused"); },
   } as unknown as PatchbayCoreClient;
@@ -71,11 +71,11 @@ test("unsupported terminalization retries after acknowledgement without acknowle
       transitions.push({ state: OperationState.DELIVERED, failureCode: FailureCode.UNSPECIFIED });
       return create(EventIdSchema);
     },
-    async failUnsupported() {
+    async rejectUnsupported() {
       terminalizationAttempts += 1;
       calls.push(`fail:${terminalizationAttempts}`);
       if (terminalizationAttempts === 1) throw new ConnectError("transient", Code.Unavailable);
-      transitions.push({ state: OperationState.FAILED, failureCode: FailureCode.UNSUPPORTED_COMMAND });
+      transitions.push({ state: OperationState.REJECTED, failureCode: FailureCode.UNSUPPORTED_COMMAND });
       return create(EventIdSchema);
     },
     async *receiveDeliveries(cursor: bigint) {
@@ -92,7 +92,7 @@ test("unsupported terminalization retries after acknowledgement without acknowle
   assert.ok(calls.indexOf("fail:2") < calls.indexOf("receive:9"), "pending terminalization must finish before reconnecting the stream");
   assert.deepEqual(transitions, [
     { state: OperationState.DELIVERED, failureCode: FailureCode.UNSPECIFIED },
-    { state: OperationState.FAILED, failureCode: FailureCode.UNSUPPORTED_COMMAND },
+    { state: OperationState.REJECTED, failureCode: FailureCode.UNSUPPORTED_COMMAND },
   ]);
   await host.dispose();
 });
@@ -103,7 +103,7 @@ test("process starts exactly one delivery loop and one poller under the same abo
   let pollAborted = false;
   const core = {
     setDiagnostics() {}, async attach() { return create(EventIdSchema); },
-    async acknowledgeDelivery() { return undefined; }, async failUnsupported() { return undefined; },
+    async acknowledgeDelivery() { return undefined; }, async rejectUnsupported() { return undefined; },
     async *receiveDeliveries(_cursor: bigint, signal: AbortSignal) {
       subscriptions += 1;
       await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
@@ -132,7 +132,7 @@ test("a fatal poller exit aborts the held-open delivery sibling and rejects supe
   let deliveryAborted = false;
   const core = {
     setDiagnostics() {}, async attach() { return create(EventIdSchema); },
-    async acknowledgeDelivery() { return undefined; }, async failUnsupported() { return undefined; },
+    async acknowledgeDelivery() { return undefined; }, async rejectUnsupported() { return undefined; },
     async *receiveDeliveries(_cursor: bigint, signal: AbortSignal) {
       await new Promise<void>((resolve) => signal.addEventListener("abort", () => { deliveryAborted = true; resolve(); }, { once: true }));
     },
@@ -150,7 +150,7 @@ test("finite delivery completion is retried as unavailable until abort", async (
   const controller = new AbortController();
   const core = {
     setDiagnostics() {}, async attach() { return create(EventIdSchema); },
-    async acknowledgeDelivery() { return undefined; }, async failUnsupported() { return undefined; },
+    async acknowledgeDelivery() { return undefined; }, async rejectUnsupported() { return undefined; },
     async *receiveDeliveries() {
       subscriptions += 1;
       if (subscriptions === 2) controller.abort();

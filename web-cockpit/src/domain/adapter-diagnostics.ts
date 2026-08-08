@@ -296,6 +296,7 @@ function cloneModel(model: PresentationModel): PresentationModel {
     elicitations: new Map(model.elicitations),
     adapters: new Map(model.adapters),
     observations: [...model.observations],
+    resourceObservations: [...model.resourceObservations],
   };
 }
 

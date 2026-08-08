@@ -557,7 +557,7 @@ export class PatchbayCoreClient {
   setDiagnostics(diagnostics: AdapterDiagnostics): void;
   attach(adapterGeneration: number): Promise<EventId>;
   acknowledgeDelivery(operation: Operation, deliveryEventId?: EventId): Promise<EventId | undefined>;
-  failUnsupported(operation: Operation): Promise<EventId | undefined>;
+  rejectUnsupported(operation: Operation): Promise<EventId | undefined>;
   receiveDeliveries(cursor: bigint, signal?: AbortSignal): AsyncIterable<Delivery>;
   reportDiagnostic(report: AdapterDiagnosticReport, signal?: AbortSignal): Promise<AdapterDiagnosticReportResult>;
 }
@@ -882,7 +882,7 @@ is needed here.
 ### Thorough-review remediation
 
 - Retained acknowledged-but-nonterminal Operations in memory and retry their
-  `FAILED + UNSUPPORTED_COMMAND` result before reopening the delivery stream;
+  `REJECTED + UNSUPPORTED_COMMAND` result before reopening the delivery stream;
   acknowledgement remains exactly once.
 - Made pool and full-endpoint fingerprint presence decoding require explicit
   object-or-null source fields, and pinned manifest/schema contracts to literal,
@@ -891,8 +891,8 @@ is needed here.
   fixed transport-error redaction coverage, removed retry-delay abort-listener
   accumulation, and made timed-out diagnostic forwarding abandon the original
   request rather than re-await it.
-- Renamed `rejectUnsupported()` to `failUnsupported()` to match the core's
-  actual failed terminal state.
+- Uses `rejectUnsupported()` to match the protocol-mandated core
+  `REJECTED + UNSUPPORTED_COMMAND` terminal state.
 
 ## Review handoff
 

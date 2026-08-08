@@ -394,6 +394,27 @@ export class AdapterProcess {
     }
 
     if (!entry) throw new Error("validated delivery lost its runtime entry");
+    try {
+      this.#translator.validate(operation);
+    } catch (error) {
+      if (!(error instanceof UnsupportedCommandError)) throw error;
+      const diagnostic = error.message;
+      return {
+        completion: this.#core
+          .ingestFailure(operation, FailureCode.UNSUPPORTED_COMMAND, diagnostic)
+          .then(() => {
+            this.#record({
+              event: "delivery.rejected",
+              level: "warn",
+              ...(commandId ? { commandId } : {}),
+              operationKind,
+              failureCode: FailureCode.UNSUPPORTED_COMMAND,
+              session: this.#sessionRef(entry),
+              error: diagnosticError(error),
+            });
+          }),
+      };
+    }
     await this.#core.reportRunning(operation);
     this.#record({
       event: "delivery.running",

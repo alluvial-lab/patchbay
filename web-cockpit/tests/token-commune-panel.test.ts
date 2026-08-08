@@ -18,15 +18,18 @@ function summary(overrides: Partial<TokenCommunePoolSummary> = {}): TokenCommune
       resourceId: "local:provider-pool:opaque",
     },
     completeness: AdapterSnapshotSupport.PARTIAL,
+    poolState: "current",
     poolObservedAt: new Date("2026-08-07T10:00:00Z"),
-    draw: { state: "current", limitFraction: 0.25, consumedUnits: 12, resetsAt: null },
+    draw: { state: "current", limitFraction: 0.25, consumedUnits: 12, resetsAt: "2026-08-07T14:00:00Z" },
     credentials: { state: "current", fresh: 2, exhausted: 0, authBroken: 0, contributionCount: 2 },
+    totalDeclaredShare: 1.5,
     capacity5h: {
       state: "current",
       usedFraction: 0.35,
       observedAt: "2026-08-07T09:59:00Z",
       resetsAt: "2026-08-07T15:00:00Z",
     },
+    fingerprint: { status: "unknown", probe: "openai-codex", reason: "probe-unavailable" },
     models: [
       model("gpt-5.5", true, null),
       model("gpt-5.3-codex-spark", false, "gpt-5.3-codex-spark-2026-06-01"),
@@ -51,11 +54,16 @@ function model(id: string, available: boolean, upstreamModel: string | null) {
 }
 
 function render(...summaries: TokenCommunePoolSummary[]) {
+  return renderWithEvents(summaries, []);
+}
+
+function renderWithEvents(summaries: readonly TokenCommunePoolSummary[], recentEvents: Parameters<typeof renderTokenCommunePanel>[1]["recentEvents"]) {
   const dom = new JSDOM("<!doctype html><html lang='en'><head><title>Panel</title></head><body><main></main></body></html>", {
     runScripts: "dangerously",
   });
   const panel = renderTokenCommunePanel(dom.window.document, {
     summaries,
+    recentEvents,
     refreshedAt: new Date("2026-08-07T10:00:00Z"),
     partial: true,
     formatNow: new Date("2026-08-07T10:07:00Z"),
@@ -78,9 +86,10 @@ test("option-7 panel renders exact calm signal order and owns every derivation",
   ]);
   assert.match(row.textContent!, /gpt-5\.5 · upstream unavailable/);
   assert.match(row.textContent!, /gpt-5\.3-codex-spark · unavailable · upstream gpt-5\.3-codex-spark-2026-06-01/);
-  assert.match(row.textContent!, /25%draw allowance/);
-  assert.match(row.textContent!, /2 fresh2 contributions · credentials current/);
-  assert.match(row.textContent!, /5h · 35% usedhighest 5h utilization/);
+  assert.match(row.textContent!, /25%draw allowance · 12 units consumed · reset 2026-08-07T14:00:00Z/);
+  assert.match(row.textContent!, /2 fresh2 contributions · 150% total declared share · credentials current/);
+  assert.match(row.textContent!, /5h · 35% usedreading 8m ago · current · reset 2026-08-07T15:00:00Z/);
+  assert.match(row.textContent!, /fingerprint unknown \(probe-unavailable\) · wrapper 7m ago · current/);
 
   const footer = panel.querySelector(".token-commune-honesty")!.textContent!;
   assert.match(footer, /native limitFraction/);
@@ -102,6 +111,7 @@ test("stale telemetry dominates live styling without erasing fresh credential ev
     capacity5h: {
       state: "stale", usedFraction: 0.52, observedAt: "2026-08-07T10:00:00Z", resetsAt: null,
     },
+    poolState: "stale",
     verdict: "telemetry-stale",
   });
   const { panel } = render(stale);
@@ -111,7 +121,7 @@ test("stale telemetry dominates live styling without erasing fresh credential ev
   assert.equal(row.querySelector(".token-commune-verdict--run"), null);
   assert.match(row.textContent!, /1 fresh/);
   assert.match(row.textContent!, /credentials stale/);
-  assert.match(row.textContent!, /7m ago · stale/);
+  assert.match(row.textContent!, /reading 7m ago · stale/);
   assert.match(row.textContent!, /25%draw allowance/, "independently current draw stays current in a stale row");
   assert.doesNotMatch(row.textContent!, /25% · stale/);
   assert.match(row.textContent!, /telemetry stale/);
@@ -142,6 +152,34 @@ test("unknown, null/no-reading, auth, model, exhausted, and runnable outcomes re
   for (const label of ["capacity unknown", "5h reading unavailable", "no 5h readings", "auth broken", "model unavailable", "pool exhausted", "runnable"]) {
     assert.match(text, new RegExp(label));
   }
+});
+
+test("source age stays visible under a current wrapper and missing readings are never current", () => {
+  const old = summary({
+    poolObservedAt: new Date("2026-08-07T10:06:30Z"),
+    capacity5h: { state: "current", usedFraction: 0.2, observedAt: "2026-08-07T04:00:00Z", resetsAt: null },
+  });
+  const missing = summary({ provider: "missing", key: "missing", capacity5h: { state: "no-5h-readings" }, verdict: "unknown" });
+  const unavailable = summary({ provider: "unavailable", key: "unavailable", capacity5h: { state: "reading-unavailable" }, verdict: "unknown" });
+  const { panel } = render(old, missing, unavailable);
+  const rows = [...panel.querySelectorAll<HTMLElement>(".token-commune-pool")];
+  assert.match(rows[0]!.textContent!, /reading 6h ago · current/);
+  assert.match(rows[0]!.textContent!, /wrapper 30s ago · current/);
+  assert.equal(rows[1]!.dataset.telemetry, "unavailable");
+  assert.equal(rows[2]!.dataset.telemetry, "unavailable");
+  assert.doesNotMatch(rows[1]!.textContent!, /telemetry current/);
+  assert.doesNotMatch(rows[2]!.textContent!, /telemetry current/);
+});
+
+test("recent pool and gap events render as bounded identity-free secondary evidence", () => {
+  const base = summary();
+  const recentEvents = [
+    { poolIdentity: base.poolIdentity, kind: "event-gap" as const, code: "window-discontinuity", occurredAt: new Date("2026-08-07T10:06:00Z") },
+    { poolIdentity: base.poolIdentity, kind: "pool-event" as const, code: "capacity_shift", occurredAt: new Date("2026-08-07T10:05:00Z") },
+  ];
+  const { panel } = renderWithEvents([base], recentEvents);
+  assert.match(panel.textContent!, /events: gap window-discontinuity · 1m ago; pool capacity_shift · 2m ago/);
+  assert.doesNotMatch(panel.textContent!, /contributionId|sourceEventId|private message/);
 });
 
 test("surface withholds rejected aliases and contributor/member/raw/aggregate data", () => {

@@ -1,8 +1,16 @@
 import { AdapterSnapshotSupport } from "@patchbay/contracts";
 import type { TokenCommunePoolSummary, TokenCommuneVerdict } from "@patchbay/operator-domain";
 
+export interface TokenCommunePanelEvent {
+  poolIdentity: TokenCommunePoolSummary["poolIdentity"];
+  kind: "pool-event" | "event-gap";
+  code: string;
+  occurredAt: Date;
+}
+
 export interface TokenCommunePanelInput {
   summaries: readonly TokenCommunePoolSummary[];
+  recentEvents: readonly TokenCommunePanelEvent[];
   refreshedAt?: Date;
   partial: boolean;
   selectedKey?: string;
@@ -93,10 +101,12 @@ function renderPoolRow(
   left.append(
     text(document, "span", "token-commune-pool__name", summary.provider),
     renderModels(document, summary),
+    text(document, "span", "token-commune-pool__meta", `${fingerprintLabel(summary)} · wrapper ${wrapperAge(summary, options.formatNow)} · ${summary.poolState}`),
+    renderRecentEvents(document, summary, options.recentEvents, options.formatNow),
   );
   row.append(
     left,
-    signal(document, drawValue(summary), "draw allowance", "token-commune-draw"),
+    signal(document, drawValue(summary), drawLabel(summary), "token-commune-draw"),
     signal(document, credentialsValue(summary), credentialsLabel(summary), "token-commune-health"),
     signal(document, capacityValue(summary), capacityLabel(summary, options.formatNow), "token-commune-capacity"),
     renderVerdict(document, summary.verdict),
@@ -128,6 +138,19 @@ function renderModels(document: Document, summary: TokenCommunePoolSummary): HTM
     models.append(label);
   });
   return models;
+}
+
+function renderRecentEvents(
+  document: Document,
+  summary: TokenCommunePoolSummary,
+  events: readonly TokenCommunePanelEvent[],
+  now?: Date,
+): HTMLElement {
+  const visible = events.filter((event) => sameIdentity(event.poolIdentity, summary.poolIdentity)).slice(0, 3);
+  const value = visible.length === 0
+    ? "events: none in bounded replay"
+    : `events: ${visible.map((event) => `${event.kind === "event-gap" ? "gap" : "pool"} ${event.code} · ${age(event.occurredAt, now)}`).join("; ")}`;
+  return text(document, "span", "token-commune-pool__events", value);
 }
 
 function signal(document: Document, value: string, label: string, className: string): HTMLElement {
@@ -182,6 +205,12 @@ function drawValue(summary: TokenCommunePoolSummary): string {
   }
   return summary.draw.state;
 }
+function drawLabel(summary: TokenCommunePoolSummary): string {
+  if (summary.draw.state === "current" || summary.draw.state === "stale") {
+    return `draw allowance · ${summary.draw.consumedUnits} units consumed · reset ${resetLabel(summary.draw.resetsAt)}`;
+  }
+  return "draw allowance";
+}
 function credentialsValue(summary: TokenCommunePoolSummary): string {
   if (summary.credentials.state === "unknown") return "unknown";
   const parts = [
@@ -193,7 +222,8 @@ function credentialsValue(summary: TokenCommunePoolSummary): string {
 }
 function credentialsLabel(summary: TokenCommunePoolSummary): string {
   const noun = summary.credentials.contributionCount === 1 ? "contribution" : "contributions";
-  return `${summary.credentials.contributionCount} ${noun} · credentials ${summary.credentials.state}`;
+  const share = summary.totalDeclaredShare === null ? "declared share unavailable" : `${formatPercent(summary.totalDeclaredShare)} total declared share`;
+  return `${summary.credentials.contributionCount} ${noun} · ${share} · credentials ${summary.credentials.state}`;
 }
 function capacityValue(summary: TokenCommunePoolSummary): string {
   if (summary.capacity5h.state === "current" || summary.capacity5h.state === "stale") {
@@ -205,16 +235,33 @@ function capacityValue(summary: TokenCommunePoolSummary): string {
 }
 function capacityLabel(summary: TokenCommunePoolSummary, now?: Date): string {
   if (summary.capacity5h.state === "current" || summary.capacity5h.state === "stale") {
-    const prefix = summary.capacity5h.state === "stale"
-      ? `${age(new Date(summary.capacity5h.observedAt), now)} · stale`
-      : "highest 5h utilization";
-    return prefix;
+    return `reading ${age(new Date(summary.capacity5h.observedAt), now)} · ${summary.capacity5h.state} · reset ${resetLabel(summary.capacity5h.resetsAt)}`;
   }
-  return "highest 5h utilization";
+  return `highest 5h utilization · ${telemetryState(summary)}`;
 }
 function telemetryState(summary: TokenCommunePoolSummary): string {
-  return summary.verdict === "telemetry-stale" || summary.capacity5h.state === "stale" ? "stale"
-    : summary.capacity5h.state === "unknown" ? "unknown" : "current";
+  if (summary.poolState === "stale" || summary.capacity5h.state === "stale") return "stale";
+  if (summary.poolState === "unknown" || summary.capacity5h.state === "unknown") return "unknown";
+  if (summary.capacity5h.state === "no-5h-readings" || summary.capacity5h.state === "reading-unavailable") return "unavailable";
+  return "current";
+}
+
+function fingerprintLabel(summary: TokenCommunePoolSummary): string {
+  if (summary.fingerprint.status === "unknown") return `fingerprint unknown (${summary.fingerprint.reason})`;
+  const state = summary.fingerprint.held ? "held" : summary.fingerprint.capturePresent ? "captured" : "reported, no capture";
+  return `fingerprint ${state}${summary.fingerprint.diffPresent ? " · diff" : ""}`;
+}
+
+function wrapperAge(summary: TokenCommunePoolSummary, now?: Date): string {
+  return summary.poolObservedAt ? age(summary.poolObservedAt, now) : "age unavailable";
+}
+
+function resetLabel(value: string | null): string {
+  return value ?? "unavailable";
+}
+
+function sameIdentity(left: TokenCommunePoolSummary["poolIdentity"], right: TokenCommunePoolSummary["poolIdentity"]): boolean {
+  return left.adapterId === right.adapterId && left.resourceKind === right.resourceKind && left.resourceId === right.resourceId;
 }
 function verdictTone(verdict: TokenCommuneVerdict): "run" | "warn" | "stop" | "unknown" {
   if (verdict === "runnable") return "run";

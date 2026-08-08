@@ -129,7 +129,7 @@ export class PatchbayCoreClient {
     });
   }
 
-  async failUnsupported(operation: Operation): Promise<EventId | undefined> {
+  async rejectUnsupported(operation: Operation): Promise<EventId | undefined> {
     return this.#ingestLifecycle(operation, ObservationKind.RESULT, "patchbay.token_commune.UnsupportedDelivery.v1", {
       reason: "unsupported_command",
     }, FailureCode.UNSUPPORTED_COMMAND);

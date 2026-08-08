@@ -232,10 +232,13 @@ function tokenResources(vector: ConformanceVector): readonly TokenCommuneResourc
   return [tokenInput(vector), tokenDrawInput(vector, adapterId), tokenDrawInput(vector, `${adapterId}-competitor`)];
 }
 
-function tokenPanel(summary: TokenCommunePoolSummary) {
+function tokenPanel(
+  summary: TokenCommunePoolSummary,
+  recentEvents: Parameters<typeof renderTokenCommunePanel>[1]["recentEvents"] = [],
+) {
   const dom = new JSDOM("<!doctype html><html><body><main></main></body></html>", { runScripts: "dangerously" });
   const panel = renderTokenCommunePanel(dom.window.document, {
-    summaries: [summary], partial: true,
+    summaries: [summary], recentEvents, partial: true,
     refreshedAt: new Date("2026-08-08T12:00:00.000Z"),
     formatNow: new Date("2026-08-08T12:05:00.000Z"),
   });
@@ -259,11 +262,25 @@ function executeTokenCommunePresentation(vector: ConformanceVector): void {
   assert.equal(current.capacity5h.state, "current");
   if (current.capacity5h.state === "current") assert.equal(current.capacity5h.usedFraction, Number(expected.current_capacity_used_fraction));
   assert.equal(current.verdict, "runnable");
+  assert.equal(current.totalDeclaredShare, 1.5);
+  assert.equal(current.fingerprint.status, "unknown");
   assert.equal(current.draw.state, "current", "only the exact adapter/provider member draw joins");
   if (current.draw.state === "current") assert.equal(current.draw.limitFraction, Number(expected.current_draw_limit_fraction));
   assert.equal(current.drawIdentity?.adapterId, text(object(vector.input, "input").adapter_id, "adapter id"));
-  const currentRendered = tokenPanel(current);
+  const recentEvents = [
+    { poolIdentity: current.poolIdentity, kind: "event-gap" as const, code: "window-discontinuity", occurredAt: new Date("2026-08-08T12:04:00.000Z") },
+    { poolIdentity: current.poolIdentity, kind: "pool-event" as const, code: "capacity_shift", occurredAt: new Date("2026-08-08T12:03:00.000Z") },
+  ];
+  const currentRendered = tokenPanel(current, recentEvents);
   assertHonestTokenPanel(currentRendered.panel, expected);
+  const currentText = currentRendered.panel.textContent ?? "";
+  assert.equal(currentText.includes("fingerprint unknown"), bool(expected.safe_fingerprint_visible, "fingerprint visible"));
+  assert.equal(currentText.includes("150% total declared share"), bool(expected.total_declared_share_visible, "declared share visible"));
+  assert.equal(currentText.includes("10 units consumed"), bool(expected.draw_consumed_units_visible, "draw consumed units visible"));
+  assert.equal(currentText.includes("reset unavailable"), bool(expected.draw_reset_visible, "draw reset visible"));
+  assert.equal((currentText.match(/reset unavailable/g) ?? []).length >= 2, bool(expected.capacity_reset_visible, "capacity reset visible"));
+  assert.equal(currentText.includes("reading 9m ago"), bool(expected.old_reading_age_visible_under_current_wrapper, "reading age visible"));
+  assert.equal(currentText.includes("gap window-discontinuity") && currentText.includes("pool capacity_shift"), bool(expected.resource_events_visible, "resource events visible"));
 
   const stale = composeTokenCommunePools([tokenInput(vector, { freshness: ResourceFreshnessState.STALE })])[0]!;
   assert.equal(stale.verdict, "telemetry-stale");
@@ -286,6 +303,41 @@ function executeTokenCommunePresentation(vector: ConformanceVector): void {
   )!;
   const crossSummary = composeTokenCommunePools([tokenInput(vector, { projection: cross })])[0]!;
   assert.equal(crossSummary.verdict === "runnable", bool(expected.cross_provider_model_runnable, "cross-provider runnable"));
+  assert.equal(crossSummary.models.some((model) => model.provider === "anthropic"), bool(expected.cross_provider_model_visible, "cross-provider visible"));
+  assert.equal(tokenPanel(crossSummary).panel.textContent?.includes("claude-cross-pool") ?? false, false);
+
+  const oldProjection = structuredClone(input.expected_projection) as any;
+  oldProjection.contributionListing.contributions[1].capacityReadings[0].observedAt = "2026-08-08T06:00:00.000Z";
+  const oldSummary = composeTokenCommunePools([tokenInput(vector, { projection: decodeTokenCommuneProjection(
+    tokenInput(vector).identity,
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, oldProjection),
+  )! })])[0]!;
+  const oldRow = tokenPanel(oldSummary).panel.querySelector<HTMLElement>(".token-commune-pool")!;
+  assert.equal(oldRow.textContent?.includes("reading 6h ago") ?? false, bool(expected.old_reading_age_visible_under_current_wrapper, "old reading age visible"));
+  assert.match(oldRow.textContent ?? "", /wrapper 5m ago · current/);
+
+  for (const [state, expectedTelemetry] of [
+    ["no-5h-readings", expected.no_5h_readings_telemetry],
+    ["all-null-5h-readings", expected.all_null_5h_readings_telemetry],
+  ] as const) {
+    const missingProjection = structuredClone(input.expected_projection) as any;
+    for (const contribution of missingProjection.contributionListing.contributions) {
+      if (state === "no-5h-readings") {
+        contribution.telemetryState = "no-readings";
+        contribution.capacityReadings = [];
+      } else {
+        for (const reading of contribution.capacityReadings) reading.usedFraction = null;
+      }
+    }
+    const missingSummary = composeTokenCommunePools([tokenInput(vector, { projection: decodeTokenCommuneProjection(
+      tokenInput(vector).identity,
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, missingProjection),
+    )! })])[0]!;
+    const row = tokenPanel(missingSummary).panel.querySelector<HTMLElement>(".token-commune-pool")!;
+    assert.equal(row.dataset.telemetry, expectedTelemetry);
+  }
 
   const aliasProjection = structuredClone(input.expected_projection) as any;
   aliasProjection.modelCatalog.models[0].id = "gpt-5.6";
@@ -386,6 +438,83 @@ async function killWebMutation(vector: ConformanceVector, mutationId: string): P
           tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, aliasProjection),
         );
         assert.equal(decoded.status, "invalid");
+      });
+      return;
+    case "display-cross-provider-model":
+      await operatorMutation([{
+        file: "token-commune.js",
+        from: "if (modelCatalog.status === \"reported\" && modelCatalog.models.some((model) => model.provider !== provider)) {",
+        to: "if (false && modelCatalog.status === \"reported\" && modelCatalog.models.some((model) => model.provider !== provider)) {",
+      }], (module) => {
+        const projection = structuredClone(input.expected_projection) as any;
+        projection.modelCatalog.models[0].provider = "anthropic";
+        const decoded = module.decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, projection),
+        );
+        const summary = module.composeTokenCommunePools([tokenInput(vector, { projection: decoded })])[0];
+        assert.equal(summary.models.some((model: any) => model.provider === "anthropic"), bool(expected.cross_provider_model_visible, "cross-provider visible"));
+      });
+      return;
+    case "drop-carried-capabilities":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js", from: "`${fingerprintLabel(summary)} · wrapper", to: "`fingerprint omitted · wrapper",
+      }], (module) => {
+        const summary = composeTokenCommunePools(tokenResources(vector))[0]!;
+        const panel = module.renderTokenCommunePanel(tokenPanel(summary).dom.window.document, { summaries: [summary], recentEvents: [], partial: true });
+        assert.equal((panel.textContent ?? "").includes("fingerprint unknown"), bool(expected.safe_fingerprint_visible, "fingerprint visible"));
+      });
+      return;
+    case "hide-current-wrapper-old-reading-age":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js",
+        from: "return `reading ${age(new Date(summary.capacity5h.observedAt), now)} · ${summary.capacity5h.state} · reset ${resetLabel(summary.capacity5h.resetsAt)}`;",
+        to: "return `highest 5h utilization · ${summary.capacity5h.state}`;",
+      }], (module) => {
+        const projection = structuredClone(input.expected_projection) as any;
+        projection.contributionListing.contributions[1].capacityReadings[0].observedAt = "2026-08-08T06:00:00.000Z";
+        const decoded = decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, projection),
+        )!;
+        const summary = composeTokenCommunePools([tokenInput(vector, { projection: decoded })])[0]!;
+        const panel = module.renderTokenCommunePanel(tokenPanel(summary).dom.window.document, { summaries: [summary], recentEvents: [], partial: true, formatNow: new Date("2026-08-08T12:05:00Z") });
+        assert.equal((panel.textContent ?? "").includes("reading 6h ago"), bool(expected.old_reading_age_visible_under_current_wrapper, "old reading age visible"));
+      });
+      return;
+    case "label-missing-reading-current":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js",
+        from: "if (summary.capacity5h.state === \"no-5h-readings\" || summary.capacity5h.state === \"reading-unavailable\")\n        return \"unavailable\";",
+        to: "if (false)\n        return \"unavailable\";",
+      }], (module) => {
+        const projection = structuredClone(input.expected_projection) as any;
+        for (const contribution of projection.contributionListing.contributions) {
+          contribution.telemetryState = "no-readings";
+          contribution.capacityReadings = [];
+        }
+        const decoded = decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, projection),
+        )!;
+        const summary = composeTokenCommunePools([tokenInput(vector, { projection: decoded })])[0]!;
+        const panel = module.renderTokenCommunePanel(tokenPanel(summary).dom.window.document, { summaries: [summary], recentEvents: [], partial: true });
+        assert.equal(panel.querySelector(".token-commune-pool")?.dataset.telemetry, expected.no_5h_readings_telemetry);
+      });
+      return;
+    case "drop-resource-events":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js",
+        from: "const visible = events.filter((event) => sameIdentity(event.poolIdentity, summary.poolIdentity)).slice(0, 3);",
+        to: "const visible = [];",
+      }], (module) => {
+        const summary = composeTokenCommunePools(tokenResources(vector))[0]!;
+        const events = [{ poolIdentity: summary.poolIdentity, kind: "event-gap", code: "window-discontinuity", occurredAt: new Date("2026-08-08T12:04:00Z") }];
+        const panel = module.renderTokenCommunePanel(tokenPanel(summary).dom.window.document, { summaries: [summary], recentEvents: events, partial: true });
+        assert.equal((panel.textContent ?? "").includes("gap window-discontinuity"), bool(expected.resource_events_visible, "resource events visible"));
       });
       return;
     case "expose-contributor-member-subkey":

@@ -21,7 +21,7 @@ text-table projections over the same metadata. This is the UI-bearing feature of
 the epic and the one net-new screen surface.
 
 It delivers: a calm **per-provider** panel — one row per provider, each
-showing commune health (pool capacity remaining + fresh/exhausted/auth_broken
+showing commune health (highest real 5h utilization + fresh/exhausted/auth_broken
 state + reset), the operator's **per-provider draw** (`limitFraction` +
 `consumedUnits`), model availability, and fingerprint state — nested beneath
 the canonical Patchbay wrapper via a local known decoder/compositor for the

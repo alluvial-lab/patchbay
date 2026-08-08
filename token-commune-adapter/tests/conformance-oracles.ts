@@ -32,7 +32,7 @@ export interface DegradationObservation {
 }
 
 export interface LifecycleFact {
-  state: "accepted" | "delivered" | "failed" | "completed";
+  state: "accepted" | "delivered" | "rejected" | "failed" | "completed";
   failureCode?: "unsupported_command" | "adapter_unavailable";
   eventLsn: bigint;
 }
@@ -170,17 +170,17 @@ export function assertUnsupportedTerminalization(
 ): void {
   const ordered = [...pendingFacts].sort((left, right) => left.eventLsn < right.eventLsn ? -1 : left.eventLsn > right.eventLsn ? 1 : 0);
   const delivered = ordered.filter((fact) => fact.state === "delivered");
-  const failed = ordered.filter((fact) => fact.state === "failed");
+  const rejected = ordered.filter((fact) => fact.state === "rejected");
   assert.equal(delivered.length, 1, "delivery acknowledgement must be durable exactly once");
-  assert.equal(failed.length, 1, "unsupported terminalization must be durable exactly once");
-  assert.equal(failed[0]?.failureCode, "unsupported_command");
-  assert.equal(ordered.some((fact) => fact.state === "completed"), false);
-  assert.ok(delivered[0]!.eventLsn < failed[0]!.eventLsn, "delivered must precede terminal failure");
-  assert.equal(ordered.at(-1)?.state, "failed", "recovery must leave no nonterminal command");
+  assert.equal(rejected.length, 1, "unsupported terminalization must be durable exactly once");
+  assert.equal(rejected[0]?.failureCode, "unsupported_command");
+  assert.equal(ordered.some((fact) => fact.state === "completed" || fact.state === "failed"), false);
+  assert.ok(delivered[0]!.eventLsn < rejected[0]!.eventLsn, "delivered must precede terminal rejection");
+  assert.equal(ordered.at(-1)?.state, "rejected", "recovery must leave no nonterminal command");
   const laterDelivered = laterFacts.filter((fact) => fact.state === "delivered");
   assert.equal(laterDelivered.length, 1, "the later command must be delivered exactly once");
   assert.ok(
-    failed[0]!.eventLsn < laterDelivered[0]!.eventLsn,
+    rejected[0]!.eventLsn < laterDelivered[0]!.eventLsn,
     "pending unsupported terminalization must commit before the later command is first delivered",
   );
 }

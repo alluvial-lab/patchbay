@@ -517,6 +517,14 @@ body > [data-patchbay-cockpit] {
 }
 .cockpit .token-commune-pool__models--unavailable,
 .cockpit .token-commune-pool__model--unavailable { color: var(--color-danger); }
+.cockpit .token-commune-pool__meta,
+.cockpit .token-commune-pool__events {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--font-size-xs)/1.35 var(--font-mono);
+  color: var(--color-text-muted);
+}
 .cockpit .token-commune-signal {
   display: grid;
   gap: 4px;

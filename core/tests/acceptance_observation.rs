@@ -9,7 +9,7 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::acceptance::{
     ingest_observation, AcceptanceError, CommandSnapshot, CommandStateLookup, IngestResult,
 };
-use patchbay_core::storage::{RusqliteStorage, Storage};
+use patchbay_core::storage::{AuditedStorage, RusqliteStorage, Storage};
 use prost::Message;
 
 #[derive(Default)]
@@ -264,6 +264,56 @@ async fn result_without_failure_emits_completed_transition() {
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Completed as i32);
     assert_eq!(transition.failure_code, FailureCode::Unspecified as i32);
+}
+
+#[tokio::test]
+async fn unsupported_result_emits_rejected_transition_and_audit() {
+    let inner = RusqliteStorage::open_in_memory().unwrap();
+    let storage = AuditedStorage::new(inner.clone());
+    let states = TestCommandStates::with(command_id(), OperationState::Delivered);
+
+    let result = ingest_observation(
+        &storage,
+        &states,
+        observation(ObservationKind::Result, FailureCode::UnsupportedCommand),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        result,
+        IngestResult::Transitioned {
+            to_state: OperationState::Rejected,
+            ..
+        }
+    ));
+    let recorded = events(&inner).await;
+    assert_eq!(recorded.len(), 3);
+    let transition = decode_transition(&recorded[1]);
+    assert_eq!(transition.from_state, OperationState::Delivered as i32);
+    assert_eq!(transition.to_state, OperationState::Rejected as i32);
+    assert_eq!(transition.failure_code, FailureCode::UnsupportedCommand as i32);
+
+    let audits = inner
+        .query_audit(&authority_domain(), patchbay_core::storage::AuditPageSpec {
+            kinds: vec![],
+            actor_id: None,
+            endpoint_id: None,
+            command_id: None,
+            grant_id: None,
+            target: None,
+            failure_codes: vec![],
+            reason_codes: vec![],
+            occurred_from: None,
+            occurred_before: None,
+            before_lsn: None,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(audits.records.len(), 1);
+    assert_eq!(audits.records[0].kind, patchbay_contracts::patchbay::AuditEventKind::CommandRejected as i32);
+    assert_eq!(audits.records[0].failure_code, FailureCode::UnsupportedCommand as i32);
 }
 
 #[tokio::test]

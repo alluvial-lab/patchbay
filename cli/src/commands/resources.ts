@@ -1,5 +1,5 @@
 import { AdapterSnapshotSupport, ResourceFreshnessState } from "@patchbay/contracts";
-import type { TokenCommunePoolSummary } from "@patchbay/operator-domain";
+import type { TokenCommunePoolSummary, TokenCommuneResourceObservation } from "@patchbay/operator-domain";
 
 import type { ControlClient } from "../core-client.js";
 import type { CliOutput } from "../main.js";
@@ -25,7 +25,7 @@ export interface ResourceInspectOptions {
 }
 
 export async function resourceQueryCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot">,
+  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
   authorityDomainId: string,
   options: ResourceQueryOptions,
   output: CliOutput,
@@ -40,20 +40,20 @@ export async function resourceQueryCommand(
   if (options.json) {
     output.stdout(JSON.stringify({
       snapshotLsn: loaded.snapshotLsn,
-      summaries: summaries.map(tokenCommuneSummaryView),
+      summaries: summaries.map((summary) => tokenCommuneSummaryView(summary, loaded.recentEvents)),
       derivation: derivationNote(),
     }));
   } else if (summaries.length === 0) {
     output.stdout("No locally query-authorized token-commune pools matched.");
   } else {
-    printSummaryTable(summaries, output);
+    printSummaryTable(summaries, loaded.recentEvents, output);
     output.stdout(derivationNote());
   }
   return 0;
 }
 
 export async function resourceInspectCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot">,
+  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
   authorityDomainId: string,
   options: ResourceInspectOptions,
   output: CliOutput,
@@ -75,7 +75,7 @@ export async function resourceInspectCommand(
         observedAt: wrapper.observedAt,
         tombstoned: wrapper.tombstoned,
       },
-      summary: tokenCommuneSummaryView(summary),
+      summary: tokenCommuneSummaryView(summary, loaded.recentEvents),
       derivation: derivationNote(),
     }));
   } else {
@@ -91,48 +91,68 @@ export async function resourceInspectCommand(
         wrapper.tombstoned ? "retired" : "active",
       ]],
     }, output);
-    printSummaryTable([summary], output);
+    printSummaryTable([summary], loaded.recentEvents, output);
     output.stdout(derivationNote());
   }
   return 0;
 }
 
-function printSummaryTable(summaries: readonly TokenCommunePoolSummary[], output: CliOutput): void {
+function printSummaryTable(
+  summaries: readonly TokenCommunePoolSummary[],
+  events: readonly TokenCommuneResourceObservation[],
+  output: CliOutput,
+): void {
   printTableSection({
     title: "TOKEN-COMMUNE POOLS",
-    headers: ["PROVIDER", "DRAW", "CREDENTIALS", "5H CAPACITY", "VERDICT", "FRESHNESS", "MODELS"],
+    headers: ["PROVIDER", "DRAW", "CONTRIBUTIONS", "5H CAPACITY", "FINGERPRINT", "VERDICT", "FRESHNESS", "MODELS", "EVENTS"],
     rows: summaries.map((summary) => [
       summary.provider,
       drawLabel(summary),
       credentialsLabel(summary),
       capacityLabel(summary),
+      fingerprintLabel(summary),
       summary.verdict,
       telemetryLabel(summary),
       modelsLabel(summary),
+      eventsLabel(summary, events),
     ]),
   }, output);
 }
 
 function drawLabel(summary: TokenCommunePoolSummary): string {
   if (summary.draw.state === "current" || summary.draw.state === "stale") {
-    return `${percent(summary.draw.limitFraction)} (${summary.draw.state}; consumed ${summary.draw.consumedUnits})`;
+    return `${percent(summary.draw.limitFraction)} (${summary.draw.state}; consumed ${summary.draw.consumedUnits}; reset ${summary.draw.resetsAt ?? "unavailable"})`;
   }
   return summary.draw.state;
 }
 function credentialsLabel(summary: TokenCommunePoolSummary): string {
   if (summary.credentials.state === "unknown") return "unknown";
-  return `${summary.credentials.fresh} fresh / ${summary.credentials.exhausted} exhausted / ${summary.credentials.authBroken} auth-broken (${summary.credentials.state})`;
+  const share = summary.totalDeclaredShare === null ? "share unavailable" : `${percent(summary.totalDeclaredShare)} declared share`;
+  return `${summary.credentials.contributionCount} anonymous / ${share}; ${summary.credentials.fresh} fresh / ${summary.credentials.exhausted} exhausted / ${summary.credentials.authBroken} auth-broken (${summary.credentials.state})`;
 }
 function capacityLabel(summary: TokenCommunePoolSummary): string {
   if (summary.capacity5h.state === "current" || summary.capacity5h.state === "stale") {
-    return `${percent(summary.capacity5h.usedFraction)} used (${summary.capacity5h.state}; ${summary.capacity5h.observedAt})`;
+    return `${percent(summary.capacity5h.usedFraction)} used (${summary.capacity5h.state}; source ${age(new Date(summary.capacity5h.observedAt))}; reset ${summary.capacity5h.resetsAt ?? "unavailable"})`;
   }
   return summary.capacity5h.state;
 }
 function telemetryLabel(summary: TokenCommunePoolSummary): string {
-  if (summary.verdict === "telemetry-stale" || summary.capacity5h.state === "stale") return "telemetry stale";
-  if (summary.capacity5h.state === "unknown") return "telemetry unknown";
-  return `telemetry current / credentials ${summary.credentials.state}`;
+  const reading = summary.capacity5h.state === "no-5h-readings" || summary.capacity5h.state === "reading-unavailable"
+    ? "unavailable"
+    : summary.capacity5h.state;
+  return `wrapper ${summary.poolState} / reading ${reading} / credentials ${summary.credentials.state}`;
+}
+function fingerprintLabel(summary: TokenCommunePoolSummary): string {
+  if (summary.fingerprint.status === "unknown") return `unknown (${summary.fingerprint.reason})`;
+  if (summary.fingerprint.held) return `held${summary.fingerprint.diffPresent ? " / diff" : ""}`;
+  return summary.fingerprint.capturePresent ? `captured${summary.fingerprint.diffPresent ? " / diff" : ""}` : "reported / no capture";
+}
+function eventsLabel(
+  summary: TokenCommunePoolSummary,
+  events: readonly TokenCommuneResourceObservation[],
+): string {
+  const visible = events.filter((event) => identityKey(event.poolIdentity) === identityKey(summary.poolIdentity)).slice(0, 5);
+  return visible.length === 0 ? "none in bounded replay" : visible.map((event) => `${event.kind === "event-gap" ? "gap" : "pool"}:${event.code}@${event.occurredAt}`).join(", ");
 }
 function modelsLabel(summary: TokenCommunePoolSummary): string {
   if (summary.models.length === 0) return summary.modelState === "unknown" ? "catalog unknown" : "none reported";
@@ -143,6 +163,13 @@ function modelsLabel(summary: TokenCommunePoolSummary): string {
 }
 function percent(value: number): string {
   return `${Math.round(value * 1000) / 10}%`;
+}
+function age(value: Date, now = new Date()): string {
+  const seconds = Math.floor(Math.max(0, now.getTime() - value.getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
 }
 function validateFilter(value: string | undefined, option: string): void {
   if (value !== undefined && (value.length === 0 || value.length > 512)) throw new Error(`${option} must be a bounded non-empty value`);

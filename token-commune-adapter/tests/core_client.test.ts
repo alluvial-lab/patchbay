@@ -110,7 +110,7 @@ test("concurrent unauthenticated calls single-flight same-generation reattach an
     testClient: fake, testAttachmentToken: () => token,
   });
   await client.attach(7);
-  await Promise.all([client.acknowledgeDelivery(operation()), client.failUnsupported(operation())]);
+  await Promise.all([client.acknowledgeDelivery(operation()), client.rejectUnsupported(operation())]);
   assert.equal(attaches, 2, "one initial attach plus one shared refresh");
   assert.equal(observations.length, 4, "two failed attempts and two retries");
   const unsupported = observations.map((item) => item.observation.value).find((item: any) => item?.failureCode === FailureCode.UNSUPPORTED_COMMAND);

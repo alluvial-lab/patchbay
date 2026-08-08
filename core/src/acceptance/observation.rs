@@ -246,8 +246,10 @@ fn is_resource_status_fact(observation: &Observation) -> bool {
 ///
 /// Event, delta, and unspecified observations carry evidence without changing
 /// command state. Status means running. Result means completed when no failure
-/// is present and failed otherwise; the original failure code is retained so
-/// `execution_outcome_unknown` remains distinguishable from a known failure.
+/// is present, rejected for the protocol-mandated adapter semantic refusal
+/// `unsupported_command`, and failed for execution/delivery errors. The original
+/// failure code is retained so policy refusal and outcome ambiguity remain
+/// distinguishable.
 #[must_use]
 pub fn derive_transition(observation: &Observation) -> Option<TransitionCandidate> {
     let observation_kind = ObservationKind::try_from(observation.kind).ok()?;
@@ -255,10 +257,10 @@ pub fn derive_transition(observation: &Observation) -> Option<TransitionCandidat
         ObservationKind::Status => (OperationState::Running, FailureCode::Unspecified),
         ObservationKind::Result => {
             let failure_code = FailureCode::try_from(observation.failure_code).ok()?;
-            if failure_code == FailureCode::Unspecified {
-                (OperationState::Completed, failure_code)
-            } else {
-                (OperationState::Failed, failure_code)
+            match failure_code {
+                FailureCode::Unspecified => (OperationState::Completed, failure_code),
+                FailureCode::UnsupportedCommand => (OperationState::Rejected, failure_code),
+                _ => (OperationState::Failed, failure_code),
             }
         }
         ObservationKind::Unspecified | ObservationKind::Event | ObservationKind::Delta => {

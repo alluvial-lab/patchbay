@@ -40,7 +40,7 @@ fields.
 ## Acceptance evidence
 
 - For both the same-process retry and replacement-process path, core history has
-  exactly one durable delivered transition before exactly one failed/unsupported
+  exactly one durable delivered transition before exactly one rejected/unsupported
   terminal transition, with no completion, duplicate durable ack, or stranded
   accepted/delivered command after recovery.
 - Current/stale/unknown/invalid rows render honestly from the shared promoted
@@ -59,9 +59,9 @@ adversarial phase to converge.
 
 ## Implementation notes
 
-- The token runner drives the real `AdapterProcess` pending-terminalization seam for both retryable same-process loss and hard process replacement. Its independent lifecycle oracle requires exactly one delivered LSN before exactly one failed/unsupported LSN, no completion, and no surviving nonterminal state; six terminalization mutants are killed.
-- Expanded the real-core E2E's existing unsupported delivery path with an injected retryable `failUnsupported` failure and a second command whose process dies after durable acknowledgement. A fresh adapter process receives the delivered-but-nonterminal command from the core and terminalizes it once before shutdown.
+- The token runner drives the real `AdapterProcess` pending-terminalization seam for both retryable same-process loss and hard process replacement. Its independent lifecycle oracle requires exactly one delivered LSN before exactly one rejected/unsupported LSN, no completion, and no surviving nonterminal state; five terminalization mutants are killed.
+- Expanded the real-core E2E's existing unsupported delivery path with an injected retryable `rejectUnsupported` failure and a second command whose process dies after durable acknowledgement. A fresh adapter process receives the delivered-but-nonterminal command from the core and terminalizes it once before shutdown.
 - Added one exact adapter projection fixture to the vector. The adapter runner proves real projector output byte-for-object equals that fixture; the web runner consumes it through the local token decoder/compositor and the real option-7 panel.
-- Presentation evidence covers current/stale/unknown, exact provider-local model provenance, the rejected `gpt-5.6` alias, hostile contributor/member/subkey/verdict/renderer/html/script fields, stale styling dominance, unknown anchoring, Patchbay-owned verdict wording, and no dynamic renderer execution. Eight output mutants are killed by literal DOM/summary expectations.
-- Verification: focused token package runner reported two exact scenario ids and six terminalization mutation kills; focused web runner reported one exact scenario id and eight presentation mutation kills; the focused real-core retry/replacement E2E passed.
+- Presentation evidence covers carried safe fingerprint/share/draw/reset summaries, bounded grant-gated pool/gap events, independent wrapper/reading ages, unavailable missing-reading states, current/stale/unknown, fail-closed provider-local model provenance, the rejected `gpt-5.6` alias, hostile contributor/member/subkey/verdict/renderer/html/script fields, stale styling dominance, unknown anchoring, Patchbay-owned verdict wording, and no dynamic renderer execution. Thirteen output mutants are killed by literal DOM/summary expectations.
+- Verification: focused token package runner reported two exact scenario ids and five terminalization mutation kills; focused web runner reported one exact scenario id and thirteen presentation mutation kills; the focused real-core retry/replacement E2E passed.
 - **Pass-2 correction (2026-08-08, `b0605a9`):** the 6-witness terminalization claim above is superseded. The current vector declarations retain 5 terminalization kills; the 8 presentation kills remain current, for 13 genuine kills across this checkpoint.

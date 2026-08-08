@@ -16,10 +16,10 @@
     "patchbay.CommandTransition.to_state",
     "patchbay.CommandTransition.failure_code",
     "patchbay.OperationState.OPERATION_STATE_DELIVERED",
-    "patchbay.OperationState.OPERATION_STATE_FAILED",
+    "patchbay.OperationState.OPERATION_STATE_REJECTED",
     "patchbay.FailureCode.FAILURE_CODE_UNSUPPORTED_COMMAND"
   ],
-  "description": "Unexpected accepted Operations survive a retryable post-delivery terminal-report failure and a hard adapter replacement, converging before later work to one durable delivered then one failed/unsupported transition.",
+  "description": "Unexpected accepted Operations survive a retryable post-delivery terminal-report failure and a hard adapter replacement, converging before later work to one durable delivered then one rejected/unsupported transition.",
   "input": {
     "scenarios": [
       { "name": "same-process-retry", "command_id": "unsupported-retry", "first_terminal_report": "retryable-unavailable", "recovery": "subscription-reconnect" },
@@ -29,12 +29,12 @@
   },
   "expected_outcome": {
     "durable_delivered_count": 1,
-    "durable_failed_count": 1,
-    "terminal_state": "OPERATION_STATE_FAILED",
+    "durable_rejected_count": 1,
+    "terminal_state": "OPERATION_STATE_REJECTED",
     "failure_code": "FAILURE_CODE_UNSUPPORTED_COMMAND",
     "completed_count": 0,
     "nonterminal_after_recovery": false,
     "pending_precedes_later_delivery": true
   },
-  "invariant_check": "Once delivery responsibility is durable, every recovery path preserves unsupported terminalization until exactly one semantic failure commits."
+  "invariant_check": "Once delivery responsibility is durable, every recovery path preserves unsupported terminalization until exactly one semantic rejection commits."
 }

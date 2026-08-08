@@ -299,25 +299,35 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
   ),
   TokenCommuneAdapterFailureSafe: (vector) => expectation(
     vector.expected_outcome?.durable_delivered_count === 1
-      && vector.expected_outcome?.durable_failed_count === 1
-      && vector.expected_outcome?.terminal_state === 'OPERATION_STATE_FAILED'
+      && vector.expected_outcome?.durable_rejected_count === 1
+      && vector.expected_outcome?.terminal_state === 'OPERATION_STATE_REJECTED'
       && vector.expected_outcome?.failure_code === 'FAILURE_CODE_UNSUPPORTED_COMMAND'
       && vector.expected_outcome?.completed_count === 0
       && vector.expected_outcome?.nonterminal_after_recovery === false
       && vector.expected_outcome?.pending_precedes_later_delivery === true,
-    'unsupported delivery must converge to exactly one delivered then failed/unsupported terminal history',
+    'unsupported delivery must converge to exactly one delivered then rejected/unsupported terminal history',
   ),
   TokenCommuneCockpitPresentationHonesty: (vector) => expectation(
     vector.expected_outcome?.stale_renders_live === false
       && vector.expected_outcome?.unknown_rows_visible === true
       && vector.expected_outcome?.cross_provider_model_runnable === false
+      && vector.expected_outcome?.cross_provider_model_visible === false
+      && vector.expected_outcome?.safe_fingerprint_visible === true
+      && vector.expected_outcome?.total_declared_share_visible === true
+      && vector.expected_outcome?.draw_consumed_units_visible === true
+      && vector.expected_outcome?.draw_reset_visible === true
+      && vector.expected_outcome?.capacity_reset_visible === true
+      && vector.expected_outcome?.old_reading_age_visible_under_current_wrapper === true
+      && vector.expected_outcome?.no_5h_readings_telemetry === 'unavailable'
+      && vector.expected_outcome?.all_null_5h_readings_telemetry === 'unavailable'
+      && vector.expected_outcome?.resource_events_visible === true
       && vector.expected_outcome?.competing_cross_adapter_draw_joined === false
       && vector.expected_outcome?.current_capacity_used_fraction === 0.8
       && vector.expected_outcome?.forbidden_alias_visible === false
       && vector.expected_outcome?.private_fields_visible === false
       && vector.expected_outcome?.dynamic_renderer_executed === false
       && vector.expected_outcome?.verdict_owner === 'Patchbay',
-    'the local cockpit compositor must preserve stale/unknown/model/privacy/verdict/renderer honesty',
+    'the local cockpit compositor must preserve carried capabilities, source-time, resource-event, stale/unknown/model/privacy/verdict/renderer honesty',
   ),
 });
 

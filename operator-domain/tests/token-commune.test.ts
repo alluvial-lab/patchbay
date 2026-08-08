@@ -207,9 +207,11 @@ test("compositor joins only exact adapter and native provider and emits no aggre
   if (joined.capacity5h.state === "current") assert.equal(joined.capacity5h.usedFraction, 1);
   assert.equal(joined.verdict, "runnable", "one 100% contribution cannot exhaust another usable contribution");
   assert.deepEqual(Object.keys(joined).sort(), [
-    "capacity5h", "completeness", "credentials", "draw", "drawIdentity", "drawObservedAt", "key",
-    "modelState", "models", "poolIdentity", "poolObservedAt", "provider", "verdict",
+    "capacity5h", "completeness", "credentials", "draw", "drawIdentity", "drawObservedAt", "fingerprint", "key",
+    "modelState", "models", "poolIdentity", "poolObservedAt", "poolState", "provider", "totalDeclaredShare", "verdict",
   ]);
+  assert.equal(joined.totalDeclaredShare, 1);
+  assert.deepEqual(joined.fingerprint, { status: "unknown", probe: null, reason: "not-probed" });
   const safe = JSON.stringify(joined);
   assert.doesNotMatch(safe, /private member|subKey|anonymous-contribution|remainingPercent|average|weighted/);
 });
@@ -279,22 +281,24 @@ test("canonical provider-pool identity anchors unknown summaries for every undec
       state: "unknown", fresh: 0, exhausted: 0, authBroken: 0, contributionCount: 0,
     });
     assert.deepEqual(summary.capacity5h, { state: "unknown" });
+    assert.equal(summary.totalDeclaredShare, null);
+    assert.deepEqual(summary.fingerprint, { status: "unknown", probe: null, reason: "not-probed" });
     assert.deepEqual(summary.models, []);
     assert.equal(summary.modelState, "unknown");
     assert.equal(summary.verdict, "unknown");
   }
 });
 
-test("model provenance is preserved and cross-provider availability cannot satisfy runnable", () => {
+test("model provenance is preserved and cross-provider rows are omitted as unknown evidence", () => {
   const crossProvider = model("claude-cross-pool", true, "anthropic", null);
   const summary = composeTokenCommunePools([
     input(poolIdentity(), decodePool(poolProjection({
       modelCatalog: { status: "reported", models: [crossProvider] },
     }))),
   ])[0]!;
-  assert.equal(summary.verdict, "model-unavailable");
-  assert.deepEqual(summary.models, [crossProvider]);
-  assert.equal(summary.models[0]!.upstreamModel, null);
+  assert.equal(summary.verdict, "unknown");
+  assert.deepEqual(summary.models, []);
+  assert.equal(summary.modelState, "unknown");
 });
 
 test("verdict synthesis applies freshness, evidence, auth, model, exhaustion, then runnable precedence", () => {
