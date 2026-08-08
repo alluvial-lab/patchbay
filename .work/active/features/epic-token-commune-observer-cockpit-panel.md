@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, ux]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-snapshot-mapping, epic-token-commune-observer-polling-ingestion]
 release_binding: null
 gate_origin: null
 created: 2026-08-05
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # token-commune cockpit resource panel and CLI projection
@@ -376,3 +376,22 @@ The signed-off `.mockups/screens/epic-token-commune-observer-cockpit-panel/optio
 ## Review handoff
 
 Effective implementation review weight is **thorough** (explicit caller). Child stories close directly on green verification; integrated feature review then iterates review → receiver adjudication → fix/verify → fresh-context review until no receiver-confirmed material current-cycle blocker remains. Reviewer findings are proposals, not authority. Autopilot completion keeps this weight unchanged.
+
+## Implementation notes
+
+- **Execution capability:** one owning worker, `openai-codex/gpt-5.6-sol`, high reasoning, selected by the explicit autopilot delegation. No sub-worker, peer, or dynamic renderer was used. The cohesive owner kept the shared decoder/compositor, cockpit adapter, option-7 component, CLI adapter, and cross-surface evidence aligned through the seven declared dependency checkpoints.
+- Added the pure `@patchbay/operator-domain` package. It validates both exact manifest contracts, strips identity-bearing contribution detail from surface types, joins only exact `(adapterId, provider)`, preserves independent draw/credential/telemetry evidence, emits only the highest real anonymous 5h reading, and owns the freshness-first Patchbay verdict.
+- Extended the cockpit's existing resource decoder/fold path and Resources destination without adding transport or cache state. Visible live `query` grants gate pool and member draw independently; recognized token resources render once through the signed-off option-7 list, with stale/unknown/partial/auth-broken distinctions and every derivation owned in the footer.
+- Added CLI `resource-query`/`resource-inspect` over canonical resource and security snapshots, reusing the diagnostics identity grammar and shared compositor. Text and JSON remain safe projections with no raw envelope, member label, contribution identity, credentials, inferred role, or admin action.
+- **Implementation judgment:** the explicit implementation brief says the upstream-rejected bare `gpt-5.6` alias must never render. The decoder therefore rejects it and the panel independently withholds it; no local alias is synthesized. Exact admitted catalog ids and native availability remain unchanged, and nullable upstream-model provenance is never fabricated.
+- All seven child stories advanced directly to `done`. This feature advances only to `review` at the caller's explicit boundary; this worker did not self-review. Effective review weight remains **thorough** for the delegated reviewer under Part IV.
+
+## Verification
+
+- `cd operator-domain && npm test` — **7/7 passed**.
+- `cd web-cockpit && npm run build` — clean; `npm test` — **113/113 passed** (baseline 105, +8).
+- `cd cli && npm test` — **42/42 passed**.
+- `cd contracts/ts && npm run check:drift && npm run check:presentation` — passed; presentation axe-core scan passed.
+- Panel-local axe-core scan — **0 critical violations**.
+- Self-mutation check — **3/3 mutants killed and reverted**: adapter-less join, inverted highest-5h comparator, and removed freshness-first verdict.
+- `git diff --check` — passed. No formal/model-checked promotion is claimed.
