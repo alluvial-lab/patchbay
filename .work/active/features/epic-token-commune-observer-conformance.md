@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance
 kind: feature
-stage: review
+stage: done
 tags: [adapter, verification]
 parent: epic-token-commune-observer
 depends_on:
@@ -693,3 +693,18 @@ clippy, and `git diff --check`.
 - Appended pass-2 correction notes to the three child completion records without rewriting their historical implementation notes.
 - Fail-closed proof: temporarily reintroduced removed id `carry-prior-endpoint-value` in the degradation row; `check:vectors` exited 1 with an exact vector-vs-ledger mismatch before running implementation checks, then the row was restored.
 - Pass-3 verification: `check:vectors` reported 52 vectors / 15 promoted / 20 implementation checks / 100 proto references / 32 killed mutations; `check:models` reported 8 checked-model / 0 checked-normative / 60 stated-normative; `check:presentation` checked 5 registries with axe passing; `check:drift` was clean; `cargo test --workspace` passed 345 tests; token adapter 60/60, web cockpit 114/114, and operator domain 9/9 passed.
+
+## Review (thorough, deep-lane — `[verification]`, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), four-pass convergence — the same vacuity-hunting discipline as the resource-plane conformance deep-lane.
+
+- **Pass 1 (BLOCK, 6):** all six were "vector passes whether or not the invariant holds" — synthetic mutation witnesses (constants-comparison / buffer-scan, not production mutations); manufactured reconnect/degradation (hard-coded ordering, states from vector inputs); terminalization not checking pending-before-later; redaction fabricated + missing SQLite WAL; E2E not using abnormal stream-break / not rendering through the cockpit; presentation non-discriminating (single contribution) + `check:vectors` rewriting traceability instead of failing closed. Fixed at `df9d0d8` (production-path mutations, real execution, WAL scan, honest E2E chain, presentation fixtures, read-only fail-closed `check:vectors`).
+- **Pass 2 (BLOCK, 3):** TS production mutants never LOADED (module-load errors miscounted as kills — the 40-kill ledger was partly false-positive); Rust degradation/source mutations were manufactured/direct-storage (not compiled-graph); credential-PATH hostile form injected but never scanned. Fixed at `b0605a9` (loadable package-local mutants + oracle-only kill classification; Rust through `AdapterControlService` boundary + materialized-snapshot oracle; credential-path scanned). Ledger corrected 40→32 genuine kills.
+- **Pass 3 (BLOCK, 1):** `docs/VERIFICATION.md` representative-mutations table still credited the 9 removed false-positive mutations; checker guarded only the count, not the prose ledger. Fixed at `a1b38f6` — ledger now sourced from the 7 vectors' `mutation_witnesses` declarations and `check-vectors.mjs` requires exact ordered vector/mutation-ID equality (self-validating; deliberate drift fails closed).
+- **Pass 4 (APPROVE):** ledger self-validation confirmed (3 independent drift checks failed closed); no regression in the genuine-checking properties; spot-checked mutation IDs are real production-path mutations; 32 = 27 TS load-confirmed + 5 Rust service-boundary. All checks + tests green.
+
+Final evidence: 52 vectors / 15 promoted / 20 implementation checks / 100 proto refs / **32 genuine production-path mutation kills**; real-core E2E (attach → PARTIAL → event repair → missed poll → stale disconnect → gen-2 reconnect → stale-generation rejection → full redaction incl. SQLite db/-wal/-shm → cockpit render). Cargo 345; token-commune-adapter 60/60; operator-domain 9/9; web-cockpit 114/114.
+
+**Parked (non-blocking nit):** intermittent test-only SQLite contention (`token-commune-adapter/tests/e2e.test.ts:621` — `database is locked` on first invocation; passes on retry). Park to backlog: configure a bounded SQLite busy-timeout or await the initial poll commit before seeding operations. Does not invalidate conformance evidence.
+
+Converged. Advanced to `done`.
