@@ -541,6 +541,7 @@ function tokenPoolResource(): ResourceView {
         contributionListing: {
           status: "reported",
           contributions: [{
+            declaredShare: 1,
             health: "fresh",
             telemetryState: "readings",
             capacityReadings: [{

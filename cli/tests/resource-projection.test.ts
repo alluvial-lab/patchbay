@@ -239,7 +239,7 @@ function client(options: {
 
 test("resource-query text and JSON use the shared exact summary without private or aggregate data", async () => {
   const text = captureOutput();
-  assert.equal(await resourceQueryCommand(client() as never, DOMAIN, { json: false }, text), 0);
+  assert.equal(await resourceQueryCommand(client() as never, DOMAIN, { replayEvents: true, json: false }, text), 0);
   const rendered = text.out.join("\n");
   assert.match(rendered, /PROVIDER\s+DRAW\s+CONTRIBUTIONS\s+5H CAPACITY\s+FINGERPRINT\s+VERDICT\s+FRESHNESS\s+MODELS\s+EVENTS/);
   assert.match(rendered, /openai-codex/);
@@ -254,7 +254,9 @@ test("resource-query text and JSON use the shared exact summary without private 
   assert.doesNotMatch(rendered, /private-member-name|subKey|anonymous-contribution|remaining|average|weighted/i);
 
   const jsonOutput = captureOutput();
-  await resourceQueryCommand(client() as never, DOMAIN, { adapterId: "token-commune", provider: "openai-codex", json: true }, jsonOutput);
+  await resourceQueryCommand(client() as never, DOMAIN, {
+    adapterId: "token-commune", provider: "openai-codex", replayEvents: true, json: true,
+  }, jsonOutput);
   const json = JSON.parse(jsonOutput.out[0]!);
   assert.equal(json.summaries[0].draw.limitFraction, "0.25");
   assert.equal(json.summaries[0].capacity5h.usedFraction, "0.35");
@@ -272,6 +274,14 @@ test("resource query grant-gates draw independently and succeeds explicitly when
   const poolOnly = captureOutput();
   await resourceQueryCommand(client({ grants: "pool" }) as never, DOMAIN, { json: false }, poolOnly);
   assert.match(poolOnly.out.join("\n"), /unavailable/);
+
+  const exactGrantOnly = client({ grants: "pool" });
+  exactGrantOnly.subscribe = async function* () {
+    throw new Error("authority-domain subscription denied");
+  };
+  const exactGrantOutput = captureOutput();
+  assert.equal(await resourceQueryCommand(exactGrantOnly as never, DOMAIN, { json: true }, exactGrantOutput), 0);
+  assert.equal(JSON.parse(exactGrantOutput.out[0]!).summaries.length, 1);
 
   const none = captureOutput();
   assert.equal(await resourceQueryCommand(client({ grants: "none" }) as never, DOMAIN, { json: false }, none), 0);

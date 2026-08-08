@@ -52,8 +52,8 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   login: { flags: [], values: ["operator-id", "endpoint-id", "device-id"] },
   logout: { flags: [], values: [] },
   "session-health": { flags: ["json"], values: [] },
-  "resource-query": { flags: ["json"], values: ["adapter-id", "provider"] },
-  "resource-inspect": { flags: ["json"], values: [] },
+  "resource-query": { flags: ["json", "replay-events"], values: ["adapter-id", "provider"] },
+  "resource-inspect": { flags: ["json", "replay-events"], values: [] },
   instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
@@ -195,7 +195,12 @@ export async function run(
         return await resourceQueryCommand(
           makeControlClient(config.coreAddr, config.coreSecret, store),
           config.authorityDomainId,
-          { adapterId: parsed.options.get("adapter-id"), provider: parsed.options.get("provider"), json },
+          {
+            adapterId: parsed.options.get("adapter-id"),
+            provider: parsed.options.get("provider"),
+            replayEvents: parsed.flags.has("replay-events"),
+            json,
+          },
           output,
         );
 
@@ -204,7 +209,7 @@ export async function run(
         return await resourceInspectCommand(
           makeControlClient(config.coreAddr, config.coreSecret, store),
           config.authorityDomainId,
-          { identity: parsed.positionals[0]!, json },
+          { identity: parsed.positionals[0]!, replayEvents: parsed.flags.has("replay-events"), json },
           output,
         );
 
@@ -468,10 +473,12 @@ export function usage(): string {
     "      Revoke the current core-issued operator session and remove local credentials.",
     "  session-health [session-id] [--json]",
     "      Show authoritative connectivity × activity state.",
-    "  resource-query [--adapter-id ID] [--provider PROVIDER] [--json]",
+    "  resource-query [--adapter-id ID] [--provider PROVIDER] [--replay-events] [--json]",
     "      Show locally query-authorized token-commune pool summaries from canonical snapshots.",
-    "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--json]",
+    "      --replay-events additionally requires authority-domain query authority.",
+    "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--replay-events] [--json]",
     "      Inspect one canonical resource wrapper and its shared safe summary.",
+    "      --replay-events additionally requires authority-domain query authority.",
     "  instruct <target> <prompt|-> [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",

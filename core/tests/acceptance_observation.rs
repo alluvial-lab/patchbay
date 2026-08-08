@@ -317,6 +317,34 @@ async fn unsupported_result_emits_rejected_transition_and_audit() {
 }
 
 #[tokio::test]
+async fn delivery_rejected_result_emits_rejected_transition() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let states = TestCommandStates::with(command_id(), OperationState::Delivered);
+
+    let result = ingest_observation(
+        &storage,
+        &states,
+        observation(ObservationKind::Result, FailureCode::DeliveryRejected),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        result,
+        IngestResult::Transitioned {
+            to_state: OperationState::Rejected,
+            ..
+        }
+    ));
+    let recorded = events(&storage).await;
+    assert_eq!(recorded.len(), 2);
+    let transition = decode_transition(&recorded[1]);
+    assert_eq!(transition.from_state, OperationState::Delivered as i32);
+    assert_eq!(transition.to_state, OperationState::Rejected as i32);
+    assert_eq!(transition.failure_code, FailureCode::DeliveryRejected as i32);
+}
+
+#[tokio::test]
 async fn execution_failed_result_emits_failed_transition() {
     assert_failed_result_preserves_code(FailureCode::ExecutionFailed).await;
 }

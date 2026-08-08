@@ -16,11 +16,13 @@ import {
 export interface ResourceQueryOptions {
   adapterId?: string;
   provider?: string;
+  replayEvents?: boolean;
   json: boolean;
 }
 
 export interface ResourceInspectOptions {
   identity: string;
+  replayEvents?: boolean;
   json: boolean;
 }
 
@@ -32,7 +34,7 @@ export async function resourceQueryCommand(
 ): Promise<number> {
   validateFilter(options.adapterId, "--adapter-id");
   validateFilter(options.provider, "--provider");
-  const loaded = await loadTokenCommuneProjection(client, authorityDomainId);
+  const loaded = await loadTokenCommuneProjection(client, authorityDomainId, options.replayEvents);
   const summaries = loaded.summaries.filter((summary) =>
     (!options.adapterId || summary.poolIdentity.adapterId === options.adapterId)
     && (!options.provider || summary.provider === options.provider),
@@ -59,7 +61,7 @@ export async function resourceInspectCommand(
   output: CliOutput,
 ): Promise<number> {
   const identity = parseCanonicalResourceIdentity(options.identity);
-  const loaded = await loadTokenCommuneProjection(client, authorityDomainId);
+  const loaded = await loadTokenCommuneProjection(client, authorityDomainId, options.replayEvents);
   const wrapper = loaded.wrappers.get(identityKey(identity));
   if (!wrapper) throw new Error(`authorized token-commune resource not found: ${canonicalResourceIdentity(identity)}`);
   const summary = summaryForIdentity(loaded.summaries, identity);

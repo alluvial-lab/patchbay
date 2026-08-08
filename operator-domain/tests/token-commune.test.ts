@@ -175,10 +175,14 @@ test("exact token-commune kinds and both manifest descriptors gate semantic deco
   assert.deepEqual(decodeTokenCommuneProjection(poolIdentity(), undefined, undefined), { status: "unavailable" });
 });
 
-test("malformed projections, contradictory counts, and the removed gpt-5.6 alias fail closed without bytes", () => {
+test("malformed projections, contradictory counts or declared shares, and the removed gpt-5.6 alias fail closed without bytes", () => {
   const malformed = decodePool(poolProjection({ credentialHealthCounts: { fresh: 1, exhausted: 0, authBroken: 0 } }));
   assert.deepEqual(malformed, { status: "invalid", reason: "projection_decode_failed" });
   assert.equal("payload" in malformed, false);
+
+  const contradictoryShare = decodePool(poolProjection({ totalDeclaredShare: 0.25 }));
+  assert.deepEqual(contradictoryShare, { status: "invalid", reason: "projection_decode_failed" });
+  assert.equal("payload" in contradictoryShare, false);
 
   const alias = decodePool(poolProjection({ modelCatalog: { status: "reported", models: [model("gpt-5.6")] } }));
   assert.deepEqual(alias, { status: "invalid", reason: "projection_decode_failed" });

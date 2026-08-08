@@ -38,6 +38,7 @@ export interface CapacityReading {
 }
 
 export interface AnonymousContribution {
+  declaredShare: number;
   health: "fresh" | "exhausted" | "auth_broken";
   telemetryState: "readings" | "no-readings";
   capacityReadings: readonly CapacityReading[];
@@ -509,6 +510,13 @@ function decodeProviderPool(value: Record<string, unknown>): TokenCommuneProject
     throw new Error("unreported contribution listing cannot carry health counts");
   }
   const totalDeclaredShare = nonNegative(value.totalDeclaredShare, "totalDeclaredShare");
+  const retainedDeclaredShare = listing.contributions.reduce(
+    (sum, contribution) => sum + contribution.declaredShare,
+    0,
+  );
+  if (totalDeclaredShare !== retainedDeclaredShare) {
+    throw new Error("total declared share disagrees with anonymous rows");
+  }
   validateStatusTelemetry(record(value.statusTelemetry, "statusTelemetry"));
   let modelCatalog = decodeModelCatalog(record(value.modelCatalog, "modelCatalog"));
   if (modelCatalog.status === "reported" && modelCatalog.models.some((model) => model.provider !== provider)) {
@@ -574,7 +582,7 @@ function decodeContribution(candidate: unknown): AnonymousContribution {
   if (value.subKeySource !== "synthesized-content-hash" || value.subKeyStability !== "snapshot-local" || value.attribution !== "unavailable") {
     throw new Error("invalid anonymous contribution identity metadata");
   }
-  fraction(value.declaredShare, "declaredShare");
+  const declaredShare = fraction(value.declaredShare, "declaredShare");
   const healthValue = record(value.health, "health");
   const health = member(healthValue.state, ["fresh", "exhausted", "auth_broken"] as const, "health");
   if (health === "fresh") exactKeys(healthValue, ["state"]);
@@ -590,7 +598,7 @@ function decodeContribution(candidate: unknown): AnonymousContribution {
   const capacityReadings = array(value.capacityReadings, "capacityReadings").map(decodeCapacity);
   if ((telemetryState === "readings") !== (capacityReadings.length > 0)) throw new Error("telemetry state disagrees with readings");
   validatePoolFingerprint(record(value.fingerprint, "contribution fingerprint"));
-  return { health, telemetryState, capacityReadings };
+  return { declaredShare, health, telemetryState, capacityReadings };
 }
 
 function decodeCapacity(candidate: unknown): CapacityReading {

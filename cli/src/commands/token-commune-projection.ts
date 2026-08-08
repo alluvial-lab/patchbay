@@ -49,6 +49,7 @@ export interface LoadedTokenCommuneProjection {
 export async function loadTokenCommuneProjection(
   client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
   authorityDomainId: string,
+  replayEvents = false,
 ): Promise<LoadedTokenCommuneProjection> {
   const domain = create(AuthorityDomainIdSchema, { value: authorityDomainId });
   const [resourceResponse, securityResponse] = await Promise.all([
@@ -98,15 +99,17 @@ export async function loadTokenCommuneProjection(
     });
   }
   const recentEvents: TokenCommuneResourceObservation[] = [];
-  for await (const event of client.subscribe(create(SubscribeRequestSchema, {
-    authorityDomainId: domain,
-    cursor: create(LsnSchema, { value: 0n }),
-  }))) {
-    if (event.payload?.kind !== StoredEventKind.OBSERVATION) continue;
-    const decoded = decodeTokenCommuneResourceObservation(fromBinary(ObservationSchema, event.payload.payload));
-    if (!decoded || !wrappers.has(identityKey(decoded.poolIdentity))) continue;
-    recentEvents.push(decoded);
-    if (recentEvents.length > 20) recentEvents.shift();
+  if (replayEvents) {
+    for await (const event of client.subscribe(create(SubscribeRequestSchema, {
+      authorityDomainId: domain,
+      cursor: create(LsnSchema, { value: 0n }),
+    }))) {
+      if (event.payload?.kind !== StoredEventKind.OBSERVATION) continue;
+      const decoded = decodeTokenCommuneResourceObservation(fromBinary(ObservationSchema, event.payload.payload));
+      if (!decoded || !wrappers.has(identityKey(decoded.poolIdentity))) continue;
+      recentEvents.push(decoded);
+      if (recentEvents.length > 20) recentEvents.shift();
+    }
   }
   return {
     summaries: composeTokenCommunePools(inputs),

@@ -433,7 +433,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
       auth.grantId,
     );
-    await waitForCommandState(control, "command-old-generation", OperationState.FAILED);
+    await waitForCommandState(control, "command-old-generation", OperationState.REJECTED);
     const staleDeliveryEvents = await readAfter(control, 0n);
     const staleFailure = observationsFor(
       staleDeliveryEvents,
