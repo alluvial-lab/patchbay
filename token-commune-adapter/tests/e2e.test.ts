@@ -633,6 +633,9 @@ function appendAcceptedOperations(
 ): void {
   const database = new DatabaseSync(databasePath);
   try {
+    // The live core remains the production writer; this test-only fixture writer
+    // waits for its short SQLite transactions instead of racing them.
+    database.exec("PRAGMA busy_timeout = 5000");
     database.exec("BEGIN IMMEDIATE");
     const insert = database.prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)");
     for (const acceptedOperation of acceptedOperations) {

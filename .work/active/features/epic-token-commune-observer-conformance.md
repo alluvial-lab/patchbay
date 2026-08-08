@@ -708,3 +708,11 @@ Final evidence: 52 vectors / 15 promoted / 20 implementation checks / 100 proto 
 **Parked (non-blocking nit):** intermittent test-only SQLite contention (`token-commune-adapter/tests/e2e.test.ts:621` — `database is locked` on first invocation; passes on retry). Park to backlog: configure a bounded SQLite busy-timeout or await the initial poll commit before seeding operations. Does not invalidate conformance evidence.
 
 Converged. Advanced to `done`.
+
+## Epic aggregate pass-3 remediation (2026-08-08)
+
+- Resolved the parked SQLite contention finding without changing production persistence ownership: the E2E-only fixture writer now applies a bounded 5-second SQLite busy timeout before `BEGIN IMMEDIATE`, so it waits for the live core's short write transaction instead of racing it.
+- Added the dedicated `test:conformance` package script and changed `check:vectors` to invoke only `dist/tests/conformance-vectors.test.js`; the mandatory vector gate no longer loads the adapter's unrelated 60-test suite.
+- Stability evidence: the affected two-test real-core E2E passed 3/3 consecutive runs; `check:vectors` passed 3/3 consecutive runs (52 vectors, 15 promoted, 20 implementation checks, 37 mutation witnesses); and the full 60-test token-commune adapter suite passed 3/3 consecutive runs. No run reported `database is locked`.
+- Full verification: `cargo test --workspace` passed (346 listed tests); Pi adapter 25/25; web cockpit 117/117; operator domain 9/9; CLI 46/46; model promotion 53/53 blocks valid (8 checked-model, 0 checked-normative, 60 stated-normative); presentation 5/5 registries with axe-core passing; generated-contract drift clean.
+- Protocol/honesty posture is unchanged: this is test harness scheduling and runner isolation only; unsupported delivery still terminalizes as `REJECTED`, and capability carriage, source-time, resource freshness, and presentation invariants retain their existing executable coverage.

@@ -114,7 +114,7 @@ const IMPLEMENTATION_RUNNERS = Object.freeze({
   },
   'token-commune-adapter': {
     command: 'npm',
-    args: ['--prefix', 'token-commune-adapter', 'test', '--', '--test-name-pattern=conformance vector runner'],
+    args: ['--prefix', 'token-commune-adapter', 'run', 'test:conformance'],
   },
 });
 
