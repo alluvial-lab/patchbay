@@ -6,13 +6,10 @@
     { "runner": "token-commune-adapter", "case": "gateway_key_redaction" }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "leak-key-in-resource-payload", "runner": "token-commune-adapter", "invariant": "Reflected gateway credentials cannot enter resource payload or projection bytes." },
+    { "mutation_id": "allow-credential-reflection", "runner": "token-commune-adapter", "invariant": "A successful gateway response reflecting any declared hostile credential value fails before projection or durable ingress." },
     { "mutation_id": "remove-local-secret-replacement", "runner": "token-commune-adapter", "invariant": "Local diagnostics redact the original member key and bearer form." },
-    { "mutation_id": "forward-arbitrary-error-text", "runner": "token-commune-adapter", "invariant": "Forwarded diagnostics structurally exclude arbitrary message, cause, and stack text." },
-    { "mutation_id": "persist-authorization-in-audit", "runner": "token-commune-adapter", "invariant": "Audit and diagnostic query projections never contain Authorization material." },
-    { "mutation_id": "leak-key-in-snapshot", "runner": "token-commune-adapter", "invariant": "Materialized snapshots contain only already-sanitized resource envelopes." },
-    { "mutation_id": "leak-key-in-subscription", "runner": "token-commune-adapter", "invariant": "Subscription events expose no credential encoding." },
-    { "mutation_id": "leak-key-in-sqlite-bytes", "runner": "token-commune-adapter", "invariant": "Raw durable SQLite bytes contain no credential encoding." }
+    { "mutation_id": "leak-credential-path-in-diagnostics", "runner": "token-commune-adapter", "invariant": "Local diagnostics redact the literal credential-file path independently of member-key forms." },
+    { "mutation_id": "forward-arbitrary-error-text", "runner": "token-commune-adapter", "invariant": "Forwarded diagnostics structurally exclude arbitrary message, cause, and stack text." }
   ],
   "proto_fields_constrained": [
     "patchbay.AdapterDiagnosticPayload.code",

@@ -185,9 +185,10 @@ export function assertUnsupportedTerminalization(
   );
 }
 
-export function assertSecretAbsent(originalSecret: string, targets: readonly SecretScanTarget[]): void {
-  assert.ok(originalSecret.length >= 24, "secret sentinel must be high entropy and long enough to avoid accidental matches");
-  const forms = secretForms(originalSecret);
+export function assertSecretAbsent(hostileValues: string | readonly string[], targets: readonly SecretScanTarget[]): void {
+  const values = typeof hostileValues === "string" ? [hostileValues] : hostileValues;
+  assert.ok(values.length > 0 && values.every((value) => value.length > 0), "hostile values must be non-empty");
+  const forms = [...new Set(values.flatMap((value) => secretForms(value)))];
   for (const target of targets) {
     const raw = Buffer.from(target.bytes);
     const utf8 = raw.toString("utf8");

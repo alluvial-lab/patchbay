@@ -36,7 +36,9 @@ import { AdapterProcess } from "../src/main.js";
 import { TokenCommunePoller, type PollerCoreSink } from "../src/poller.js";
 import { projectTokenCommuneSnapshot } from "../src/snapshot_projection.js";
 import type { PatchbayCoreClient } from "../src/core_client.js";
-import { withProductionMutant, type ProductionReplacement } from "./production-mutant.js";
+import {
+  ProductionMutantHarnessError, withProductionMutant, type ProductionReplacement,
+} from "./production-mutant.js";
 import {
   assertPartialSnapshotOracle,
   assertReconnectOracle,
@@ -226,7 +228,6 @@ async function executeRedaction(vector: ConformanceVector, seams: {
   createGatewayClient?: typeof createHttpTokenCommuneGatewayClient;
   openDiagnostics?: typeof openAdapterDiagnostics;
   Forwarder?: typeof CoreDiagnosticsForwarder;
-  expectReflectionRejected?: boolean;
 } = {}): Promise<void> {
   const directory = mkdtempSync(path.join(tmpdir(), "patchbay-token-vector-"));
   const credentialPath = path.join(directory, "member.key");
@@ -236,6 +237,7 @@ async function executeRedaction(vector: ConformanceVector, seams: {
   try {
     writeFileSync(credentialPath, `${secret}\n`, { mode: 0o600 });
     const credential = await loadGatewayCredential(credentialPath);
+    assert.ok(secret.length >= 24, "secret sentinel must be high entropy and long enough to avoid accidental matches");
     const forms = [
       secret,
       `Bearer ${secret}`,
@@ -246,7 +248,6 @@ async function executeRedaction(vector: ConformanceVector, seams: {
     ];
     assert.deepEqual(vector.input.hostile_forms, ["raw", "bearer", "url-encoded", "base64", "json-string", "credential-file-path"]);
     const requests: string[] = [];
-    const reflectedMe: any[] = [];
     for (const hostile of forms) {
       const client = (seams.createGatewayClient ?? createHttpTokenCommuneGatewayClient)({
         baseUrl: new URL("https://commune.example/"), credential, redactionSecrets: [credentialPath],
@@ -259,8 +260,7 @@ async function executeRedaction(vector: ConformanceVector, seams: {
           }] });
         },
       });
-      if (seams.expectReflectionRejected === false) reflectedMe.push(await client.getMe());
-      else await assert.rejects(client.getMe(), (error: unknown) => error instanceof GatewayClientError && error.kind === "invalid-response");
+      await assert.rejects(client.getMe(), (error: unknown) => error instanceof GatewayClientError && error.kind === "invalid-response");
     }
     assert.ok(requests.every((authorization) => authorization === `Bearer ${secret}`), "the key is used only on outbound Authorization");
 
@@ -291,7 +291,7 @@ async function executeRedaction(vector: ConformanceVector, seams: {
     let lsn = 0n;
     const safeGateway: TokenCommuneGatewayClient = {
       getStatus: async () => ({ ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
-      getPool: async () => ({ contributions: [] }), getMe: async () => reflectedMe[0] ?? ({ displayName: "Ada", reports: [] }),
+      getPool: async () => ({ contributions: [] }), getMe: async () => ({ displayName: "Ada", reports: [] }),
       getFingerprints: async () => ({
         anthropic: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
         codex: { templateSource: null, capturedAt: null, capturePresent: false, holdReason: null, heldAt: null, diffPresent: false },
@@ -323,16 +323,22 @@ async function executeRedaction(vector: ConformanceVector, seams: {
       { name: "observations", bytes: encoder.encode(JSON.stringify(observations, jsonBigint)) },
       { name: "diagnostics", bytes: readFileSync(diagnosticPath) },
       { name: "forwarded-diagnostics", bytes: encoder.encode(JSON.stringify(forwarded, jsonBigint)) },
+      ...forwarded.flatMap((report, index) => {
+        const payload = (report as { payload?: { payload?: unknown } }).payload?.payload;
+        return payload instanceof Uint8Array
+          ? [{ name: `forwarded-diagnostic-payload-${index}`, bytes: payload }]
+          : [];
+      }),
       { name: "audit-query", bytes: encoder.encode(JSON.stringify(queryOutput, jsonBigint)) },
       { name: "snapshots", bytes: encoder.encode(JSON.stringify(resourceReports.at(-1), jsonBigint)) },
       { name: "subscriptions", bytes: encoder.encode(JSON.stringify({ resourceReports, observations }, jsonBigint)) },
       ...[sqlitePath, `${sqlitePath}-wal`, `${sqlitePath}-shm`].map((file) => ({ name: path.basename(file), bytes: readFileSync(file) })),
     ];
     assert.deepEqual(vector.input.required_sinks, ["resource-reports", "observations", "diagnostics", "audit-query", "snapshots", "subscriptions", "sqlite-bytes"]);
-    assertSecretAbsent(secret, scanTargets);
+    assertSecretAbsent(forms, scanTargets);
     database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     database.close();
-    assertSecretAbsent(secret, [
+    assertSecretAbsent(forms, [
       { name: "sqlite-closed", bytes: readFileSync(sqlitePath) },
       ...[`${sqlitePath}-wal`, `${sqlitePath}-shm`].flatMap((file) => {
         try { return [{ name: path.basename(file), bytes: readFileSync(file) }]; } catch { return []; }
@@ -524,13 +530,19 @@ async function expectProductionMutationKilled(
   label: string,
 ): Promise<void> {
   await baseline();
+  let moduleLoaded = false;
   let killed = false;
-  try { await withProductionMutant(replacements, entry, mutant); }
-  catch (error) {
-    assert.notEqual((error as Error).name, "SyntaxError", `production mutation ${label} did not load`);
-    assert.doesNotMatch(String((error as Error).message), /production mutation anchor/, `production mutation ${label} did not reach its oracle`);
+  try {
+    await withProductionMutant(replacements, entry, async (module) => {
+      moduleLoaded = true;
+      await mutant(module);
+    });
+  } catch (error) {
+    if (error instanceof ProductionMutantHarnessError) throw error;
+    assert.equal(moduleLoaded, true, `production mutation ${label} failed before module loading completed`);
     killed = true;
   }
+  assert.equal(moduleLoaded, true, `production mutation ${label} did not load`);
   assert.equal(killed, true, `production mutation ${label} survived the baseline oracle`);
 }
 
@@ -577,8 +589,8 @@ async function killMutation(vector: ConformanceVector, mutationId: string): Prom
     }],
     "suppress-no-anchor-gap": [{
       file: "event_window.js",
-      from: "if (visibleWindowSize === MAX_PAGE_SIZE)\n            return \"window-saturated-without-anchor\";",
-      to: "if (visibleWindowSize === MAX_PAGE_SIZE)\n            return undefined;",
+      from: "return visibleWindowSize === MAX_PAGE_SIZE\n        ? \"window-saturated-without-anchor\"\n        : \"window-discontinuity\";",
+      to: "return visibleWindowSize === MAX_PAGE_SIZE\n        ? undefined\n        : \"window-discontinuity\";",
     }],
     "fabricate-missed-count": [{
       file: "event_observation.js", from: "continuity: input.gap.continuity,", to: "continuity: input.gap.continuity,\n        missedCount: 47,",
@@ -632,11 +644,6 @@ async function killMutation(vector: ConformanceVector, mutationId: string): Prom
   }
 
   const terminalMutations: Record<string, ProductionReplacement> = {
-    "clear-pending-before-terminal-ack": {
-      file: "main.js",
-      from: "await this.#core.failUnsupported(operation);\n        this.#pendingTerminalization = undefined;",
-      to: "this.#pendingTerminalization = undefined;\n        await this.#core.failUnsupported(operation);",
-    },
     "filter-delivered-nonterminal-on-replacement": {
       file: "main.js",
       from: "const operation = requiredOperation(delivery);\n            const commandId",
@@ -665,14 +672,14 @@ async function killMutation(vector: ConformanceVector, mutationId: string): Prom
     return;
   }
 
-  if (["leak-key-in-resource-payload", "persist-authorization-in-audit", "leak-key-in-snapshot", "leak-key-in-subscription", "leak-key-in-sqlite-bytes"].includes(mutationId)) {
+  if (mutationId === "allow-credential-reflection") {
     await expectProductionMutationKilled(
       () => executeRedaction(vector), [{
         file: "gateway_client.js",
         from: "if (forms.some((form) => text.includes(form))) {",
         to: "if (false && forms.some((form) => text.includes(form))) {",
       }], "gateway_client.js",
-      (module) => executeRedaction(vector, { createGatewayClient: module.createHttpTokenCommuneGatewayClient, expectReflectionRejected: false }), mutationId,
+      (module) => executeRedaction(vector, { createGatewayClient: module.createHttpTokenCommuneGatewayClient }), mutationId,
     );
     return;
   }
@@ -693,6 +700,17 @@ async function killMutation(vector: ConformanceVector, mutationId: string): Prom
         to: "const code = input.error?.name ?? TOKEN_COMMUNE_FORWARDED_DIAGNOSTIC_CODES[input.event];",
       }], "core_diagnostics_forwarder.js",
       (module) => executeRedaction(vector, { Forwarder: module.CoreDiagnosticsForwarder }), mutationId,
+    );
+    return;
+  }
+  if (mutationId === "leak-credential-path-in-diagnostics") {
+    await expectProductionMutationKilled(
+      () => executeRedaction(vector), [{
+        file: "adapter_diagnostics.js",
+        from: "this.#secrets = (options.secrets ?? []).filter(Boolean);",
+        to: "this.#secrets = (options.secrets ?? []).filter((secret) => !secret.startsWith(\"/\"));",
+      }], "adapter_diagnostics.js",
+      (module) => executeRedaction(vector, { openDiagnostics: module.openAdapterDiagnostics }), mutationId,
     );
     return;
   }

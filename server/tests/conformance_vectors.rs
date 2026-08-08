@@ -17,7 +17,7 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     authority::events as authority_events,
-    resource::{adapter_stale_event, ingest_resource_report, rebuild_from_log, ResourceIdentity as CoreResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
     session::events as session_events,
     storage::{RusqliteStorage, Storage},
     time::TestClock,
@@ -37,6 +37,9 @@ use prost_types::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
 use tonic::{Code, Request, Response};
+
+#[cfg(feature = "conformance-fault-injection")]
+use patchbay_core_server::adapter_service::AdapterServiceConformanceFault;
 
 const RUNNER: &str = "rust-server";
 const EVIDENCE: &str = "conformance-adapter-evidence";
@@ -1324,40 +1327,122 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     Ok(())
 }
 
-async fn ingest_degradation_report(
-    storage: &RusqliteStorage,
-    registry: &mut ResourceRegistry,
+#[derive(Debug)]
+enum MutationExecutionError {
+    Harness(String),
+    Oracle(String),
+}
+
+impl MutationExecutionError {
+    fn harness(error: impl ToString) -> Self {
+        Self::Harness(error.to_string())
+    }
+
+    fn oracle(message: impl Into<String>) -> Self {
+        Self::Oracle(message.into())
+    }
+}
+
+fn resource_upsert(identity: ResourceIdentity, kind: &ResourceKind) -> ResourceReportMutation {
+    ResourceReportMutation {
+        identity: Some(identity),
+        mutation: Some(resource_report_mutation::Mutation::Upsert(
+            ResourceStateUpsert {
+                resource_payload: Some(PayloadEnvelope {
+                    payload: vec![1],
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: format!("{}.payload.v1", kind.value),
+                }),
+                projection_payload: Some(PayloadEnvelope {
+                    payload: b"{}".to_vec(),
+                    content_type: PayloadContentType::Json as i32,
+                    schema_ref: format!("{}.projection.v1", kind.value),
+                }),
+            },
+        )),
+    }
+}
+
+fn resource_report_request(
     domain: &AuthorityDomainId,
     adapter: &AdapterId,
     kind: &ResourceKind,
     generation: u64,
     mutations: Vec<ResourceReportMutation>,
-) -> Result<(), String> {
-    ingest_resource_report(
-        storage,
-        registry,
-        ValidatedResourceReport {
-            authority_domain_id: domain.clone(),
-            adapter_id: adapter.clone(),
-            adapter_generation: Generation { value: generation },
-            mode: ResourceReportMode::Snapshot,
-            views: vec![ResourceViewReport {
-                resource_kind: Some(kind.clone()),
-                completeness: AdapterSnapshotSupport::Partial as i32,
-                mutations,
-            }],
-            observed_at: Timestamp {
-                seconds: 100 + generation as i64,
-                nanos: 0,
+    observed_seconds: i64,
+) -> ObservationRequest {
+    ObservationRequest {
+        authority_domain_id: Some(domain.clone()),
+        observation: Some(observation_request::Observation::ResourceReport(
+            ResourceReport {
+                adapter_id: Some(adapter.clone()),
+                adapter_generation: Some(Generation { value: generation }),
+                report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                    views: vec![ResourceViewReport {
+                        resource_kind: Some(kind.clone()),
+                        completeness: AdapterSnapshotSupport::Partial as i32,
+                        mutations,
+                    }],
+                })),
+                observed_at: Some(Timestamp {
+                    seconds: observed_seconds,
+                    nanos: 0,
+                }),
             },
-        },
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    Ok(())
+        )),
+    }
 }
 
-async fn run_token_degradation_trace(mutation: Option<&str>) -> Result<(), String> {
+async fn materialized_resource_snapshot(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+) -> Result<ResourceSnapshot, MutationExecutionError> {
+    let state = ProjectionState::rebuild(storage, domain)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    Ok(state
+        .materialize_resource_snapshot(
+            domain.clone(),
+            Timestamp {
+                seconds: 200,
+                nanos: 0,
+            },
+        )
+        .await)
+}
+
+#[cfg(feature = "conformance-fault-injection")]
+fn assert_source_snapshot_unchanged(
+    before: &ResourceSnapshot,
+    after: &ResourceSnapshot,
+) -> Result<(), MutationExecutionError> {
+    if before.resources == after.resources && before.view_revisions == after.view_revisions {
+        Ok(())
+    } else {
+        Err(MutationExecutionError::oracle(
+            "rejected source evidence changed the materialized resource snapshot",
+        ))
+    }
+}
+
+fn snapshot_freshness(
+    snapshot: &ResourceSnapshot,
+    identity: &ResourceIdentity,
+) -> Option<patchbay_contracts::patchbay::ResourceFreshnessState> {
+    snapshot
+        .resources
+        .iter()
+        .find(|resource| resource.identity.as_ref() == Some(identity))
+        .and_then(|resource| {
+            patchbay_contracts::patchbay::ResourceFreshnessState::try_from(resource.freshness).ok()
+        })
+}
+
+async fn run_token_degradation_trace_with_service(
+    vector: &ConformanceVector,
+    storage: &RusqliteStorage,
+    service: &AdapterControlServiceImpl<RusqliteStorage>,
+) -> Result<(), MutationExecutionError> {
     let domain = AuthorityDomainId {
         value: "token-conformance".into(),
     };
@@ -1367,181 +1452,266 @@ async fn run_token_degradation_trace(mutation: Option<&str>) -> Result<(), Strin
     let kind = ResourceKind {
         value: "token-commune.provider-pool".into(),
     };
+    let steps = vector
+        .input
+        .pointer("/steps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| MutationExecutionError::harness("degradation vector is missing steps"))?;
+    let step_id = |step: usize, field: &str| -> Result<String, MutationExecutionError> {
+        steps
+            .get(step)
+            .and_then(|value| value.get(field))
+            .and_then(Value::as_array)
+            .and_then(|values| values.first())
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                MutationExecutionError::harness(format!(
+                    "degradation step {step} is missing {field}"
+                ))
+            })
+    };
     let identity = |id: &str| ResourceIdentity {
         adapter_id: Some(adapter.clone()),
         resource_kind: Some(kind.clone()),
         resource_id: Some(ResourceId { value: id.into() }),
     };
-    let a = identity("pool-a");
-    let b = identity("pool-b");
-    let unknown = identity("pool-unknown");
-    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
-    let mut registry = ResourceRegistry::new();
-    let upsert = |identity: ResourceIdentity| ResourceReportMutation {
-        identity: Some(identity),
-        mutation: Some(resource_report_mutation::Mutation::Upsert(
-            ResourceStateUpsert {
-                resource_payload: Some(PayloadEnvelope {
-                    payload: vec![1],
-                    content_type: PayloadContentType::Protobuf as i32,
-                    schema_ref: "token.payload.v1".into(),
-                }),
-                projection_payload: Some(PayloadEnvelope {
-                    payload: b"{}".to_vec(),
-                    content_type: PayloadContentType::Json as i32,
-                    schema_ref: "token.projection.v1".into(),
-                }),
-            },
-        )),
-    };
-    let unknown_mutation = ResourceReportMutation {
-        identity: Some(unknown.clone()),
-        mutation: Some(resource_report_mutation::Mutation::Unknown(
-            ResourceStateUnknown {},
-        )),
-    };
-    ingest_degradation_report(
-        &storage,
-        &mut registry,
-        &domain,
-        &adapter,
-        &kind,
-        1,
-        vec![upsert(a.clone()), unknown_mutation],
-    )
-    .await?;
+    let a = identity(&step_id(0, "cached")?);
+    let unknown = identity(&step_id(0, "no_payload")?);
+    let b = identity(&step_id(3, "listed")?);
     let current = patchbay_contracts::patchbay::ResourceFreshnessState::Current;
     let stale = patchbay_contracts::patchbay::ResourceFreshnessState::Stale;
     let unknown_state = patchbay_contracts::patchbay::ResourceFreshnessState::Unknown;
-    let state = |registry: &ResourceRegistry, identity: &ResourceIdentity| {
-        CoreResourceIdentity::try_from_wire(identity)
-            .ok()
-            .and_then(|canonical| registry.get(&canonical).map(|record| record.freshness))
+
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter, &kind, 1)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let token = attachment_token(&attached).map_err(MutationExecutionError::harness)?;
+    let ingest = |request| {
+        authenticated(request, &adapter.value, &token).map_err(MutationExecutionError::harness)
     };
-    if state(&registry, &a) != Some(current) || state(&registry, &unknown) != Some(unknown_state) {
-        return Err("baseline report did not establish current/unknown resources".into());
-    }
 
-    match mutation {
-        Some("skip-empty-partial-report") => {}
-        Some("carry-prior-endpoint-value") => {
-            ingest_degradation_report(
-                &storage,
-                &mut registry,
-                &domain,
-                &adapter,
-                &kind,
-                1,
-                vec![upsert(a.clone())],
-            )
-            .await?;
-        }
-        _ => {
-            ingest_degradation_report(&storage, &mut registry, &domain, &adapter, &kind, 1, vec![])
-                .await?;
-        }
-    }
-    if state(&registry, &a) != Some(stale) || state(&registry, &unknown) != Some(unknown_state) {
-        return Err("failed poll did not preserve the empty-PARTIAL stale/unknown truth".into());
-    }
-
-    // Restore a current value immediately before the abnormal stream break so
-    // disconnect degradation, rather than the prior failed poll, owns stale.
-    ingest_degradation_report(
-        &storage,
-        &mut registry,
-        &domain,
-        &adapter,
-        &kind,
-        1,
-        vec![upsert(a.clone())],
-    )
-    .await?;
-    if state(&registry, &a) != Some(current) {
-        return Err("pre-disconnect resource was not current".into());
-    }
-    if mutation != Some("disconnect-remains-current") {
-        if let Some(event) = adapter_stale_event(
-            &registry,
-            &domain,
-            &adapter,
-            Generation { value: 1 },
-            Timestamp {
-                seconds: 103,
-                nanos: 0,
-            },
-        )
-        .map_err(|error| error.to_string())?
-        {
-            storage
-                .append(&domain, event)
-                .await
-                .map_err(|error| error.to_string())?;
-            registry = rebuild_from_log(&storage, &domain)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    if mutation == Some("polling-establishes-liveness") {
-        ingest_degradation_report(
-            &storage,
-            &mut registry,
+    service
+        .ingest_observation(ingest(resource_report_request(
             &domain,
             &adapter,
             &kind,
             1,
-            vec![upsert(a.clone())],
-        )
-        .await?;
-    }
-    if state(&registry, &a) != Some(stale) {
-        return Err("abnormal stream loss did not degrade current cache to stale".into());
-    }
-
-    let reconnect = if mutation == Some("reconnect-promotes-omitted-identities") {
-        vec![upsert(a.clone()), upsert(b.clone())]
-    } else {
-        vec![upsert(b.clone())]
-    };
-    ingest_degradation_report(
-        &storage,
-        &mut registry,
-        &domain,
-        &adapter,
-        &kind,
-        2,
-        reconnect,
-    )
-    .await?;
-    if state(&registry, &a) != Some(stale)
-        || state(&registry, &b) != Some(current)
-        || state(&registry, &unknown) != Some(unknown_state)
+            vec![
+                resource_upsert(a.clone(), &kind),
+                ResourceReportMutation {
+                    identity: Some(unknown.clone()),
+                    mutation: Some(resource_report_mutation::Mutation::Unknown(
+                        ResourceStateUnknown {},
+                    )),
+                },
+            ],
+            100,
+        ))?)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let snapshot = materialized_resource_snapshot(storage, &domain).await?;
+    if snapshot_freshness(&snapshot, &a) != Some(current)
+        || snapshot_freshness(&snapshot, &unknown) != Some(unknown_state)
     {
-        return Err("generation-2 PARTIAL reconnect promoted an omitted identity".into());
+        return Err(MutationExecutionError::oracle(
+            "baseline ingress did not materialize current and unknown resources",
+        ));
     }
-    Ok(())
-}
 
-async fn kill_degradation_mutation(mutation_id: &str) -> Result<(), String> {
-    run_token_degradation_trace(None).await?;
-    if run_token_degradation_trace(Some(mutation_id)).await.is_ok() {
-        return Err(format!(
-            "degradation mutation {mutation_id} survived the production projection oracle"
+    service
+        .ingest_observation(ingest(resource_report_request(
+            &domain,
+            &adapter,
+            &kind,
+            1,
+            vec![],
+            101,
+        ))?)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let snapshot = materialized_resource_snapshot(storage, &domain).await?;
+    if snapshot_freshness(&snapshot, &a) != Some(stale)
+        || snapshot_freshness(&snapshot, &unknown) != Some(unknown_state)
+    {
+        return Err(MutationExecutionError::oracle(
+            "empty PARTIAL ingress did not materialize stale and unknown truth",
+        ));
+    }
+
+    service
+        .ingest_observation(ingest(resource_report_request(
+            &domain,
+            &adapter,
+            &kind,
+            1,
+            vec![resource_upsert(a.clone(), &kind)],
+            102,
+        ))?)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let snapshot = materialized_resource_snapshot(storage, &domain).await?;
+    if snapshot_freshness(&snapshot, &a) != Some(current) {
+        return Err(MutationExecutionError::oracle(
+            "pre-disconnect report did not restore current state",
+        ));
+    }
+
+    let stream = service
+        .receive_deliveries(
+            authenticated(
+                ReceiveRequest {
+                    adapter_id: Some(adapter.clone()),
+                    cursor: Some(Lsn { value: 0 }),
+                },
+                &adapter.value,
+                &token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await
+        .map_err(MutationExecutionError::harness)?
+        .into_inner();
+    drop(stream);
+    let disconnect_snapshot = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let snapshot = materialized_resource_snapshot(storage, &domain).await?;
+            if snapshot_freshness(&snapshot, &a) != Some(current) {
+                return Ok::<_, MutationExecutionError>(snapshot);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        MutationExecutionError::oracle(
+            "disconnect degradation did not reach the materialized snapshot",
+        )
+    })??;
+    if snapshot_freshness(&disconnect_snapshot, &a) != Some(stale) {
+        return Err(MutationExecutionError::oracle(
+            "abnormal stream loss did not materialize stale cached state",
+        ));
+    }
+
+    let replacement = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter, &kind, 2)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let replacement_token =
+        attachment_token(&replacement).map_err(MutationExecutionError::harness)?;
+    service
+        .ingest_observation(
+            authenticated(
+                resource_report_request(
+                    &domain,
+                    &adapter,
+                    &kind,
+                    2,
+                    vec![resource_upsert(b.clone(), &kind)],
+                    103,
+                ),
+                &adapter.value,
+                &replacement_token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let snapshot = materialized_resource_snapshot(storage, &domain).await?;
+    if snapshot_freshness(&snapshot, &a) != Some(stale)
+        || snapshot_freshness(&snapshot, &b) != Some(current)
+        || snapshot_freshness(&snapshot, &unknown) != Some(unknown_state)
+    {
+        return Err(MutationExecutionError::oracle(
+            "generation-2 PARTIAL reconnect violated the materialized snapshot oracle",
         ));
     }
     Ok(())
 }
 
+async fn run_token_degradation_trace(vector: &ConformanceVector) -> Result<(), String> {
+    let domain = AuthorityDomainId {
+        value: "token-conformance".into(),
+    };
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain,
+        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+    )
+    .await?;
+    run_token_degradation_trace_with_service(vector, &storage, &service)
+        .await
+        .map_err(|error| match error {
+            MutationExecutionError::Harness(message) | MutationExecutionError::Oracle(message) => {
+                message
+            }
+        })
+}
+
+#[cfg(feature = "conformance-fault-injection")]
+async fn kill_degradation_mutation(
+    vector: &ConformanceVector,
+    mutation_id: &str,
+) -> Result<(), String> {
+    run_token_degradation_trace(vector).await?;
+    let fault = match mutation_id {
+        "skip-empty-partial-report" => {
+            AdapterServiceConformanceFault::IgnoreEmptyPartialResourceReport
+        }
+        "disconnect-remains-current" => {
+            AdapterServiceConformanceFault::KeepResourcesCurrentOnDisconnect
+        }
+        _ => return Err(format!("unhandled degradation mutation {mutation_id}")),
+    };
+    let domain = AuthorityDomainId {
+        value: "token-conformance".into(),
+    };
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new_with_conformance_fault(
+        storage.clone(),
+        domain,
+        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        fault,
+    )
+    .await?;
+    match run_token_degradation_trace_with_service(vector, &storage, &service).await {
+        Err(MutationExecutionError::Oracle(_)) => Ok(()),
+        Err(MutationExecutionError::Harness(error)) => Err(format!(
+            "degradation mutation {mutation_id} had a harness failure: {error}"
+        )),
+        Ok(()) => Err(format!(
+            "degradation mutation {mutation_id} survived the service-boundary snapshot oracle"
+        )),
+    }
+}
+
+#[cfg(not(feature = "conformance-fault-injection"))]
+async fn kill_degradation_mutation(
+    _vector: &ConformanceVector,
+    _mutation_id: &str,
+) -> Result<(), String> {
+    Err("Rust mutation witnesses require conformance-fault-injection".into())
+}
+
+#[cfg(feature = "conformance-fault-injection")]
 async fn kill_source_ingress_mutation(
     vector: &ConformanceVector,
     mutation_id: &str,
 ) -> Result<(), String> {
-    // Baseline first: the real authenticated service must satisfy the vector.
     source_binding(vector).await?;
     let domain = AuthorityDomainId {
         value: string(&vector.input, "/authority_domain_id")?.to_owned(),
     };
-    let adapter_id = AdapterId {
+    let adapter = AdapterId {
         value: string(&vector.input, "/authenticated_adapter_id")?.to_owned(),
     };
     let generation = vector
@@ -1550,91 +1720,99 @@ async fn kill_source_ingress_mutation(
         .and_then(Value::as_u64)
         .ok_or("missing attachment generation")?;
     let exact = tuple(&vector.input, "/target_identity")?;
-    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
-
-    match mutation_id {
-        "ignore-generation-equality" => {
-            let mut registry = ResourceRegistry::new();
-            ingest_resource_report(
-                &storage,
-                &mut registry,
-                ValidatedResourceReport {
-                    authority_domain_id: domain.clone(),
-                    adapter_id: adapter_id.clone(),
-                    adapter_generation: Generation {
-                        value: generation - 1,
-                    },
-                    mode: ResourceReportMode::Snapshot,
-                    views: vec![ResourceViewReport {
-                        resource_kind: exact.resource_kind.clone(),
-                        completeness: AdapterSnapshotSupport::Partial as i32,
-                        mutations: vec![ResourceReportMutation {
-                            identity: Some(exact.clone()),
-                            mutation: Some(resource_report_mutation::Mutation::Upsert(
-                                ResourceStateUpsert {
-                                    resource_payload: Some(PayloadEnvelope {
-                                        payload: vec![1],
-                                        content_type: PayloadContentType::Protobuf as i32,
-                                        schema_ref: "token.payload.v1".into(),
-                                    }),
-                                    projection_payload: Some(PayloadEnvelope {
-                                        payload: b"{}".to_vec(),
-                                        content_type: PayloadContentType::Json as i32,
-                                        schema_ref: "token.projection.v1".into(),
-                                    }),
-                                },
-                            )),
-                        }],
-                    }],
-                    observed_at: Timestamp {
-                        seconds: 100,
-                        nanos: 0,
-                    },
-                },
-            )
-            .await
-            .map_err(|error| error.to_string())?;
+    let kind = exact
+        .resource_kind
+        .clone()
+        .ok_or("target identity missing kind")?;
+    let fault = match mutation_id {
+        "ignore-generation-equality" => AdapterServiceConformanceFault::IgnoreResourceGeneration,
+        "accept-prior-attachment-token" => {
+            AdapterServiceConformanceFault::AcceptPriorAttachmentToken
         }
-        "accept-prior-attachment-token" | "trust-payload-source" | "compare-local-id-only" => {
-            // Claim-breaking source-ingress mutant: bypass the corresponding
-            // service fence and append the attempted Observation through the
-            // real storage/event seam.
-            let attempted_identity = if mutation_id == "compare-local-id-only" {
-                tuple(&vector.input, "/cross_adapter_target")?
-            } else {
-                exact.clone()
-            };
-            let attempted = observation(vector, &domain, attempted_identity)?;
-            let encoded = match attempted
-                .observation
-                .ok_or("attempted observation missing")?
-            {
-                observation_request::Observation::Event(value) => value.encode_to_vec(),
-                _ => return Err("unexpected attempted observation shape".into()),
-            };
-            storage
-                .append(
-                    &domain,
-                    StoredEventPayload {
-                        kind: StoredEventKind::Observation as i32,
-                        payload: encoded,
-                    },
-                )
-                .await
-                .map_err(|error| error.to_string())?;
+        "compare-local-id-only" => {
+            AdapterServiceConformanceFault::NormalizeResourceOwnerToAuthenticatedAdapter
         }
         _ => return Err(format!("unhandled source-ingress mutation {mutation_id}")),
-    }
-    let appended = storage
-        .read_after(&domain, Lsn { value: 0 })
+    };
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new_with_conformance_fault(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        fault,
+    )
+    .await?;
+    let old = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter, &kind, generation - 1)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
         .await
         .map_err(|error| error.to_string())?;
-    if appended.is_empty() {
-        return Err(format!(
-            "source-ingress mutation {mutation_id} did not violate the no-append oracle"
-        ));
+    let old_token = attachment_token(&old)?;
+    let current = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter, &kind, generation)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
+    let current_token = attachment_token(&current)?;
+    let before = materialized_resource_snapshot(&storage, &domain)
+        .await
+        .map_err(|error| format!("source mutation snapshot setup failed: {error:?}"))?;
+    let attempted_identity = if mutation_id == "compare-local-id-only" {
+        tuple(&vector.input, "/cross_adapter_target")?
+    } else {
+        exact
+    };
+    let attempted_generation = if mutation_id == "ignore-generation-equality" {
+        generation - 1
+    } else {
+        generation
+    };
+    let token = if mutation_id == "accept-prior-attachment-token" {
+        &old_token
+    } else {
+        &current_token
+    };
+    service
+        .ingest_observation(authenticated(
+            resource_report_request(
+                &domain,
+                &adapter,
+                &kind,
+                attempted_generation,
+                vec![resource_upsert(attempted_identity, &kind)],
+                100,
+            ),
+            &adapter.value,
+            token,
+        )?)
+        .await
+        .map_err(|error| {
+            format!("source mutation {mutation_id} failed before its snapshot oracle: {error}")
+        })?;
+    let after = materialized_resource_snapshot(&storage, &domain)
+        .await
+        .map_err(|error| format!("source mutation snapshot load failed: {error:?}"))?;
+    match assert_source_snapshot_unchanged(&before, &after) {
+        Err(MutationExecutionError::Oracle(_)) => Ok(()),
+        Err(MutationExecutionError::Harness(error)) => Err(format!(
+            "source-ingress mutation {mutation_id} had a harness failure: {error}"
+        )),
+        Ok(()) => Err(format!(
+            "source-ingress mutation {mutation_id} survived the materialized snapshot oracle"
+        )),
     }
-    Ok(())
+}
+
+#[cfg(not(feature = "conformance-fault-injection"))]
+async fn kill_source_ingress_mutation(
+    _vector: &ConformanceVector,
+    _mutation_id: &str,
+) -> Result<(), String> {
+    Err("Rust mutation witnesses require conformance-fault-injection".into())
 }
 
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
@@ -1645,7 +1823,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "operation_durable_acceptance" => server_operation_scenario(vector, true).await,
         "operation_missing_grant" => server_operation_scenario(vector, false).await,
         "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
-        "token_commune_degradation_projection" => run_token_degradation_trace(None).await,
+        "token_commune_degradation_projection" => run_token_degradation_trace(vector).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "resource_observation_source_binding" | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
@@ -1674,7 +1852,7 @@ async fn conformance_vector_runner() {
         assert!(vector.mutation_witnesses.iter().any(|witness| witness.runner == RUNNER && witness.mutation_id == request.mutation_id),
             "unregistered requested mutation {}:{}", request.vector_id, request.mutation_id);
         let result = if vector.property_id == "TokenCommuneDegradationHonesty" {
-            kill_degradation_mutation(&request.mutation_id).await
+            kill_degradation_mutation(vector, &request.mutation_id).await
         } else {
             kill_source_ingress_mutation(vector, &request.mutation_id).await
         };

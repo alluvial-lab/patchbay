@@ -10,16 +10,18 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
     AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport,
     AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
-    ObservationRequest, ObservationResult, OperationState, ReceiveRequest,
-    SessionActivityState, SessionConnectivityState, StoredEventKind,
+    ObservationRequest, ObservationResult, OperationState, ReceiveRequest, SessionActivityState,
+    SessionConnectivityState, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
-    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
-    diagnostics::{ingest_adapter_diagnostic, validate_adapter_diagnostic_report},
     adapter::{self, AdapterRegistry},
+    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::hash_principal_credential,
-    resource::{self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    diagnostics::{ingest_adapter_diagnostic, validate_adapter_diagnostic_report},
+    resource::{
+        self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
+    },
     session::{self, SessionRegistry, SessionReport},
     storage::{AuditRecordDraft, RecordedEvent, Storage},
     target::target_adapter_id,
@@ -115,6 +117,23 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum AdapterServiceConformanceFault {
+    #[default]
+    None,
+    #[cfg(feature = "conformance-fault-injection")]
+    AcceptPriorAttachmentToken,
+    #[cfg(feature = "conformance-fault-injection")]
+    IgnoreResourceGeneration,
+    #[cfg(feature = "conformance-fault-injection")]
+    NormalizeResourceOwnerToAuthenticatedAdapter,
+    #[cfg(feature = "conformance-fault-injection")]
+    IgnoreEmptyPartialResourceReport,
+    #[cfg(feature = "conformance-fault-injection")]
+    KeepResourcesCurrentOnDisconnect,
+}
+
 #[derive(Clone)]
 pub struct AdapterControlServiceImpl<S> {
     storage: S,
@@ -128,6 +147,8 @@ pub struct AdapterControlServiceImpl<S> {
     attachment_tokens: Arc<Mutex<HashMap<AdapterId, Vec<u8>>>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
     decision_gate: CoreDecisionGate,
+    #[cfg(feature = "conformance-fault-injection")]
+    conformance_fault: AdapterServiceConformanceFault,
 }
 
 impl<S> AdapterControlServiceImpl<S>
@@ -154,6 +175,41 @@ where
         evidence: AdapterEvidenceVerifier,
         decision_gate: CoreDecisionGate,
     ) -> Result<Self, String> {
+        Self::new_with_decision_gate_and_conformance_fault(
+            storage,
+            authority_domain_id,
+            evidence,
+            decision_gate,
+            AdapterServiceConformanceFault::None,
+        )
+        .await
+    }
+
+    #[cfg(feature = "conformance-fault-injection")]
+    #[doc(hidden)]
+    pub async fn new_with_conformance_fault(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        evidence: AdapterEvidenceVerifier,
+        conformance_fault: AdapterServiceConformanceFault,
+    ) -> Result<Self, String> {
+        Self::new_with_decision_gate_and_conformance_fault(
+            storage,
+            authority_domain_id,
+            evidence,
+            CoreDecisionGate::default(),
+            conformance_fault,
+        )
+        .await
+    }
+
+    async fn new_with_decision_gate_and_conformance_fault(
+        storage: S,
+        authority_domain_id: AuthorityDomainId,
+        evidence: AdapterEvidenceVerifier,
+        decision_gate: CoreDecisionGate,
+        _conformance_fault: AdapterServiceConformanceFault,
+    ) -> Result<Self, String> {
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".into());
         }
@@ -170,7 +226,10 @@ where
             .await
             .map_err(|error| error.to_string())?;
         let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
-            Arc::new(DurableAuditSink::new(storage.clone(), authority_domain_id.clone())),
+            Arc::new(DurableAuditSink::new(
+                storage.clone(),
+                authority_domain_id.clone(),
+            )),
             vec![Arc::new(StderrAuditSink)],
         ));
         Ok(Self {
@@ -185,6 +244,8 @@ where
             attachment_tokens: Arc::new(Mutex::new(HashMap::new())),
             delivery_stream_epochs: Arc::new(Mutex::new(HashMap::new())),
             decision_gate,
+            #[cfg(feature = "conformance-fault-injection")]
+            conformance_fault: _conformance_fault,
         })
     }
 
@@ -196,6 +257,10 @@ where
             .ok_or_else(|| Status::unauthenticated("missing adapter attachment token"))?
             .to_str()
             .map_err(|_| Status::unauthenticated("invalid adapter attachment token"))?;
+        #[cfg(feature = "conformance-fault-injection")]
+        if self.conformance_fault == AdapterServiceConformanceFault::AcceptPriorAttachmentToken {
+            return Ok(adapter_id);
+        }
         let actual_hash = hash_principal_credential(token);
         let tokens = self.attachment_tokens.lock().await;
         let expected_hash = tokens.get(&adapter_id).ok_or_else(|| {
@@ -343,11 +408,8 @@ fn deliveries_for_events(
                 Some(operation) => operation,
                 None => return Some(Err(Status::internal("accepted operation has no operation"))),
             };
-            let targets_adapter = operation
-                .target_scope
-                .as_ref()
-                .and_then(target_adapter_id)
-                == Some(adapter_id);
+            let targets_adapter =
+                operation.target_scope.as_ref().and_then(target_adapter_id) == Some(adapter_id);
             let remains_deliverable = operation
                 .command_id
                 .as_ref()
@@ -563,9 +625,10 @@ where
         let rebuilt_adapters = adapter::rebuild_from_log(&self.storage, &self.authority_domain_id)
             .await
             .map_err(map_adapter_error)?;
-        let rebuilt_resources = resource::rebuild_from_log(&self.storage, &self.authority_domain_id)
-            .await
-            .map_err(map_resource_error)?;
+        let rebuilt_resources =
+            resource::rebuild_from_log(&self.storage, &self.authority_domain_id)
+                .await
+                .map_err(map_resource_error)?;
         let mut adapters = self.adapters.lock().await;
         *adapters = rebuilt_adapters;
         let mut resources = self.resources.lock().await;
@@ -650,7 +713,9 @@ where
             let adapters = self.adapters.lock().await;
             adapters
                 .get(&authenticated_adapter)
-                .ok_or_else(|| Status::unauthenticated("adapter attachment is not current; reattach required"))?
+                .ok_or_else(|| {
+                    Status::unauthenticated("adapter attachment is not current; reattach required")
+                })?
                 .registration
                 .clone()
         };
@@ -669,13 +734,10 @@ where
                 }));
             }
         };
-        let receipt = ingest_adapter_diagnostic(
-            &self.storage,
-            &self.authority_domain_id,
-            validated,
-        )
-        .await
-        .map_err(map_storage_error_to_status)?;
+        let receipt =
+            ingest_adapter_diagnostic(&self.storage, &self.authority_domain_id, validated)
+                .await
+                .map_err(map_storage_error_to_status)?;
         Ok(Response::new(AdapterDiagnosticReportResult {
             accepted: true,
             observation_event_id: Some(receipt.observation_event_id),
@@ -738,12 +800,17 @@ where
                     .map_err(map_session_error)?;
                 let mut sessions = self.sessions.lock().await;
                 *sessions = rebuilt;
-                let result = match session::ingest_session_report(&self.storage, &mut *sessions, report)
-                    .await
+                let result = match session::ingest_session_report(
+                    &self.storage,
+                    &mut *sessions,
+                    report,
+                )
+                .await
                 {
                     Ok(result) => result,
                     Err(error) => {
-                        let kind = if matches!(error, session::SessionError::StaleGeneration { .. }) {
+                        let kind = if matches!(error, session::SessionError::StaleGeneration { .. })
+                        {
                             patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch
                         } else {
                             patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
@@ -786,6 +853,8 @@ where
                         ));
                     }
                 };
+                #[cfg(feature = "conformance-fault-injection")]
+                let mut views = views;
                 {
                     let adapters = self.adapters.lock().await;
                     let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
@@ -794,16 +863,45 @@ where
                         )
                     })?;
                     if record.registration.adapter_generation.as_ref() != Some(&generation) {
+                        #[cfg(feature = "conformance-fault-injection")]
+                        if self.conformance_fault
+                            == AdapterServiceConformanceFault::IgnoreResourceGeneration
+                        {
+                            // Deliberate compiled-graph fault used only by the conformance runner.
+                        } else {
+                            return Err(Status::failed_precondition(
+                                "resource report adapter generation is stale",
+                            ));
+                        }
+                        #[cfg(not(feature = "conformance-fault-injection"))]
                         return Err(Status::failed_precondition(
                             "resource report adapter generation is stale",
                         ));
                     }
-                    validate_resource_views(
-                        &adapters,
-                        &authenticated_adapter,
-                        mode,
-                        &views,
-                    )?;
+                    #[cfg(feature = "conformance-fault-injection")]
+                    if self.conformance_fault
+                        == AdapterServiceConformanceFault::NormalizeResourceOwnerToAuthenticatedAdapter
+                    {
+                        for view in &mut views {
+                            for mutation in &mut view.mutations {
+                                if let Some(identity) = mutation.identity.as_mut() {
+                                    identity.adapter_id = Some(authenticated_adapter.clone());
+                                }
+                            }
+                        }
+                    }
+                    validate_resource_views(&adapters, &authenticated_adapter, mode, &views)?;
+                }
+                #[cfg(feature = "conformance-fault-injection")]
+                if self.conformance_fault
+                    == AdapterServiceConformanceFault::IgnoreEmptyPartialResourceReport
+                    && mode == ResourceReportMode::Snapshot
+                    && views.iter().all(|view| {
+                        view.completeness == AdapterSnapshotSupport::Partial as i32
+                            && view.mutations.is_empty()
+                    })
+                {
+                    return Ok(Response::new(ObservationResult { event_id: None }));
                 }
                 let rebuilt = resource::rebuild_from_log(&self.storage, &domain)
                     .await
@@ -929,6 +1027,8 @@ where
         let decision_gate = self.decision_gate.clone();
         let stale_domain = domain.clone();
         let stale_adapter = authenticated_adapter.clone();
+        #[cfg(feature = "conformance-fault-injection")]
+        let conformance_fault = self.conformance_fault;
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
                 // The shared decision gate prevents revocation from planning
@@ -987,16 +1087,23 @@ where
                         &stale_adapter,
                     )
                     .map_err(|error| error.to_string())?;
-                    if let Some(source) = resource::adapter_stale_event(
-                        &rebuilt_resources,
-                        &stale_domain,
-                        &stale_adapter,
-                        adapter_generation,
-                        crate::identity::now_timestamp().map_err(|error| error.to_string())?,
-                    )
-                    .map_err(|error| error.to_string())?
-                    {
-                        sources.push(source);
+                    #[cfg(feature = "conformance-fault-injection")]
+                    let keep_resources_current = conformance_fault
+                        == AdapterServiceConformanceFault::KeepResourcesCurrentOnDisconnect;
+                    #[cfg(not(feature = "conformance-fault-injection"))]
+                    let keep_resources_current = false;
+                    if !keep_resources_current {
+                        if let Some(source) = resource::adapter_stale_event(
+                            &rebuilt_resources,
+                            &stale_domain,
+                            &stale_adapter,
+                            adapter_generation,
+                            crate::identity::now_timestamp().map_err(|error| error.to_string())?,
+                        )
+                        .map_err(|error| error.to_string())?
+                        {
+                            sources.push(source);
+                        }
                     }
                     let mut audit_draft = AuditRecordDraft::new(
                         crate::identity::now_timestamp().map_err(|error| error.to_string())?,
@@ -1041,7 +1148,8 @@ where
                         None,
                         "adapter_disconnect_reconciliation_failed",
                     )
-                    .await {
+                    .await
+                    {
                         eprintln!("patchbay-core-server: failed to record adapter lifecycle audit: {error}");
                     }
                 }
@@ -1094,9 +1202,10 @@ fn validate_resource_views(
     views: &[patchbay_contracts::patchbay::ResourceViewReport],
 ) -> Result<(), Status> {
     for view in views {
-        let kind = view.resource_kind.as_ref().ok_or_else(|| {
-            Status::invalid_argument("resource view is missing resource_kind")
-        })?;
+        let kind = view
+            .resource_kind
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("resource view is missing resource_kind"))?;
         let declared = adapters
             .get(authenticated_adapter)
             .and_then(|record| record.validated_capability.resource(kind))
@@ -1111,12 +1220,11 @@ fn validate_resource_views(
             ));
         }
         for mutation in &view.mutations {
-            let identity = ResourceIdentity::try_from_wire(
-                mutation.identity.as_ref().ok_or_else(|| {
+            let identity =
+                ResourceIdentity::try_from_wire(mutation.identity.as_ref().ok_or_else(|| {
                     Status::invalid_argument("resource mutation is missing identity")
-                })?,
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                })?)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
             if identity.adapter_id() != authenticated_adapter || identity.resource_kind() != kind {
                 return Err(Status::permission_denied(
                     "resource mutation identity does not match authenticated view",

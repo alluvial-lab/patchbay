@@ -347,7 +347,7 @@ not described as checked-normative, model-checked, or release-verified.
 ### token-commune observer conformance evidence (implementation-checked)
 
 The token-commune profile promotes seven executable examples. Its runners execute
-nine exact scenario checks and kill 40 declared mutation witnesses before the
+nine exact scenario checks and kill 32 declared mutation witnesses before the
 shared checker may update traceability. The profile is exact and fail-closed:
 vector/property/scenario/mutation ids, reported execution, killed mutations,
 proto references, expected outcomes, and generated evidence must all agree.

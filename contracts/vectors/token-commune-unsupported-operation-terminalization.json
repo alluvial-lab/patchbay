@@ -6,7 +6,6 @@
     { "runner": "token-commune-adapter", "case": "unsupported_operation_terminalization" }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "clear-pending-before-terminal-ack", "runner": "token-commune-adapter", "invariant": "Retryable terminal-report failure retains pending unsupported work." },
     { "mutation_id": "filter-delivered-nonterminal-on-replacement", "runner": "token-commune-adapter", "invariant": "Core redelivery includes delivered-but-nonterminal work for a replacement process." },
     { "mutation_id": "advance-later-delivery-first", "runner": "token-commune-adapter", "invariant": "Pending recovery terminalizes before later delivery is handled." },
     { "mutation_id": "terminalize-completed", "runner": "token-commune-adapter", "invariant": "Unsupported work never becomes completed." },

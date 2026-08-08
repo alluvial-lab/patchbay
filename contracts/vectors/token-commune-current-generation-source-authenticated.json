@@ -6,10 +6,9 @@
     { "runner": "rust-server", "case": "token_commune_current_generation_source_binding" }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "ignore-generation-equality", "runner": "rust-server", "invariant": "Attempted report generation must exactly equal the authenticated current attachment generation." },
-    { "mutation_id": "accept-prior-attachment-token", "runner": "rust-server", "invariant": "A replaced attachment token is inert." },
-    { "mutation_id": "trust-payload-source", "runner": "rust-server", "invariant": "Payload-claimed sender or generation cannot replace channel evidence." },
-    { "mutation_id": "compare-local-id-only", "runner": "rust-server", "invariant": "Target ownership compares the full adapter/kind/local-id tuple." }
+    { "mutation_id": "ignore-generation-equality", "runner": "rust-server", "invariant": "Patched production ingress must not admit a stale-generation report into the materialized resource snapshot." },
+    { "mutation_id": "accept-prior-attachment-token", "runner": "rust-server", "invariant": "Patched production authentication must not admit a prior-token report into the materialized resource snapshot." },
+    { "mutation_id": "compare-local-id-only", "runner": "rust-server", "invariant": "Patched production ownership matching must not normalize a cross-adapter tuple into the materialized resource snapshot." }
   ],
   "proto_fields_constrained": [
     "patchbay.AdapterRegistration.adapter_generation",

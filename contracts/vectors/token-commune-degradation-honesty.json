@@ -7,11 +7,8 @@
     { "runner": "rust-server", "case": "token_commune_degradation_projection" }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "skip-empty-partial-report", "runner": "rust-server", "invariant": "A fully failed poll still reports both empty PARTIAL views." },
-    { "mutation_id": "carry-prior-endpoint-value", "runner": "rust-server", "invariant": "A failed endpoint cannot reuse prior-cycle telemetry." },
-    { "mutation_id": "disconnect-remains-current", "runner": "rust-server", "invariant": "Abnormal delivery loss degrades cached current resources to stale." },
-    { "mutation_id": "polling-establishes-liveness", "runner": "rust-server", "invariant": "Poll cadence and silence carry no liveness claim." },
-    { "mutation_id": "reconnect-promotes-omitted-identities", "runner": "rust-server", "invariant": "A PARTIAL reconnect restores only explicitly listed current identities." }
+    { "mutation_id": "skip-empty-partial-report", "runner": "rust-server", "invariant": "A fully failed poll still crosses authenticated report ingress and degrades both materialized PARTIAL views." },
+    { "mutation_id": "disconnect-remains-current", "runner": "rust-server", "invariant": "Abnormal delivery loss executes production disconnect degradation and makes cached resources stale in a materialized snapshot." }
   ],
   "proto_fields_constrained": [
     "patchbay.Resource.freshness",

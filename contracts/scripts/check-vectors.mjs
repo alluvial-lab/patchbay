@@ -106,7 +106,7 @@ const IMPLEMENTATION_RUNNERS = Object.freeze({
   },
   'rust-server': {
     command: 'cargo',
-    args: ['test', '-q', '-p', 'patchbay-core-server', '--test', 'conformance_vectors', '--', '--nocapture'],
+    args: ['test', '-q', '-p', 'patchbay-core-server', '--features', 'conformance-fault-injection', '--test', 'conformance_vectors', '--', '--nocapture'],
   },
   'web-cockpit': {
     command: 'npm',

@@ -23,7 +23,9 @@ import {
 import type { ProviderPoolProjection } from "../src/domain/resource-projection.js";
 import { renderResourceDestination } from "../src/ui/resource-view.js";
 import { renderTokenCommunePanel } from "../src/ui/token-commune-panel.js";
-import { withProductionMutant, type ProductionReplacement } from "./production-mutant.js";
+import {
+  ProductionMutantHarnessError, withProductionMutant, type ProductionReplacement,
+} from "./production-mutant.js";
 
 const RUNNER = "web-cockpit" as const;
 
@@ -314,13 +316,19 @@ async function expectWebProductionMutationKilled(
   mutationId: string,
 ): Promise<void> {
   executeTokenCommunePresentation(vector);
+  let moduleLoaded = false;
   let killed = false;
-  try { await withProductionMutant(packageRoot, replacements, entry, mutant); }
-  catch (error) {
-    assert.notEqual((error as Error).name, "SyntaxError", `production mutation ${mutationId} did not load`);
-    assert.doesNotMatch(String((error as Error).message), /production mutation anchor/, `production mutation ${mutationId} did not reach its oracle`);
+  try {
+    await withProductionMutant(packageRoot, replacements, entry, async (module) => {
+      moduleLoaded = true;
+      await mutant(module);
+    });
+  } catch (error) {
+    if (error instanceof ProductionMutantHarnessError) throw error;
+    assert.equal(moduleLoaded, true, `production mutation ${mutationId} failed before module loading completed`);
     killed = true;
   }
+  assert.equal(moduleLoaded, true, `production mutation ${mutationId} did not load`);
   assert.equal(killed, true, `production mutation ${mutationId} survived the presentation oracle`);
 }
 
