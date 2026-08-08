@@ -92,14 +92,27 @@ export interface TableSection {
 }
 
 export function printTableSection(section: TableSection, output: CliOutput): void {
-  if (section.title) output.stdout(section.title);
-  const widths = section.headers.map((header, index) =>
-    Math.max(header.length, ...section.rows.map((row) => row[index]?.length ?? 0)),
+  const headers = section.headers.map(escapeTerminalControls);
+  const rows = section.rows.map((row) => row.map(escapeTerminalControls));
+  if (section.title) output.stdout(escapeTerminalControls(section.title));
+  const widths = headers.map((header, index) =>
+    Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
   );
-  output.stdout(section.headers.map((header, index) => header.padEnd(widths[index]!)).join("  "));
-  for (const row of section.rows) {
+  output.stdout(headers.map((header, index) => header.padEnd(widths[index]!)).join("  "));
+  for (const row of rows) {
     output.stdout(row.map((value, index) => value.padEnd(widths[index]!)).join("  "));
   }
+}
+
+function escapeTerminalControls(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, (character) => {
+    switch (character) {
+      case "\n": return "\\n";
+      case "\r": return "\\r";
+      case "\t": return "\\t";
+      default: return `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    }
+  });
 }
 
 export interface EventIdView {

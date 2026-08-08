@@ -136,7 +136,10 @@ function telemetryLabel(summary: TokenCommunePoolSummary): string {
 }
 function modelsLabel(summary: TokenCommunePoolSummary): string {
   if (summary.models.length === 0) return summary.modelState === "unknown" ? "catalog unknown" : "none reported";
-  return summary.models.map((model) => model.available ? model.id : `${model.id} unavailable`).join(", ");
+  return summary.models.map((model) => {
+    const provenance = `upstream ${model.upstreamModel ?? "unavailable"}`;
+    return model.available ? `${model.id} (${provenance})` : `${model.id} unavailable (${provenance})`;
+  }).join(", ");
 }
 function percent(value: number): string {
   return `${Math.round(value * 1000) / 10}%`;

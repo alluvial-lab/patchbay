@@ -50,8 +50,19 @@ export interface CredentialHealthCounts {
   authBroken: number;
 }
 
+export interface ProviderModel {
+  id: string;
+  provider: string;
+  surface: string;
+  upstreamModel: string | null;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  available: boolean;
+}
+
 export type ProviderModelCatalog =
-  | { status: "reported"; models: readonly { id: string; available: boolean }[] }
+  | { status: "reported"; models: readonly ProviderModel[] }
   | { status: "unavailable"; models: readonly [] };
 
 export interface MemberDrawReport {
@@ -160,7 +171,7 @@ export interface TokenCommunePoolSummary {
   draw: DrawAllowance;
   credentials: CredentialHealthSummary;
   capacity5h: Capacity5h;
-  models: readonly { id: string; available: boolean }[];
+  models: readonly ProviderModel[];
   modelState: "current" | "stale" | "unknown";
   verdict: TokenCommuneVerdict;
 }
@@ -175,10 +186,26 @@ export function composeTokenCommunePools(
   const pools: TokenCommunePoolSummary[] = [];
 
   for (const pool of resources) {
+    if (pool.identity.resourceKind !== TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.resourceKind) continue;
     if (
       pool.projection.status !== "decoded"
       || pool.projection.value.kind !== "token-commune-provider-pool"
-    ) continue;
+    ) {
+      pools.push({
+        key: identityKey(pool.identity),
+        provider: "provider unavailable",
+        poolIdentity: pool.identity,
+        completeness: pool.completeness,
+        ...(pool.observedAt ? { poolObservedAt: pool.observedAt } : {}),
+        draw: { state: "unknown" },
+        credentials: { state: "unknown", fresh: 0, exhausted: 0, authBroken: 0, contributionCount: 0 },
+        capacity5h: { state: "unknown" },
+        models: [],
+        modelState: "unknown",
+        verdict: "unknown",
+      });
+      continue;
+    }
     const value = pool.projection.value;
     const exactDraws = draws.filter((draw) =>
       draw.identity.adapterId === pool.identity.adapterId
@@ -196,7 +223,7 @@ export function composeTokenCommunePools(
       || !pool.reconciled
       || pool.freshness === ResourceFreshnessState.STALE;
     const poolUnknown = pool.freshness === ResourceFreshnessState.UNKNOWN;
-    const draw = composeDraw(matchingReports, poolStale);
+    const draw = composeDraw(matchingReports);
     const credentials = composeCredentials(value.contributionListing, value.credentialHealthCounts, poolStale, poolUnknown);
     const { capacity, facts } = composeCapacity(value.contributionListing, poolStale, poolUnknown);
     const modelState = value.modelCatalog.status !== "reported" || poolUnknown
@@ -213,7 +240,7 @@ export function composeTokenCommunePools(
       capacity5h: capacity,
       contributionCapacityFacts: facts,
       modelState,
-      availableModelCount: models.filter((model) => model.available).length,
+      availableModelCount: models.filter((model) => model.provider === value.provider && model.available).length,
     });
     const uniqueDraw = matchingReports.length === 1 ? matchingReports[0] : undefined;
     pools.push({
@@ -274,14 +301,12 @@ export function synthesizeTokenCommuneVerdict(input: {
 
 function composeDraw(
   matches: readonly { draw: TokenCommuneResourceInput; report: MemberDrawReport }[],
-  poolStale: boolean,
 ): DrawAllowance {
   if (matches.length === 0) return { state: "unavailable" };
   if (matches.length > 1) return { state: "ambiguous" };
   const match = matches[0]!;
   if (match.draw.freshness === ResourceFreshnessState.UNKNOWN) return { state: "unknown" };
-  const stale = poolStale
-    || match.draw.tombstoned
+  const stale = match.draw.tombstoned
     || !match.draw.reconciled
     || match.draw.freshness === ResourceFreshnessState.STALE;
   return {
@@ -492,13 +517,24 @@ function decodeModelCatalog(value: Record<string, unknown>): ProviderModelCatalo
       // The upstream catalog rejects this removed bare alias. Fail closed rather
       // than presenting it as a Patchbay-created model name.
       if (id === "gpt-5.6") throw new Error("rejected model alias");
-      text(model.provider, "model.provider");
-      text(model.surface, "model.surface");
-      if (model.upstreamModel !== null) text(model.upstreamModel, "model.upstreamModel");
-      positive(model.contextWindow, "contextWindow");
-      positive(model.maxTokens, "maxTokens");
-      bool(model.reasoning, "reasoning");
-      return { id, available: bool(model.available, "available") };
+      const provider = text(model.provider, "model.provider");
+      const surface = text(model.surface, "model.surface");
+      const upstreamModel = model.upstreamModel === null
+        ? null
+        : text(model.upstreamModel, "model.upstreamModel");
+      const contextWindow = positive(model.contextWindow, "contextWindow");
+      const maxTokens = positive(model.maxTokens, "maxTokens");
+      const reasoning = bool(model.reasoning, "reasoning");
+      return {
+        id,
+        provider,
+        surface,
+        upstreamModel,
+        contextWindow,
+        maxTokens,
+        reasoning,
+        available: bool(model.available, "available"),
+      };
     }),
   };
 }
@@ -552,6 +588,10 @@ function validatePoolFingerprint(value: Record<string, unknown>): void {
   member(value.templateSource, ["compiled", "override"] as const, "templateSource");
   nullableTime(value.since, "since");
   bool(value.diffPresent, "diffPresent");
+}
+
+function identityKey(identity: SurfaceResourceIdentity): string {
+  return `${identity.adapterId}\u0000${identity.resourceKind}\u0000${identity.resourceId}`;
 }
 
 function jsonObject(payload: Uint8Array): Record<string, unknown> {

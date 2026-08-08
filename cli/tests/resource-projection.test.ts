@@ -50,9 +50,15 @@ function reading(usedFraction: number | null) {
   };
 }
 
-function poolProjection() {
+function poolProjection(options: {
+  provider?: string;
+  modelId?: string;
+  modelProvider?: string;
+  upstreamModel?: string | null;
+} = {}) {
+  const provider = options.provider ?? "openai-codex";
   return {
-    provider: "openai-codex",
+    provider,
     contributionListing: {
       status: "reported",
       contributions: [{
@@ -71,20 +77,26 @@ function poolProjection() {
     totalDeclaredShare: 1,
     statusTelemetry: { status: "not-reported", contributions: [] },
     modelCatalog: { status: "reported", models: [{
-      id: "gpt-5.5", provider: "openai-codex", surface: "codex", upstreamModel: null,
-      contextWindow: 200000, maxTokens: 8192, reasoning: true, available: true,
+      id: options.modelId ?? "gpt-5.5",
+      provider: options.modelProvider ?? provider,
+      surface: "codex",
+      upstreamModel: options.upstreamModel ?? null,
+      contextWindow: 200000,
+      maxTokens: 8192,
+      reasoning: true,
+      available: true,
     }] },
     fingerprint: { status: "unknown", probe: null, reason: "not-probed" },
     capacityAggregation: "none",
   };
 }
 
-function drawProjection(limitFraction = 0.25) {
+function drawProjection(limitFraction = 0.25, provider = "openai-codex") {
   return {
     memberDisplayName: "private-member-name",
-    provider: "openai-codex",
+    provider,
     reports: [{
-      provider: "openai-codex", limitFraction, fromDecree: false, consumedUnits: 4,
+      provider, limitFraction, fromDecree: false, consumedUnits: 4,
       drawUnits: null, exceeded: false, enforceable: false, resetsAt: null,
     }],
   };
@@ -98,20 +110,44 @@ function identity(adapterId: string, resourceKind: string, resourceId: string) {
   });
 }
 
-function resource(adapterId: string, kind: "pool" | "draw", stale = false) {
+type PoolProjectionState = "decoded" | "invalid" | "unsupported" | "unavailable";
+
+type ProjectionOptions = {
+  poolProjectionState?: PoolProjectionState;
+  provider?: string;
+  modelId?: string;
+  modelProvider?: string;
+  upstreamModel?: string | null;
+};
+
+function resource(
+  adapterId: string,
+  kind: "pool" | "draw",
+  stale = false,
+  options: ProjectionOptions = {},
+) {
   const pool = kind === "pool";
   const resourceKind = pool ? "token-commune.provider-pool" : "token-commune.member-draw";
+  const projectionState = options.poolProjectionState ?? "decoded";
+  const hasPayloads = !pool || projectionState !== "unavailable";
+  const projectionSchema = pool
+    ? projectionState === "unsupported"
+      ? "patchbay.token_commune.provider_pool.projection.v2"
+      : "patchbay.token_commune.provider_pool.projection.v1"
+    : "patchbay.token_commune.member_draw.projection.v1";
+  const projection = pool
+    ? projectionState === "invalid" ? "{" : poolProjection(options)
+    : drawProjection(adapterId === "token-commune" ? 0.25 : 0.8, options.provider);
   return create(ResourceSchema, {
     authorityDomainId: domain,
     identity: identity(adapterId, resourceKind, `${kind}-opaque`),
-    resourcePayload: envelope(
-      pool ? "patchbay.token_commune.provider_pool.payload.v1" : "patchbay.token_commune.member_draw.payload.v1",
-      {},
-    ),
-    projectionPayload: envelope(
-      pool ? "patchbay.token_commune.provider_pool.projection.v1" : "patchbay.token_commune.member_draw.projection.v1",
-      pool ? poolProjection() : drawProjection(adapterId === "token-commune" ? 0.25 : 0.8),
-    ),
+    ...(hasPayloads ? {
+      resourcePayload: envelope(
+        pool ? "patchbay.token_commune.provider_pool.payload.v1" : "patchbay.token_commune.member_draw.payload.v1",
+        {},
+      ),
+      projectionPayload: envelope(projectionSchema, projection),
+    } : {}),
     freshness: stale ? ResourceFreshnessState.STALE : ResourceFreshnessState.CURRENT,
     sourceAdapterGeneration: { value: 2n },
     revisionLsn: create(LsnSchema, { value: pool ? 9n : 10n }),
@@ -119,8 +155,15 @@ function resource(adapterId: string, kind: "pool" | "draw", stale = false) {
   });
 }
 
-function client(options: { stalePool?: boolean; grants?: "both" | "pool" | "none" } = {}) {
-  const resources = [resource("token-commune", "pool", options.stalePool), resource("token-commune", "draw"), resource("other-adapter", "draw")];
+function client(options: {
+  stalePool?: boolean;
+  grants?: "both" | "pool" | "none";
+} & ProjectionOptions = {}) {
+  const resources = [
+    resource("token-commune", "pool", options.stalePool, options),
+    resource("token-commune", "draw", false, options),
+    resource("other-adapter", "draw", false, options),
+  ];
   const snapshot = create(ResourceSnapshotSchema, {
     authorityDomainId: domain,
     snapshotLsn: create(LsnSchema, { value: 12n }),
@@ -185,6 +228,7 @@ test("resource-query text and JSON use the shared exact summary without private 
   assert.equal(json.summaries[0].draw.limitFraction, "0.25");
   assert.equal(json.summaries[0].capacity5h.usedFraction, "0.35");
   assert.equal(json.summaries[0].models[0].id, "gpt-5.5");
+  assert.equal(json.summaries[0].models[0].upstreamModel, null);
   assert.equal(JSON.stringify(json).includes("private-member-name"), false);
 });
 
@@ -204,6 +248,54 @@ test("wrong-adapter same-provider draw cannot redirect the join", async () => {
   const json = JSON.parse(output.out[0]!);
   assert.equal(json.summaries[0].draw.state, "unavailable");
   assert.notEqual(json.summaries[0].draw.limitFraction, "0.8");
+});
+
+test("invalid, unsupported, and unavailable canonical pools query and inspect as honest unknown summaries", async () => {
+  for (const poolProjectionState of ["invalid", "unsupported", "unavailable"] as const) {
+    const queryOutput = captureOutput();
+    assert.equal(await resourceQueryCommand(
+      client({ poolProjectionState }) as never,
+      DOMAIN,
+      { json: true },
+      queryOutput,
+    ), 0);
+    const query = JSON.parse(queryOutput.out[0]!);
+    assert.equal(query.summaries.length, 1);
+    assert.equal(query.summaries[0].provider, "provider unavailable");
+    assert.equal(query.summaries[0].draw.state, "unknown");
+    assert.equal(query.summaries[0].credentials.state, "unknown");
+    assert.equal(query.summaries[0].capacity5h.state, "unknown");
+    assert.equal(query.summaries[0].freshness, "unknown");
+    assert.deepEqual(query.summaries[0].models, []);
+    assert.equal(query.summaries[0].verdict, "unknown");
+
+    const inspectOutput = captureOutput();
+    assert.equal(await resourceInspectCommand(client({ poolProjectionState }) as never, DOMAIN, {
+      identity: "adapter=token-commune;resource-kind=token-commune.provider-pool;resource=pool-opaque",
+      json: true,
+    }, inspectOutput), 0);
+    const inspect = JSON.parse(inspectOutput.out[0]!);
+    assert.equal(inspect.summary.provider, "provider unavailable");
+    assert.equal(inspect.summary.verdict, "unknown");
+  }
+});
+
+test("text tables escape adapter control characters while JSON preserves exact values", async () => {
+  const provider = "openai\n\u001b[31mcodex";
+  const modelId = "model\n\u001b[2Jspoof\u009bC1";
+  const textOutput = captureOutput();
+  await resourceQueryCommand(client({ provider, modelId }) as never, DOMAIN, { json: false }, textOutput);
+  assert.equal(textOutput.out.every((line) => !line.includes("\n") && !line.includes("\u001b")), true);
+  const text = textOutput.out.join("\n");
+  assert.match(text, /openai\\n\\x1b\[31mcodex/);
+  assert.match(text, /model\\n\\x1b\[2Jspoof\\x9bC1/);
+
+  const jsonOutput = captureOutput();
+  await resourceQueryCommand(client({ provider, modelId }) as never, DOMAIN, { json: true }, jsonOutput);
+  const json = JSON.parse(jsonOutput.out[0]!);
+  assert.equal(json.summaries[0].provider, provider);
+  assert.equal(json.summaries[0].models[0].id, modelId);
+  assert.equal(json.summaries[0].models[0].upstreamModel, null);
 });
 
 test("resource-inspect prints canonical wrapper before the same safe summary", async () => {

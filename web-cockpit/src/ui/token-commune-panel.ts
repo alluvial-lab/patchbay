@@ -118,11 +118,12 @@ function renderModels(document: Document, summary: TokenCommunePoolSummary): HTM
   }
   presentable.forEach((model, index) => {
     if (index) models.append(document.createTextNode(" · "));
+    const provenance = `upstream ${model.upstreamModel ?? "unavailable"}`;
     const label = text(
       document,
       "span",
       model.available ? "" : "token-commune-pool__model--unavailable",
-      model.available ? model.id : `${model.id} · unavailable`,
+      model.available ? `${model.id} · ${provenance}` : `${model.id} · unavailable · ${provenance}`,
     );
     models.append(label);
   });

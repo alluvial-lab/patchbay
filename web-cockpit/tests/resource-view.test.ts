@@ -9,6 +9,7 @@ import {
   CommandIdSchema,
   OperationKind,
   OperationSchema,
+  PayloadContentType,
   OperationState,
   ResourceFreshnessState,
   ResourceIdSchema,
@@ -422,6 +423,71 @@ test("token-commune panel input deny-by-default gates pool and draw independentl
   assert.deepEqual(tokenCommunePanelInput(model, undefined, now).summaries, []);
 });
 
+test("invalid, unsupported, and unavailable canonical token pools each render an honest unknown row", () => {
+  const projections: readonly ResourceView["projection"][] = [
+    {
+      status: "invalid",
+      projection: {
+        schemaRef: "patchbay.token_commune.provider_pool.projection.v1",
+        contentType: PayloadContentType.JSON,
+      },
+      reason: "projection_decode_failed",
+    },
+    {
+      status: "unsupported",
+      projection: { schemaRef: "future.provider-pool.v2", contentType: PayloadContentType.JSON },
+    },
+    { status: "unavailable" },
+  ];
+
+  for (const [index, projection] of projections.entries()) {
+    const resource = tokenPoolResource();
+    resource.identity = { ...resource.identity, resourceId: `unknown-${index}` };
+    resource.projection = projection;
+    const model = modelWith(resource, tokenDrawResource());
+    model.security.grants.push({
+      grantId: `unknown-pool-${index}`,
+      subjectActorId: "operator",
+      targetScope: resourceScope(resource.identity),
+      allowedOperationKinds: [OperationKind.QUERY],
+      revoked: false,
+      revocationPolicy: 0,
+    }, {
+      grantId: `draw-${index}`,
+      subjectActorId: "operator",
+      targetScope: resourceScope(tokenDrawResource().identity),
+      allowedOperationKinds: [OperationKind.QUERY],
+      revoked: false,
+      revocationPolicy: 0,
+    });
+
+    const panelInput = tokenCommunePanelInput(model, undefined, new Date("2026-08-07T12:00:00Z"));
+    assert.equal(panelInput.summaries.length, 1);
+    const summary = panelInput.summaries[0]!;
+    assert.equal(summary.provider, "provider unavailable");
+    assert.equal(summary.poolIdentity.resourceId, `unknown-${index}`);
+    assert.equal(summary.draw.state, "unknown", "an undecodable pool must not attempt a draw join");
+    assert.equal(summary.credentials.state, "unknown");
+    assert.equal(summary.capacity5h.state, "unknown");
+    assert.equal(summary.modelState, "unknown");
+    assert.equal(summary.verdict, "unknown");
+
+    const dom = new JSDOM();
+    const destination = renderResourceDestination(dom.window.document, model, {
+      mobileDetailOpen: false,
+      lockdownActive: false,
+      onSelect() {},
+      onBack() {},
+    });
+    const row = destination.element.querySelector(".token-commune-pool")!;
+    assert.match(row.textContent!, /provider unavailable/);
+    assert.match(row.textContent!, /model catalog unavailable/);
+    assert.match(row.textContent!, /capacity unknown/);
+    assert.equal(row.getAttribute("data-telemetry"), "unknown");
+    assert.equal(row.getAttribute("data-verdict"), "unknown");
+  }
+});
+
 test("recognized token resources render once in the option-7 panel, not generic detail", () => {
   const resource = tokenPoolResource();
   const model = modelWith(resource);
@@ -474,7 +540,16 @@ function tokenPoolResource(): ResourceView {
           }],
         },
         credentialHealthCounts: { fresh: 1, exhausted: 0, authBroken: 0 },
-        modelCatalog: { status: "reported", models: [{ id: "gpt-5.5", available: true }] },
+        modelCatalog: { status: "reported", models: [{
+          id: "gpt-5.5",
+          provider: "openai-codex",
+          surface: "codex",
+          upstreamModel: null,
+          contextWindow: 200000,
+          maxTokens: 8192,
+          reasoning: true,
+          available: true,
+        }] },
         capacityAggregation: "none",
       },
     },

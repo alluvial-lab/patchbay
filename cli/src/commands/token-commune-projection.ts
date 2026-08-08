@@ -153,7 +153,16 @@ export function tokenCommuneSummaryView(summary: TokenCommunePoolSummary) {
     } : { state: summary.capacity5h.state, usedFraction: null, observedAt: null, resetsAt: null },
     verdict: summary.verdict,
     freshness: summary.verdict === "telemetry-stale" ? "stale" : summary.modelState,
-    models: summary.models.map((model) => ({ id: model.id, available: model.available })),
+    models: summary.models.map((model) => ({
+      id: model.id,
+      provider: model.provider,
+      surface: model.surface,
+      upstreamModel: model.upstreamModel,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      reasoning: model.reasoning,
+      available: model.available,
+    })),
     completeness: completenessLabel(summary.completeness),
   };
 }

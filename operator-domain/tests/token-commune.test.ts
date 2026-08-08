@@ -72,12 +72,17 @@ function contribution(
   };
 }
 
-function model(id: string, available = true) {
+function model(
+  id: string,
+  available = true,
+  provider = "openai-codex",
+  upstreamModel: string | null = null,
+) {
   return {
     id,
-    provider: "openai-codex",
+    provider,
     surface: "codex",
-    upstreamModel: null,
+    upstreamModel,
     contextWindow: 200000,
     maxTokens: 8192,
     reasoning: true,
@@ -244,7 +249,52 @@ test("draw ambiguity and independent pool/draw freshness fail closed", () => {
   assert.equal(stalePool.credentials.state, "stale");
   assert.equal(stalePool.capacity5h.state, "stale");
   assert.equal(stalePool.verdict, "telemetry-stale");
-  assert.equal(stalePool.draw.state, "stale");
+  assert.equal(stalePool.draw.state, "current", "pool staleness must not contaminate current draw evidence");
+
+  const staleDraw = composeTokenCommunePools([
+    input(poolIdentity(), decodePool()),
+    input(drawIdentity(), decodeDraw(), { freshness: ResourceFreshnessState.STALE }),
+  ])[0]!;
+  assert.equal(staleDraw.credentials.state, "current");
+  assert.equal(staleDraw.capacity5h.state, "current");
+  assert.equal(staleDraw.verdict, "runnable");
+  assert.equal(staleDraw.draw.state, "stale", "draw staleness remains independent of a current pool");
+});
+
+test("canonical provider-pool identity anchors unknown summaries for every undecodable projection state", () => {
+  const unavailableStates: TokenCommuneDecodeResult[] = [
+    { status: "invalid", reason: "projection_decode_failed" },
+    { status: "unsupported" },
+    { status: "unavailable" },
+  ];
+  for (const projection of unavailableStates) {
+    const summary = composeTokenCommunePools([
+      input(poolIdentity(), projection),
+      input(drawIdentity(), decodeDraw()),
+    ])[0]!;
+    assert.equal(summary.provider, "provider unavailable");
+    assert.deepEqual(summary.poolIdentity, poolIdentity());
+    assert.deepEqual(summary.draw, { state: "unknown" });
+    assert.deepEqual(summary.credentials, {
+      state: "unknown", fresh: 0, exhausted: 0, authBroken: 0, contributionCount: 0,
+    });
+    assert.deepEqual(summary.capacity5h, { state: "unknown" });
+    assert.deepEqual(summary.models, []);
+    assert.equal(summary.modelState, "unknown");
+    assert.equal(summary.verdict, "unknown");
+  }
+});
+
+test("model provenance is preserved and cross-provider availability cannot satisfy runnable", () => {
+  const crossProvider = model("claude-cross-pool", true, "anthropic", null);
+  const summary = composeTokenCommunePools([
+    input(poolIdentity(), decodePool(poolProjection({
+      modelCatalog: { status: "reported", models: [crossProvider] },
+    }))),
+  ])[0]!;
+  assert.equal(summary.verdict, "model-unavailable");
+  assert.deepEqual(summary.models, [crossProvider]);
+  assert.equal(summary.models[0]!.upstreamModel, null);
 });
 
 test("verdict synthesis applies freshness, evidence, auth, model, exhaustion, then runnable precedence", () => {

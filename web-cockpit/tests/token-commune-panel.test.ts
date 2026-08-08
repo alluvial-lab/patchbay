@@ -28,12 +28,25 @@ function summary(overrides: Partial<TokenCommunePoolSummary> = {}): TokenCommune
       resetsAt: "2026-08-07T15:00:00Z",
     },
     models: [
-      { id: "gpt-5.5", available: true },
-      { id: "gpt-5.3-codex-spark", available: false },
+      model("gpt-5.5", true, null),
+      model("gpt-5.3-codex-spark", false, "gpt-5.3-codex-spark-2026-06-01"),
     ],
     modelState: "current",
     verdict: "runnable",
     ...overrides,
+  };
+}
+
+function model(id: string, available: boolean, upstreamModel: string | null) {
+  return {
+    id,
+    provider: "openai-codex",
+    surface: "codex",
+    upstreamModel,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    available,
   };
 }
 
@@ -63,8 +76,8 @@ test("option-7 panel renders exact calm signal order and owns every derivation",
     "token-commune-signal token-commune-capacity",
     "token-commune-verdict token-commune-verdict--run",
   ]);
-  assert.match(row.textContent!, /gpt-5\.5/);
-  assert.match(row.textContent!, /gpt-5\.3-codex-spark · unavailable/);
+  assert.match(row.textContent!, /gpt-5\.5 · upstream unavailable/);
+  assert.match(row.textContent!, /gpt-5\.3-codex-spark · unavailable · upstream gpt-5\.3-codex-spark-2026-06-01/);
   assert.match(row.textContent!, /25%draw allowance/);
   assert.match(row.textContent!, /2 fresh2 contributions · credentials current/);
   assert.match(row.textContent!, /5h · 35% usedhighest 5h utilization/);
@@ -99,7 +112,20 @@ test("stale telemetry dominates live styling without erasing fresh credential ev
   assert.match(row.textContent!, /1 fresh/);
   assert.match(row.textContent!, /credentials stale/);
   assert.match(row.textContent!, /7m ago · stale/);
+  assert.match(row.textContent!, /25%draw allowance/, "independently current draw stays current in a stale row");
+  assert.doesNotMatch(row.textContent!, /25% · stale/);
   assert.match(row.textContent!, /telemetry stale/);
+
+  const currentPoolStaleDraw = summary({
+    provider: "independent-draw",
+    key: "independent-draw",
+    draw: { state: "stale", limitFraction: 0.4, consumedUnits: 2, resetsAt: null },
+  });
+  const { panel: currentPanel } = render(currentPoolStaleDraw);
+  const currentRow = currentPanel.querySelector(".token-commune-pool")!;
+  assert.equal(currentRow.classList.contains("token-commune-pool--stale"), false);
+  assert.match(currentRow.textContent!, /40% · staledraw allowance/);
+  assert.match(currentRow.textContent!, /runnable/);
 });
 
 test("unknown, null/no-reading, auth, model, exhausted, and runnable outcomes remain distinct", () => {
@@ -107,7 +133,7 @@ test("unknown, null/no-reading, auth, model, exhausted, and runnable outcomes re
     summary({ provider: "unknown", key: "a", capacity5h: { state: "unknown" }, verdict: "unknown" }),
     summary({ provider: "null", key: "b", capacity5h: { state: "reading-unavailable" }, verdict: "unknown" }),
     summary({ provider: "none", key: "c", capacity5h: { state: "no-5h-readings" }, verdict: "auth-broken" }),
-    summary({ provider: "model", key: "d", models: [{ id: "safe-unavailable", available: false }], verdict: "model-unavailable" }),
+    summary({ provider: "model", key: "d", models: [model("safe-unavailable", false, null)], verdict: "model-unavailable" }),
     summary({ provider: "empty", key: "e", verdict: "pool-exhausted" }),
     summary({ provider: "run", key: "f", verdict: "runnable" }),
   ];
@@ -119,7 +145,7 @@ test("unknown, null/no-reading, auth, model, exhausted, and runnable outcomes re
 });
 
 test("surface withholds rejected aliases and contributor/member/raw/aggregate data", () => {
-  const unsafe = summary({ models: [{ id: "gpt-5.6", available: true }] });
+  const unsafe = summary({ models: [model("gpt-5.6", true, null)] });
   const { panel } = render(unsafe);
   const markup = panel.outerHTML;
   assert.doesNotMatch(markup, />gpt-5\.6</);
