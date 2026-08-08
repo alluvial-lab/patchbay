@@ -21,7 +21,9 @@ test("credential requires a non-symlink regular 0600 single-line file and applie
     credential.apply(headers);
     assert.equal(headers.get("authorization"), "Bearer member-key");
     assert.equal(headers.has("x-api-key"), false);
-    assert.deepEqual(credential.redactionSecrets(), ["member-key", "Bearer member-key"]);
+    assert.deepEqual(credential.redactionSecrets(), [
+      "member-key", "Bearer member-key", "bWVtYmVyLWtleQ==", "\"member-key\"",
+    ]);
     credential.dispose();
     assert.throws(() => credential.apply(new Headers()), /disposed/);
 

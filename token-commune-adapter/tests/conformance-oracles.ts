@@ -164,8 +164,11 @@ export function expectedCurrentGenerationAcceptance(input: {
     && input.tokenEpochCurrent;
 }
 
-export function assertUnsupportedTerminalization(facts: readonly LifecycleFact[]): void {
-  const ordered = [...facts].sort((left, right) => left.eventLsn < right.eventLsn ? -1 : left.eventLsn > right.eventLsn ? 1 : 0);
+export function assertUnsupportedTerminalization(
+  pendingFacts: readonly LifecycleFact[],
+  laterFacts: readonly LifecycleFact[],
+): void {
+  const ordered = [...pendingFacts].sort((left, right) => left.eventLsn < right.eventLsn ? -1 : left.eventLsn > right.eventLsn ? 1 : 0);
   const delivered = ordered.filter((fact) => fact.state === "delivered");
   const failed = ordered.filter((fact) => fact.state === "failed");
   assert.equal(delivered.length, 1, "delivery acknowledgement must be durable exactly once");
@@ -174,6 +177,12 @@ export function assertUnsupportedTerminalization(facts: readonly LifecycleFact[]
   assert.equal(ordered.some((fact) => fact.state === "completed"), false);
   assert.ok(delivered[0]!.eventLsn < failed[0]!.eventLsn, "delivered must precede terminal failure");
   assert.equal(ordered.at(-1)?.state, "failed", "recovery must leave no nonterminal command");
+  const laterDelivered = laterFacts.filter((fact) => fact.state === "delivered");
+  assert.equal(laterDelivered.length, 1, "the later command must be delivered exactly once");
+  assert.ok(
+    failed[0]!.eventLsn < laterDelivered[0]!.eventLsn,
+    "pending unsupported terminalization must commit before the later command is first delivered",
+  );
 }
 
 export function assertSecretAbsent(originalSecret: string, targets: readonly SecretScanTarget[]): void {

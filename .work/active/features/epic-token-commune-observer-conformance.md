@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance
 kind: feature
-stage: review
+stage: done
 tags: [adapter, verification]
 parent: epic-token-commune-observer
 depends_on:
@@ -647,13 +647,13 @@ clippy, and `git diff --check`.
   - `token-commune-gateway-key-redaction`
   - `token-commune-unsupported-operation-terminalization`
   - `token-commune-cockpit-presentation-honesty`
-- Harness/evidence: the one shared corpus now has 52 vectors / 15 promoted vectors. The exact token profile contributes seven promoted vectors, nine exact scenario checks, seven property-specific expected-outcome guards, and 40 mandatory mutation witnesses; the full promoted corpus executes 20 checks and resolves 100 proto references. Exact requested/executed and declared/killed sets, profile parity, proto refs, generated docs, and count assertions fail closed before traceability writes.
+- Harness/evidence: corpus, promotion, scenario, mutation, and proto-reference totals are derived by the checker rather than retained here. Exact requested/executed and declared/killed sets, profile parity, proto refs, generated docs, and every retained count assertion fail closed before traceability comparison.
 - Independent oracles: literal two-view/PARTIAL and no-aggregate checks; set/sequence latest-50 model; degradation confidence truth table; attempted attachment-token/generation/ownership tuple; multi-encoding secret byte scan; durable lifecycle facts; and literal summary/DOM expectations. None imports the production helper it judges.
 - Real-core E2E: real local HTTP gateway and Authorization, real `0600` credential loader, actual adapter process, generated RPC clients, Rust core, and SQLite execute mixed PARTIAL report, event baseline/overlap, missed poll, abnormal stream loss/stale snapshot, generation-2 reconnect/50-window gap/listed recovery, stale-generation and cross-owner rejection, retryable and replacement-process unsupported terminalization, diagnostic query, full sink redaction, and cockpit-bound exact projection evidence.
 - Highest-stakes redaction result: the member-key sentinel and bearer/URL/base64/JSON/hex forms are absent from resource envelopes, Observations/subscriptions, local/forwarded diagnostics, diagnostic/audit query output, ResourceSnapshot bytes, and raw SQLite bytes. A successful upstream response that reflects credential material now fails closed as `invalid-response` before decode.
-- Mutation evidence: all 40 declared witnesses were exactly killed. Four explicit artifact flips (PARTIAL→authoritative, current-source acceptance false, secret absence false, stale-render-live true) each made its vector/property fail, changed no traceability bytes, and were reverted. Separate transient profile tests proved missing vector, property drift, scenario drift, and mutation-declaration drift fail with traceability byte-identical.
+- Mutation evidence: every declared witness was exactly killed. Production-module copies now carry each claim-breaking projector, tracker/poller, sanitizer, terminalization-loop, compositor, or renderer mutation; Rust conformance mutants drive the real source-ingress/core-storage and degradation-projection seams. Every witness runs baseline production first, then the mutant through the same oracle.
 - Final verification:
-  - `npm --prefix contracts/ts run check:vectors`: 52 vectors, 15 promoted, 20 implementation checks, 100 proto refs, 40 mutation kills — pass.
+  - `npm --prefix contracts/ts run check:vectors`: derived corpus/promotion/check/proto/mutation totals — pass.
   - `check:drift`, `check:presentation` (5 registries + axe), `check:models` (8 checked-model / 0 checked-normative / 60 stated-normative) — pass.
   - `cargo test --workspace`: 345 listed tests including doctests — pass; `cargo clippy --workspace --all-targets -- -D warnings` — pass.
   - `npm --prefix token-commune-adapter test`: 60/60 — pass; both real-core E2Es green.
@@ -663,3 +663,13 @@ clippy, and `git diff --check`.
 - Verification execution note: an initial parallel command batch created transient build-artifact contention (the web build observed operator-domain `dist/` while that package was rebuilding, and Cargo doctest linkage overlapped contract regeneration). The authoritative commands were rerun sequentially and passed; no test expectation or production behavior was weakened.
 - Story commits: `7029c6d`, `b9f1b08`, `d5c13e8`, `a313872`, `f037e21`, `8df3a72`. No unrelated changes or deferred production defects were folded into the feature.
 - Assurance classification: promoted vector + implementation-checked only. No formal/model-checked, checked-normative, cross-adapter portability, or release-verified claim is made.
+
+## Deep-lane review remediation (2026-08-08)
+
+- Replaced observation-editing, constant-comparison, and sentinel-buffer mutation theater with baseline→compiled-production-mutant→same-oracle witnesses. The TypeScript harness mutates copied compiled production graphs and the Rust runner exercises mutant source ingress and real resource storage/replay.
+- Reconnect evidence now runs the real poller/tracker and derives report/gap/event ordering from sink call traces and committed acknowledgements. Degradation combines the real failed-poll report with a Rust four-step core projection trace, including a CURRENT resource immediately before abnormal disconnect.
+- Terminalization scenarios enqueue pending and later Operations together; both retry and replacement recovery assert the pending unsupported terminal LSN precedes the later command's first delivered LSN.
+- Redaction now injects every declared hostile representation through real gateway fields, scans actual reports, Observations, local/forwarded diagnostics, query-shaped output, snapshots/subscriptions, and live plus checkpointed/closed SQLite db/WAL/SHM files. The real-process E2E separately scans core queries, subscription output, resource snapshot, diagnostics, and every core SQLite file.
+- The real-process E2E proves initial-baseline no replay, report→gap→event durable LSN order, CURRENT immediately before abnormal stream loss, stale caused by that loss, and final snapshot composition through operator-domain and the real panel renderer.
+- The promoted presentation scenario now has unequal multi-contribution readings, a native member draw, and a competing same-provider cross-adapter draw. Its join witness mutates the actual compositor, while aggregate-vs-native behavior is distinguishable at the rendered summary.
+- `check:vectors` is read-only and compares generated traceability byte-for-byte. `generate:vectors` is the separate write command; check failure never repairs the artifact. Prose-maintained totals were removed from this work item.

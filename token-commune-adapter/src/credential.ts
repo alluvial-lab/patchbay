@@ -50,7 +50,14 @@ class FileGatewayCredential implements GatewayCredential {
   }
 
   redactionSecrets(): readonly string[] {
-    return this.#key ? [this.#key, `Bearer ${this.#key}`] : [];
+    if (!this.#key) return [];
+    return [...new Set([
+      this.#key,
+      `Bearer ${this.#key}`,
+      encodeURIComponent(this.#key),
+      Buffer.from(this.#key).toString("base64"),
+      JSON.stringify(this.#key),
+    ])];
   }
 
   dispose(): void {

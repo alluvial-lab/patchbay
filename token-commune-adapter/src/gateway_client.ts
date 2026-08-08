@@ -119,6 +119,7 @@ export interface TokenCommuneGatewayClient {
 export function createHttpTokenCommuneGatewayClient(options: {
   baseUrl: URL; credential: GatewayCredential; fetch?: typeof globalThis.fetch;
   maxResponseBytes?: number; requestTimeoutMs?: number; now?: () => Date;
+  redactionSecrets?: readonly string[];
 }): TokenCommuneGatewayClient {
   const fetcher = options.fetch ?? globalThis.fetch;
   const maximum = options.maxResponseBytes ?? 1024 * 1024;
@@ -155,7 +156,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
     }
     try {
       const text = await boundedText(response, maximum);
-      rejectCredentialReflection(text, options.credential.redactionSecrets());
+      rejectCredentialReflection(text, [...options.credential.redactionSecrets(), ...(options.redactionSecrets ?? [])]);
       return deepFreeze(decode(JSON.parse(text) as unknown));
     } catch (error) {
       if (error instanceof GatewayClientError) throw error;

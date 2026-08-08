@@ -23,6 +23,7 @@ import {
 import type { ProviderPoolProjection } from "../src/domain/resource-projection.js";
 import { renderResourceDestination } from "../src/ui/resource-view.js";
 import { renderTokenCommunePanel } from "../src/ui/token-commune-panel.js";
+import { withProductionMutant, type ProductionReplacement } from "./production-mutant.js";
 
 const RUNNER = "web-cockpit" as const;
 
@@ -202,6 +203,33 @@ function tokenInput(
   };
 }
 
+function tokenDrawInput(vector: ConformanceVector, adapterId: string): TokenCommuneResourceInput {
+  const input = object(vector.input, "input");
+  const identity = {
+    adapterId,
+    resourceKind: TOKEN_COMMUNE_PRESENTATION_CONTRACT.memberDraw.resourceKind,
+    resourceId: `local:member-draw:conformance:${adapterId}:openai-codex`,
+  };
+  return {
+    identity,
+    freshness: ResourceFreshnessState.CURRENT,
+    completeness: AdapterSnapshotSupport.PARTIAL,
+    observedAt: new Date("2026-08-08T12:00:00.000Z"),
+    reconciled: true,
+    tombstoned: false,
+    projection: decodeTokenCommuneProjection(
+      identity,
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.memberDraw.payloadSchema, {}),
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.memberDraw.projectionSchema, input.expected_draw_projection),
+    )!,
+  };
+}
+
+function tokenResources(vector: ConformanceVector): readonly TokenCommuneResourceInput[] {
+  const adapterId = text(object(vector.input, "input").adapter_id, "adapter id");
+  return [tokenInput(vector), tokenDrawInput(vector, adapterId), tokenDrawInput(vector, `${adapterId}-competitor`)];
+}
+
 function tokenPanel(summary: TokenCommunePoolSummary) {
   const dom = new JSDOM("<!doctype html><html><body><main></main></body></html>", { runScripts: "dangerously" });
   const panel = renderTokenCommunePanel(dom.window.document, {
@@ -224,11 +252,14 @@ function assertHonestTokenPanel(panel: HTMLElement, expected: Record<string, unk
 
 function executeTokenCommunePresentation(vector: ConformanceVector): void {
   const expected = object(vector.expected_outcome, "expected outcome");
-  const current = composeTokenCommunePools([tokenInput(vector)])[0]!;
+  const current = composeTokenCommunePools(tokenResources(vector))[0]!;
   assert.equal(current.provider, text(expected.current_provider, "current provider"));
   assert.equal(current.capacity5h.state, "current");
   if (current.capacity5h.state === "current") assert.equal(current.capacity5h.usedFraction, Number(expected.current_capacity_used_fraction));
   assert.equal(current.verdict, "runnable");
+  assert.equal(current.draw.state, "current", "only the exact adapter/provider member draw joins");
+  if (current.draw.state === "current") assert.equal(current.draw.limitFraction, Number(expected.current_draw_limit_fraction));
+  assert.equal(current.drawIdentity?.adapterId, text(object(vector.input, "input").adapter_id, "adapter id"));
   const currentRendered = tokenPanel(current);
   assertHonestTokenPanel(currentRendered.panel, expected);
 
@@ -274,31 +305,133 @@ function executeTokenCommunePresentation(vector: ConformanceVector): void {
   assertHonestTokenPanel(hostileRendered.panel, expected);
 }
 
-function killWebMutation(vector: ConformanceVector, mutationId: string): void {
+async function expectWebProductionMutationKilled(
+  vector: ConformanceVector,
+  packageRoot: string,
+  replacements: readonly ProductionReplacement[],
+  entry: string,
+  mutant: (module: Record<string, any>) => Promise<void> | void,
+  mutationId: string,
+): Promise<void> {
+  executeTokenCommunePresentation(vector);
+  let killed = false;
+  try { await withProductionMutant(packageRoot, replacements, entry, mutant); }
+  catch (error) {
+    assert.notEqual((error as Error).name, "SyntaxError", `production mutation ${mutationId} did not load`);
+    assert.doesNotMatch(String((error as Error).message), /production mutation anchor/, `production mutation ${mutationId} did not reach its oracle`);
+    killed = true;
+  }
+  assert.equal(killed, true, `production mutation ${mutationId} survived the presentation oracle`);
+}
+
+async function killWebMutation(vector: ConformanceVector, mutationId: string): Promise<void> {
+  const input = object(vector.input, "input");
   const expected = object(vector.expected_outcome, "expected outcome");
-  assert.throws(() => {
-    const current = composeTokenCommunePools([tokenInput(vector)])[0]!;
-    const { dom, panel } = tokenPanel(current);
-    switch (mutationId) {
-      case "style-stale-as-live": {
-        const stale = tokenPanel(composeTokenCommunePools([tokenInput(vector, { freshness: ResourceFreshnessState.STALE })])[0]!).panel;
-        stale.querySelector(".token-commune-verdict")!.classList.add("token-commune-verdict--run");
-        assert.equal(stale.querySelector(".token-commune-verdict--run"), null); return;
-      }
-      case "drop-unknown-row": {
-        const unknown = tokenPanel(composeTokenCommunePools([tokenInput(vector, { projection: { status: "unavailable" } })])[0]!).panel;
-        unknown.querySelector(".token-commune-pool")!.remove();
-        assert.ok(unknown.querySelector(".token-commune-pool")); return;
-      }
-      case "join-model-by-provider-only": assert.equal("runnable", "model-unavailable"); return;
-      case "accept-forbidden-gpt-5-6-alias": panel.append("gpt-5.6"); assertHonestTokenPanel(panel, expected); return;
-      case "expose-contributor-member-subkey": panel.append("private contributor private member private-sub-key"); assertHonestTokenPanel(panel, expected); return;
-      case "trust-adapter-verdict": assert.equal(object(object(vector.input, "input").hostile_fields, "hostile").verdict, "unknown"); return;
-      case "load-dynamic-renderer": (dom.window as any).__pwned = true; assertHonestTokenPanel(panel, expected); return;
-      case "render-hostile-html-script": panel.innerHTML = text(object(object(vector.input, "input").hostile_fields, "hostile").html, "hostile html"); assert.equal(panel.querySelector("img, script"), null); return;
-      default: throw new Error(`unhandled web mutation ${vector.vector_id}:${mutationId}`);
-    }
-  }, { name: "AssertionError" }, `mutation ${vector.vector_id}:${mutationId} survived the literal presentation oracle`);
+  const operatorRoot = path.resolve(process.cwd(), "../operator-domain");
+  const webRoot = process.cwd();
+  const operatorMutation = async (
+    replacements: readonly ProductionReplacement[],
+    mutant: (module: Record<string, any>) => Promise<void> | void,
+  ) => expectWebProductionMutationKilled(vector, operatorRoot, replacements, "token-commune.js", mutant, mutationId);
+  const rendererMutation = async (
+    replacements: readonly ProductionReplacement[],
+    mutant: (module: Record<string, any>) => Promise<void> | void,
+  ) => expectWebProductionMutationKilled(vector, webRoot, replacements, "ui/token-commune-panel.js", mutant, mutationId);
+
+  switch (mutationId) {
+    case "style-stale-as-live":
+      await operatorMutation([{
+        file: "token-commune.js", from: "if (!input.poolCurrent)\n        return \"telemetry-stale\";", to: "if (!input.poolCurrent)\n        return \"runnable\";",
+      }], (module) => {
+        const stale = module.composeTokenCommunePools([tokenInput(vector, { freshness: ResourceFreshnessState.STALE })])[0];
+        const panel = tokenPanel(stale).panel;
+        assert.ok(panel.querySelector(".token-commune-pool--stale"));
+        assert.equal(panel.querySelector(".token-commune-verdict--run"), null);
+      });
+      return;
+    case "drop-unknown-row":
+      await operatorMutation([{
+        file: "token-commune.js", from: "            pools.push({\n                key: identityKey(pool.identity),", to: "            if (true) continue;\n            pools.push({\n                key: identityKey(pool.identity),",
+      }], (module) => {
+        const rows = module.composeTokenCommunePools([tokenInput(vector, { projection: { status: "unavailable" } })]);
+        assert.equal(rows.length > 0, bool(expected.unknown_rows_visible, "unknown rows visible"));
+      });
+      return;
+    case "join-draw-by-provider-only":
+      await operatorMutation([{
+        file: "token-commune.js", from: "const exactDraws = draws.filter((draw) => draw.identity.adapterId === pool.identity.adapterId\n            && draw.projection.status", to: "const exactDraws = draws.filter((draw) => draw.projection.status",
+      }], (module) => {
+        const summary = module.composeTokenCommunePools(tokenResources(vector))[0];
+        assert.equal(summary.draw.state, "current", "exact adapter/provider join must select one native draw");
+        assert.equal(summary.drawIdentity?.adapterId, text(input.adapter_id, "adapter id"));
+      });
+      return;
+    case "accept-forbidden-gpt-5-6-alias":
+      await operatorMutation([{
+        file: "token-commune.js", from: "if (id === \"gpt-5.6\")\n                throw new Error(\"rejected model alias\");", to: "if (false)\n                throw new Error(\"rejected model alias\");",
+      }], (module) => {
+        const aliasProjection = structuredClone(input.expected_projection) as any;
+        aliasProjection.modelCatalog.models[0].id = "gpt-5.6";
+        const decoded = module.decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, aliasProjection),
+        );
+        assert.equal(decoded.status, "invalid");
+      });
+      return;
+    case "expose-contributor-member-subkey":
+      await operatorMutation([
+        { file: "token-commune.js", from: "function exactKeys(value, expected) {\n    const actual", to: "function exactKeys(value, expected) {\n    return;\n    const actual" },
+        { file: "token-commune.js", from: "kind: \"token-commune-provider-pool\",\n        provider,", to: "kind: \"token-commune-provider-pool\",\n        provider: value.member ?? value.subKey ?? provider," },
+      ], (module) => {
+        const hostileProjection = { ...(input.expected_projection as object), ...(input.hostile_fields as object) };
+        const decoded = module.decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, hostileProjection),
+        );
+        const summary = module.composeTokenCommunePools([tokenInput(vector, { projection: decoded })])[0];
+        assertHonestTokenPanel(tokenPanel(summary).panel, expected);
+      });
+      return;
+    case "trust-adapter-verdict":
+      await operatorMutation([
+        { file: "token-commune.js", from: "function exactKeys(value, expected) {\n    const actual", to: "function exactKeys(value, expected) {\n    return;\n    const actual" },
+        { file: "token-commune.js", from: "const verdict = synthesizeTokenCommuneVerdict({", to: "const verdict = value.verdict ?? synthesizeTokenCommuneVerdict({" },
+      ], (module) => {
+        const hostileProjection = { ...(input.expected_projection as object), ...(input.hostile_fields as object) };
+        const decoded = module.decodeTokenCommuneProjection(
+          tokenInput(vector).identity,
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+          tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, hostileProjection),
+        );
+        const summary = module.composeTokenCommunePools([tokenInput(vector, { projection: decoded })])[0];
+        assert.notEqual(summary.verdict, object(input.hostile_fields, "hostile").verdict);
+      });
+      return;
+    case "load-dynamic-renderer":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js", from: "function renderPoolRow(document, summary, options) {\n    const row", to: "function renderPoolRow(document, summary, options) {\n    if (summary.rendererUrl) document.defaultView.__pwned = true;\n    const row",
+      }], (module) => {
+        const summary = { ...composeTokenCommunePools(tokenResources(vector))[0]!, rendererUrl: object(input.hostile_fields, "hostile").rendererUrl };
+        const dom = new JSDOM("<!doctype html><html><body></body></html>", { runScripts: "dangerously" });
+        const panel = module.renderTokenCommunePanel(dom.window.document, { summaries: [summary], partial: true });
+        assertHonestTokenPanel(panel, expected);
+      });
+      return;
+    case "render-hostile-html-script":
+      await rendererMutation([{
+        file: "ui/token-commune-panel.js", from: "element.textContent = value;", to: "element.innerHTML = value;",
+      }], (module) => {
+        const summary = { ...composeTokenCommunePools(tokenResources(vector))[0]!, provider: text(object(input.hostile_fields, "hostile").html, "hostile html") };
+        const dom = new JSDOM("<!doctype html><html><body></body></html>", { runScripts: "dangerously" });
+        const panel = module.renderTokenCommunePanel(dom.window.document, { summaries: [summary], partial: true });
+        assert.equal(panel.querySelector("img, script"), null);
+      });
+      return;
+    default: throw new Error(`unhandled web mutation ${vector.vector_id}:${mutationId}`);
+  }
 }
 
 async function executeVectorCase(vector: ConformanceVector, caseName: string): Promise<void> {
@@ -335,7 +468,7 @@ test("conformance vector runner", async () => {
       vector.mutation_witnesses?.some((witness) => witness.runner === RUNNER && witness.mutation_id === request.mutation_id),
       `unregistered requested mutation ${request.vector_id}:${request.mutation_id}`,
     );
-    killWebMutation(vector, request.mutation_id);
+    await killWebMutation(vector, request.mutation_id);
     console.log(`PATCHBAY_CONFORMANCE_MUTATION_KILLED=${request.vector_id}:${request.mutation_id}`);
   }
 });

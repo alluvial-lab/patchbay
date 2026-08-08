@@ -3,14 +3,13 @@
   "property_id": "TokenCommuneCurrentGenerationSourceAuthenticated",
   "promotion_status": "promoted",
   "implementation_checks": [
-    { "runner": "rust-server", "case": "token_commune_current_generation_source_binding" },
-    { "runner": "token-commune-adapter", "case": "current_generation_source_oracle" }
+    { "runner": "rust-server", "case": "token_commune_current_generation_source_binding" }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "ignore-generation-equality", "runner": "token-commune-adapter", "invariant": "Attempted report generation must exactly equal the authenticated current attachment generation." },
-    { "mutation_id": "accept-prior-attachment-token", "runner": "token-commune-adapter", "invariant": "A replaced attachment token is inert." },
-    { "mutation_id": "trust-payload-source", "runner": "token-commune-adapter", "invariant": "Payload-claimed sender or generation cannot replace channel evidence." },
-    { "mutation_id": "compare-local-id-only", "runner": "token-commune-adapter", "invariant": "Target ownership compares the full adapter/kind/local-id tuple." }
+    { "mutation_id": "ignore-generation-equality", "runner": "rust-server", "invariant": "Attempted report generation must exactly equal the authenticated current attachment generation." },
+    { "mutation_id": "accept-prior-attachment-token", "runner": "rust-server", "invariant": "A replaced attachment token is inert." },
+    { "mutation_id": "trust-payload-source", "runner": "rust-server", "invariant": "Payload-claimed sender or generation cannot replace channel evidence." },
+    { "mutation_id": "compare-local-id-only", "runner": "rust-server", "invariant": "Target ownership compares the full adapter/kind/local-id tuple." }
   ],
   "proto_fields_constrained": [
     "patchbay.AdapterRegistration.adapter_generation",

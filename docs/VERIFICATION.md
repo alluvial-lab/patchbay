@@ -450,14 +450,14 @@ Each conformance vector lives as a JSON file under `contracts/vectors/` and carr
 }
 ```
 
-Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors, execute every promoted vector's registered package checks, and regenerate the traceability table below. Draft vectors may remain metadata-only; promoted vectors require a non-empty `implementation_checks` list whose exact executed ids are reported by known Rust core/server or web-cockpit runners.
+Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors, execute every promoted vector's registered package checks, and compare the traceability table below byte-for-byte without writing it. Draft vectors may remain metadata-only; promoted vectors require a non-empty `implementation_checks` list whose exact executed ids are reported by known Rust core/server or web-cockpit runners. Intentional traceability updates use the separate `npm --prefix contracts/ts run generate:vectors` command.
 
 A CI script reads all vectors and:
 
 - fails if a checked-normative property lacks a promoted vector;
 - fails if a vector references a missing or misspelled property id;
 - fails if a promoted vector's expected outcome contradicts its referenced model property's invariant (a surfaced contradiction, per the authority order);
-- generates the traceability table in this document as a checked-in artifact, so the human-readable mapping from property → `.proto` fields → vectors never drifts.
+- compares the checked-in traceability table against generated text and fails without writing on drift; the separate generation command updates the artifact intentionally.
 
 A promoted vector that later contradicts its model is a reconciliation event: either the model is wrong (update the model, re-check every vector exercising it) or the vector is wrong (demote, fix, re-promote). It is never a silent override.
 

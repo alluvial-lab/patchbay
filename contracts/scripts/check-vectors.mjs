@@ -132,15 +132,15 @@ const TOKEN_COMMUNE_PROFILE = Object.freeze([
   {
     property: 'TokenCommuneDegradationHonesty',
     vector: 'token-commune-degradation-honesty',
-    checks: [{ runner: 'token-commune-adapter', case: 'degradation_honesty' }],
+    checks: [
+      { runner: 'token-commune-adapter', case: 'degradation_failed_poll_report' },
+      { runner: 'rust-server', case: 'token_commune_degradation_projection' },
+    ],
   },
   {
     property: 'TokenCommuneCurrentGenerationSourceAuthenticated',
     vector: 'token-commune-current-generation-source-authenticated',
-    checks: [
-      { runner: 'rust-server', case: 'token_commune_current_generation_source_binding' },
-      { runner: 'token-commune-adapter', case: 'current_generation_source_oracle' },
-    ],
+    checks: [{ runner: 'rust-server', case: 'token_commune_current_generation_source_binding' }],
   },
   {
     property: 'TokenCommuneGatewayMemberKeyRedacted',
@@ -164,7 +164,7 @@ const TOKEN_COMMUNE_PROFILE = Object.freeze([
 
 const TOKEN_COMMUNE_BY_VECTOR = new Map(TOKEN_COMMUNE_PROFILE.map((entry) => [entry.vector, entry]));
 const TOKEN_COMMUNE_BY_PROPERTY = new Map(TOKEN_COMMUNE_PROFILE.map((entry) => [entry.property, entry]));
-const MUTATION_RUNNERS = new Set(['token-commune-adapter', 'web-cockpit']);
+const MUTATION_RUNNERS = new Set(['rust-server', 'token-commune-adapter', 'web-cockpit']);
 
 function expectation(ok, detail) {
   return { ok: Boolean(ok), detail };
@@ -303,13 +303,16 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.expected_outcome?.terminal_state === 'OPERATION_STATE_FAILED'
       && vector.expected_outcome?.failure_code === 'FAILURE_CODE_UNSUPPORTED_COMMAND'
       && vector.expected_outcome?.completed_count === 0
-      && vector.expected_outcome?.nonterminal_after_recovery === false,
+      && vector.expected_outcome?.nonterminal_after_recovery === false
+      && vector.expected_outcome?.pending_precedes_later_delivery === true,
     'unsupported delivery must converge to exactly one delivered then failed/unsupported terminal history',
   ),
   TokenCommuneCockpitPresentationHonesty: (vector) => expectation(
     vector.expected_outcome?.stale_renders_live === false
       && vector.expected_outcome?.unknown_rows_visible === true
       && vector.expected_outcome?.cross_provider_model_runnable === false
+      && vector.expected_outcome?.competing_cross_adapter_draw_joined === false
+      && vector.expected_outcome?.current_capacity_used_fraction === 0.8
       && vector.expected_outcome?.forbidden_alias_visible === false
       && vector.expected_outcome?.private_fields_visible === false
       && vector.expected_outcome?.dynamic_renderer_executed === false
@@ -1027,24 +1030,33 @@ function buildTraceabilityMarkdown(vectors) {
   ].join('\n');
 }
 
-async function updateVerificationMarkdown(vectors) {
+async function expectedVerificationMarkdown(vectors) {
   const current = await readFile(verificationPath, 'utf8');
   const generated = buildTraceabilityMarkdown(vectors);
   const begin = current.indexOf(GENERATED_BEGIN);
   const end = current.indexOf(GENERATED_END);
 
-  let next;
   if (begin !== -1 && end !== -1 && end > begin) {
-    next = `${current.slice(0, begin)}${generated}${current.slice(end + GENERATED_END.length)}`;
-  } else {
-    const insertionPoint = current.indexOf('\n## Model promotion rule');
-    if (insertionPoint === -1) {
-      throw new Error(`Could not find insertion point in ${rel(verificationPath)}; expected "## Model promotion rule"`);
-    }
-    next = `${current.slice(0, insertionPoint)}\n\n${generated}\n${current.slice(insertionPoint)}`;
+    return `${current.slice(0, begin)}${generated}${current.slice(end + GENERATED_END.length)}`;
   }
+  const insertionPoint = current.indexOf('\n## Model promotion rule');
+  if (insertionPoint === -1) {
+    throw new Error(`Could not find insertion point in ${rel(verificationPath)}; expected "## Model promotion rule"`);
+  }
+  return `${current.slice(0, insertionPoint)}\n\n${generated}\n${current.slice(insertionPoint)}`;
+}
 
-  if (next !== current) await writeFile(verificationPath, next);
+async function traceabilityDriftErrors(vectors) {
+  const current = await readFile(verificationPath, 'utf8');
+  const expected = await expectedVerificationMarkdown(vectors);
+  return current === expected ? [] : [
+    `${rel(verificationPath)}: generated conformance-vector traceability is stale; run npm --prefix contracts/ts run generate:vectors`,
+  ];
+}
+
+async function writeVerificationMarkdown(vectors) {
+  const expected = await expectedVerificationMarkdown(vectors);
+  await writeFile(verificationPath, expected);
 }
 
 function printSummary({ vectors, envelopeErrors, profileErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted, mutationsKilled, evidenceErrors }) {
@@ -1076,6 +1088,9 @@ function printSummary({ vectors, envelopeErrors, profileErrors, propertyErrors, 
 }
 
 async function main() {
+  const writeMode = process.argv.includes('--write');
+  const unknownArgs = process.argv.slice(2).filter((argument) => argument !== '--write');
+  if (unknownArgs.length > 0) throw new Error(`unknown arguments: ${unknownArgs.join(', ')}`);
   const [{ vectors, errors: envelopeErrors }, protoSchema] = await Promise.all([
     readVectors(),
     readProtoSchema(),
@@ -1094,9 +1109,13 @@ async function main() {
   const evidenceErrors = staticErrors.length === 0 && implementationErrors.length === 0
     ? validateEvidenceCounts(verificationMarkdown, vectors, implementationExecuted, mutationsKilled)
     : [];
+  const traceabilityErrors = staticErrors.length === 0 && implementationErrors.length === 0 && evidenceErrors.length === 0
+    ? await traceabilityDriftErrors(vectors)
+    : [];
 
-  if (staticErrors.length === 0 && implementationErrors.length === 0 && evidenceErrors.length === 0) {
-    await updateVerificationMarkdown(vectors);
+  if (writeMode && staticErrors.length === 0 && implementationErrors.length === 0 && evidenceErrors.length === 0) {
+    await writeVerificationMarkdown(vectors);
+    traceabilityErrors.length = 0;
   }
 
   printSummary({
@@ -1113,10 +1132,10 @@ async function main() {
     implementationErrors,
     implementationExecuted,
     mutationsKilled,
-    evidenceErrors,
+    evidenceErrors: [...evidenceErrors, ...traceabilityErrors],
   });
 
-  if ([...staticErrors, ...implementationErrors, ...evidenceErrors].length > 0) process.exitCode = 1;
+  if ([...staticErrors, ...implementationErrors, ...evidenceErrors, ...traceabilityErrors].length > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {

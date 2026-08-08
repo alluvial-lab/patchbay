@@ -194,7 +194,9 @@ export async function runFromEnvironment(env: NodeJS.ProcessEnv = process.env): 
     adapterGeneration: config.adapterGeneration,
     secrets: [config.attachmentEvidence, config.gatewayCredentialFile, ...credential.redactionSecrets()],
   });
-  const gateway = createHttpTokenCommuneGatewayClient({ baseUrl: config.gatewayBaseUrl, credential });
+  const gateway = createHttpTokenCommuneGatewayClient({
+    baseUrl: config.gatewayBaseUrl, credential, redactionSecrets: [config.gatewayCredentialFile],
+  });
   const host = new AdapterProcess({ ...config, gateway, diagnostics, forwardDiagnostics: true });
   const controller = new AbortController();
   const stop = () => controller.abort();

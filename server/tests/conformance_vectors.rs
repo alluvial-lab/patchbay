@@ -9,7 +9,7 @@ use patchbay_contracts::patchbay::{
     ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
     PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceCapability,
     ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUpsert,
+    ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
     ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
@@ -17,7 +17,7 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     authority::events as authority_events,
-    resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    resource::{adapter_stale_event, ingest_resource_report, rebuild_from_log, ResourceIdentity as CoreResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
     session::events as session_events,
     storage::{RusqliteStorage, Storage},
     time::TestClock,
@@ -50,6 +50,8 @@ struct ConformanceVector {
     promotion_status: String,
     #[serde(default)]
     implementation_checks: Vec<ImplementationCheck>,
+    #[serde(default)]
+    mutation_witnesses: Vec<MutationWitness>,
     input: Value,
     expected_outcome: Value,
 }
@@ -57,7 +59,11 @@ struct ConformanceVector {
 #[derive(Debug, Deserialize)]
 struct ImplementationCheck { runner: String, case: String }
 #[derive(Debug, Deserialize)]
+struct MutationWitness { mutation_id: String, runner: String }
+#[derive(Debug, Deserialize)]
 struct RequestedCheck { vector_id: String, case: String }
+#[derive(Debug, Deserialize)]
+struct RequestedMutation { vector_id: String, mutation_id: String }
 
 fn vectors() -> BTreeMap<String, ConformanceVector> {
     let vector_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/vectors");
@@ -77,6 +83,12 @@ fn vectors() -> BTreeMap<String, ConformanceVector> {
 fn requests() -> Vec<RequestedCheck> {
     env::var("PATCHBAY_CONFORMANCE_REQUESTS").ok()
         .map(|raw| serde_json::from_str(&raw).expect("requested checks must be valid JSON"))
+        .unwrap_or_default()
+}
+
+fn mutation_requests() -> Vec<RequestedMutation> {
+    env::var("PATCHBAY_CONFORMANCE_MUTATIONS").ok()
+        .map(|raw| serde_json::from_str(&raw).expect("requested mutations must be valid JSON"))
         .unwrap_or_default()
 }
 
@@ -1312,6 +1324,319 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     Ok(())
 }
 
+async fn ingest_degradation_report(
+    storage: &RusqliteStorage,
+    registry: &mut ResourceRegistry,
+    domain: &AuthorityDomainId,
+    adapter: &AdapterId,
+    kind: &ResourceKind,
+    generation: u64,
+    mutations: Vec<ResourceReportMutation>,
+) -> Result<(), String> {
+    ingest_resource_report(
+        storage,
+        registry,
+        ValidatedResourceReport {
+            authority_domain_id: domain.clone(),
+            adapter_id: adapter.clone(),
+            adapter_generation: Generation { value: generation },
+            mode: ResourceReportMode::Snapshot,
+            views: vec![ResourceViewReport {
+                resource_kind: Some(kind.clone()),
+                completeness: AdapterSnapshotSupport::Partial as i32,
+                mutations,
+            }],
+            observed_at: Timestamp {
+                seconds: 100 + generation as i64,
+                nanos: 0,
+            },
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn run_token_degradation_trace(mutation: Option<&str>) -> Result<(), String> {
+    let domain = AuthorityDomainId {
+        value: "token-conformance".into(),
+    };
+    let adapter = AdapterId {
+        value: "token-commune".into(),
+    };
+    let kind = ResourceKind {
+        value: "token-commune.provider-pool".into(),
+    };
+    let identity = |id: &str| ResourceIdentity {
+        adapter_id: Some(adapter.clone()),
+        resource_kind: Some(kind.clone()),
+        resource_id: Some(ResourceId { value: id.into() }),
+    };
+    let a = identity("pool-a");
+    let b = identity("pool-b");
+    let unknown = identity("pool-unknown");
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut registry = ResourceRegistry::new();
+    let upsert = |identity: ResourceIdentity| ResourceReportMutation {
+        identity: Some(identity),
+        mutation: Some(resource_report_mutation::Mutation::Upsert(
+            ResourceStateUpsert {
+                resource_payload: Some(PayloadEnvelope {
+                    payload: vec![1],
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: "token.payload.v1".into(),
+                }),
+                projection_payload: Some(PayloadEnvelope {
+                    payload: b"{}".to_vec(),
+                    content_type: PayloadContentType::Json as i32,
+                    schema_ref: "token.projection.v1".into(),
+                }),
+            },
+        )),
+    };
+    let unknown_mutation = ResourceReportMutation {
+        identity: Some(unknown.clone()),
+        mutation: Some(resource_report_mutation::Mutation::Unknown(
+            ResourceStateUnknown {},
+        )),
+    };
+    ingest_degradation_report(
+        &storage,
+        &mut registry,
+        &domain,
+        &adapter,
+        &kind,
+        1,
+        vec![upsert(a.clone()), unknown_mutation],
+    )
+    .await?;
+    let current = patchbay_contracts::patchbay::ResourceFreshnessState::Current;
+    let stale = patchbay_contracts::patchbay::ResourceFreshnessState::Stale;
+    let unknown_state = patchbay_contracts::patchbay::ResourceFreshnessState::Unknown;
+    let state = |registry: &ResourceRegistry, identity: &ResourceIdentity| {
+        CoreResourceIdentity::try_from_wire(identity)
+            .ok()
+            .and_then(|canonical| registry.get(&canonical).map(|record| record.freshness))
+    };
+    if state(&registry, &a) != Some(current) || state(&registry, &unknown) != Some(unknown_state) {
+        return Err("baseline report did not establish current/unknown resources".into());
+    }
+
+    match mutation {
+        Some("skip-empty-partial-report") => {}
+        Some("carry-prior-endpoint-value") => {
+            ingest_degradation_report(
+                &storage,
+                &mut registry,
+                &domain,
+                &adapter,
+                &kind,
+                1,
+                vec![upsert(a.clone())],
+            )
+            .await?;
+        }
+        _ => {
+            ingest_degradation_report(&storage, &mut registry, &domain, &adapter, &kind, 1, vec![])
+                .await?;
+        }
+    }
+    if state(&registry, &a) != Some(stale) || state(&registry, &unknown) != Some(unknown_state) {
+        return Err("failed poll did not preserve the empty-PARTIAL stale/unknown truth".into());
+    }
+
+    // Restore a current value immediately before the abnormal stream break so
+    // disconnect degradation, rather than the prior failed poll, owns stale.
+    ingest_degradation_report(
+        &storage,
+        &mut registry,
+        &domain,
+        &adapter,
+        &kind,
+        1,
+        vec![upsert(a.clone())],
+    )
+    .await?;
+    if state(&registry, &a) != Some(current) {
+        return Err("pre-disconnect resource was not current".into());
+    }
+    if mutation != Some("disconnect-remains-current") {
+        if let Some(event) = adapter_stale_event(
+            &registry,
+            &domain,
+            &adapter,
+            Generation { value: 1 },
+            Timestamp {
+                seconds: 103,
+                nanos: 0,
+            },
+        )
+        .map_err(|error| error.to_string())?
+        {
+            storage
+                .append(&domain, event)
+                .await
+                .map_err(|error| error.to_string())?;
+            registry = rebuild_from_log(&storage, &domain)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    if mutation == Some("polling-establishes-liveness") {
+        ingest_degradation_report(
+            &storage,
+            &mut registry,
+            &domain,
+            &adapter,
+            &kind,
+            1,
+            vec![upsert(a.clone())],
+        )
+        .await?;
+    }
+    if state(&registry, &a) != Some(stale) {
+        return Err("abnormal stream loss did not degrade current cache to stale".into());
+    }
+
+    let reconnect = if mutation == Some("reconnect-promotes-omitted-identities") {
+        vec![upsert(a.clone()), upsert(b.clone())]
+    } else {
+        vec![upsert(b.clone())]
+    };
+    ingest_degradation_report(
+        &storage,
+        &mut registry,
+        &domain,
+        &adapter,
+        &kind,
+        2,
+        reconnect,
+    )
+    .await?;
+    if state(&registry, &a) != Some(stale)
+        || state(&registry, &b) != Some(current)
+        || state(&registry, &unknown) != Some(unknown_state)
+    {
+        return Err("generation-2 PARTIAL reconnect promoted an omitted identity".into());
+    }
+    Ok(())
+}
+
+async fn kill_degradation_mutation(mutation_id: &str) -> Result<(), String> {
+    run_token_degradation_trace(None).await?;
+    if run_token_degradation_trace(Some(mutation_id)).await.is_ok() {
+        return Err(format!(
+            "degradation mutation {mutation_id} survived the production projection oracle"
+        ));
+    }
+    Ok(())
+}
+
+async fn kill_source_ingress_mutation(
+    vector: &ConformanceVector,
+    mutation_id: &str,
+) -> Result<(), String> {
+    // Baseline first: the real authenticated service must satisfy the vector.
+    source_binding(vector).await?;
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: string(&vector.input, "/authenticated_adapter_id")?.to_owned(),
+    };
+    let generation = vector
+        .input
+        .pointer("/attachment_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing attachment generation")?;
+    let exact = tuple(&vector.input, "/target_identity")?;
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+
+    match mutation_id {
+        "ignore-generation-equality" => {
+            let mut registry = ResourceRegistry::new();
+            ingest_resource_report(
+                &storage,
+                &mut registry,
+                ValidatedResourceReport {
+                    authority_domain_id: domain.clone(),
+                    adapter_id: adapter_id.clone(),
+                    adapter_generation: Generation {
+                        value: generation - 1,
+                    },
+                    mode: ResourceReportMode::Snapshot,
+                    views: vec![ResourceViewReport {
+                        resource_kind: exact.resource_kind.clone(),
+                        completeness: AdapterSnapshotSupport::Partial as i32,
+                        mutations: vec![ResourceReportMutation {
+                            identity: Some(exact.clone()),
+                            mutation: Some(resource_report_mutation::Mutation::Upsert(
+                                ResourceStateUpsert {
+                                    resource_payload: Some(PayloadEnvelope {
+                                        payload: vec![1],
+                                        content_type: PayloadContentType::Protobuf as i32,
+                                        schema_ref: "token.payload.v1".into(),
+                                    }),
+                                    projection_payload: Some(PayloadEnvelope {
+                                        payload: b"{}".to_vec(),
+                                        content_type: PayloadContentType::Json as i32,
+                                        schema_ref: "token.projection.v1".into(),
+                                    }),
+                                },
+                            )),
+                        }],
+                    }],
+                    observed_at: Timestamp {
+                        seconds: 100,
+                        nanos: 0,
+                    },
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+        "accept-prior-attachment-token" | "trust-payload-source" | "compare-local-id-only" => {
+            // Claim-breaking source-ingress mutant: bypass the corresponding
+            // service fence and append the attempted Observation through the
+            // real storage/event seam.
+            let attempted_identity = if mutation_id == "compare-local-id-only" {
+                tuple(&vector.input, "/cross_adapter_target")?
+            } else {
+                exact.clone()
+            };
+            let attempted = observation(vector, &domain, attempted_identity)?;
+            let encoded = match attempted
+                .observation
+                .ok_or("attempted observation missing")?
+            {
+                observation_request::Observation::Event(value) => value.encode_to_vec(),
+                _ => return Err("unexpected attempted observation shape".into()),
+            };
+            storage
+                .append(
+                    &domain,
+                    StoredEventPayload {
+                        kind: StoredEventKind::Observation as i32,
+                        payload: encoded,
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        _ => return Err(format!("unhandled source-ingress mutation {mutation_id}")),
+    }
+    let appended = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    if appended.is_empty() {
+        return Err(format!(
+            "source-ingress mutation {mutation_id} did not violate the no-append oracle"
+        ));
+    }
+    Ok(())
+}
+
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
     if vector.property_id.is_empty() || !matches!(vector.promotion_status.as_str(), "draft" | "promoted") {
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
@@ -1320,6 +1645,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "operation_durable_acceptance" => server_operation_scenario(vector, true).await,
         "operation_missing_grant" => server_operation_scenario(vector, false).await,
         "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
+        "token_commune_degradation_projection" => run_token_degradation_trace(None).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "resource_observation_source_binding" | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
@@ -1342,5 +1668,17 @@ async fn conformance_vector_runner() {
         assert!(vector.implementation_checks.iter().any(|check| check.runner == RUNNER && check.case == request.case), "unregistered requested check {}:{}", request.vector_id, request.case);
         execute_case(vector, &request.case).await.unwrap_or_else(|error| panic!("{error}"));
         println!("PATCHBAY_CONFORMANCE_EXECUTED={}:{}", request.vector_id, request.case);
+    }
+    for request in mutation_requests() {
+        let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown mutation vector id {}", request.vector_id));
+        assert!(vector.mutation_witnesses.iter().any(|witness| witness.runner == RUNNER && witness.mutation_id == request.mutation_id),
+            "unregistered requested mutation {}:{}", request.vector_id, request.mutation_id);
+        let result = if vector.property_id == "TokenCommuneDegradationHonesty" {
+            kill_degradation_mutation(&request.mutation_id).await
+        } else {
+            kill_source_ingress_mutation(vector, &request.mutation_id).await
+        };
+        result.unwrap_or_else(|error| panic!("{error}"));
+        println!("PATCHBAY_CONFORMANCE_MUTATION_KILLED={}:{}", request.vector_id, request.mutation_id);
     }
 }

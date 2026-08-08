@@ -3,18 +3,56 @@
   "property_id": "TokenCommuneCockpitPresentationHonesty",
   "promotion_status": "promoted",
   "implementation_checks": [
-    { "runner": "token-commune-adapter", "case": "cockpit_projection_fixture" },
-    { "runner": "web-cockpit", "case": "token_commune_cockpit_presentation" }
+    {
+      "runner": "token-commune-adapter",
+      "case": "cockpit_projection_fixture"
+    },
+    {
+      "runner": "web-cockpit",
+      "case": "token_commune_cockpit_presentation"
+    }
   ],
   "mutation_witnesses": [
-    { "mutation_id": "style-stale-as-live", "runner": "web-cockpit", "invariant": "Wrapper freshness dominates domain health and runnable evidence." },
-    { "mutation_id": "drop-unknown-row", "runner": "web-cockpit", "invariant": "Canonical provider-pool identities anchor unknown/invalid projections." },
-    { "mutation_id": "join-model-by-provider-only", "runner": "web-cockpit", "invariant": "Runnable model evidence is native to the exact pool provider and adapter." },
-    { "mutation_id": "accept-forbidden-gpt-5-6-alias", "runner": "web-cockpit", "invariant": "The removed gpt-5.6 alias fails closed and is withheld." },
-    { "mutation_id": "expose-contributor-member-subkey", "runner": "web-cockpit", "invariant": "Private contributor/member/subkey material never reaches the panel." },
-    { "mutation_id": "trust-adapter-verdict", "runner": "web-cockpit", "invariant": "Verdicts are synthesized locally from Patchbay evidence." },
-    { "mutation_id": "load-dynamic-renderer", "runner": "web-cockpit", "invariant": "rendererUrl and adapter-provided code remain inert." },
-    { "mutation_id": "render-hostile-html-script", "runner": "web-cockpit", "invariant": "Hostile html/script fields are rejected rather than assigned through innerHTML." }
+    {
+      "mutation_id": "style-stale-as-live",
+      "runner": "web-cockpit",
+      "invariant": "Wrapper freshness dominates domain health and runnable evidence."
+    },
+    {
+      "mutation_id": "drop-unknown-row",
+      "runner": "web-cockpit",
+      "invariant": "Canonical provider-pool identities anchor unknown/invalid projections."
+    },
+    {
+      "mutation_id": "join-draw-by-provider-only",
+      "runner": "web-cockpit",
+      "invariant": "Member draw joins only on the exact pool adapter and native provider."
+    },
+    {
+      "mutation_id": "accept-forbidden-gpt-5-6-alias",
+      "runner": "web-cockpit",
+      "invariant": "The removed gpt-5.6 alias fails closed and is withheld."
+    },
+    {
+      "mutation_id": "expose-contributor-member-subkey",
+      "runner": "web-cockpit",
+      "invariant": "Private contributor/member/subkey material never reaches the panel."
+    },
+    {
+      "mutation_id": "trust-adapter-verdict",
+      "runner": "web-cockpit",
+      "invariant": "Verdicts are synthesized locally from Patchbay evidence."
+    },
+    {
+      "mutation_id": "load-dynamic-renderer",
+      "runner": "web-cockpit",
+      "invariant": "rendererUrl and adapter-provided code remain inert."
+    },
+    {
+      "mutation_id": "render-hostile-html-script",
+      "runner": "web-cockpit",
+      "invariant": "Hostile html/script fields are rejected rather than assigned through innerHTML."
+    }
   ],
   "proto_fields_constrained": [
     "patchbay.Resource.freshness",
@@ -33,17 +71,80 @@
           {
             "provider": "openai-codex",
             "declaredShare": 1,
-            "health": { "state": "fresh" },
+            "health": {
+              "state": "fresh"
+            },
             "capacity": [
-              { "window": "5h", "usedFraction": 0.35, "usedUnits": 35, "limitUnits": 100, "resetsAt": null, "source": "usage_endpoint", "observedAt": "2026-08-08T11:55:00.000Z" }
+              {
+                "window": "5h",
+                "usedFraction": 0.35,
+                "usedUnits": 35,
+                "limitUnits": 100,
+                "resetsAt": null,
+                "source": "usage_endpoint",
+                "observedAt": "2026-08-08T11:55:00.000Z"
+              }
             ],
-            "fingerprint": { "state": "unknown", "templateSource": "compiled", "since": null, "diffPresent": false }
+            "fingerprint": {
+              "state": "unknown",
+              "templateSource": "compiled",
+              "since": null,
+              "diffPresent": false
+            }
+          },
+          {
+            "provider": "openai-codex",
+            "declaredShare": 0.5,
+            "health": {
+              "state": "fresh"
+            },
+            "capacity": [
+              {
+                "window": "5h",
+                "usedFraction": 0.8,
+                "usedUnits": 80,
+                "limitUnits": 100,
+                "resetsAt": null,
+                "source": "usage_endpoint",
+                "observedAt": "2026-08-08T11:56:00.000Z"
+              }
+            ],
+            "fingerprint": {
+              "state": "unknown",
+              "templateSource": "compiled",
+              "since": null,
+              "diffPresent": false
+            }
           }
         ]
       },
       "models": {
         "models": [
-          { "id": "gpt-5.5", "provider": "openai-codex", "surface": "codex", "upstreamModel": null, "contextWindow": 200000, "maxTokens": 8192, "reasoning": true, "available": true }
+          {
+            "id": "gpt-5.5",
+            "provider": "openai-codex",
+            "surface": "codex",
+            "upstreamModel": null,
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+            "reasoning": true,
+            "available": true
+          }
+        ]
+      },
+      "me": {
+        "displayName": "Ada",
+        "reports": [
+          {
+            "provider": "openai-codex",
+            "limitFraction": 0.25,
+            "fromDecree": false,
+            "consumedUnits": 10,
+            "drawUnits": null,
+            "exceeded": false,
+            "enforceable": false,
+            "resetsAt": null
+          }
         ]
       }
     },
@@ -58,29 +159,94 @@
             "subKeyStability": "snapshot-local",
             "attribution": "unavailable",
             "declaredShare": 1,
-            "health": { "state": "fresh" },
-            "fingerprint": { "state": "unknown", "templateSource": "compiled", "since": null, "diffPresent": false },
+            "health": {
+              "state": "fresh"
+            },
+            "fingerprint": {
+              "state": "unknown",
+              "templateSource": "compiled",
+              "since": null,
+              "diffPresent": false
+            },
             "telemetryState": "readings",
             "capacityReadings": [
-              { "window": "5h", "usedFraction": 0.35, "usedUnits": 35, "limitUnits": 100, "resetsAt": null, "source": "usage_endpoint", "observedAt": "2026-08-08T11:55:00.000Z" }
+              {
+                "window": "5h",
+                "usedFraction": 0.35,
+                "usedUnits": 35,
+                "limitUnits": 100,
+                "resetsAt": null,
+                "source": "usage_endpoint",
+                "observedAt": "2026-08-08T11:55:00.000Z"
+              }
+            ]
+          },
+          {
+            "subKey": "local:anonymous-contribution:4d86d9b182b749a336237b9b:1",
+            "subKeySource": "synthesized-content-hash",
+            "subKeyStability": "snapshot-local",
+            "attribution": "unavailable",
+            "declaredShare": 0.5,
+            "health": {
+              "state": "fresh"
+            },
+            "fingerprint": {
+              "state": "unknown",
+              "templateSource": "compiled",
+              "since": null,
+              "diffPresent": false
+            },
+            "telemetryState": "readings",
+            "capacityReadings": [
+              {
+                "window": "5h",
+                "usedFraction": 0.8,
+                "usedUnits": 80,
+                "limitUnits": 100,
+                "resetsAt": null,
+                "source": "usage_endpoint",
+                "observedAt": "2026-08-08T11:56:00.000Z"
+              }
             ]
           }
         ]
       },
-      "credentialHealthCounts": { "fresh": 1, "exhausted": 0, "authBroken": 0 },
-      "totalDeclaredShare": 1,
-      "statusTelemetry": { "status": "unavailable", "contributions": [] },
+      "credentialHealthCounts": {
+        "fresh": 2,
+        "exhausted": 0,
+        "authBroken": 0
+      },
+      "totalDeclaredShare": 1.5,
+      "statusTelemetry": {
+        "status": "unavailable",
+        "contributions": []
+      },
       "modelCatalog": {
         "status": "reported",
         "models": [
-          { "id": "gpt-5.5", "provider": "openai-codex", "surface": "codex", "upstreamModel": null, "contextWindow": 200000, "maxTokens": 8192, "reasoning": true, "available": true }
+          {
+            "id": "gpt-5.5",
+            "provider": "openai-codex",
+            "surface": "codex",
+            "upstreamModel": null,
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+            "reasoning": true,
+            "available": true
+          }
         ]
       },
-      "fingerprint": { "status": "unknown", "probe": "openai-codex", "reason": "probe-unavailable" },
+      "fingerprint": {
+        "status": "unknown",
+        "probe": "openai-codex",
+        "reason": "probe-unavailable"
+      },
       "capacityAggregation": "none"
     },
     "hostile_fields": {
-      "contributors": ["private contributor"],
+      "contributors": [
+        "private contributor"
+      ],
       "member": "private member",
       "subKey": "private-sub-key",
       "verdict": "runnable",
@@ -89,7 +255,33 @@
       "script": "globalThis.__pwned=true",
       "forbiddenAlias": "gpt-5.6"
     },
-    "scenarios": ["current", "stale", "unknown", "invalid", "cross-provider-model", "forbidden-alias", "hostile-fields"]
+    "scenarios": [
+      "current-multi-contribution",
+      "exact-draw",
+      "competing-cross-adapter-draw",
+      "stale",
+      "unknown",
+      "invalid",
+      "cross-provider-model",
+      "forbidden-alias",
+      "hostile-fields"
+    ],
+    "expected_draw_projection": {
+      "memberDisplayName": "Ada",
+      "provider": "openai-codex",
+      "reports": [
+        {
+          "provider": "openai-codex",
+          "limitFraction": 0.25,
+          "fromDecree": false,
+          "consumedUnits": 10,
+          "drawUnits": null,
+          "exceeded": false,
+          "enforceable": false,
+          "resetsAt": null
+        }
+      ]
+    }
   },
   "expected_outcome": {
     "stale_renders_live": false,
@@ -100,8 +292,10 @@
     "dynamic_renderer_executed": false,
     "verdict_owner": "Patchbay",
     "current_provider": "openai-codex",
-    "current_capacity_used_fraction": 0.35,
-    "capacity_aggregation": "none"
+    "current_capacity_used_fraction": 0.8,
+    "capacity_aggregation": "none",
+    "current_draw_limit_fraction": 0.25,
+    "competing_cross_adapter_draw_joined": false
   },
   "invariant_check": "Only locally decoded exact evidence may shape the static panel; canonical freshness/privacy/model provenance and Patchbay-owned verdict rules remain dominant."
 }

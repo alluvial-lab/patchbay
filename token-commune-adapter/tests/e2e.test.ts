@@ -3,6 +3,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
@@ -13,7 +14,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   AcceptedOperationSchema, ActorEndpointRefSchema, ActorIdSchema, AdapterIdSchema, AdapterRegistrationSchema,
   AdapterSnapshotSupport, AdapterTargetCategory, AdminService, AuthorityDomainIdSchema,
-  BootstrapRequestSchema, CommandIdSchema, CommandTransitionSchema, ControlService,
+  AuditQuerySchema, BootstrapRequestSchema, CommandIdSchema, CommandTransitionSchema, ControlService,
   DeviceIdSchema, DiagnosticsQuerySchema, EndpointIdSchema, FailureCode, GenerationSchema,
   LoadSnapshotRequestSchema, LsnSchema, ObservationKind, ObservationSchema, OperationKind,
   OperationSchema, OperationState, PayloadContentType, PayloadEnvelopeSchema,
@@ -105,7 +106,7 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     // seed one already-accepted adapter delivery, matching the core's own durable
     // inbox shape, so this adapter-only feature can exercise its delivery seam.
     // The polling runtime independently emits its honest empty PARTIAL report.
-    appendAcceptedOperation(databasePath, operation("unsupported-query"), auth.grantId);
+    appendAcceptedOperations(databasePath, [operation("unsupported-query"), operation("unsupported-later-retry")], auth.grantId);
     let terminal = commandTransitions(await readAfter(control, 0n), "unsupported-query").at(-1);
     await waitFor(async () => {
       terminal = commandTransitions(await readAfter(control, 0n), "unsupported-query").at(-1);
@@ -123,9 +124,12 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     assert.notEqual(deliveredIndex, -1, "transition sequence must contain DELIVERED");
     assert.notEqual(failedIndex, -1, "transition sequence must contain FAILED + UNSUPPORTED_COMMAND");
     assert.ok(deliveredIndex < failedIndex, "unsupported delivery must transition DELIVERED before FAILED");
+    await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-later-retry")
+      .some((item) => item.toState === OperationState.DELIVERED), "later retry-scenario delivery");
+    assertPendingPrecedesLaterDelivery(databasePath, "unsupported-query", "unsupported-later-retry");
 
-    appendAcceptedOperation(databasePath, operation("unsupported-replacement"), auth.grantId);
     crashNextTerminal = true;
+    appendAcceptedOperations(databasePath, [operation("unsupported-replacement"), operation("unsupported-later-replacement")], auth.grantId);
     await assert.rejects(run, /injected hard process loss after delivery acknowledgement/);
     await host.dispose();
     host = undefined;
@@ -150,6 +154,9 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.DELIVERED).length, 1);
     assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND).length, 1);
     assert.equal(replacementTransitions.some((item) => item.toState === OperationState.COMPLETED), false);
+    await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-later-replacement")
+      .some((item) => item.toState === OperationState.DELIVERED), "later replacement-scenario delivery");
+    assertPendingPrecedesLaterDelivery(databasePath, "unsupported-replacement", "unsupported-later-replacement");
 
     const visible = JSON.stringify(await readAfter(control, 0n), (_key, value) => typeof value === "bigint" ? value.toString() : value);
     assert.equal(visible.includes(adapterEvidence), false);
@@ -188,7 +195,9 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
   const gateway = new ScriptedTokenCommuneGateway();
   const gatewayUrl = await gateway.start(conformanceGatewaySteps(sentinel));
   const credential = await loadGatewayCredential(credentialPath);
-  const httpGateway = createHttpTokenCommuneGatewayClient({ baseUrl: gatewayUrl, credential, requestTimeoutMs: 2_000 });
+  const httpGateway = createHttpTokenCommuneGatewayClient({
+    baseUrl: gatewayUrl, credential, requestTimeoutMs: 2_000, redactionSecrets: [credentialPath],
+  });
   const core = startCore(port, adminPort, databasePath);
   const controller1 = new AbortController();
   const controller2 = new AbortController();
@@ -206,7 +215,7 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     const anthropicId = identities.providerPool("anthropic").resourceId;
     const diagnostics1 = await openAdapterDiagnostics({
       path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 1,
-      secrets: [adapterEvidence, sentinel, `Bearer ${sentinel}`, credentialPath],
+      secrets: [adapterEvidence, ...credential.redactionSecrets(), credentialPath],
     });
     const oldClient = new PatchbayCoreClient({
       coreAddress: baseUrl, adapterId: "token-commune", authorityDomainId: domainId,
@@ -225,6 +234,8 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     let snapshot = await waitForResourceSnapshot(control, (candidate) =>
       resource(candidate, openaiId)?.freshness === ResourceFreshnessState.CURRENT,
     );
+    assert.equal(observations(await readAfter(control, 0n), "patchbay.token_commune.pool_event.v1").length, 0,
+      "the initial latest-50 baseline emits no replayed source event");
     assert.equal(snapshot.viewRevisions.length, 2, "both exact token-commune views have revisions");
     assert.ok(snapshot.viewRevisions.every((view) => view.completeness === AdapterSnapshotSupport.PARTIAL));
     assert.ok(resource(snapshot, openaiId)?.projectionPayload, "mixed-success report installs listed provider evidence");
@@ -237,20 +248,34 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
       .filter((observation) => JSON.parse(new TextDecoder().decode(observation.payload?.payload)).sourceEventId === "new").length, 1);
 
     gateway.advance();
+    await waitFor(async () => {
+      const events = await readAfter(control, 0n);
+      const gapVisible = observations(events, "patchbay.token_commune.event_gap.v1")
+        .some((observation) => JSON.parse(new TextDecoder().decode(observation.payload?.payload)).visibleWindowSize === 50);
+      const eventVisible = observations(events, "patchbay.token_commune.pool_event.v1")
+        .some((observation) => String(JSON.parse(new TextDecoder().decode(observation.payload?.payload)).sourceEventId).startsWith("roll-"));
+      return gapVisible && eventVisible;
+    }, "same-generation saturated-window gap and first visible event");
     snapshot = await waitForResourceSnapshot(control, (candidate) =>
-      resource(candidate, openaiId)?.freshness === ResourceFreshnessState.STALE,
+      resource(candidate, openaiId)?.freshness === ResourceFreshnessState.CURRENT,
     );
-    assert.equal(resource(snapshot, openaiId)?.freshness, ResourceFreshnessState.STALE, "empty PARTIAL poll preserves the row as stale");
+    assertReportGapEventOrder(databasePath);
+
     controller1.abort();
     await run1;
     await process1.dispose();
     process1 = undefined;
     run1 = undefined;
+    snapshot = await waitForResourceSnapshot(control, (candidate) =>
+      resource(candidate, openaiId)?.freshness === ResourceFreshnessState.STALE,
+    );
+    assert.equal(resource(snapshot, openaiId)?.freshness, ResourceFreshnessState.STALE,
+      "abnormal delivery-stream loss, not a failed poll, degrades an immediately-current resource");
 
     gateway.advance();
     const diagnostics2 = await openAdapterDiagnostics({
       path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 2,
-      secrets: [adapterEvidence, sentinel, `Bearer ${sentinel}`, credentialPath],
+      secrets: [adapterEvidence, ...credential.redactionSecrets(), credentialPath],
     });
     process2 = new AdapterProcess({
       coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 2,
@@ -274,6 +299,12 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     assert.ok(gap, "the latest-50 rollover is externally visible as gap evidence");
     assert.equal(gap["continuity"], "unknown-before-visible-window");
     assert.equal(Object.hasOwn(gap, "missedCount"), false, "the adapter cannot fabricate a missed count");
+
+    controller2.abort();
+    await run2;
+    await process2.dispose();
+    process2 = undefined;
+    run2 = undefined;
 
     const otherClient = new PatchbayCoreClient({
       coreAddress: baseUrl, adapterId: "other-token-observer", authorityDomainId: domainId,
@@ -304,14 +335,23 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     const diagnosticsQuery = await control.queryDiagnostics(create(QueryDiagnosticsRequestSchema, {
       operation: adapterStatusOperation("redaction-adapter-status"),
     }));
+    const auditQuery = await control.queryDiagnostics(create(QueryDiagnosticsRequestSchema, {
+      operation: auditQueryOperation("redaction-audit-query"),
+    }));
     const finalEvents = await readAfter(control, 0n);
     const finalSnapshot = await loadResourceSnapshot(control);
+    await assertHonestCockpitRendering(finalSnapshot, anthropicId);
+    const liveSqlite = sqliteFiles(databasePath, "live");
+    checkpointSqlite(databasePath);
+    const checkpointedSqlite = sqliteFiles(databasePath, "checkpointed");
     assertSecretAbsent(sentinel, [
       { name: "subscription-events", bytes: encoder.encode(JSON.stringify(finalEvents, bigintJson)) },
       { name: "resource-snapshot", bytes: toBinary(ResourceSnapshotSchema, finalSnapshot) },
       { name: "diagnostic-query", bytes: encoder.encode(JSON.stringify(diagnosticsQuery, bigintJson)) },
+      { name: "audit-query", bytes: encoder.encode(JSON.stringify(auditQuery, bigintJson)) },
       { name: "adapter-diagnostics", bytes: readFileSync(diagnosticPath) },
-      { name: "sqlite-bytes", bytes: readFileSync(databasePath) },
+      ...liveSqlite,
+      ...checkpointedSqlite,
     ]);
     assert.ok(gateway.requests.length > 0);
     assert.ok(gateway.requests.every((request) => request.authorization === `Bearer ${sentinel}`));
@@ -324,6 +364,8 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
     credential.dispose();
     await gateway.close();
     core.kill("SIGTERM");
+    await waitFor(() => core.exitCode !== null, "core shutdown", 5_000).catch(() => core.kill("SIGKILL"));
+    assertSecretAbsent(sentinel, sqliteFiles(databasePath, "closed"));
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -376,15 +418,12 @@ function conformanceGatewaySteps(secret: string): readonly ScriptedGatewayStep[]
   });
   const initial = [event("old", 1_786_190_000_000, "openai-codex")];
   const overlap = [...initial, event("new", 1_786_190_060_000, "openai-codex")];
-  const failed = Object.fromEntries(Object.values({
-    status: "/commune/status", pool: "/commune/pool", me: "/commune/me", events: "/commune/events",
-    fingerprints: "/commune/fingerprint", models: "/v1/models",
-  }).map((endpoint) => [endpoint, response({ error: "unavailable" }, 503)])) as ScriptedGatewayStep["responses"];
+  const rollover = Array.from({ length: 50 }, (_, index) => event(`roll-${String(index + 1).padStart(2, "0")}`, 1_786_190_120_000 + index, "openai-codex"));
   const latestFifty = Array.from({ length: 50 }, (_, index) => event(`g2-${String(index + 1).padStart(2, "0")}`, 1_786_190_200_000 + index, "anthropic"));
   return [
     step("openai-codex", 0.35, initial, { ok: false, anthropicHealth: { state: "auth_broken", reason: secret }, contributions: [] }),
     step("openai-codex", 0.40, overlap, { ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
-    { expectedAuthorization: authorization, responses: failed },
+    step("openai-codex", 0.45, rollover, { ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
     step("anthropic", 0.20, latestFifty, { ok: true, anthropicHealth: { state: "fresh" }, contributions: [] }),
   ];
 }
@@ -431,6 +470,25 @@ function nonRegistrationObservationCount(payloads: readonly StoredEventPayload[]
     .filter((observation) => observation.payload?.schemaRef !== "patchbay.AdapterRegistration").length;
 }
 
+function auditQueryOperation(commandId: string) {
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: operatorId }) }),
+    kind: OperationKind.QUERY,
+    targetScope: create(TargetScopeSchema, { kind: TargetScopeKind.AUTHORITY_DOMAIN }),
+    validityWindow: create(TimeWindowSchema, { startsAt: { seconds: 1n }, expiresAt: { seconds: 2_534_023_007_99n } }),
+    submittedAt: { seconds: 1n }, idempotencyKey: `${commandId}-key`,
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.DiagnosticsQuery",
+      payload: toBinary(DiagnosticsQuerySchema, create(DiagnosticsQuerySchema, {
+        query: { case: "audit", value: create(AuditQuerySchema, { limit: 500 }) },
+      })),
+    }),
+  });
+}
+
 function adapterStatusOperation(commandId: string) {
   return create(OperationSchema, {
     commandId: create(CommandIdSchema, { value: commandId }),
@@ -450,6 +508,93 @@ function adapterStatusOperation(commandId: string) {
   });
 }
 
+function durableRows(databasePath: string): Array<{ lsn: number; stored: StoredEventPayload }> {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    return (database.prepare("SELECT lsn, payload FROM events WHERE authority_domain_id = ? ORDER BY lsn")
+      .all(domainId) as Array<{ lsn: number; payload: Uint8Array }>)
+      .map((row) => ({ lsn: row.lsn, stored: fromBinary(StoredEventPayloadSchema, row.payload) }));
+  } finally {
+    database.close();
+  }
+}
+
+function assertReportGapEventOrder(databasePath: string): void {
+  const trace = durableRows(databasePath).map(({ lsn, stored }) => {
+    if (stored.kind === StoredEventKind.RESOURCE_STATE) return { lsn, kind: "report", payload: undefined };
+    if (stored.kind !== StoredEventKind.OBSERVATION) return { lsn, kind: "other", payload: undefined };
+    const observation = fromBinary(ObservationSchema, stored.payload);
+    const payload = observation.payload?.contentType === PayloadContentType.JSON
+      ? JSON.parse(new TextDecoder().decode(observation.payload.payload)) as Record<string, unknown>
+      : undefined;
+    if (observation.payload?.schemaRef === "patchbay.token_commune.event_gap.v1" && payload?.["visibleWindowSize"] === 50) {
+      return { lsn, kind: "gap", payload };
+    }
+    if (observation.payload?.schemaRef === "patchbay.token_commune.pool_event.v1"
+        && typeof payload?.["sourceEventId"] === "string" && payload["sourceEventId"].startsWith("roll-")) {
+      return { lsn, kind: "event", payload };
+    }
+    return { lsn, kind: "other", payload };
+  });
+  const gap = trace.find((entry) => entry.kind === "gap");
+  const event = trace.find((entry) => entry.kind === "event");
+  assert.ok(gap && event, "durable reconnect trace must contain saturated gap and visible event");
+  const report = trace.filter((entry) => entry.kind === "report" && entry.lsn < gap.lsn).at(-1);
+  assert.ok(report, "durable reconnect trace must contain a committed report before gap repair");
+  assert.ok(report.lsn < gap.lsn && gap.lsn < event.lsn, "committed LSNs must order report before gap before event");
+}
+
+function checkpointSqlite(databasePath: string): void {
+  const database = new DatabaseSync(databasePath);
+  try { database.exec("PRAGMA wal_checkpoint(PASSIVE)"); }
+  finally { database.close(); }
+}
+
+function sqliteFiles(databasePath: string, phase: string) {
+  return [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]
+    .filter((candidate) => readFileIfPresent(candidate) !== undefined)
+    .map((candidate) => ({ name: `sqlite-${phase}-${candidate.slice(databasePath.length) || "db"}`, bytes: readFileSync(candidate) }));
+}
+function readFileIfPresent(candidate: string): Uint8Array | undefined {
+  try { return readFileSync(candidate); } catch (error: any) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function assertHonestCockpitRendering(snapshot: ResourceSnapshot, resourceId: string): Promise<void> {
+  const operator = await import(pathToFileURL(join(repoRoot, "operator-domain/dist/src/token-commune.js")).href);
+  const web = await import(pathToFileURL(join(repoRoot, "web-cockpit/dist/src/ui/token-commune-panel.js")).href);
+  const { JSDOM } = await import(pathToFileURL(join(repoRoot, "web-cockpit/node_modules/jsdom/lib/api.js")).href);
+  const inputs = snapshot.resources.map((item) => {
+    const identity = {
+      adapterId: item.identity?.adapterId?.value ?? "",
+      resourceKind: item.identity?.resourceKind?.value ?? "",
+      resourceId: item.identity?.resourceId?.value ?? "",
+    };
+    const projection = operator.decodeTokenCommuneProjection(identity, item.resourcePayload, item.projectionPayload);
+    if (projection === undefined) return undefined;
+    return {
+      identity,
+      freshness: item.freshness,
+      completeness: snapshot.viewRevisions.find((view) => view.resourceKind?.value === identity.resourceKind)?.completeness
+        ?? AdapterSnapshotSupport.UNSPECIFIED,
+      reconciled: true,
+      tombstoned: item.tombstoned,
+      projection,
+    };
+  }).filter(Boolean);
+  const summaries = operator.composeTokenCommunePools(inputs);
+  const selected = summaries.find((summary: any) => summary.poolIdentity.resourceId === resourceId);
+  assert.ok(selected, "real snapshot must compose into a token-commune pool summary");
+  const dom = new JSDOM("<!doctype html><html><body><main></main></body></html>");
+  const panel = web.renderTokenCommunePanel(dom.window.document, { summaries, partial: true });
+  dom.window.document.querySelector("main").append(panel);
+  assert.match(panel.textContent ?? "", /anthropic/);
+  assert.match(panel.textContent ?? "", /Verdicts are a Patchbay synthesis/);
+  assert.equal(panel.querySelector("script, img, .token-commune-pool--stale .token-commune-verdict--run"), null);
+}
+
 function bigintJson(_key: string, value: unknown): unknown {
   return typeof value === "bigint" ? value.toString() : value;
 }
@@ -466,24 +611,55 @@ function operation(commandId: string) {
   });
 }
 
-function appendAcceptedOperation(
+function appendAcceptedOperations(
   databasePath: string,
-  acceptedOperation: ReturnType<typeof operation>,
+  acceptedOperations: readonly ReturnType<typeof operation>[],
   authorizingGrantId: GrantId,
 ): void {
   const database = new DatabaseSync(databasePath);
   try {
-    database.prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)").run(
-      domainId,
-      StoredEventKind.OPERATION,
-      toBinary(StoredEventPayloadSchema, create(StoredEventPayloadSchema, {
-        kind: StoredEventKind.OPERATION,
-        payload: toBinary(AcceptedOperationSchema, create(AcceptedOperationSchema, {
-          operation: acceptedOperation,
-          authorizingGrantId,
+    database.exec("BEGIN IMMEDIATE");
+    const insert = database.prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)");
+    for (const acceptedOperation of acceptedOperations) {
+      insert.run(
+        domainId,
+        StoredEventKind.OPERATION,
+        toBinary(StoredEventPayloadSchema, create(StoredEventPayloadSchema, {
+          kind: StoredEventKind.OPERATION,
+          payload: toBinary(AcceptedOperationSchema, create(AcceptedOperationSchema, {
+            operation: acceptedOperation,
+            authorizingGrantId,
+          })),
         })),
-      })),
-    );
+      );
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch { /* preserve the original error */ }
+    throw error;
+  } finally {
+    database.close();
+  }
+}
+
+function assertPendingPrecedesLaterDelivery(databasePath: string, pendingId: string, laterId: string): void {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const rows = database.prepare("SELECT lsn, payload FROM events WHERE authority_domain_id = ? ORDER BY lsn")
+      .all(domainId) as Array<{ lsn: number; payload: Uint8Array }>;
+    let pendingFailureLsn: number | undefined;
+    let laterDeliveredLsn: number | undefined;
+    for (const row of rows) {
+      const stored = fromBinary(StoredEventPayloadSchema, row.payload);
+      if (stored.kind !== StoredEventKind.COMMAND_TRANSITION) continue;
+      const transition = fromBinary(CommandTransitionSchema, stored.payload);
+      if (transition.commandId?.value === pendingId && transition.toState === OperationState.FAILED
+          && transition.failureCode === FailureCode.UNSUPPORTED_COMMAND) pendingFailureLsn = row.lsn;
+      if (transition.commandId?.value === laterId && transition.toState === OperationState.DELIVERED
+          && laterDeliveredLsn === undefined) laterDeliveredLsn = row.lsn;
+    }
+    assert.ok(pendingFailureLsn !== undefined && laterDeliveredLsn !== undefined);
+    assert.ok(pendingFailureLsn < laterDeliveredLsn, `${pendingId} must terminalize before ${laterId} delivery`);
   } finally {
     database.close();
   }
