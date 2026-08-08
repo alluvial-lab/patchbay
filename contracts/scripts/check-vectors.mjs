@@ -85,6 +85,13 @@ const STATED_NORMATIVE_PROPERTIES = [
   'ResourceStaleNeverLive',
   'ResourceIdentityCollisionFenced',
   'ResourceCoreStateInjectionRejected',
+  'TokenCommunePartialSnapshotHonesty',
+  'TokenCommuneBoundedReconnectHonesty',
+  'TokenCommuneDegradationHonesty',
+  'TokenCommuneCurrentGenerationSourceAuthenticated',
+  'TokenCommuneGatewayMemberKeyRedacted',
+  'TokenCommuneAdapterFailureSafe',
+  'TokenCommuneCockpitPresentationHonesty',
 ];
 
 // Descriptive, non-formal ids that may appear in draft boundary vectors. They
@@ -105,7 +112,59 @@ const IMPLEMENTATION_RUNNERS = Object.freeze({
     command: 'npm',
     args: ['--prefix', 'web-cockpit', 'test', '--', '--test-name-pattern=conformance vector runner'],
   },
+  'token-commune-adapter': {
+    command: 'npm',
+    args: ['--prefix', 'token-commune-adapter', 'test', '--', '--test-name-pattern=conformance vector runner'],
+  },
 });
+
+const TOKEN_COMMUNE_PROFILE = Object.freeze([
+  {
+    property: 'TokenCommunePartialSnapshotHonesty',
+    vector: 'token-commune-partial-snapshot-honesty',
+    checks: [{ runner: 'token-commune-adapter', case: 'partial_snapshot_honesty' }],
+  },
+  {
+    property: 'TokenCommuneBoundedReconnectHonesty',
+    vector: 'token-commune-bounded-reconnect-honesty',
+    checks: [{ runner: 'token-commune-adapter', case: 'bounded_reconnect_honesty' }],
+  },
+  {
+    property: 'TokenCommuneDegradationHonesty',
+    vector: 'token-commune-degradation-honesty',
+    checks: [{ runner: 'token-commune-adapter', case: 'degradation_honesty' }],
+  },
+  {
+    property: 'TokenCommuneCurrentGenerationSourceAuthenticated',
+    vector: 'token-commune-current-generation-source-authenticated',
+    checks: [
+      { runner: 'rust-server', case: 'token_commune_current_generation_source_binding' },
+      { runner: 'token-commune-adapter', case: 'current_generation_source_oracle' },
+    ],
+  },
+  {
+    property: 'TokenCommuneGatewayMemberKeyRedacted',
+    vector: 'token-commune-gateway-key-redaction',
+    checks: [{ runner: 'token-commune-adapter', case: 'gateway_key_redaction' }],
+  },
+  {
+    property: 'TokenCommuneAdapterFailureSafe',
+    vector: 'token-commune-unsupported-operation-terminalization',
+    checks: [{ runner: 'token-commune-adapter', case: 'unsupported_operation_terminalization' }],
+  },
+  {
+    property: 'TokenCommuneCockpitPresentationHonesty',
+    vector: 'token-commune-cockpit-presentation-honesty',
+    checks: [
+      { runner: 'token-commune-adapter', case: 'cockpit_projection_fixture' },
+      { runner: 'web-cockpit', case: 'token_commune_cockpit_presentation' },
+    ],
+  },
+]);
+
+const TOKEN_COMMUNE_BY_VECTOR = new Map(TOKEN_COMMUNE_PROFILE.map((entry) => [entry.vector, entry]));
+const TOKEN_COMMUNE_BY_PROPERTY = new Map(TOKEN_COMMUNE_PROFILE.map((entry) => [entry.property, entry]));
+const MUTATION_RUNNERS = new Set(['token-commune-adapter', 'web-cockpit']);
 
 function expectation(ok, detail) {
   return { ok: Boolean(ok), detail };
@@ -198,6 +257,64 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.expected_outcome?.resource_resolved === false
       && vector.expected_outcome?.adapter_assigned_lsn_accepted === false,
     'opaque Observation bytes must remain evidence and never become core-owned resource state',
+  ),
+  TokenCommunePartialSnapshotHonesty: (vector) => expectation(
+    Array.isArray(vector.expected_outcome?.views)
+      && vector.expected_outcome.views.length === 2
+      && vector.expected_outcome.views.every((view) => view?.completeness === 'ADAPTER_SNAPSHOT_SUPPORT_PARTIAL')
+      && vector.expected_outcome?.omission_is_tombstone === false
+      && vector.expected_outcome?.capacity_aggregation === 'none',
+    'token-commune snapshots must expose exactly two PARTIAL views without tombstone or aggregate claims',
+  ),
+  TokenCommuneBoundedReconnectHonesty: (vector) => expectation(
+    vector.expected_outcome?.initial_baseline_replayed === false
+      && vector.expected_outcome?.acknowledge_only_after_core_acceptance === true
+      && vector.expected_outcome?.saturated_gap_reason === 'window-saturated-without-anchor'
+      && vector.expected_outcome?.fabricated_missed_count === null
+      && vector.expected_outcome?.report_precedes_events === true,
+    'latest-50 reconciliation must be baseline-safe, acknowledgement-aware, gap-explicit, and report-first',
+  ),
+  TokenCommuneDegradationHonesty: (vector) => expectation(
+    vector.expected_outcome?.missed_poll_emits_empty_partial_views === true
+      && vector.expected_outcome?.disconnect_cached_state === 'stale'
+      && vector.expected_outcome?.disconnect_no_payload_state === 'unknown'
+      && vector.expected_outcome?.omitted_partial_identity_removed === false
+      && vector.expected_outcome?.polling_establishes_liveness === false,
+    'failed polls and disconnects must preserve rows while degrading cache confidence honestly',
+  ),
+  TokenCommuneCurrentGenerationSourceAuthenticated: (vector) => expectation(
+    vector.expected_outcome?.current_exact_tuple_appended === true
+      && vector.expected_outcome?.stale_token_appended === false
+      && vector.expected_outcome?.stale_generation_appended === false
+      && vector.expected_outcome?.cross_owner_appended === false
+      && vector.expected_outcome?.payload_claim_overrides_source === false,
+    'only current authenticated attachment evidence for the exact owned target may append',
+  ),
+  TokenCommuneGatewayMemberKeyRedacted: (vector) => expectation(
+    vector.expected_outcome?.secret_absent === true
+      && Array.isArray(vector.expected_outcome?.scanned_sinks)
+      && ['resource-reports', 'observations', 'diagnostics', 'audit-query', 'snapshots', 'subscriptions', 'sqlite-bytes']
+        .every((sink) => vector.expected_outcome.scanned_sinks.includes(sink)),
+    'the gateway member key and common encodings must be absent from every external and durable sink',
+  ),
+  TokenCommuneAdapterFailureSafe: (vector) => expectation(
+    vector.expected_outcome?.durable_delivered_count === 1
+      && vector.expected_outcome?.durable_failed_count === 1
+      && vector.expected_outcome?.terminal_state === 'OPERATION_STATE_FAILED'
+      && vector.expected_outcome?.failure_code === 'FAILURE_CODE_UNSUPPORTED_COMMAND'
+      && vector.expected_outcome?.completed_count === 0
+      && vector.expected_outcome?.nonterminal_after_recovery === false,
+    'unsupported delivery must converge to exactly one delivered then failed/unsupported terminal history',
+  ),
+  TokenCommuneCockpitPresentationHonesty: (vector) => expectation(
+    vector.expected_outcome?.stale_renders_live === false
+      && vector.expected_outcome?.unknown_rows_visible === true
+      && vector.expected_outcome?.cross_provider_model_runnable === false
+      && vector.expected_outcome?.forbidden_alias_visible === false
+      && vector.expected_outcome?.private_fields_visible === false
+      && vector.expected_outcome?.dynamic_renderer_executed === false
+      && vector.expected_outcome?.verdict_owner === 'Patchbay',
+    'the local cockpit compositor must preserve stale/unknown/model/privacy/verdict/renderer honesty',
   ),
 });
 
@@ -389,6 +506,42 @@ function validateImplementationChecks(vector, filename) {
   return errors;
 }
 
+function validateMutationWitnesses(vector, filename) {
+  const errors = [];
+  const witnesses = vector.mutation_witnesses;
+  const profile = TOKEN_COMMUNE_BY_VECTOR.get(vector.vector_id);
+  if (witnesses === undefined) {
+    if (profile && vector.promotion_status === 'promoted') {
+      errors.push(`${filename}: promoted token-commune vectors require non-empty mutation_witnesses`);
+    }
+    return errors;
+  }
+  if (!Array.isArray(witnesses)) return [`${filename}: mutation_witnesses must be an array`];
+  if (profile && vector.promotion_status === 'promoted' && witnesses.length === 0) {
+    errors.push(`${filename}: promoted token-commune vectors require non-empty mutation_witnesses`);
+  }
+  const seen = new Set();
+  for (const [index, witness] of witnesses.entries()) {
+    if (!witness || typeof witness !== 'object' || Array.isArray(witness)) {
+      errors.push(`${filename}: mutation_witnesses[${index}] must be an object`);
+      continue;
+    }
+    if (typeof witness.mutation_id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(witness.mutation_id)) {
+      errors.push(`${filename}: mutation_witnesses[${index}].mutation_id must be a non-empty kebab-case id`);
+      continue;
+    }
+    if (!MUTATION_RUNNERS.has(witness.runner)) {
+      errors.push(`${filename}: mutation_witnesses[${index}] has unsupported runner ${String(witness.runner)}`);
+    }
+    if (typeof witness.invariant !== 'string' || witness.invariant.trim().length === 0) {
+      errors.push(`${filename}: mutation_witnesses[${index}].invariant must be a non-empty string`);
+    }
+    if (seen.has(witness.mutation_id)) errors.push(`${filename}: duplicate mutation witness ${witness.mutation_id}`);
+    seen.add(witness.mutation_id);
+  }
+  return errors;
+}
+
 function validateEnvelope(vector, filename) {
   const errors = [];
   const required = [
@@ -441,6 +594,7 @@ function validateEnvelope(vector, filename) {
   }
 
   errors.push(...validateImplementationChecks(vector, filename));
+  errors.push(...validateMutationWitnesses(vector, filename));
   return errors;
 }
 
@@ -481,6 +635,42 @@ async function readVectors() {
   if (entries.length === 0) errors.push(`${rel(vectorDir)}: no *.json vector files found`);
 
   return { vectors, errors };
+}
+
+function validateTokenCommuneProfile(vectors) {
+  const errors = [];
+  const byVector = new Map(vectors.map((vector) => [vector.vector_id, vector]));
+  for (const profile of TOKEN_COMMUNE_PROFILE) {
+    const vector = byVector.get(profile.vector);
+    if (!vector) {
+      errors.push(`token-commune profile: missing exact vector ${profile.vector}`);
+      continue;
+    }
+    if (vector.property_id !== profile.property) {
+      errors.push(`${vector.filename}: token-commune profile requires property_id ${profile.property}`);
+    }
+    const actual = (vector.implementation_checks ?? [])
+      .map((check) => `${check.runner}:${check.case}`).sort();
+    const expected = profile.checks.map((check) => `${check.runner}:${check.case}`).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      errors.push(`${vector.filename}: implementation_checks must equal the profile; expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  for (const vector of vectors) {
+    if ((vector.vector_id.startsWith('token-commune-') || vector.property_id.startsWith('TokenCommune'))
+        && !TOKEN_COMMUNE_BY_VECTOR.has(vector.vector_id)) {
+      errors.push(`${vector.filename}: token-commune vector/property is outside the exact certification profile`);
+    }
+    const propertyProfile = TOKEN_COMMUNE_BY_PROPERTY.get(vector.property_id);
+    if (propertyProfile && propertyProfile.vector !== vector.vector_id) {
+      errors.push(`${vector.filename}: ${vector.property_id} is bound only to ${propertyProfile.vector}`);
+    }
+  }
+  const statuses = new Set(TOKEN_COMMUNE_PROFILE.map((profile) => byVector.get(profile.vector)?.promotion_status));
+  if (statuses.has('promoted') && statuses.has('draft')) {
+    errors.push('token-commune profile: partial promotion is forbidden; all seven exact vectors promote together');
+  }
+  return errors;
 }
 
 function validatePropertyReferences(vectors) {
@@ -554,25 +744,23 @@ function validateAssertedCount(markdown, { label, pattern, derived, source }) {
   return [];
 }
 
-function validateResourceEvidenceCounts(markdown, vectors, implementationExecuted) {
-  const promotedCount = vectors.filter((vector) => vector.promotion_status === 'promoted').length;
+function validateEvidenceCounts(markdown, vectors, implementationExecuted, mutationsKilled) {
+  const tokenVectorIds = new Set(TOKEN_COMMUNE_PROFILE.map((profile) => profile.vector));
+  const resourceVectors = vectors.filter((vector) => vector.promotion_status === 'promoted' && !tokenVectorIds.has(vector.vector_id));
+  const resourceChecks = resourceVectors.flatMap((vector) => vector.implementation_checks ?? []);
   const resourcePropertyCount = STATED_NORMATIVE_PROPERTIES.filter((id) => id.startsWith('Resource')).length;
-
-  // Standing resource-plane counts are guarded below. Other concrete corpus
-  // counts in VERIFICATION.md and historical conformance notes must be kept in
-  // sync with check:vectors/check:models output when their source artifacts move.
-  return [
+  const errors = [
     ...validateAssertedCount(markdown, {
-      label: 'promoted-vector count',
+      label: 'resource promoted-vector count',
       pattern: /The resource-plane corpus promotes\s+([a-z]+|\d+)\s+executable examples\b/i,
-      derived: promotedCount,
-      source: 'promoted vectors',
+      derived: resourceVectors.length,
+      source: 'non-token promoted vectors',
     }),
     ...validateAssertedCount(markdown, {
-      label: 'implementation-check count',
+      label: 'resource implementation-check count',
       pattern: /The umbrella checker runs\s+([a-z]+|\d+)\s+exact\s+package\s+checks\b/i,
-      derived: implementationExecuted.length,
-      source: 'executed package checks',
+      derived: resourceChecks.length,
+      source: 'non-token promoted implementation checks',
     }),
     ...validateAssertedCount(markdown, {
       label: 'resource-property count',
@@ -581,6 +769,30 @@ function validateResourceEvidenceCounts(markdown, vectors, implementationExecute
       source: 'registered Resource* properties',
     }),
   ];
+  const tokenPromoted = vectors.filter((vector) => vector.promotion_status === 'promoted' && tokenVectorIds.has(vector.vector_id));
+  if (tokenPromoted.length > 0) {
+    errors.push(
+      ...validateAssertedCount(markdown, {
+        label: 'token-commune promoted-vector count',
+        pattern: /The token-commune profile promotes\s+([a-z]+|\d+)\s+executable examples\b/i,
+        derived: tokenPromoted.length,
+        source: 'token-commune profile registry',
+      }),
+      ...validateAssertedCount(markdown, {
+        label: 'token-commune implementation-check count',
+        pattern: /Its runners execute\s+([a-z]+|\d+)\s+exact\s+scenario checks\b/i,
+        derived: implementationExecuted.filter((id) => tokenVectorIds.has(id.split(':')[1])).length,
+        source: 'token-commune profile execution',
+      }),
+      ...validateAssertedCount(markdown, {
+        label: 'token-commune mutation-witness count',
+        pattern: /and kill\s+([a-z]+|\d+)\s+declared mutation witnesses\b/i,
+        derived: mutationsKilled.length,
+        source: 'exact mutation-kill reports',
+      }),
+    );
+  }
+  return errors;
 }
 
 function validateVerificationPropertyRegistry(markdown) {
@@ -694,14 +906,36 @@ function requestedImplementationChecks(vectors) {
   return byRunner;
 }
 
+function requestedMutationWitnesses(vectors) {
+  const byRunner = new Map();
+  for (const vector of vectors.filter((item) => item.promotion_status === 'promoted')) {
+    for (const witness of vector.mutation_witnesses ?? []) {
+      const requests = byRunner.get(witness.runner) ?? [];
+      requests.push({ vector_id: vector.vector_id, mutation_id: witness.mutation_id });
+      byRunner.set(witness.runner, requests);
+    }
+  }
+  return byRunner;
+}
+
 function runImplementationChecks(vectors) {
   const errors = [];
   const executed = [];
-  for (const [runner, requests] of requestedImplementationChecks(vectors)) {
+  const mutationsKilled = [];
+  const checksByRunner = requestedImplementationChecks(vectors);
+  const mutationsByRunner = requestedMutationWitnesses(vectors);
+  const runners = new Set([...checksByRunner.keys(), ...mutationsByRunner.keys()]);
+  for (const runner of runners) {
+    const requests = checksByRunner.get(runner) ?? [];
+    const mutationRequests = mutationsByRunner.get(runner) ?? [];
     const spec = IMPLEMENTATION_RUNNERS[runner];
     const result = spawnSync(spec.command, spec.args, {
       cwd: repoRoot,
-      env: { ...process.env, PATCHBAY_CONFORMANCE_REQUESTS: JSON.stringify(requests) },
+      env: {
+        ...process.env,
+        PATCHBAY_CONFORMANCE_REQUESTS: JSON.stringify(requests),
+        PATCHBAY_CONFORMANCE_MUTATIONS: JSON.stringify(mutationRequests),
+      },
       encoding: 'utf8',
       maxBuffer: 50 * 1024 * 1024,
     });
@@ -722,11 +956,23 @@ function runImplementationChecks(vectors) {
     }
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       errors.push(`${runner}: executed check ids did not match request; expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-      continue;
+    } else {
+      executed.push(...reported.map((id) => `${runner}:${id}`));
     }
-    executed.push(...reported.map((id) => `${runner}:${id}`));
+
+    const killed = [...output.matchAll(/^PATCHBAY_CONFORMANCE_MUTATION_KILLED=(.+)$/gm)].map((match) => match[1].trim());
+    const expectedKilled = mutationRequests.map((request) => `${request.vector_id}:${request.mutation_id}`).sort();
+    const actualKilled = [...killed].sort();
+    if (new Set(killed).size !== killed.length) {
+      errors.push(`${runner}: runner reported duplicate killed mutation ids`);
+    }
+    if (JSON.stringify(actualKilled) !== JSON.stringify(expectedKilled)) {
+      errors.push(`${runner}: killed mutation ids did not match request; expected ${JSON.stringify(expectedKilled)}, got ${JSON.stringify(actualKilled)}`);
+    } else {
+      mutationsKilled.push(...killed.map((id) => `${runner}:${id}`));
+    }
   }
-  return { errors, executed };
+  return { errors, executed, mutationsKilled };
 }
 
 function buildTraceabilityMarkdown(vectors) {
@@ -801,7 +1047,7 @@ async function updateVerificationMarkdown(vectors) {
   if (next !== current) await writeFile(verificationPath, next);
 }
 
-function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted, evidenceErrors }) {
+function printSummary({ vectors, envelopeErrors, profileErrors, propertyErrors, protoErrors, protoReferencesChecked, registryErrors, coverageErrors, invariantErrors, invariantChecked, implementationErrors, implementationExecuted, mutationsKilled, evidenceErrors }) {
   const promotedVectors = vectors.filter((vector) => vector.promotion_status === 'promoted');
   const checkedModelWithoutPromoted = CHECKED_MODEL_PROPERTIES.filter(
     (propertyId) => !vectors.some((vector) => vector.property_id === propertyId && vector.promotion_status === 'promoted'),
@@ -816,10 +1062,11 @@ function printSummary({ vectors, envelopeErrors, propertyErrors, protoErrors, pr
   console.log(`- promoted proto references resolved: ${protoReferencesChecked}`);
   console.log(`- promoted invariant expectation checks run: ${invariantChecked.length}`);
   console.log(`- implementation checks executed: ${implementationExecuted.length}`);
+  console.log(`- mutation witnesses killed: ${mutationsKilled.length}`);
   console.log(`- checked-model properties without promoted vectors (informational, not failing until checked-normative): ${checkedModelWithoutPromoted.length}`);
   console.log(`- traceability table target: ${rel(verificationPath)}`);
 
-  const allErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors, ...evidenceErrors];
+  const allErrors = [...envelopeErrors, ...profileErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors, ...implementationErrors, ...evidenceErrors];
   if (allErrors.length > 0) {
     console.error('\nFailures:');
     for (const error of allErrors) console.error(`- ${error}`);
@@ -833,18 +1080,19 @@ async function main() {
     readVectors(),
     readProtoSchema(),
   ]);
+  const profileErrors = validateTokenCommuneProfile(vectors);
   const propertyErrors = validatePropertyReferences(vectors);
   const { errors: protoErrors, checked: protoReferencesChecked } = validatePromotedProtoReferences(vectors, protoSchema);
   const verificationMarkdown = await readFile(verificationPath, 'utf8');
   const registryErrors = validateVerificationPropertyRegistry(verificationMarkdown);
   const coverageErrors = validatePromotedCoverage(vectors);
   const { errors: invariantErrors, checked: invariantChecked } = validatePromotedInvariantExpectations(vectors);
-  const staticErrors = [...envelopeErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];
-  const { errors: implementationErrors, executed: implementationExecuted } = staticErrors.length === 0
+  const staticErrors = [...envelopeErrors, ...profileErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];
+  const { errors: implementationErrors, executed: implementationExecuted, mutationsKilled } = staticErrors.length === 0
     ? runImplementationChecks(vectors)
-    : { errors: [], executed: [] };
+    : { errors: [], executed: [], mutationsKilled: [] };
   const evidenceErrors = staticErrors.length === 0 && implementationErrors.length === 0
-    ? validateResourceEvidenceCounts(verificationMarkdown, vectors, implementationExecuted)
+    ? validateEvidenceCounts(verificationMarkdown, vectors, implementationExecuted, mutationsKilled)
     : [];
 
   if (staticErrors.length === 0 && implementationErrors.length === 0 && evidenceErrors.length === 0) {
@@ -854,6 +1102,7 @@ async function main() {
   printSummary({
     vectors,
     envelopeErrors,
+    profileErrors,
     propertyErrors,
     protoErrors,
     protoReferencesChecked,
@@ -863,6 +1112,7 @@ async function main() {
     invariantChecked,
     implementationErrors,
     implementationExecuted,
+    mutationsKilled,
     evidenceErrors,
   });
 

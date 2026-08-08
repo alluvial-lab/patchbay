@@ -1,0 +1,54 @@
+{
+  "vector_id": "token-commune-current-generation-source-authenticated",
+  "property_id": "TokenCommuneCurrentGenerationSourceAuthenticated",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-server", "case": "token_commune_current_generation_source_binding" },
+    { "runner": "token-commune-adapter", "case": "current_generation_source_oracle" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "ignore-generation-equality", "runner": "token-commune-adapter", "invariant": "Attempted report generation must exactly equal the authenticated current attachment generation." },
+    { "mutation_id": "accept-prior-attachment-token", "runner": "token-commune-adapter", "invariant": "A replaced attachment token is inert." },
+    { "mutation_id": "trust-payload-source", "runner": "token-commune-adapter", "invariant": "Payload-claimed sender or generation cannot replace channel evidence." },
+    { "mutation_id": "compare-local-id-only", "runner": "token-commune-adapter", "invariant": "Target ownership compares the full adapter/kind/local-id tuple." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.AdapterRegistration.adapter_generation",
+    "patchbay.Observation.sender",
+    "patchbay.Observation.target_scope",
+    "patchbay.ResourceReport.adapter_generation",
+    "patchbay.ResourceIdentity.adapter_id",
+    "patchbay.ResourceIdentity.resource_kind",
+    "patchbay.ResourceIdentity.resource_id"
+  ],
+  "description": "Current exact attachment token, adapter generation, and resource ownership append evidence; stale token, stale generation, cross-owner target, and payload-forged source append nothing.",
+  "input": {
+    "authority_domain_id": "token-commune-source-conformance",
+    "authenticated_adapter_id": "token-commune",
+    "attachment_generation": 2,
+    "target_identity": ["token-commune", "token-commune.provider-pool", "pool-openai"],
+    "cross_adapter_target": ["other-adapter", "token-commune.provider-pool", "pool-openai"],
+    "forged_sender_actor": "payload-claimed-admin",
+    "payload_claim": { "sender": "other-adapter", "adapterGeneration": 999, "authority": "grant-all" },
+    "attempts": [
+      { "name": "current", "request_adapter_id": "token-commune", "request_generation": 2, "owns_target": true, "token_epoch_current": true },
+      { "name": "stale-token", "request_adapter_id": "token-commune", "request_generation": 2, "owns_target": true, "token_epoch_current": false },
+      { "name": "stale-generation", "request_adapter_id": "token-commune", "request_generation": 1, "owns_target": true, "token_epoch_current": true },
+      { "name": "cross-owner", "request_adapter_id": "token-commune", "request_generation": 2, "owns_target": false, "token_epoch_current": true }
+    ]
+  },
+  "expected_outcome": {
+    "current_exact_tuple_appended": true,
+    "stale_token_appended": false,
+    "stale_generation_appended": false,
+    "cross_owner_appended": false,
+    "payload_claim_overrides_source": false,
+    "authenticated_owner": { "observation_appended": true, "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION" },
+    "unauthenticated": { "status": "UNAUTHENTICATED", "observation_appended": false },
+    "stale_token": { "status": "UNAUTHENTICATED", "observation_appended": false },
+    "stale_generation": { "status": "INVALID_ARGUMENT", "resource_state_appended": false },
+    "cross_adapter_target": { "status": "PERMISSION_DENIED", "observation_appended": false },
+    "forged_claim": { "authority_changed": false, "resource_state_changed": false, "operation_created": false }
+  },
+  "invariant_check": "Accepted source is a function of attempted authenticated pre-state, never of identity written into the accepted payload."
+}

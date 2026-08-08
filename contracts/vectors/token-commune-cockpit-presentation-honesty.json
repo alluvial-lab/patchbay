@@ -1,0 +1,75 @@
+{
+  "vector_id": "token-commune-cockpit-presentation-honesty",
+  "property_id": "TokenCommuneCockpitPresentationHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "cockpit_projection_fixture" },
+    { "runner": "web-cockpit", "case": "token_commune_cockpit_presentation" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "style-stale-as-live", "runner": "web-cockpit", "invariant": "Wrapper freshness dominates domain health and runnable evidence." },
+    { "mutation_id": "drop-unknown-row", "runner": "web-cockpit", "invariant": "Canonical provider-pool identities anchor unknown/invalid projections." },
+    { "mutation_id": "join-model-by-provider-only", "runner": "web-cockpit", "invariant": "Runnable model evidence is native to the exact pool provider and adapter." },
+    { "mutation_id": "accept-forbidden-gpt-5-6-alias", "runner": "web-cockpit", "invariant": "The removed gpt-5.6 alias fails closed and is withheld." },
+    { "mutation_id": "expose-contributor-member-subkey", "runner": "web-cockpit", "invariant": "Private contributor/member/subkey material never reaches the panel." },
+    { "mutation_id": "trust-adapter-verdict", "runner": "web-cockpit", "invariant": "Verdicts are synthesized locally from Patchbay evidence." },
+    { "mutation_id": "load-dynamic-renderer", "runner": "web-cockpit", "invariant": "rendererUrl and adapter-provided code remain inert." },
+    { "mutation_id": "render-hostile-html-script", "runner": "web-cockpit", "invariant": "Hostile html/script fields are rejected rather than assigned through innerHTML." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.Resource.freshness",
+    "patchbay.Resource.projection_payload",
+    "patchbay.ResourceViewRevision.completeness",
+    "patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_STALE",
+    "patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_UNKNOWN"
+  ],
+  "description": "The exact adapter projection fixture crosses the local decoder, compositor, and option-7 panel with current, stale, unknown/invalid, cross-provider, forbidden-alias, and hostile renderer/contributor fields.",
+  "input": {
+    "adapter_id": "token-commune",
+    "gateway_base_url": "https://commune.example/",
+    "gateway": {
+      "pool": {
+        "contributions": [
+          {
+            "provider": "openai-codex",
+            "declaredShare": 1,
+            "health": { "state": "fresh" },
+            "capacity": [
+              { "window": "5h", "usedFraction": 0.35, "usedUnits": 35, "limitUnits": 100, "resetsAt": null, "source": "usage_endpoint", "observedAt": "2026-08-08T11:55:00.000Z" }
+            ],
+            "fingerprint": { "state": "unknown", "templateSource": "compiled", "since": null, "diffPresent": false }
+          }
+        ]
+      },
+      "models": {
+        "models": [
+          { "id": "gpt-5.5", "provider": "openai-codex", "surface": "codex", "upstreamModel": null, "contextWindow": 200000, "maxTokens": 8192, "reasoning": true, "available": true }
+        ]
+      }
+    },
+    "hostile_fields": {
+      "contributors": ["private contributor"],
+      "member": "private member",
+      "subKey": "private-sub-key",
+      "verdict": "runnable",
+      "rendererUrl": "https://evil.invalid/renderer.js",
+      "html": "<img src=x onerror=globalThis.__pwned=true>",
+      "script": "globalThis.__pwned=true",
+      "forbiddenAlias": "gpt-5.6"
+    },
+    "scenarios": ["current", "stale", "unknown", "invalid", "cross-provider-model", "forbidden-alias", "hostile-fields"]
+  },
+  "expected_outcome": {
+    "stale_renders_live": false,
+    "unknown_rows_visible": true,
+    "cross_provider_model_runnable": false,
+    "forbidden_alias_visible": false,
+    "private_fields_visible": false,
+    "dynamic_renderer_executed": false,
+    "verdict_owner": "Patchbay",
+    "current_provider": "openai-codex",
+    "current_capacity_used_fraction": 0.35,
+    "capacity_aggregation": "none"
+  },
+  "invariant_check": "Only locally decoded exact evidence may shape the static panel; canonical freshness/privacy/model provenance and Patchbay-owned verdict rules remain dominant."
+}

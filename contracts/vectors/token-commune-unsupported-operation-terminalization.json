@@ -1,0 +1,41 @@
+{
+  "vector_id": "token-commune-unsupported-operation-terminalization",
+  "property_id": "TokenCommuneAdapterFailureSafe",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "unsupported_operation_terminalization" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "clear-pending-before-terminal-ack", "runner": "token-commune-adapter", "invariant": "Retryable terminal-report failure retains pending unsupported work." },
+    { "mutation_id": "filter-delivered-nonterminal-on-replacement", "runner": "token-commune-adapter", "invariant": "Core redelivery includes delivered-but-nonterminal work for a replacement process." },
+    { "mutation_id": "advance-later-delivery-first", "runner": "token-commune-adapter", "invariant": "Pending recovery terminalizes before later delivery is handled." },
+    { "mutation_id": "terminalize-completed", "runner": "token-commune-adapter", "invariant": "Unsupported work never becomes completed." },
+    { "mutation_id": "use-adapter-unavailable", "runner": "token-commune-adapter", "invariant": "The semantic terminal failure is unsupported_command." },
+    { "mutation_id": "duplicate-delivery-or-terminal-transition", "runner": "token-commune-adapter", "invariant": "Durable delivery acknowledgement and terminal transition are idempotent." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.CommandTransition.to_state",
+    "patchbay.CommandTransition.failure_code",
+    "patchbay.OperationState.OPERATION_STATE_DELIVERED",
+    "patchbay.OperationState.OPERATION_STATE_FAILED",
+    "patchbay.FailureCode.FAILURE_CODE_UNSUPPORTED_COMMAND"
+  ],
+  "description": "Unexpected accepted Operations survive a retryable post-delivery terminal-report failure and a hard adapter replacement, converging before later work to one durable delivered then one failed/unsupported transition.",
+  "input": {
+    "scenarios": [
+      { "name": "same-process-retry", "command_id": "unsupported-retry", "first_terminal_report": "retryable-unavailable", "recovery": "subscription-reconnect" },
+      { "name": "replacement-process", "command_id": "unsupported-replacement", "first_terminal_report": "process-lost", "recovery": "core-redelivery" }
+    ],
+    "later_command_id": "unsupported-later"
+  },
+  "expected_outcome": {
+    "durable_delivered_count": 1,
+    "durable_failed_count": 1,
+    "terminal_state": "OPERATION_STATE_FAILED",
+    "failure_code": "FAILURE_CODE_UNSUPPORTED_COMMAND",
+    "completed_count": 0,
+    "nonterminal_after_recovery": false,
+    "pending_precedes_later_delivery": true
+  },
+  "invariant_check": "Once delivery responsibility is durable, every recovery path preserves unsupported terminalization until exactly one semantic failure commits."
+}

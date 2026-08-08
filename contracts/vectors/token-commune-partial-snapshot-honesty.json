@@ -1,0 +1,82 @@
+{
+  "vector_id": "token-commune-partial-snapshot-honesty",
+  "property_id": "TokenCommunePartialSnapshotHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "partial_snapshot_honesty" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "partial-to-authoritative", "runner": "token-commune-adapter", "invariant": "Both external collection views remain PARTIAL." },
+    { "mutation_id": "drop-declared-view", "runner": "token-commune-adapter", "invariant": "Both manifest-declared resource views are always reported." },
+    { "mutation_id": "reuse-prior-successful-slice", "runner": "token-commune-adapter", "invariant": "A failed endpoint is unavailable rather than copied from a prior poll." },
+    { "mutation_id": "missing-telemetry-to-zero", "runner": "token-commune-adapter", "invariant": "Unavailable or not-reported telemetry is not coerced to zero." },
+    { "mutation_id": "synthesize-capacity-aggregate", "runner": "token-commune-adapter", "invariant": "No provider-pool capacity aggregate is invented." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ResourceReport.snapshot",
+    "patchbay.ResourceViewReport.completeness",
+    "patchbay.ResourceViewReport.mutations",
+    "patchbay.AdapterSnapshotSupport.ADAPTER_SNAPSHOT_SUPPORT_PARTIAL"
+  ],
+  "description": "Mixed-success token-commune polling emits exactly the two declared PARTIAL views, classifiable listed upserts, explicit unavailable/not-reported source slices, and no aggregate or omission-as-tombstone claim.",
+  "input": {
+    "adapter_id": "token-commune",
+    "adapter_generation": 7,
+    "observed_at": "2026-08-08T12:00:00.000Z",
+    "gateway_base_url": "https://commune.example/",
+    "gateway": {
+      "status": {
+        "status": "reported",
+        "value": {
+          "ok": true,
+          "anthropicHealth": { "state": "fresh" },
+          "contributions": []
+        }
+      },
+      "pool": {
+        "status": "reported",
+        "value": {
+          "contributions": [
+            {
+              "provider": "openai-codex",
+              "declaredShare": 1,
+              "health": { "state": "fresh" },
+              "capacity": [],
+              "fingerprint": { "state": "unknown", "templateSource": "compiled", "since": null, "diffPresent": false }
+            }
+          ]
+        }
+      },
+      "me": { "status": "unavailable" },
+      "fingerprints": { "status": "unavailable" },
+      "models": {
+        "status": "reported",
+        "value": {
+          "models": [
+            {
+              "id": "gpt-5.5",
+              "provider": "openai-codex",
+              "surface": "codex",
+              "upstreamModel": null,
+              "contextWindow": 200000,
+              "maxTokens": 8192,
+              "reasoning": true,
+              "available": true
+            }
+          ]
+        }
+      }
+    }
+  },
+  "expected_outcome": {
+    "views": [
+      { "resource_kind": "token-commune.provider-pool", "completeness": "ADAPTER_SNAPSHOT_SUPPORT_PARTIAL", "mutation_count": 1 },
+      { "resource_kind": "token-commune.member-draw", "completeness": "ADAPTER_SNAPSHOT_SUPPORT_PARTIAL", "mutation_count": 0 }
+    ],
+    "failed_slices": { "member_draw": "unavailable", "fingerprint": "unavailable" },
+    "omission_is_tombstone": false,
+    "missing_telemetry_is_zero": false,
+    "capacity_aggregation": "none"
+  },
+  "invariant_check": "A partial-only observer reports only listed evidence, preserves missing-source distinctions, and never widens its snapshot or capacity claim."
+}

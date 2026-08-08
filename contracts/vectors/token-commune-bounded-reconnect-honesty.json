@@ -1,0 +1,48 @@
+{
+  "vector_id": "token-commune-bounded-reconnect-honesty",
+  "property_id": "TokenCommuneBoundedReconnectHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "bounded_reconnect_honesty" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "replay-initial-history", "runner": "token-commune-adapter", "invariant": "The first latest-50 page establishes a baseline and emits no historical event." },
+    { "mutation_id": "advance-dedup-before-ack", "runner": "token-commune-adapter", "invariant": "A source event remains retryable until core acknowledgement." },
+    { "mutation_id": "suppress-no-anchor-gap", "runner": "token-commune-adapter", "invariant": "A saturated replacement window without an anchor emits explicit unknown continuity." },
+    { "mutation_id": "fabricate-missed-count", "runner": "token-commune-adapter", "invariant": "Latest-50 evidence cannot establish how many events were missed." },
+    { "mutation_id": "events-before-reconnect-report", "runner": "token-commune-adapter", "invariant": "Every reconnect/recovery cycle reports resource state before visible event repair." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.Observation.kind",
+    "patchbay.Observation.payload",
+    "patchbay.Observation.target_scope",
+    "patchbay.ResourceReport.snapshot"
+  ],
+  "description": "The latest-50/no-cursor window is a non-replayed initial baseline; overlapping pages emit only acknowledged-new ids; retry preserves unacknowledged ids; saturated no-anchor rollover reports an unknown-continuity gap before visible events.",
+  "input": {
+    "history_mode": "latest-50-no-cursor",
+    "steps": [
+      { "process": 1, "page_ids": ["e01", "e02"], "acknowledged": [], "commit_window": true, "report_accepted": true },
+      { "process": 1, "page_ids": ["e02", "e03"], "acknowledged": [], "commit_window": false, "report_accepted": true },
+      { "process": 1, "page_ids": ["e02", "e03"], "acknowledged": ["e03"], "commit_window": true, "report_accepted": true },
+      {
+        "process": 1,
+        "page_ids": ["x01", "x02", "x03", "x04", "x05", "x06", "x07", "x08", "x09", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30", "x31", "x32", "x33", "x34", "x35", "x36", "x37", "x38", "x39", "x40", "x41", "x42", "x43", "x44", "x45", "x46", "x47", "x48", "x49", "x50"],
+        "acknowledged": [],
+        "commit_window": true,
+        "report_accepted": true
+      }
+    ]
+  },
+  "expected_outcome": {
+    "initial_baseline_replayed": false,
+    "emitted_ids_by_step": [[], ["e03"], [], ["x01", "x02", "x03", "x04", "x05", "x06", "x07", "x08", "x09", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30", "x31", "x32", "x33", "x34", "x35", "x36", "x37", "x38", "x39", "x40", "x41", "x42", "x43", "x44", "x45", "x46", "x47", "x48", "x49", "x50"]],
+    "retryable_before_ack": ["e03"],
+    "acknowledge_only_after_core_acceptance": true,
+    "saturated_gap_reason": "window-saturated-without-anchor",
+    "gap_continuity": "unknown-before-visible-window",
+    "fabricated_missed_count": null,
+    "report_precedes_events": true
+  },
+  "invariant_check": "Reconciliation states only what the bounded visible window and durable acknowledgements prove; it never reconstructs hidden history."
+}

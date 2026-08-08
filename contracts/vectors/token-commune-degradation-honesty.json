@@ -1,0 +1,44 @@
+{
+  "vector_id": "token-commune-degradation-honesty",
+  "property_id": "TokenCommuneDegradationHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "degradation_honesty" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "skip-empty-partial-report", "runner": "token-commune-adapter", "invariant": "A fully failed poll still reports both empty PARTIAL views." },
+    { "mutation_id": "carry-prior-endpoint-value", "runner": "token-commune-adapter", "invariant": "A failed endpoint cannot reuse prior-cycle telemetry." },
+    { "mutation_id": "disconnect-remains-current", "runner": "token-commune-adapter", "invariant": "Abnormal delivery loss degrades cached current resources to stale." },
+    { "mutation_id": "polling-establishes-liveness", "runner": "token-commune-adapter", "invariant": "Poll cadence and silence carry no liveness claim." },
+    { "mutation_id": "reconnect-promotes-omitted-identities", "runner": "token-commune-adapter", "invariant": "A PARTIAL reconnect restores only explicitly listed current identities." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.Resource.freshness",
+    "patchbay.Resource.resource_payload",
+    "patchbay.ResourceSnapshot.resources",
+    "patchbay.ResourceViewReport.completeness",
+    "patchbay.ResourceFreshnessState"
+  ],
+  "description": "A successful report, fully failed poll, abnormal disconnect, and generation-2 listed-only reconnect preserve unknown/stale rows and restore current state only from accepted current-generation evidence.",
+  "input": {
+    "steps": [
+      { "kind": "reported", "generation": 1, "listed": ["pool-a", "pool-unknown"], "cached": ["pool-a"], "no_payload": ["pool-unknown"] },
+      { "kind": "poll-missed", "generation": 1, "listed": [], "cached": ["pool-a"], "no_payload": ["pool-unknown"] },
+      { "kind": "disconnected", "generation": 1, "listed": [], "cached": ["pool-a"], "no_payload": ["pool-unknown"] },
+      { "kind": "reconnected", "generation": 2, "listed": ["pool-b"], "cached": ["pool-a", "pool-b"], "no_payload": ["pool-unknown"] }
+    ],
+    "failed_endpoints": ["status", "pool", "me", "fingerprints", "models", "events"]
+  },
+  "expected_outcome": {
+    "missed_poll_emits_empty_partial_views": true,
+    "missed_poll_view_count": 2,
+    "disconnect_cached_state": "stale",
+    "disconnect_no_payload_state": "unknown",
+    "omitted_partial_identity_removed": false,
+    "reconnected_current_identities": ["pool-b"],
+    "reconnected_stale_identities": ["pool-a"],
+    "reconnected_unknown_identities": ["pool-unknown"],
+    "polling_establishes_liveness": false
+  },
+  "invariant_check": "Resource confidence degrades monotonically without evidence; PARTIAL omission never deletes or promotes an identity."
+}

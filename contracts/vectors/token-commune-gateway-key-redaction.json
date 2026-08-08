@@ -1,0 +1,47 @@
+{
+  "vector_id": "token-commune-gateway-key-redaction",
+  "property_id": "TokenCommuneGatewayMemberKeyRedacted",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "token-commune-adapter", "case": "gateway_key_redaction" }
+  ],
+  "mutation_witnesses": [
+    { "mutation_id": "leak-key-in-resource-payload", "runner": "token-commune-adapter", "invariant": "Reflected gateway credentials cannot enter resource payload or projection bytes." },
+    { "mutation_id": "remove-local-secret-replacement", "runner": "token-commune-adapter", "invariant": "Local diagnostics redact the original member key and bearer form." },
+    { "mutation_id": "forward-arbitrary-error-text", "runner": "token-commune-adapter", "invariant": "Forwarded diagnostics structurally exclude arbitrary message, cause, and stack text." },
+    { "mutation_id": "persist-authorization-in-audit", "runner": "token-commune-adapter", "invariant": "Audit and diagnostic query projections never contain Authorization material." },
+    { "mutation_id": "leak-key-in-snapshot", "runner": "token-commune-adapter", "invariant": "Materialized snapshots contain only already-sanitized resource envelopes." },
+    { "mutation_id": "leak-key-in-subscription", "runner": "token-commune-adapter", "invariant": "Subscription events expose no credential encoding." },
+    { "mutation_id": "leak-key-in-sqlite-bytes", "runner": "token-commune-adapter", "invariant": "Raw durable SQLite bytes contain no credential encoding." }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.AdapterDiagnosticPayload.code",
+    "patchbay.AuditRecord",
+    "patchbay.Observation.payload",
+    "patchbay.PayloadEnvelope.payload",
+    "patchbay.Resource.resource_payload",
+    "patchbay.Resource.projection_payload",
+    "patchbay.ResourceSnapshot.resources"
+  ],
+  "description": "A high-entropy gateway member-key sentinel is used for real HTTP Authorization while hostile upstream reflection is rejected and every emitted, queried, snapshotted, subscribed, diagnostic, audit, and durable representation remains secret-free.",
+  "input": {
+    "secret": "tc_member_7Qp9zV3mN8rT2xK6wH4sF1dC",
+    "hostile_forms": [
+      "raw",
+      "bearer",
+      "url-encoded",
+      "base64",
+      "json-string",
+      "credential-file-path"
+    ],
+    "hostile_gateway_fields": ["member", "message", "reason", "code", "authorization"],
+    "required_sinks": ["resource-reports", "observations", "diagnostics", "audit-query", "snapshots", "subscriptions", "sqlite-bytes"]
+  },
+  "expected_outcome": {
+    "secret_absent": true,
+    "scanned_sinks": ["resource-reports", "observations", "diagnostics", "audit-query", "snapshots", "subscriptions", "sqlite-bytes"],
+    "gateway_reflection_disposition": "invalid-response-unavailable",
+    "diagnostic_schema_arbitrary_text_fields": false
+  },
+  "invariant_check": "The credential may exist only at its source and outbound Authorization header; no adapter/core output or durable byte representation may carry it or a common encoding."
+}

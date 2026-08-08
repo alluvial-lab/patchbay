@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance-harness-registry-guards
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, verification]
 parent: epic-token-commune-observer-conformance
 depends_on: []
@@ -51,3 +51,12 @@ vectors, add a token-only corpus, or claim model evidence.
 ## Ordering constraint
 
 Root checkpoint. Phase-1 vectors register only through this bridge.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, high reasoning, explicitly selected by the autopilot caller for the cross-package verification boundary. One owning worker retained the full six-story chain; no sub-worker fan-out was used because the profile, mutation ledger, and generated traceability share one write boundary.
+- Added the exact seven-entry token-commune profile and `token-commune-adapter` runner to the existing checker. The profile fails closed on missing/extra vector-property pairs, exact scenario-registration drift, and partial promotion.
+- Added additive `mutation_witnesses` envelope validation and exact per-runner `PATCHBAY_CONFORMANCE_MUTATION_KILLED` accounting. Missing, duplicate, unexpected, or unreported kills block generated-doc writes.
+- Added property-specific static expected-outcome guards for every `TokenCommune*` property and kept the existing resource/session runner accounting intact.
+- Added the shared independent oracle module, package runner scaffold, and seven draft profile vectors so later checkpoints fill one corpus rather than introducing a parallel harness.
+- Verification: token adapter TypeScript build passed; checker syntax passed; `check:vectors` passed with the existing 8 promoted vectors / 11 implementation checks and no token execution while the exact profile remains draft; `check:models` passed with 68 registered property ids and generated traceability current; `git diff --check` passed.
