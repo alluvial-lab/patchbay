@@ -370,6 +370,7 @@ function executeCockpitFixture(vector: ConformanceVector): void {
   });
   const observed = reportObservation(report);
   const pool = observed.views[0]?.mutations[0]?.projection as any;
+  assert.deepEqual(pool, vector.input.expected_projection, "adapter projection bytes must equal the cross-package fixture");
   assert.equal(pool.provider, vector.expected_outcome.current_provider);
   assert.equal(pool.capacityAggregation, vector.expected_outcome.capacity_aggregation);
   assert.equal(pool.contributionListing.contributions[0].capacityReadings[0].usedFraction, vector.expected_outcome.current_capacity_used_fraction);

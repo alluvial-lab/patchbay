@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance-phase-2-failure-presentation-adversaries
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, verification, ux]
 parent: epic-token-commune-observer-conformance
 depends_on: [epic-token-commune-observer-conformance-phase-2-security-adversaries]
@@ -56,3 +56,11 @@ fields.
 
 Depends on the security adversary checkpoint. Promotion waits for this entire
 adversarial phase to converge.
+
+## Implementation notes
+
+- The token runner drives the real `AdapterProcess` pending-terminalization seam for both retryable same-process loss and hard process replacement. Its independent lifecycle oracle requires exactly one delivered LSN before exactly one failed/unsupported LSN, no completion, and no surviving nonterminal state; six terminalization mutants are killed.
+- Expanded the real-core E2E's existing unsupported delivery path with an injected retryable `failUnsupported` failure and a second command whose process dies after durable acknowledgement. A fresh adapter process receives the delivered-but-nonterminal command from the core and terminalizes it once before shutdown.
+- Added one exact adapter projection fixture to the vector. The adapter runner proves real projector output byte-for-object equals that fixture; the web runner consumes it through the local token decoder/compositor and the real option-7 panel.
+- Presentation evidence covers current/stale/unknown, exact provider-local model provenance, the rejected `gpt-5.6` alias, hostile contributor/member/subkey/verdict/renderer/html/script fields, stale styling dominance, unknown anchoring, Patchbay-owned verdict wording, and no dynamic renderer execution. Eight output mutants are killed by literal DOM/summary expectations.
+- Verification: focused token package runner reported two exact scenario ids and six terminalization mutation kills; focused web runner reported one exact scenario id and eight presentation mutation kills; the focused real-core retry/replacement E2E passed.

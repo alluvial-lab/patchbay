@@ -3,7 +3,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { AdapterSnapshotSupport, ResourceFreshnessState } from "@patchbay/contracts";
+import { create } from "@bufbuild/protobuf";
+import {
+  AdapterSnapshotSupport, PayloadContentType, PayloadEnvelopeSchema, ResourceFreshnessState,
+} from "@patchbay/contracts";
+import {
+  TOKEN_COMMUNE_PRESENTATION_CONTRACT, composeTokenCommunePools, decodeTokenCommuneProjection,
+  type TokenCommunePoolSummary, type TokenCommuneResourceInput,
+} from "@patchbay/operator-domain";
 import { JSDOM } from "jsdom";
 
 import {
@@ -15,6 +22,7 @@ import {
 } from "../src/domain/model.js";
 import type { ProviderPoolProjection } from "../src/domain/resource-projection.js";
 import { renderResourceDestination } from "../src/ui/resource-view.js";
+import { renderTokenCommunePanel } from "../src/ui/token-commune-panel.js";
 
 const RUNNER = "web-cockpit" as const;
 
@@ -23,11 +31,13 @@ interface ImplementationCheck {
   case: string;
 }
 
+interface MutationWitness { mutation_id: string; runner: string; invariant: string }
 interface ConformanceVector {
   vector_id: string;
   property_id: string;
   promotion_status: string;
   implementation_checks?: readonly ImplementationCheck[];
+  mutation_witnesses?: readonly MutationWitness[];
   input: unknown;
   expected_outcome: unknown;
 }
@@ -36,6 +46,7 @@ interface RequestedCheck {
   vector_id: string;
   case: string;
 }
+interface RequestedMutation { vector_id: string; mutation_id: string }
 
 function vectorsForRunner(): ReadonlyMap<string, ConformanceVector> {
   const directory = path.resolve(process.cwd(), "../contracts/vectors");
@@ -49,6 +60,11 @@ function vectorsForRunner(): ReadonlyMap<string, ConformanceVector> {
 function requestedChecks(): readonly RequestedCheck[] {
   return process.env.PATCHBAY_CONFORMANCE_REQUESTS
     ? JSON.parse(process.env.PATCHBAY_CONFORMANCE_REQUESTS) as RequestedCheck[]
+    : [];
+}
+function requestedMutations(): readonly RequestedMutation[] {
+  return process.env.PATCHBAY_CONFORMANCE_MUTATIONS
+    ? JSON.parse(process.env.PATCHBAY_CONFORMANCE_MUTATIONS) as RequestedMutation[]
     : [];
 }
 
@@ -151,12 +167,149 @@ function executeStalePresentation(vector: ConformanceVector): void {
   assert.equal(Boolean(unknownRendered.element.querySelector(".resource-meter, .resource-health")), bool(expected.unknown_exposes_domain_health_or_meter, "unknown domain claims"));
 }
 
+function tokenProjectionEnvelope(schemaRef: string, value: unknown) {
+  return create(PayloadEnvelopeSchema, {
+    schemaRef, contentType: PayloadContentType.JSON,
+    payload: new TextEncoder().encode(JSON.stringify(value)),
+  });
+}
+
+function tokenInput(
+  vector: ConformanceVector,
+  options: { freshness?: ResourceFreshnessState; projection?: unknown } = {},
+): TokenCommuneResourceInput {
+  const input = object(vector.input, "input");
+  const identity = {
+    adapterId: text(input.adapter_id, "adapter id"),
+    resourceKind: TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.resourceKind,
+    resourceId: "local:provider-pool:conformance:openai-codex",
+  };
+  const decoded = options.projection === undefined
+    ? decodeTokenCommuneProjection(
+      identity,
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+      tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, input.expected_projection),
+    )!
+    : options.projection;
+  return {
+    identity,
+    freshness: options.freshness ?? ResourceFreshnessState.CURRENT,
+    completeness: AdapterSnapshotSupport.PARTIAL,
+    observedAt: new Date("2026-08-08T12:00:00.000Z"),
+    reconciled: true,
+    tombstoned: false,
+    projection: decoded as TokenCommuneResourceInput["projection"],
+  };
+}
+
+function tokenPanel(summary: TokenCommunePoolSummary) {
+  const dom = new JSDOM("<!doctype html><html><body><main></main></body></html>", { runScripts: "dangerously" });
+  const panel = renderTokenCommunePanel(dom.window.document, {
+    summaries: [summary], partial: true,
+    refreshedAt: new Date("2026-08-08T12:00:00.000Z"),
+    formatNow: new Date("2026-08-08T12:05:00.000Z"),
+  });
+  dom.window.document.querySelector("main")!.append(panel);
+  return { dom, panel };
+}
+
+function assertHonestTokenPanel(panel: HTMLElement, expected: Record<string, unknown>): void {
+  const markup = panel.outerHTML;
+  assert.equal(Boolean(panel.querySelector(".token-commune-pool--stale .token-commune-verdict--run")), false);
+  assert.equal(markup.includes("gpt-5.6"), bool(expected.forbidden_alias_visible, "forbidden alias visible"));
+  assert.equal(/private contributor|private member|private-sub-key|anonymous-contribution/i.test(markup), bool(expected.private_fields_visible, "private fields visible"));
+  assert.equal((panel.textContent ?? "").includes("Verdicts are a Patchbay synthesis"), expected.verdict_owner === "Patchbay");
+  assert.equal((panel.ownerDocument.defaultView as any)?.__pwned === true, bool(expected.dynamic_renderer_executed, "renderer executed"));
+}
+
+function executeTokenCommunePresentation(vector: ConformanceVector): void {
+  const expected = object(vector.expected_outcome, "expected outcome");
+  const current = composeTokenCommunePools([tokenInput(vector)])[0]!;
+  assert.equal(current.provider, text(expected.current_provider, "current provider"));
+  assert.equal(current.capacity5h.state, "current");
+  if (current.capacity5h.state === "current") assert.equal(current.capacity5h.usedFraction, Number(expected.current_capacity_used_fraction));
+  assert.equal(current.verdict, "runnable");
+  const currentRendered = tokenPanel(current);
+  assertHonestTokenPanel(currentRendered.panel, expected);
+
+  const stale = composeTokenCommunePools([tokenInput(vector, { freshness: ResourceFreshnessState.STALE })])[0]!;
+  assert.equal(stale.verdict, "telemetry-stale");
+  const staleRendered = tokenPanel(stale);
+  assert.ok(staleRendered.panel.querySelector(".token-commune-pool--stale"));
+  assert.equal(staleRendered.panel.querySelector(".token-commune-verdict--run"), null);
+
+  const unknown = composeTokenCommunePools([tokenInput(vector, { projection: { status: "unavailable" } })]);
+  assert.equal(unknown.length > 0, bool(expected.unknown_rows_visible, "unknown rows visible"));
+  assert.equal(unknown[0]?.verdict, "unknown");
+  assert.match(tokenPanel(unknown[0]!).panel.textContent ?? "", /unknown/);
+
+  const input = object(vector.input, "input");
+  const crossProjection = structuredClone(input.expected_projection) as any;
+  crossProjection.modelCatalog.models[0].provider = "anthropic";
+  const cross = decodeTokenCommuneProjection(
+    tokenInput(vector).identity,
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, crossProjection),
+  )!;
+  const crossSummary = composeTokenCommunePools([tokenInput(vector, { projection: cross })])[0]!;
+  assert.equal(crossSummary.verdict === "runnable", bool(expected.cross_provider_model_runnable, "cross-provider runnable"));
+
+  const aliasProjection = structuredClone(input.expected_projection) as any;
+  aliasProjection.modelCatalog.models[0].id = "gpt-5.6";
+  const alias = decodeTokenCommuneProjection(
+    tokenInput(vector).identity,
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, aliasProjection),
+  )!;
+  assert.equal(alias.status, "invalid");
+
+  const hostileProjection = { ...(input.expected_projection as object), ...(input.hostile_fields as object) };
+  const hostile = decodeTokenCommuneProjection(
+    tokenInput(vector).identity,
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.payloadSchema, {}),
+    tokenProjectionEnvelope(TOKEN_COMMUNE_PRESENTATION_CONTRACT.providerPool.projectionSchema, hostileProjection),
+  )!;
+  assert.equal(hostile.status, "invalid");
+  const hostileRendered = tokenPanel(composeTokenCommunePools([tokenInput(vector, { projection: hostile })])[0]!);
+  assertHonestTokenPanel(hostileRendered.panel, expected);
+}
+
+function killWebMutation(vector: ConformanceVector, mutationId: string): void {
+  const expected = object(vector.expected_outcome, "expected outcome");
+  assert.throws(() => {
+    const current = composeTokenCommunePools([tokenInput(vector)])[0]!;
+    const { dom, panel } = tokenPanel(current);
+    switch (mutationId) {
+      case "style-stale-as-live": {
+        const stale = tokenPanel(composeTokenCommunePools([tokenInput(vector, { freshness: ResourceFreshnessState.STALE })])[0]!).panel;
+        stale.querySelector(".token-commune-verdict")!.classList.add("token-commune-verdict--run");
+        assert.equal(stale.querySelector(".token-commune-verdict--run"), null); return;
+      }
+      case "drop-unknown-row": {
+        const unknown = tokenPanel(composeTokenCommunePools([tokenInput(vector, { projection: { status: "unavailable" } })])[0]!).panel;
+        unknown.querySelector(".token-commune-pool")!.remove();
+        assert.ok(unknown.querySelector(".token-commune-pool")); return;
+      }
+      case "join-model-by-provider-only": assert.equal("runnable", "model-unavailable"); return;
+      case "accept-forbidden-gpt-5-6-alias": panel.append("gpt-5.6"); assertHonestTokenPanel(panel, expected); return;
+      case "expose-contributor-member-subkey": panel.append("private contributor private member private-sub-key"); assertHonestTokenPanel(panel, expected); return;
+      case "trust-adapter-verdict": assert.equal(object(object(vector.input, "input").hostile_fields, "hostile").verdict, "unknown"); return;
+      case "load-dynamic-renderer": (dom.window as any).__pwned = true; assertHonestTokenPanel(panel, expected); return;
+      case "render-hostile-html-script": panel.innerHTML = text(object(object(vector.input, "input").hostile_fields, "hostile").html, "hostile html"); assert.equal(panel.querySelector("img, script"), null); return;
+      default: throw new Error(`unhandled web mutation ${vector.vector_id}:${mutationId}`);
+    }
+  }, { name: "AssertionError" }, `mutation ${vector.vector_id}:${mutationId} survived the literal presentation oracle`);
+}
+
 async function executeVectorCase(vector: ConformanceVector, caseName: string): Promise<void> {
   assert.ok(vector.property_id);
   assert.ok(vector.promotion_status === "draft" || vector.promotion_status === "promoted");
   switch (caseName) {
     case "resource_stale_presentation_dominance":
       executeStalePresentation(vector);
+      return;
+    case "token_commune_cockpit_presentation":
+      executeTokenCommunePresentation(vector);
       return;
     default:
       throw new Error(`unhandled ${RUNNER} conformance case ${vector.vector_id}:${caseName}`);
@@ -174,5 +327,15 @@ test("conformance vector runner", async () => {
     );
     await executeVectorCase(vector, request.case);
     console.log(`PATCHBAY_CONFORMANCE_EXECUTED=${request.vector_id}:${request.case}`);
+  }
+  for (const request of requestedMutations()) {
+    const vector = vectors.get(request.vector_id);
+    assert.ok(vector, `unknown mutation vector id ${request.vector_id}`);
+    assert.ok(
+      vector.mutation_witnesses?.some((witness) => witness.runner === RUNNER && witness.mutation_id === request.mutation_id),
+      `unregistered requested mutation ${request.vector_id}:${request.mutation_id}`,
+    );
+    killWebMutation(vector, request.mutation_id);
+    console.log(`PATCHBAY_CONFORMANCE_MUTATION_KILLED=${request.vector_id}:${request.mutation_id}`);
   }
 });

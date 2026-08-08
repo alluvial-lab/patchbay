@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { DatabaseSync } from "node:sqlite";
-import { createClient, type Interceptor } from "@connectrpc/connect";
+import { Code, ConnectError, createClient, type Interceptor } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   AcceptedOperationSchema, ActorEndpointRefSchema, ActorIdSchema, AdapterIdSchema, AdapterRegistrationSchema,
@@ -65,12 +65,30 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
       path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 1,
       secrets: [adapterEvidence, gatewayKey, `Bearer ${gatewayKey}`],
     });
+    const coreClient = new PatchbayCoreClient({
+      coreAddress: baseUrl, adapterId: "token-commune", authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+    }, diagnostics);
+    const actualFailUnsupported = coreClient.failUnsupported.bind(coreClient);
+    let failRetryOnce = true;
+    let crashNextTerminal = false;
+    coreClient.failUnsupported = async (operation) => {
+      if (failRetryOnce) {
+        failRetryOnce = false;
+        throw new ConnectError("injected retryable terminal report loss", Code.Unavailable);
+      }
+      if (crashNextTerminal) {
+        crashNextTerminal = false;
+        throw new Error("injected hard process loss after delivery acknowledgement");
+      }
+      return actualFailUnsupported(operation);
+    };
     host = new AdapterProcess({
       coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 1,
       authorityDomainId: domainId, attachmentEvidence: adapterEvidence,
       gatewayBaseUrl: new URL("https://gateway.invalid/"), gatewayCredentialFile: "/not-read",
       pollIntervalMs: 30_000, diagnosticPath, gateway: emptyGateway(),
-      diagnostics, forwardDiagnostics: true,
+      diagnostics, forwardDiagnostics: true, coreClient,
     });
     await host.start();
     run = host.run(controller.signal);
@@ -105,6 +123,33 @@ test("real core records the PARTIAL manifest and fails an unexpected operation w
     assert.notEqual(deliveredIndex, -1, "transition sequence must contain DELIVERED");
     assert.notEqual(failedIndex, -1, "transition sequence must contain FAILED + UNSUPPORTED_COMMAND");
     assert.ok(deliveredIndex < failedIndex, "unsupported delivery must transition DELIVERED before FAILED");
+
+    appendAcceptedOperation(databasePath, operation("unsupported-replacement"), auth.grantId);
+    crashNextTerminal = true;
+    await assert.rejects(run, /injected hard process loss after delivery acknowledgement/);
+    await host.dispose();
+    host = undefined;
+    run = undefined;
+    const replacementDiagnostics = await openAdapterDiagnostics({
+      path: diagnosticPath, adapterId: "token-commune", adapterGeneration: 1,
+      secrets: [adapterEvidence, gatewayKey, `Bearer ${gatewayKey}`],
+    });
+    host = new AdapterProcess({
+      coreAddress: baseUrl, adapterId: "token-commune", adapterGeneration: 1,
+      authorityDomainId: domainId, attachmentEvidence: adapterEvidence,
+      gatewayBaseUrl: new URL("https://gateway.invalid/"), gatewayCredentialFile: "/not-read",
+      pollIntervalMs: 30_000, diagnosticPath, gateway: emptyGateway(),
+      diagnostics: replacementDiagnostics, forwardDiagnostics: true,
+    });
+    await host.start();
+    run = host.run(controller.signal);
+    await waitFor(async () => commandTransitions(await readAfter(control, 0n), "unsupported-replacement")
+      .some((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND),
+    "replacement process unsupported terminalization");
+    const replacementTransitions = commandTransitions(await readAfter(control, 0n), "unsupported-replacement");
+    assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.DELIVERED).length, 1);
+    assert.equal(replacementTransitions.filter((item) => item.toState === OperationState.FAILED && item.failureCode === FailureCode.UNSUPPORTED_COMMAND).length, 1);
+    assert.equal(replacementTransitions.some((item) => item.toState === OperationState.COMPLETED), false);
 
     const visible = JSON.stringify(await readAfter(control, 0n), (_key, value) => typeof value === "bigint" ? value.toString() : value);
     assert.equal(visible.includes(adapterEvidence), false);
