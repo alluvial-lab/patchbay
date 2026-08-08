@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel-pool-compositor
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: [epic-token-commune-observer-cockpit-panel-projection-decoder]
 release_binding: null
 gate_origin: null
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # Per-pool signal compositor
@@ -33,3 +33,9 @@ Compose decoded provider-pool and member-draw resources into one deterministic s
 ## Ordering
 
 Depends on the manifest-bound decoder. Verdict synthesis depends on this stable signal model.
+
+## Implementation notes
+
+- Implemented one deterministic summary per exact `(adapterId, provider)`; resource ids, private member labels, synthesized contribution keys, and input order do not participate in joins.
+- The capacity signal selects the maximum real non-null `5h` reading with newest-observation tie-breaks. Null, absent, non-5h, stale, current, and ambiguous draw evidence remain distinct; the summary has no aggregate/remaining/mean/weighted capacity field.
+- Verification: `cd operator-domain && npm test` — 7/7 tests passed, including wrong-adapter join, divergent draw, null/non-5h selection, anonymous output, and exact summary-shape witnesses.
