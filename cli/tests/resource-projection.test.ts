@@ -7,13 +7,10 @@ import {
   AdapterSnapshotSupport,
   AuthorityDomainIdSchema,
   EventIdSchema,
-  GrantSummarySchema,
-  LoadSecuritySnapshotResponseSchema,
   LoadSnapshotResponseSchema,
   LsnSchema,
   ObservationKind,
   ObservationSchema,
-  OperationKind,
   PayloadContentType,
   PayloadEnvelopeSchema,
   ResourceFreshnessState,
@@ -23,7 +20,6 @@ import {
   ResourceSchema,
   ResourceSnapshotSchema,
   ResourceViewRevisionSchema,
-  SecuritySnapshotSchema,
   SnapshotViewKind,
   StoredEventKind,
   TargetScopeKind,
@@ -167,12 +163,15 @@ function resource(
 
 function client(options: {
   stalePool?: boolean;
-  grants?: "both" | "pool" | "none";
+  resources?: "both" | "pool" | "none";
 } & ProjectionOptions = {}) {
-  const resources = [
+  const visibleResources = options.resources ?? "both";
+  const resources = visibleResources === "none" ? [] : [
     resource("token-commune", "pool", options.stalePool, options),
-    resource("token-commune", "draw", false, options),
-    resource("other-adapter", "draw", false, options),
+    ...(visibleResources === "both" ? [
+      resource("token-commune", "draw", false, options),
+      resource("other-adapter", "draw", false, options),
+    ] : []),
   ];
   const snapshot = create(ResourceSnapshotSchema, {
     authorityDomainId: domain,
@@ -186,23 +185,6 @@ function client(options: {
       adapterId: { value: adapterId! }, resourceKind: create(ResourceKindSchema, { value: resourceKind! }),
       completeness: AdapterSnapshotSupport.PARTIAL, sourceAdapterGeneration: { value: 2n },
       revisionLsn: create(LsnSchema, { value: 12n }), observedAt: timestampFromDate(new Date("2026-08-07T10:01:00Z")),
-    })),
-  });
-  const grants = options.grants ?? "both";
-  const allowedKinds = grants === "none" ? [] : grants === "pool"
-    ? ["token-commune.provider-pool"]
-    : ["token-commune.provider-pool", "token-commune.member-draw"];
-  const security = create(SecuritySnapshotSchema, {
-    authorityDomainId: domain,
-    snapshotLsn: create(LsnSchema, { value: 12n }),
-    grants: allowedKinds.map((resourceKind, index) => create(GrantSummarySchema, {
-      grantId: { value: `grant-${index}` },
-      subjectActorId: { value: "operator" },
-      targetScope: create(TargetScopeSchema, {
-        kind: TargetScopeKind.RESOURCE,
-        resource: identity("token-commune", resourceKind, resourceKind.endsWith("provider-pool") ? "pool-opaque" : "draw-opaque"),
-      }),
-      allowedOperationKinds: [OperationKind.QUERY],
     })),
   });
   return {
@@ -230,9 +212,6 @@ function client(options: {
         eventId: create(EventIdSchema, { authorityDomainId: domain, lsn: create(LsnSchema, { value: 12n }) }),
         snapshotPayload: toBinary(ResourceSnapshotSchema, snapshot),
       });
-    },
-    async loadSecuritySnapshot() {
-      return create(LoadSecuritySnapshotResponseSchema, { snapshot: security });
     },
   };
 }
@@ -270,27 +249,19 @@ test("resource-query text and JSON use the shared exact summary without private 
   assert.equal(JSON.stringify(json).includes("private-member-name"), false);
 });
 
-test("resource query grant-gates draw independently and succeeds explicitly when no pool is authorized", async () => {
+test("resource query composes the core-filtered snapshot and succeeds explicitly when no pool is authorized", async () => {
   const poolOnly = captureOutput();
-  await resourceQueryCommand(client({ grants: "pool" }) as never, DOMAIN, { json: false }, poolOnly);
+  await resourceQueryCommand(client({ resources: "pool" }) as never, DOMAIN, { json: false }, poolOnly);
   assert.match(poolOnly.out.join("\n"), /unavailable/);
 
-  const exactGrantOnly = client({ grants: "pool" });
-  exactGrantOnly.subscribe = async function* () {
-    throw new Error("authority-domain subscription denied");
-  };
-  const exactGrantOutput = captureOutput();
-  assert.equal(await resourceQueryCommand(exactGrantOnly as never, DOMAIN, { json: true }, exactGrantOutput), 0);
-  assert.equal(JSON.parse(exactGrantOutput.out[0]!).summaries.length, 1);
-
   const none = captureOutput();
-  assert.equal(await resourceQueryCommand(client({ grants: "none" }) as never, DOMAIN, { json: false }, none), 0);
-  assert.deepEqual(none.out, ["No locally query-authorized token-commune pools matched."]);
+  assert.equal(await resourceQueryCommand(client({ resources: "none" }) as never, DOMAIN, { json: false }, none), 0);
+  assert.deepEqual(none.out, ["No core-authorized token-commune pools matched."]);
 });
 
 test("wrong-adapter same-provider draw cannot redirect the join", async () => {
   const output = captureOutput();
-  await resourceQueryCommand(client({ grants: "pool" }) as never, DOMAIN, { json: true }, output);
+  await resourceQueryCommand(client({ resources: "pool" }) as never, DOMAIN, { json: true }, output);
   const json = JSON.parse(output.out[0]!);
   assert.equal(json.summaries[0].draw.state, "unavailable");
   assert.notEqual(json.summaries[0].draw.limitFraction, "0.8");

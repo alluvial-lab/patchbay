@@ -140,3 +140,7 @@ Cross-model (gpt-5.6-sol vs zai/kimi host), four-pass convergence over the whole
 **Verification (green throughout):** `cargo test --workspace` 346; `pi-adapter` 25/25; `token-commune-adapter` 60/60; `web-cockpit` 117/117; `operator-domain` 9/9; `cli` 46/46; `check:vectors` 52 vectors / 15 promoted / 20 implementation checks / **37 mutation kills** / 103 proto refs; `check:models` (8 checked-model, 0 checked-normative, 60 stated-normative); `check:presentation` (5 registries, axe-core); `check:drift` clean.
 
 Advanced to `done`.
+
+## Phase 8 pass-2 remediation (2026-08-08)
+
+Receiver-confirmed blocker: pass 1 stopped subscribing by default but still always called `LoadSecuritySnapshot`, so the real core denied an exact-resource-only operator at the authority-domain security-inventory check before projection. That snapshot was used only for CLI-local grant gating. Pass 2 removes the duplicate CLI authority read and makes the real `LoadSnapshot(RESOURCE)` boundary apply the canonical per-resource `query` grant matcher, withholding unauthorized resources and their view metadata. `cli/tests/real-core-resource-projection.mjs` now boots/restarts the real Rust server with only an exact pool grant, confirms the security snapshot is denied, confirms `resource-query --json` succeeds, and confirms an ungranted draw resource is absent.

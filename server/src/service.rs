@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition,
@@ -714,7 +714,8 @@ where
             .catch_up(&self.storage, &authority_domain_id)
             .await
             .map_err(map_storage_error_to_status)?;
-        self.issuer_from_request(&request, authority_domain_id.clone())
+        let issuer = self
+            .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
 
         if view_kind == patchbay_contracts::patchbay::SnapshotViewKind::Session {
@@ -771,13 +772,51 @@ where
         // Resource checkpoints cannot share the current undiscriminated
         // session slot. Materialize directly from the replayable projection;
         // a historical bound repairs to the newer current authority.
-        let snapshot = self
+        let mut snapshot = self
             .state
             .materialize_resource_snapshot(
                 authority_domain_id.clone(),
                 crate::identity::now_timestamp()?,
             )
             .await;
+        let evaluated_at = self.clock.now();
+        let mut authorized_views = HashSet::new();
+        let mut authorized_resources = Vec::with_capacity(snapshot.resources.len());
+        for resource in std::mem::take(&mut snapshot.resources) {
+            let Some(identity) = resource.identity.clone() else {
+                continue;
+            };
+            let scope = TargetScope {
+                kind: TargetScopeKind::Resource as i32,
+                resource: Some(identity.clone()),
+                ..TargetScope::default()
+            };
+            if self
+                .state
+                .grant_check()
+                .check_at(
+                    &authority_domain_id,
+                    &issuer,
+                    patchbay_contracts::patchbay::OperationKind::Query,
+                    &scope,
+                    &evaluated_at,
+                )
+                .await
+                .is_ok()
+            {
+                let adapter_id = identity.adapter_id.map(|id| id.value).unwrap_or_default();
+                let resource_kind = identity.resource_kind.map(|kind| kind.value).unwrap_or_default();
+                authorized_views.insert((adapter_id, resource_kind));
+                authorized_resources.push(resource);
+            }
+        }
+        snapshot.resources = authorized_resources;
+        snapshot.view_revisions.retain(|view| {
+            authorized_views.contains(&(
+                view.adapter_id.as_ref().map(|id| id.value.clone()).unwrap_or_default(),
+                view.resource_kind.as_ref().map(|kind| kind.value.clone()).unwrap_or_default(),
+            ))
+        });
         let snapshot_lsn = snapshot
             .snapshot_lsn
             .ok_or_else(|| Status::internal("materialized resource snapshot has no LSN"))?;

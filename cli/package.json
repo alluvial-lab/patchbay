@@ -9,8 +9,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/main.js",
-    "test": "npm run build && node --test dist/tests/*.test.js",
-    "test:core-smoke": "npm run build && node tests/core-smoke.mjs"
+    "test": "npm run build && node --test dist/tests/*.test.js && npm run test:real-core-resource",
+    "test:core-smoke": "npm run build && node tests/core-smoke.mjs",
+    "test:real-core-resource": "cargo build --manifest-path ../Cargo.toml -p patchbay-core-server --bin patchbay-core-server && node tests/real-core-resource-projection.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1",

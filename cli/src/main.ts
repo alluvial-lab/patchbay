@@ -474,7 +474,7 @@ export function usage(): string {
     "  session-health [session-id] [--json]",
     "      Show authoritative connectivity × activity state.",
     "  resource-query [--adapter-id ID] [--provider PROVIDER] [--replay-events] [--json]",
-    "      Show locally query-authorized token-commune pool summaries from canonical snapshots.",
+    "      Show core-authorized token-commune pool summaries from canonical snapshots.",
     "      --replay-events additionally requires authority-domain query authority.",
     "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--replay-events] [--json]",
     "      Inspect one canonical resource wrapper and its shared safe summary.",

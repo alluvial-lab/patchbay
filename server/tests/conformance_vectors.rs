@@ -1148,6 +1148,29 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
             }.encode_to_vec(),
         },
     ).await.map_err(|error| error.to_string())?;
+    storage.append(
+        &authority_domain_id,
+        authority_events::grant(
+            authority_domain_id.clone(),
+            Grant {
+                grant_id: Some(GrantId { value: "resource-snapshot-exact-query".to_owned() }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+                subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::Resource as i32,
+                    resource: Some(identity.clone()),
+                    ..TargetScope::default()
+                }),
+                allowed_operation_kinds: vec![OperationKind::Query as i32],
+                provenance: Some(GrantProvenance {
+                    reason: "resource snapshot conformance fixture".to_owned(),
+                    ..GrantProvenance::default()
+                }),
+                revocation_policy: GrantRevocationPolicy::Continue as i32,
+                ..Grant::default()
+            },
+        ),
+    ).await.map_err(|error| error.to_string())?;
     let service = ControlServiceImpl::new(storage.clone(), authority_domain_id.clone()).await?;
     let login = service.verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
         operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),

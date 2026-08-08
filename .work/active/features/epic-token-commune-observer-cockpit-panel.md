@@ -106,8 +106,8 @@ Adversarially reviewed (cross-model) + visually self-verified via headless rende
 - **No fabricated stale threshold:** display native reading age from `observedAt`; call it stale only when its canonical wrapper is stale/unreconciled. The source declares no minutes-based telemetry SLA.
 - **Draw ambiguity fails closed:** exactly one same-provider report yields `limitFraction`, `consumedUnits`, and reset. Zero is unavailable; multiple reports are ambiguous. Never average, sum, or silently select.
 - **Fail-closed verdict companions:** the selected outcomes remain `runnable`, `pool-exhausted`, `telemetry-stale`, and `auth-broken`. `model-unavailable` and `unknown` cover evidence that cannot honestly fit those four; neither is mislabeled healthy, exhausted, or stale.
-- **Local grant gating is deny-by-default defense-in-depth:** a row needs a visible live `query` grant whose strict scope contains the pool; member draw is withheld independently unless its resource is covered. Core subscription/snapshot authorization remains authoritative. No trustworthy upstream member/admin role is projected, so this observer infers no admin mode and exposes no admin controls.
-- **CLI reads canonical snapshots:** add `resource-query` and `resource-inspect` over `LoadSnapshot(RESOURCE)` plus the security snapshot for local gating. Human output is text tables; JSON exposes safe summaries, never raw envelopes, member names, contribution keys/ids, or credentials.
+- **Cockpit-local grant gating is deny-by-default defense-in-depth:** a row needs a visible live `query` grant whose strict scope contains the pool; member draw is withheld independently unless its resource is covered. Core subscription/snapshot authorization remains authoritative. No trustworthy upstream member/admin role is projected, so this observer infers no admin mode and exposes no admin controls.
+- **CLI reads the core-authorized canonical snapshot:** `resource-query` and `resource-inspect` consume `LoadSnapshot(RESOURCE)` without loading the authority-domain security inventory. The core filters the snapshot per resource using the verified issuer's live `query` grants, so an exact-resource grant is sufficient and unauthorized siblings never reach the CLI. Human output is text tables; JSON exposes safe summaries, never raw envelopes, member names, contribution keys/ids, or credentials.
 - **Dispatch rationale:** direct-read only. The surface is bounded to the landed resource projection, token-commune contracts, shell, and CLI snapshot precedent. This worker exposes no independent subagent/peer mechanism; Part IV advisory review is recorded as degraded and non-blocking, not mislabeled independent.
 
 ## Architectural choice
@@ -295,17 +295,17 @@ export function renderTokenCommunePanel(document: Document, options: TokenCommun
 export interface ResourceQueryOptions { adapterId?: string; provider?: string; json: boolean }
 export interface ResourceInspectOptions { identity: string; json: boolean }
 export async function resourceQueryCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot">,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe">,
   authorityDomainId: string, options: ResourceQueryOptions, output: CliOutput,
 ): Promise<number>;
 export async function resourceInspectCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot">,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe">,
   authorityDomainId: string, options: ResourceInspectOptions, output: CliOutput,
 ): Promise<number>;
 export function parseCanonicalResourceIdentity(value: string): SurfaceResourceIdentity;
 ```
 
-**Notes and acceptance:** `resource-query [--adapter-id ID] [--provider PROVIDER] [--json]` validates resource/security snapshot framing, locally grant-filters, and prints `PROVIDER`, `DRAW`, `CREDENTIALS`, `5H CAPACITY`, `VERDICT`, `FRESHNESS`, `MODELS`. Empty authorized results succeed explicitly. `resource-inspect <adapter=...;resource-kind=...;resource=...> [--json]` prints canonical identity/revision/completeness/times first, then identical signals/verdict and derivation note; it is not a contribution drill-down. Extract diagnostics' existing percent-encoded resource parser. JSON uses decimal strings/RFC3339/null and never raw bytes/subkeys/member identity. CLI and web call the shared compositor.
+**Notes and acceptance:** `resource-query [--adapter-id ID] [--provider PROVIDER] [--json]` validates core-authorized resource snapshot framing and prints `PROVIDER`, `DRAW`, `CREDENTIALS`, `5H CAPACITY`, `VERDICT`, `FRESHNESS`, `MODELS`. It does not require or load the authority-domain security snapshot; exact-resource `query` grants are sufficient because `LoadSnapshot(RESOURCE)` filters records server-side. Empty authorized results succeed explicitly. `resource-inspect <adapter=...;resource-kind=...;resource=...> [--json]` prints canonical identity/revision/completeness/times first, then identical signals/verdict and derivation note; it is not a contribution drill-down. Extract diagnostics' existing percent-encoded resource parser. JSON uses decimal strings/RFC3339/null and never raw bytes/subkeys/member identity. CLI and web call the shared compositor.
 
 ### Unit 7: Mutation-sensitive honesty evidence
 
@@ -382,7 +382,7 @@ Effective implementation review weight is **thorough** (explicit caller). Child 
 - **Execution capability:** one owning worker, `openai-codex/gpt-5.6-sol`, high reasoning, selected by the explicit autopilot delegation. No sub-worker, peer, or dynamic renderer was used. The cohesive owner kept the shared decoder/compositor, cockpit adapter, option-7 component, CLI adapter, and cross-surface evidence aligned through the seven declared dependency checkpoints.
 - Added the pure `@patchbay/operator-domain` package. It validates both exact manifest contracts, strips identity-bearing contribution detail from surface types, joins only exact `(adapterId, provider)`, preserves independent draw/credential/telemetry evidence, emits only the highest real anonymous 5h reading, and owns the freshness-first Patchbay verdict.
 - Extended the cockpit's existing resource decoder/fold path and Resources destination without adding transport or cache state. Visible live `query` grants gate pool and member draw independently; recognized token resources render once through the signed-off option-7 list, with stale/unknown/partial/auth-broken distinctions and every derivation owned in the footer.
-- Added CLI `resource-query`/`resource-inspect` over canonical resource and security snapshots, reusing the diagnostics identity grammar and shared compositor. Text and JSON remain safe projections with no raw envelope, member label, contribution identity, credentials, inferred role, or admin action.
+- Added CLI `resource-query`/`resource-inspect` over canonical resource snapshots, reusing the diagnostics identity grammar and shared compositor. Phase-8 pass-2 removed the security-snapshot dependency and made the real core filter resource snapshots by the verified issuer's per-resource `query` grants. Text and JSON remain safe projections with no raw envelope, member label, contribution identity, credentials, inferred role, or admin action.
 - **Implementation judgment:** the explicit implementation brief says the upstream-rejected bare `gpt-5.6` alias must never render. The decoder therefore rejects it and the panel independently withholds it; no local alias is synthesized. Exact admitted catalog ids and native availability remain unchanged, and nullable upstream-model provenance is never fabricated.
 - All seven child stories advanced directly to `done`. This feature advances only to `review` at the caller's explicit boundary; this worker did not self-review. Effective review weight remains **thorough** for the delegated reviewer under Part IV.
 
@@ -404,3 +404,7 @@ Cross-model (gpt-5.6-sol vs zai/kimi host), convergence.
 - **Pass 2 (APPROVE):** all five fixes verified correct + mutation-sensitive; no regression in the locked honesty model (no aggregate, verdict-owned, stale≠live, contributor redaction, `gpt-5.6` rejection, no dynamic adapter renderer, exact join, grant-gating); option-7 structural match enforced.
 
 Converged. Advanced to `done`.
+
+## Phase 8 pass-2 remediation (2026-08-08)
+
+The pass-1 exact-resource regression was fake-client-only and missed that `loadTokenCommuneProjection` still always loaded `LoadSecuritySnapshot`, whose real handler requires `query` at authority-domain scope. The security snapshot existed only to support CLI-local grant filtering; it was not projection data. The fix removes that duplicate CLI authority layer and relies on `LoadSnapshot(RESOURCE)` as the single server-side authority boundary. Investigation found the real resource snapshot path was not yet applying the intended filter, so the remediation also filters each materialized resource through the canonical grant checker and removes unauthorized view metadata before encoding. A real-process CLI regression now proves an exact pool-only grant succeeds while `LoadSecuritySnapshot` is denied and an ungranted draw resource stays absent.

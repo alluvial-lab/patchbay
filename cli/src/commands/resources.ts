@@ -27,7 +27,7 @@ export interface ResourceInspectOptions {
 }
 
 export async function resourceQueryCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe">,
   authorityDomainId: string,
   options: ResourceQueryOptions,
   output: CliOutput,
@@ -46,7 +46,7 @@ export async function resourceQueryCommand(
       derivation: derivationNote(),
     }));
   } else if (summaries.length === 0) {
-    output.stdout("No locally query-authorized token-commune pools matched.");
+    output.stdout("No core-authorized token-commune pools matched.");
   } else {
     printSummaryTable(summaries, loaded.recentEvents, output);
     output.stdout(derivationNote());
@@ -55,7 +55,7 @@ export async function resourceQueryCommand(
 }
 
 export async function resourceInspectCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "loadSecuritySnapshot" | "subscribe">,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe">,
   authorityDomainId: string,
   options: ResourceInspectOptions,
   output: CliOutput,
