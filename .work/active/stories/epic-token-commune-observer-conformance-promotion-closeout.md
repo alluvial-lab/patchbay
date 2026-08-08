@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance-promotion-closeout
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, verification]
 parent: epic-token-commune-observer-conformance
 depends_on: [epic-token-commune-observer-conformance-phase-2-failure-presentation-adversaries]
@@ -52,3 +52,14 @@ proposals; the receiver verifies and dispositions each one.
 
 Final checkpoint. Depends on all completeness, E2E, security, failure, and
 presentation evidence.
+
+## Implementation notes
+
+- Promoted the exact seven-vector profile together after all nine exact package scenarios and all 40 declared mutation witnesses executed. Generated conformance/model traceability now classifies the seven properties as stated-normative implementation evidence only.
+- Final shared corpus: 52 vectors total, 15 promoted (8 existing resource/shared + 7 token-commune), 20 promoted implementation checks total (11 existing + 9 token), 100 promoted proto references, and 40 token-commune mutation kills.
+- Fail-closed guard checks transiently removed the profile vector, renamed its property and scenario, and removed a mutation declaration. Every variant failed before runner execution and left `docs/VERIFICATION.md` byte-identical.
+- Four explicit self-mutation checks flipped independent expected outcomes for PARTIAL completeness, current-generation acceptance, gateway-key absence, and stale presentation. Each vector/property check failed, traceability remained byte-identical, and the original artifact was restored.
+- Integrated verification: `check:vectors`, `check:drift`, `check:presentation`, and `check:models` passed; `cargo test --workspace` passed 345 listed Rust tests including doctests; clippy passed with warnings denied; token-commune adapter passed 60/60; operator-domain passed 9/9; web cockpit passed 114/114; `git diff --check` passed.
+- Real-core result: local HTTP gateway → 0600 key loader → adapter → Rust core/SQLite → PARTIAL snapshot → overlap repair → missed poll → disconnect/stale → generation-2 reconnect/latest-50 gap/listed recovery → stale-generation/cross-owner rejection → redaction scans and real cockpit projection all passed.
+- Assurance remains bounded: promoted vector + implementation-checked, not model-checked, checked-normative, cross-adapter portability proof, or release-verified.
+- Review boundary: effective weight is `thorough` from the explicit caller. Per caller instruction this implementation worker stops after the feature advances to `review`; the separate deep-lane reviewer owns completeness→adversarial convergence.

@@ -1,7 +1,7 @@
 {
   "vector_id": "token-commune-cockpit-presentation-honesty",
   "property_id": "TokenCommuneCockpitPresentationHonesty",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "token-commune-adapter", "case": "cockpit_projection_fixture" },
     { "runner": "web-cockpit", "case": "token_commune_cockpit_presentation" }

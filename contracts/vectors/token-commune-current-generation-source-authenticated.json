@@ -1,7 +1,7 @@
 {
   "vector_id": "token-commune-current-generation-source-authenticated",
   "property_id": "TokenCommuneCurrentGenerationSourceAuthenticated",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "rust-server", "case": "token_commune_current_generation_source_binding" },
     { "runner": "token-commune-adapter", "case": "current_generation_source_oracle" }

@@ -52,6 +52,7 @@ The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft 
 - Adapter failure visibility: failure-vocabulary distinguishability refinements.
 - Reply and response-Operation correlation: `TypedCorrelation`, duplicate-reply idempotency/rejection, and reference-resolution edge cases remain stated-normative until correlation acceptance is checked against independent attempted evidence.
 - Operational-resource adapter boundaries: `ResourceObservationSourceAuthenticated`, `ResourceSnapshotCompletenessHonesty`, `ResourceStaleNeverLive`, `ResourceIdentityCollisionFenced`, and `ResourceCoreStateInjectionRejected` are stated-normative implementation-evidence properties. They are not model-checked or checked-normative; promoted executable examples and mutation-sensitive implementation oracles are tracked separately from formal promotion.
+- token-commune observer evidence: `TokenCommunePartialSnapshotHonesty`, `TokenCommuneBoundedReconnectHonesty`, `TokenCommuneDegradationHonesty`, `TokenCommuneCurrentGenerationSourceAuthenticated`, `TokenCommuneGatewayMemberKeyRedacted`, `TokenCommuneAdapterFailureSafe`, and `TokenCommuneCockpitPresentationHonesty` are adapter-specific stated-normative implementation-evidence properties. Their promoted examples and mutation-sensitive package/E2E oracles are not formal, checked-normative, cross-adapter portability, or release-verification evidence.
 
 ## v1 release assurance policy
 
@@ -343,6 +344,28 @@ resource examples do not make them checked-normative. None of the five new
 resource properties has a promoted formal model. Accordingly this evidence is
 not described as checked-normative, model-checked, or release-verified.
 
+### token-commune observer conformance evidence (implementation-checked)
+
+The token-commune profile promotes seven executable examples. Its runners execute
+nine exact scenario checks and kill 40 declared mutation witnesses before the
+shared checker may update traceability. The profile is exact and fail-closed:
+vector/property/scenario/mutation ids, reported execution, killed mutations,
+proto references, expected outcomes, and generated evidence must all agree.
+
+| Property id | Executable vector | Product seam and independent oracle | Representative killed mutations | Assurance tier |
+|---|---|---|---|---|
+| `TokenCommunePartialSnapshotHonesty` | `token-commune-partial-snapshot-honesty` | real projector over raw endpoint availability; literal two-view/PARTIAL/listed-only/no-aggregate oracle | PARTIAL→authoritative, dropped view, prior-slice reuse, missing→zero, aggregate synthesis | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneBoundedReconnectHonesty` | `token-commune-bounded-reconnect-honesty` | real latest-50 tracker/poller; independent set/sequence and report-order model | initial replay, pre-ack dedup, hidden no-anchor gap, fabricated missed count, event-before-report | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneDegradationHonesty` | `token-commune-degradation-honesty` | real failed poll plus real-core disconnect/reconnect snapshots; independent confidence truth table | skipped empty report, prior endpoint carry, current-on-disconnect, polling liveness, omitted promotion | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneCurrentGenerationSourceAuthenticated` | `token-commune-current-generation-source-authenticated` | real `AdapterControlService` attachment/token/generation/ownership ingress; attempted-pre-state tuple oracle | generation bypass, prior token, payload source trust, local-id-only ownership | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneGatewayMemberKeyRedacted` | `token-commune-gateway-key-redaction` | real 0600 credential + HTTP client + reports/Observations/diagnostics/query/snapshot/subscription/SQLite scans; independent multi-encoding byte oracle | payload, local diagnostic, forwarded error, audit, snapshot, subscription, and SQLite leaks | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneAdapterFailureSafe` | `token-commune-unsupported-operation-terminalization` | real adapter process and real-core same-process/replacement recovery; literal durable lifecycle oracle | lost pending terminalization, filtered delivered work, later-work advance, completed/wrong failure, duplicate transition | promoted vector + implementation-checked; not model-checked |
+| `TokenCommuneCockpitPresentationHonesty` | `token-commune-cockpit-presentation-honesty` | exact adapter projection fixture through local decoder/compositor/option-7 panel; literal summary/DOM oracle | stale-as-live, disappearing unknown, provider-only join, `gpt-5.6`, private fields, adapter verdict, dynamic renderer/HTML | promoted vector + implementation-checked; not model-checked |
+
+This evidence proves the current read-only observer examples only. It does not
+prove the sibling cross-adapter ontology/portability claim, a formal invariant,
+or release verification.
+
 ### Audit integrity
 
 Properties:
@@ -447,7 +470,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 8 properties with promoted vector coverage.
+Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 15 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -511,13 +534,13 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 | `SubscriptionGrantChecked` | draft | stated-normative | specs/seed/subscription_authority.qnt | apalache | — | <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property> | subscription establishment succeeds only with a live subscribe-kind Grant record whose subject matches the submitting actor and stream/filter scope |
 | `TerminalFinality` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache-temporal | — | echo y \| quint verify command_lifecycle.qnt --temporal terminal_finality --max-steps 10 | once a command reaches a terminal CommandState, later events do not mutate it |
 | `TimeoutNeitherSuccessNorDenial` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneAdapterFailureSafe` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneBoundedReconnectHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneCockpitPresentationHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneCurrentGenerationSourceAuthenticated` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneDegradationHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommuneGatewayMemberKeyRedacted` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `TokenCommunePartialSnapshotHonesty` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `TokenCommuneAdapterFailureSafe` | reserved-unmodeled | stated-normative | — | — | token-commune-unsupported-operation-terminalization | — | — |
+| `TokenCommuneBoundedReconnectHonesty` | reserved-unmodeled | stated-normative | — | — | token-commune-bounded-reconnect-honesty | — | — |
+| `TokenCommuneCockpitPresentationHonesty` | reserved-unmodeled | stated-normative | — | — | token-commune-cockpit-presentation-honesty | — | — |
+| `TokenCommuneCurrentGenerationSourceAuthenticated` | reserved-unmodeled | stated-normative | — | — | token-commune-current-generation-source-authenticated | — | — |
+| `TokenCommuneDegradationHonesty` | reserved-unmodeled | stated-normative | — | — | token-commune-degradation-honesty | — | — |
+| `TokenCommuneGatewayMemberKeyRedacted` | reserved-unmodeled | stated-normative | — | — | token-commune-gateway-key-redaction | — | — |
+| `TokenCommunePartialSnapshotHonesty` | reserved-unmodeled | stated-normative | — | — | token-commune-partial-snapshot-honesty | — | — |
 | `TypedCorrelation` | draft | stated-normative | specs/seed/reply_correlation.qnt | apalache | — | <TBD — demoted; formula inspects state recorded by the accepting action, not independent attempted evidence; not a mutation-survivable oracle; v1 formal gate owns the real property> | replies use typed same-context references to known prior commands/messages, response Operations use typed same authority/session/responder-context references to known prior Elicitations, and neither can masquerade across CommandId/MessageId/ReplyId/EventId/ElicitationId spaces |
 
 <!-- END GENERATED MODEL-PROMOTION TRACEABILITY -->
@@ -529,7 +552,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 52 vector(s), 8 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 52 vector(s), 15 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -593,13 +616,13 @@ Summary: 52 vector(s), 8 promoted vector(s), 0 checked-normative properties requ
 | `SubscriptionGrantChecked` | stated-normative | [subscription-grant-checked](../contracts/vectors/subscription-grant-checked.json) (draft) | patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_ESTABLISHED<br>patchbay.AuditRecord.grant_id<br>patchbay.OperationKind.OPERATION_KIND_QUERY<br>patchbay.SubscribeRequest.authority_domain_id<br>patchbay.TargetScopeKind.TARGET_SCOPE_KIND_AUTHORITY_DOMAIN |
 | `TerminalFinality` | checked-model | [terminal-expiration-before-completion](../contracts/vectors/terminal-expiration-before-completion.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.lsn<br>patchbay.Operation.validity_window<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.operation_state |
 | `TimeoutNeitherSuccessNorDenial` | stated-normative | — | — |
-| `TokenCommuneAdapterFailureSafe` | stated-normative | [token-commune-unsupported-operation-terminalization](../contracts/vectors/token-commune-unsupported-operation-terminalization.json) (draft) | patchbay.CommandTransition.failure_code<br>patchbay.CommandTransition.to_state<br>patchbay.FailureCode.FAILURE_CODE_UNSUPPORTED_COMMAND<br>patchbay.OperationState.OPERATION_STATE_DELIVERED<br>patchbay.OperationState.OPERATION_STATE_FAILED |
-| `TokenCommuneBoundedReconnectHonesty` | stated-normative | [token-commune-bounded-reconnect-honesty](../contracts/vectors/token-commune-bounded-reconnect-honesty.json) (draft) | patchbay.Observation.kind<br>patchbay.Observation.payload<br>patchbay.Observation.target_scope<br>patchbay.ResourceReport.snapshot |
-| `TokenCommuneCockpitPresentationHonesty` | stated-normative | [token-commune-cockpit-presentation-honesty](../contracts/vectors/token-commune-cockpit-presentation-honesty.json) (draft) | patchbay.Resource.freshness<br>patchbay.Resource.projection_payload<br>patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_STALE<br>patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_UNKNOWN<br>patchbay.ResourceViewRevision.completeness |
-| `TokenCommuneCurrentGenerationSourceAuthenticated` | stated-normative | [token-commune-current-generation-source-authenticated](../contracts/vectors/token-commune-current-generation-source-authenticated.json) (draft) | patchbay.AdapterRegistration.adapter_generation<br>patchbay.Observation.sender<br>patchbay.Observation.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.ResourceReport.adapter_generation |
-| `TokenCommuneDegradationHonesty` | stated-normative | [token-commune-degradation-honesty](../contracts/vectors/token-commune-degradation-honesty.json) (draft) | patchbay.Resource.freshness<br>patchbay.Resource.resource_payload<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceViewReport.completeness |
-| `TokenCommuneGatewayMemberKeyRedacted` | stated-normative | [token-commune-gateway-key-redaction](../contracts/vectors/token-commune-gateway-key-redaction.json) (draft) | patchbay.AdapterDiagnosticPayload.code<br>patchbay.AuditRecord<br>patchbay.Observation.payload<br>patchbay.PayloadEnvelope.payload<br>patchbay.Resource.projection_payload<br>patchbay.Resource.resource_payload<br>patchbay.ResourceSnapshot.resources |
-| `TokenCommunePartialSnapshotHonesty` | stated-normative | [token-commune-partial-snapshot-honesty](../contracts/vectors/token-commune-partial-snapshot-honesty.json) (draft) | patchbay.AdapterSnapshotSupport.ADAPTER_SNAPSHOT_SUPPORT_PARTIAL<br>patchbay.ResourceReport.snapshot<br>patchbay.ResourceViewReport.completeness<br>patchbay.ResourceViewReport.mutations |
+| `TokenCommuneAdapterFailureSafe` | stated-normative | [token-commune-unsupported-operation-terminalization](../contracts/vectors/token-commune-unsupported-operation-terminalization.json) (promoted) | patchbay.CommandTransition.failure_code<br>patchbay.CommandTransition.to_state<br>patchbay.FailureCode.FAILURE_CODE_UNSUPPORTED_COMMAND<br>patchbay.OperationState.OPERATION_STATE_DELIVERED<br>patchbay.OperationState.OPERATION_STATE_FAILED |
+| `TokenCommuneBoundedReconnectHonesty` | stated-normative | [token-commune-bounded-reconnect-honesty](../contracts/vectors/token-commune-bounded-reconnect-honesty.json) (promoted) | patchbay.Observation.kind<br>patchbay.Observation.payload<br>patchbay.Observation.target_scope<br>patchbay.ResourceReport.snapshot |
+| `TokenCommuneCockpitPresentationHonesty` | stated-normative | [token-commune-cockpit-presentation-honesty](../contracts/vectors/token-commune-cockpit-presentation-honesty.json) (promoted) | patchbay.Resource.freshness<br>patchbay.Resource.projection_payload<br>patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_STALE<br>patchbay.ResourceFreshnessState.RESOURCE_FRESHNESS_STATE_UNKNOWN<br>patchbay.ResourceViewRevision.completeness |
+| `TokenCommuneCurrentGenerationSourceAuthenticated` | stated-normative | [token-commune-current-generation-source-authenticated](../contracts/vectors/token-commune-current-generation-source-authenticated.json) (promoted) | patchbay.AdapterRegistration.adapter_generation<br>patchbay.Observation.sender<br>patchbay.Observation.target_scope<br>patchbay.ResourceIdentity.adapter_id<br>patchbay.ResourceIdentity.resource_id<br>patchbay.ResourceIdentity.resource_kind<br>patchbay.ResourceReport.adapter_generation |
+| `TokenCommuneDegradationHonesty` | stated-normative | [token-commune-degradation-honesty](../contracts/vectors/token-commune-degradation-honesty.json) (promoted) | patchbay.Resource.freshness<br>patchbay.Resource.resource_payload<br>patchbay.ResourceFreshnessState<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceViewReport.completeness |
+| `TokenCommuneGatewayMemberKeyRedacted` | stated-normative | [token-commune-gateway-key-redaction](../contracts/vectors/token-commune-gateway-key-redaction.json) (promoted) | patchbay.AdapterDiagnosticPayload.code<br>patchbay.AuditRecord<br>patchbay.Observation.payload<br>patchbay.PayloadEnvelope.payload<br>patchbay.Resource.projection_payload<br>patchbay.Resource.resource_payload<br>patchbay.ResourceSnapshot.resources |
+| `TokenCommunePartialSnapshotHonesty` | stated-normative | [token-commune-partial-snapshot-honesty](../contracts/vectors/token-commune-partial-snapshot-honesty.json) (promoted) | patchbay.AdapterSnapshotSupport.ADAPTER_SNAPSHOT_SUPPORT_PARTIAL<br>patchbay.ResourceReport.snapshot<br>patchbay.ResourceViewReport.completeness<br>patchbay.ResourceViewReport.mutations |
 | `TypedCorrelation` | stated-normative | [reply-correlation](../contracts/vectors/reply-correlation.json) (draft) | patchbay.Observation.correlations<br>patchbay.Observation.reply_id<br>patchbay.ReplyId.value<br>patchbay.TypedCorrelation.command_id<br>patchbay.TypedCorrelation.message_id |
 | `boundary-validation` | descriptive boundary validation (draft-only) | [approval-response-invalid-reserved-decision](../contracts/vectors/approval-response-invalid-reserved-decision.json) (draft)<br>[approval-response-invalid-unspecified-decision](../contracts/vectors/approval-response-invalid-unspecified-decision.json) (draft)<br>[approval-response-invalid-wrong-content-type](../contracts/vectors/approval-response-invalid-wrong-content-type.json) (draft)<br>[audit-redaction-boundary](../contracts/vectors/audit-redaction-boundary.json) (draft)<br>[elicitation-response-invalid-both-primary-answers](../contracts/vectors/elicitation-response-invalid-both-primary-answers.json) (draft)<br>[elicitation-response-invalid-free-text-disallowed](../contracts/vectors/elicitation-response-invalid-free-text-disallowed.json) (draft)<br>[elicitation-response-invalid-mismatched-option](../contracts/vectors/elicitation-response-invalid-mismatched-option.json) (draft)<br>[elicitation-response-invalid-terminal-elicitation](../contracts/vectors/elicitation-response-invalid-terminal-elicitation.json) (draft)<br>[failure-missing-target](../contracts/vectors/failure-missing-target.json) (draft)<br>[failure-unknown-operation-kind](../contracts/vectors/failure-unknown-operation-kind.json) (draft) | AdapterCapabilitySummary.attachment_method_kind<br>AdapterDiagnosticPayload.adapter_generation<br>AdapterDiagnosticPayload.code<br>AdapterDiagnosticPayload.count<br>AdapterDiagnosticPayload.operation_kind<br>AdapterDiagnosticReport.payload<br>AuditRecord.operator_session_hash<br>AuditRecord.source_network<br>CommandSummary<br>patchbay.ApprovalDecision<br>patchbay.ApprovalResponsePayload.decision<br>patchbay.ElicitationResponsePayload.clarification<br>patchbay.ElicitationResponsePayload.free_text<br>patchbay.ElicitationResponsePayload.selected_option_id<br>patchbay.Operation.kind<br>patchbay.Operation.payload<br>patchbay.Operation.target_scope<br>patchbay.PayloadEnvelope.content_type<br>patchbay.QuestionContract.allow_free_text<br>patchbay.QuestionContract.options<br>patchbay.ResponseContract.question<br>patchbay.ResponseOption.option_id<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome<br>patchbay.TargetScope.kind<br>patchbay.TargetScope.runtime_session_id<br>patchbay.TargetScope.session_generation |
 

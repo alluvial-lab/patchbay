@@ -1,7 +1,7 @@
 {
   "vector_id": "token-commune-gateway-key-redaction",
   "property_id": "TokenCommuneGatewayMemberKeyRedacted",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "token-commune-adapter", "case": "gateway_key_redaction" }
   ],

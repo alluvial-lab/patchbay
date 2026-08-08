@@ -1,7 +1,7 @@
 {
   "vector_id": "token-commune-partial-snapshot-honesty",
   "property_id": "TokenCommunePartialSnapshotHonesty",
-  "promotion_status": "draft",
+  "promotion_status": "promoted",
   "implementation_checks": [
     { "runner": "token-commune-adapter", "case": "partial_snapshot_honesty" }
   ],
