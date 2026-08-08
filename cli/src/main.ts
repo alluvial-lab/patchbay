@@ -26,6 +26,7 @@ import { lockdownEnterCommand, lockdownExitCommand } from "./commands/lockdown.j
 import { logoutCommand } from "./commands/logout.js";
 import { sessionHealthCommand } from "./commands/session-health.js";
 import { setupCommand } from "./commands/setup.js";
+import { resourceInspectCommand, resourceQueryCommand } from "./commands/resources.js";
 
 export interface CliOutput {
   stdout(line: string): void;
@@ -51,6 +52,8 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   login: { flags: [], values: ["operator-id", "endpoint-id", "device-id"] },
   logout: { flags: [], values: [] },
   "session-health": { flags: ["json"], values: [] },
+  "resource-query": { flags: ["json"], values: ["adapter-id", "provider"] },
+  "resource-inspect": { flags: ["json"], values: [] },
   instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
@@ -70,6 +73,8 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
 };
 const VALUE_OPTIONS = new Set([
   "operator-id",
+  "adapter-id",
+  "provider",
   "endpoint-id",
   "device-id",
   "idempotency-key",
@@ -182,6 +187,24 @@ export async function run(
           makeControlClient(config.coreAddr, config.coreSecret, store),
           config.authorityDomainId,
           { sessionId: parsed.positionals[0], json },
+          output,
+        );
+
+      case "resource-query":
+        requirePositionals(command, parsed.positionals, 0, 0);
+        return await resourceQueryCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          config.authorityDomainId,
+          { adapterId: parsed.options.get("adapter-id"), provider: parsed.options.get("provider"), json },
+          output,
+        );
+
+      case "resource-inspect":
+        requirePositionals(command, parsed.positionals, 1, 1);
+        return await resourceInspectCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          config.authorityDomainId,
+          { identity: parsed.positionals[0]!, json },
           output,
         );
 
@@ -445,6 +468,10 @@ export function usage(): string {
     "      Revoke the current core-issued operator session and remove local credentials.",
     "  session-health [session-id] [--json]",
     "      Show authoritative connectivity × activity state.",
+    "  resource-query [--adapter-id ID] [--provider PROVIDER] [--json]",
+    "      Show locally query-authorized token-commune pool summaries from canonical snapshots.",
+    "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--json]",
+    "      Inspect one canonical resource wrapper and its shared safe summary.",
     "  instruct <target> <prompt|-> [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",

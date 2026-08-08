@@ -226,7 +226,7 @@ export function parseAuditTarget(raw: string | undefined, authorityDomainId: str
   }
 }
 
-function parseCanonicalResourceTarget(raw: string): TargetScope {
+export function parseCanonicalResourceTarget(raw: string): TargetScope {
   const values = new Map<string, string>();
   for (const part of raw.split(";")) {
     const separator = part.indexOf("=");

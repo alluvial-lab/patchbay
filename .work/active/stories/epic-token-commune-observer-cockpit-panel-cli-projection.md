@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel-cli-projection
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: [epic-token-commune-observer-cockpit-panel-verdict-synthesis]
 release_binding: null
 gate_origin: null
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # CLI resource query and inspect projections
@@ -39,3 +39,10 @@ Add `resource-query` and `resource-inspect` over canonical resource/security sna
 ## Ordering
 
 Depends on verdict synthesis and may proceed beside cockpit integration under the same feature owner. Final honesty evidence depends on this checkpoint and the panel component.
+
+## Implementation notes
+
+- Added `resource-query` and `resource-inspect` over validated RESOURCE plus security snapshots. Both locally grant-filter exact pool/draw resources and invoke the shared `@patchbay/operator-domain` decoder/compositor; no persistence, raw envelopes, member labels, contribution keys, or credential material is exposed.
+- Human output uses the required provider/draw/credentials/5h/verdict/freshness/models table. Inspect prints canonical identity/revision/completeness/freshness/time first; JSON uses decimal strings, RFC 3339/null, safe summaries, and the visible Patchbay derivation rule.
+- Exported and reused diagnostics' strict percent-encoded canonical resource parser instead of introducing a second grammar. Empty authorized query results are explicit successful output.
+- Verification: full `cli` build/test passed 42/42, including snapshot framing, exact grant filtering, wrong-adapter join isolation, safe text/JSON, inspect ordering, and malformed identity rejection.
