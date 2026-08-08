@@ -449,6 +449,129 @@ body > [data-patchbay-cockpit] {
 .cockpit .resource-health--danger { color: var(--color-danger); }
 .cockpit .resource-health--unknown { color: var(--color-text-tertiary); }
 
+/* Signed-off token-commune option-7: a calm per-provider list above the
+   generic resource plane. Domain signals remain subordinate to canonical
+   grant/freshness state supplied by resource-view.ts. */
+.cockpit .resources-view--token-commune {
+  display: block;
+  overflow-y: auto;
+}
+.cockpit .token-commune-panel {
+  display: grid;
+  width: min(1040px, calc(100% - var(--space-12)));
+  gap: var(--space-6);
+  margin: 0 auto;
+  padding: var(--space-8) 0 var(--space-12);
+}
+.cockpit .token-commune-panel__head h1 {
+  margin: var(--space-1) 0 0;
+  font: var(--font-weight-semibold) var(--font-size-xl)/1 var(--font-sans);
+}
+.cockpit .token-commune-panel__eyebrow {
+  font: var(--font-size-xs)/1 var(--font-mono);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.cockpit .token-commune-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+  font: var(--font-size-sm)/1.5 var(--font-mono);
+  color: var(--color-text-secondary);
+}
+.cockpit .token-commune-summary__dot { color: var(--color-text-tertiary); }
+.cockpit .token-commune-pools { display: grid; gap: var(--space-3); }
+.cockpit .token-commune-pool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 148px 184px 136px;
+  column-gap: var(--space-5);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-4) var(--space-6);
+  text-align: left;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  cursor: pointer;
+}
+.cockpit .token-commune-pool:hover { border-color: var(--color-border-strong); }
+.cockpit .token-commune-pool:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.cockpit .token-commune-pool--selected { box-shadow: inset 3px 0 0 var(--color-accent); }
+.cockpit .token-commune-pool--stale {
+  color: var(--color-text-secondary);
+  background: var(--color-stale-surface);
+}
+.cockpit .token-commune-pool__left { display: grid; min-width: 0; gap: 3px; }
+.cockpit .token-commune-pool__name {
+  font: var(--font-weight-semibold) var(--font-size-base)/1.2 var(--font-mono);
+}
+.cockpit .token-commune-pool__models {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--font-size-xs)/1.4 var(--font-mono);
+  color: var(--color-text-secondary);
+}
+.cockpit .token-commune-pool__models--unavailable,
+.cockpit .token-commune-pool__model--unavailable { color: var(--color-danger); }
+.cockpit .token-commune-signal {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.cockpit .token-commune-signal__value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+}
+.cockpit .token-commune-draw .token-commune-signal__value { font-size: var(--font-size-lg); }
+.cockpit .token-commune-signal__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  color: var(--color-text-secondary);
+}
+.cockpit .token-commune-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  font: var(--font-weight-semibold) var(--font-size-xs)/1 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.cockpit .token-commune-verdict::before {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  content: "";
+  background: currentcolor;
+  border-radius: var(--radius-full);
+}
+.cockpit .token-commune-verdict--run { color: var(--color-success); }
+.cockpit .token-commune-verdict--warn { color: var(--color-warning); }
+.cockpit .token-commune-verdict--stop { color: var(--color-danger); }
+.cockpit .token-commune-verdict--unknown { color: var(--color-text-tertiary); }
+.cockpit .token-commune-honesty {
+  display: grid;
+  gap: var(--space-2);
+  font: var(--font-size-xs)/1.5 var(--font-mono);
+  color: var(--color-text-secondary);
+}
+.cockpit .token-commune-honesty p { margin: 0; }
+.cockpit .generic-resource-plane {
+  display: grid;
+  grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
+  min-height: 560px;
+  border-top: 1px solid var(--color-border);
+}
+
 .cockpit .runtime-resource-link {
   display: flex;
   align-items: center;
@@ -593,6 +716,10 @@ body > [data-patchbay-cockpit] {
   .cockpit .lockdown-banner { margin: 0; border-radius: 0; }
   .cockpit .security-view { padding: var(--space-4); padding-bottom: 96px; }
   .cockpit .resources-view { display: block; min-height: 100dvh; padding-bottom: 84px; }
+  .cockpit .token-commune-panel { width: calc(100% - var(--space-6)); padding: var(--space-6) 0 var(--space-8); }
+  .cockpit .token-commune-pool { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+  .cockpit .token-commune-signal { text-align: left; }
+  .cockpit .generic-resource-plane { display: block; }
   .cockpit .resource-list,
   .cockpit .resource-detail { width: 100%; min-height: 100dvh; border-right: 0; }
   .cockpit .resource-detail__back { display: inline-flex; }
