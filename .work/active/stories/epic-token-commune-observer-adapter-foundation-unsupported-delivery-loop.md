@@ -67,12 +67,11 @@ vectors.
   already-accepted durable adapter Operation using the same fixture technique
   as the Pi adapter's stale-delivery test; it does not fabricate a resource
   report before snapshot mapping exists.
-- Implementation discovery: current core ingestion maps every adapter RESULT
-  carrying a failure code to `CommandState.FAILED`; consequently the real-core
-  terminal is `FAILED` with canonical `UNSUPPORTED_COMMAND`, not `REJECTED`.
-  Changing that core-wide lifecycle mapping is outside this sibling-package
-  feature. The adapter still performs the requested acknowledge-then-fail
-  unsupported behavior, and the discrepancy is explicit for feature review.
+- Historical implementation discovery (superseded by aggregate-review
+  remediation): core ingestion originally terminalized this path as
+  `FAILED + UNSUPPORTED_COMMAND`. The current real-core outcome is
+  `REJECTED + UNSUPPORTED_COMMAND`, matching the canonical delivery-refusal
+  semantics.
 - Verification: integrated `npm test` passed, including acknowledge-before-
   unsupported ordering, finite-tail retry, abort/dispose behavior, exact real
   manifest assertions, core terminal failure code, and secret scans.

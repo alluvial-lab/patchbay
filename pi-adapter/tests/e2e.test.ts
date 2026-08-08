@@ -339,6 +339,73 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     ) as { value?: { generation?: number } };
     assert.equal(queryValue.value?.generation, 2);
 
+    const malformedPayloadCases = [
+      {
+        slug: "query-json",
+        kind: OperationKind.QUERY,
+        payload: "{",
+      },
+      {
+        slug: "reconfigure-shape",
+        kind: OperationKind.RECONFIGURE,
+        payload: "[]",
+      },
+      {
+        slug: "session-management-action",
+        kind: OperationKind.SESSION_MANAGEMENT,
+        payload: "{}",
+      },
+    ] as const;
+    for (const malformed of malformedPayloadCases) {
+      const malformedCommandId = `command-malformed-${malformed.slug}`;
+      const malformedSubmission = await control.submit(
+        create(SubmitRequestSchema, {
+          operation: operation(
+            malformedCommandId,
+            malformed.kind,
+            malformed.payload,
+            2,
+          ),
+        }),
+      );
+      await waitForCommandFailure(
+        control,
+        malformedCommandId,
+        FailureCode.EXECUTION_FAILED,
+      );
+      const malformedEvents = await readAfter(
+        control,
+        malformedSubmission.acceptedLsn?.value ?? 0n,
+      );
+      assert.deepEqual(
+        commandStates(malformedEvents, malformedCommandId),
+        [OperationState.DELIVERED, OperationState.RUNNING, OperationState.FAILED],
+        `${malformed.slug} terminalizes through the execution-failure path`,
+      );
+
+      const validCommandId = `command-after-malformed-${malformed.slug}`;
+      const validSubmission = await control.submit(
+        create(SubmitRequestSchema, {
+          operation: operation(
+            validCommandId,
+            OperationKind.QUERY,
+            JSON.stringify({ action: "state" }),
+            2,
+          ),
+        }),
+      );
+      await waitForCommandState(control, validCommandId, OperationState.COMPLETED);
+      const validEvents = await readAfter(
+        control,
+        validSubmission.acceptedLsn?.value ?? 0n,
+      );
+      assert.deepEqual(
+        commandStates(validEvents, validCommandId),
+        [OperationState.DELIVERED, OperationState.RUNNING, OperationState.COMPLETED],
+        `adapter continues after ${malformed.slug}`,
+      );
+    }
+
     const cancelFixture = sessionFixture.faux;
     cancelFixture.appendResponses([
       async () => {

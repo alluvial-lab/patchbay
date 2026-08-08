@@ -619,7 +619,7 @@ and closes diagnostics.
 - [ ] An idle `ReceiveDeliveries` remains open until abort; finite completion is
       retried rather than treated as healthy liveness.
 - [ ] An unexpected committed Operation transitions through acknowledgement to
-      `FAILED + UNSUPPORTED_COMMAND` exactly once and advances the local cursor
+      `REJECTED + UNSUPPORTED_COMMAND` exactly once and advances the local cursor
       only after acknowledgement succeeds.
 - [ ] Stream replacement/unauthenticated reconnect does not re-acknowledge
       already acknowledged delivery history.
@@ -857,12 +857,11 @@ is needed here.
   adapter target. The real-core test therefore seeds one durable accepted
   adapter Operation, following the existing Pi stale-delivery fixture pattern,
   rather than fabricating an out-of-scope resource report.
-- The current core maps every adapter RESULT with a failure code to
-  `CommandState.FAILED`. The delivered unsupported Operation therefore becomes
-  `FAILED` with canonical `UNSUPPORTED_COMMAND`, not `REJECTED`. The adapter
-  implements the caller-requested acknowledge-and-fail stub; changing the
-  core-wide lifecycle mapping was intentionally kept outside this sibling-
-  package feature and is called out for thorough review.
+- Historical implementation discovery (superseded by aggregate-review
+  remediation): core ingestion originally mapped the delivered unsupported
+  Operation to `FAILED + UNSUPPORTED_COMMAND`. It now uses
+  `REJECTED + UNSUPPORTED_COMMAND`, matching the canonical delivery-refusal
+  semantics.
 
 ### Verification
 

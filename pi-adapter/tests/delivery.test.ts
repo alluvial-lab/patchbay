@@ -56,6 +56,36 @@ test("DeliveryTranslator maps instruct/cancel/session-new and rejects spawn", as
   );
 });
 
+test("DeliveryTranslator preflight defers malformed payload errors to execution", async () => {
+  const translator = new DeliveryTranslator();
+  const session = {} as PiSession;
+  const malformed = [
+    ["query malformed JSON", operation(OperationKind.QUERY, "{")],
+    ["reconfigure non-object JSON", operation(OperationKind.RECONFIGURE, "[]")],
+    [
+      "session-management missing action",
+      operation(OperationKind.SESSION_MANAGEMENT, "{}"),
+    ],
+  ] as const;
+
+  for (const [description, candidate] of malformed) {
+    assert.doesNotThrow(
+      () => translator.validate(candidate),
+      `${description} must not escape unsupported preflight`,
+    );
+    await assert.rejects(
+      translator.deliver(candidate, session),
+      (error: unknown) => error instanceof Error && !(error instanceof UnsupportedCommandError),
+      `${description} must remain an execution failure`,
+    );
+  }
+  assert.throws(
+    () => translator.validate(operation(OperationKind.SPAWN)),
+    UnsupportedCommandError,
+    "semantic unsupported decisions still reject before running",
+  );
+});
+
 test("DeliveryTranslator resolves committed approval decisions and rejects reserved/question responses", async () => {
   const resolutions: boolean[] = [];
   const session = {
