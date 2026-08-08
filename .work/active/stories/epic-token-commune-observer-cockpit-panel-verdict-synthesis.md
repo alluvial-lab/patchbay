@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel-verdict-synthesis
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: [epic-token-commune-observer-cockpit-panel-pool-compositor]
 release_binding: null
 gate_origin: null
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # Patchbay-owned verdict synthesis
@@ -34,3 +34,9 @@ Implement the feature's exact, pure verdict precedence over canonical pool fresh
 ## Ordering
 
 Depends on the signal compositor. Web and CLI integrations consume this completed synthesis contract.
+
+## Implementation notes
+
+- Implemented the Patchbay-owned precedence exactly: stale wrapper → unknown required evidence → auth broken → model unavailable → pool exhausted → runnable → unknown.
+- Runnable requires fresh credential evidence, at least one exact available catalog model, and a real sub-100% 5h contribution reading. Draw is absent from the synthesis input. Exhaustion evaluates every anonymous contribution fact, so one 100% maximum cannot exhaust a mixed usable pool.
+- Verification: `cd operator-domain && npm test` — 7/7 tests passed; representative health-first/stale, maximum-only exhaustion, and unknown-evidence mutants are killed by independent expected-result oracles.
