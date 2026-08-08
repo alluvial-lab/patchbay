@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer
 kind: epic
-stage: review
+stage: done
 tags: [adapter, protocol, ux, integration]
 parent: null
 depends_on: [epic-agent-operations-resource-plane]
@@ -125,3 +125,18 @@ The token-commune pool/resource panel is the epic's one net-new screen surface, 
 - **Committed post-v0.1.0 direction:** token-commune as the second reference adapter; outboard metadata-only integration; personal per-operator deployments; a rich resource panel.
 - **Reserved seams:** upstream push/webhook delivery, third-party packaging of the adapter, cross-deployment shared presence, and generic dynamic adapter UI modules.
 - **Explicitly rejected for this epic:** Patchbay in token-commune's LLM data path, copying gateway policy into Patchbay, shared filesystem imports from token-commune internals, or presenting quota health as runtime-session liveness.
+
+## Epic aggregate review (thorough, 2026-08-07)
+
+Cross-model (gpt-5.6-sol vs zai/kimi host), four-pass convergence over the whole arc (all 5 child features each already reviewed+done).
+
+- **Pass 1 (REQUEST CHANGES, 3 blockers + 1 important + 1 nit):** (1) `unsupported_command` terminalized as `FAILED`, **contradicting `docs/PROTOCOL.md`** (which mandates `rejected` after acceptance — verified at PROTOCOL.md:181/374/124/150); the foundation review's earlier "FAILED is honest" disposition was wrong (it treated current core behavior as canonical, not the protocol doc). (2) Operator surfaces DROPPED promised capabilities — `totalDeclaredShare` + fingerprint validated-then-discarded by the decoder; draw `consumedUnits`/reset, contribution count/share unrendered; resource-scoped pool/gap Observations discarded by the cockpit fold (only Pi transcript schema accepted). (3) Source-time honesty lost — reading age hidden when wrapper current; missing/null readings labeled telemetry "current". Important: cross-provider model rendered under the wrong pool. All fixed at `227d1f9`: narrow adapter-neutral core mapping for `unsupported_command`→`REJECTED` (canonical `FailureCode::UnsupportedCommand`, no token-commune vocabulary in core) + Pi aligned (preflight before RUNNING, E2E REJECTED) + vector updated to REJECTED+UNSUPPORTED_COMMAND; capabilities carried through operator-domain + bounded grant-gated resource-event projection (≤100 events, identity-free) + web/CLI render; source-time honesty (always show reading age, missing→unavailable, separate freshness fields); cross-provider model omitted+unknown.
+- **Pass 2 (REQUEST CHANGES, 1 blocker):** the Pi unsupported-preflight regression — `validate()` parsed adapter-specific JSON after acknowledgement, so a malformed payload threw a generic error → stranded the command (DELIVERED, no terminal) + killed the adapter. Fixed at `09c3d9d`: preflight only lets `UnsupportedCommandError` escape; malformed payloads route RUNNING→FAILED/EXECUTION_FAILED without stranding/crashing; unit + real-core E2E (malformed QUERY/RECONFIGURE/SESSION_MANAGEMENT each followed by a valid command).
+- **Pass 3 (REQUEST CHANGES, 1 blocker):** the mandatory `check:vectors` gate was nondeterministic — the conformance E2E's second SQLite writer raced the live core (`database is locked`), and the vector runner invoked all 60 adapter tests instead of isolating conformance. A flaky mandatory gate is a verification-soundness defect. Fixed at `826b55c`: test writer sets `PRAGMA busy_timeout=5000`; isolated `test:conformance` runner (only `conformance-vectors.test.js`); check:vectors ×3 + adapter ×3 stable, zero locks.
+- **Pass 4 (APPROVE):** determinism confirmed (check:vectors run 3× during review, stable); no regression in any honesty/protocol/scope invariant; capability completeness, contract coherence, honesty model, scope-boundary adherence, core-neutrality, foundation-doc alignment, and v1-adapter-proof/control-attention readiness all confirmed.
+
+**Convergence adjudication:** the pass-1 unsupported→REJECTED finding overrode the foundation review's earlier disposition — a canonical-protocol contradiction is exactly what the aggregate gate exists to catch. The Pi preflight + vector-gate findings are downstream regressions/verification-soundness from that fix, resolved in kind. No foundation-doc assertion was made false (PARTIAL/composite-IDs/contributor-attribution remain honest limitations + external prerequisites; the v1-horizon authoritative-tier wording in SPEC/ARCHITECTURE is intended future state).
+
+**Verification (green throughout):** `cargo test --workspace` 346; `pi-adapter` 25/25; `token-commune-adapter` 60/60; `web-cockpit` 117/117; `operator-domain` 9/9; `cli` 46/46; `check:vectors` 52 vectors / 15 promoted / 20 implementation checks / **37 mutation kills** / 103 proto refs; `check:models` (8 checked-model, 0 checked-normative, 60 stated-normative); `check:presentation` (5 registries, axe-core); `check:drift` clean.
+
+Advanced to `done`.
