@@ -220,8 +220,8 @@ async function executeRedaction(vector: ConformanceVector): Promise<void> {
     const requests: string[] = [];
     const client = createHttpTokenCommuneGatewayClient({
       baseUrl: new URL("https://commune.example/"), credential,
-      fetch: async (request) => {
-        const headers = new Headers(request instanceof Request ? request.headers : undefined);
+      fetch: async (request, init) => {
+        const headers = new Headers(request instanceof Request ? request.headers : init?.headers);
         requests.push(headers.get("authorization") ?? "");
         return Response.json({ member: secret, draw: [] });
       },

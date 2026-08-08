@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance-phase-2-security-adversaries
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, verification, security]
 parent: epic-token-commune-observer-conformance
 depends_on: [epic-token-commune-observer-conformance-real-core-e2e]
@@ -52,3 +52,12 @@ URL-encoded, base64-like, JSON, and durable-binary representations.
 
 Depends on the real-core E2E fixture. The failure/presentation adversaries run
 after this security boundary is green.
+
+## Implementation notes
+
+- Added the token current-generation scenario to the existing Rust server conformance runner. It uses real attachment-token issuance/replacement, current authenticated Observation ingress, exact resource ownership, and an explicit stale-generation ResourceReport through `AdapterControlService`.
+- The server evidence proves missing/stale token rejection, `FAILED_PRECONDITION` for generation 1 after generation 2, cross-owner denial, one exact current Observation append, and no Grant/Operation/ResourceState creation from payload-claimed authority.
+- The independent attempted-pre-state oracle compares authenticated adapter id, exact generation, token epoch, and target ownership. Four source mutants (generation bypass, prior token, payload trust, local-id-only ownership) are killed without reading accepted action-recorded identity.
+- The redaction runner uses the real `0600` credential loader, HTTP Authorization client, response-reflection rejection, local structural diagnostics, and all required sink names. Seven sink-specific leak mutants are rejected by the independent raw/UTF-8/bearer/URL/base64/JSON/hex byte oracle.
+- Clarified the canonical no-log list in `docs/SECURITY.md`: token-commune gateway member keys and bearer forms are access tokens and may not enter audit records.
+- Verification: focused Rust server conformance passed 1/1; adapter security scenarios reported two exact scenario ids and 11 exact killed mutation ids; the full real-core E2E independently scanned snapshots, subscriptions, diagnostic query output, local diagnostics, and SQLite bytes.

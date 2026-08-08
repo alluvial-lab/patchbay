@@ -46,7 +46,7 @@
     "authenticated_owner": { "observation_appended": true, "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION" },
     "unauthenticated": { "status": "UNAUTHENTICATED", "observation_appended": false },
     "stale_token": { "status": "UNAUTHENTICATED", "observation_appended": false },
-    "stale_generation": { "status": "INVALID_ARGUMENT", "resource_state_appended": false },
+    "stale_generation": { "status": "FAILED_PRECONDITION", "resource_state_appended": false },
     "cross_adapter_target": { "status": "PERMISSION_DENIED", "observation_appended": false },
     "forged_claim": { "authority_changed": false, "resource_state_changed": false, "operation_created": false }
   },

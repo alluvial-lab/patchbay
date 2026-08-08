@@ -1259,6 +1259,34 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     if stale.code() != Code::Unauthenticated || string(&vector.expected_outcome, "/stale_token/status")? != "UNAUTHENTICATED" {
         return Err("stale attachment token did not reject unauthenticated".to_owned());
     }
+    if vector.property_id == "TokenCommuneCurrentGenerationSourceAuthenticated" {
+        let stale_generation = service.ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
+                    adapter_id: Some(adapter_id.clone()),
+                    adapter_generation: Some(Generation { value: generation - 1 }),
+                    report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                        views: vec![ResourceViewReport {
+                            resource_kind: Some(kind.clone()),
+                            completeness: AdapterSnapshotSupport::Partial as i32,
+                            mutations: Vec::new(),
+                        }],
+                    })),
+                    observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+                })),
+            },
+            &adapter_id.value,
+            &current_token,
+        )?).await.expect_err("stale report generation must reject");
+        if stale_generation.code() != Code::FailedPrecondition
+            || string(&vector.expected_outcome, "/stale_generation/status")? != "FAILED_PRECONDITION"
+            || boolean(&vector.expected_outcome, "/stale_generation/resource_state_appended")?
+            || boolean(&vector.expected_outcome, "/stale_generation_appended")?
+        {
+            return Err("stale report generation was not fenced before resource append".to_owned());
+        }
+    }
     let cross = service.ingest_observation(authenticated(observation(vector, &domain, tuple(&vector.input, "/cross_adapter_target")?)?, &adapter_id.value, &current_token)?).await.expect_err("cross-adapter target must reject");
     if cross.code() != Code::PermissionDenied || string(&vector.expected_outcome, "/cross_adapter_target/status")? != "PERMISSION_DENIED" {
         return Err("cross-adapter resource Observation was not fenced".to_owned());
@@ -1293,7 +1321,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "operation_missing_grant" => server_operation_scenario(vector, false).await,
         "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
-        "resource_observation_source_binding" => source_binding(vector).await,
+        "resource_observation_source_binding" | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
     }
 }
