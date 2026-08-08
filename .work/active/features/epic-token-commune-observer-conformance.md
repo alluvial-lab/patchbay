@@ -1,7 +1,7 @@
 ---
 id: epic-token-commune-observer-conformance
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, verification]
 parent: epic-token-commune-observer
 depends_on:
@@ -634,3 +634,32 @@ clippy, and `git diff --check`.
   guarantees; they are reserved prerequisites rather than hidden requirements.
 - Rejected: metadata-only promotion, hard-coded unrelated runners, a token-only
   report, and cross-adapter proof claims.
+
+## Implementation notes
+
+- Ownership/topology: one cohesive owning worker (`openai-codex/gpt-5.6-sol`, high reasoning) implemented the six-story dependency chain sequentially with no sub-worker fan-out. Direct reading covered the shared checker, package runners, token adapter seams, real-core E2E utilities, operator compositor, panel, and foundation; splitting would have weakened the exact profile/projection/mutation truth boundary.
+- Review boundary: effective `review_weight = thorough`, explicit caller override. This worker implemented and verified only, then advanced the feature to `review`; the separate `[verification]` deep-lane reviewer owns two-phase completeness→adversarial convergence and no implementation pass is mislabeled review.
+- Promoted vectors:
+  - `token-commune-partial-snapshot-honesty`
+  - `token-commune-bounded-reconnect-honesty`
+  - `token-commune-degradation-honesty`
+  - `token-commune-current-generation-source-authenticated`
+  - `token-commune-gateway-key-redaction`
+  - `token-commune-unsupported-operation-terminalization`
+  - `token-commune-cockpit-presentation-honesty`
+- Harness/evidence: the one shared corpus now has 52 vectors / 15 promoted vectors. The exact token profile contributes seven promoted vectors, nine exact scenario checks, seven property-specific expected-outcome guards, and 40 mandatory mutation witnesses; the full promoted corpus executes 20 checks and resolves 100 proto references. Exact requested/executed and declared/killed sets, profile parity, proto refs, generated docs, and count assertions fail closed before traceability writes.
+- Independent oracles: literal two-view/PARTIAL and no-aggregate checks; set/sequence latest-50 model; degradation confidence truth table; attempted attachment-token/generation/ownership tuple; multi-encoding secret byte scan; durable lifecycle facts; and literal summary/DOM expectations. None imports the production helper it judges.
+- Real-core E2E: real local HTTP gateway and Authorization, real `0600` credential loader, actual adapter process, generated RPC clients, Rust core, and SQLite execute mixed PARTIAL report, event baseline/overlap, missed poll, abnormal stream loss/stale snapshot, generation-2 reconnect/50-window gap/listed recovery, stale-generation and cross-owner rejection, retryable and replacement-process unsupported terminalization, diagnostic query, full sink redaction, and cockpit-bound exact projection evidence.
+- Highest-stakes redaction result: the member-key sentinel and bearer/URL/base64/JSON/hex forms are absent from resource envelopes, Observations/subscriptions, local/forwarded diagnostics, diagnostic/audit query output, ResourceSnapshot bytes, and raw SQLite bytes. A successful upstream response that reflects credential material now fails closed as `invalid-response` before decode.
+- Mutation evidence: all 40 declared witnesses were exactly killed. Four explicit artifact flips (PARTIAL→authoritative, current-source acceptance false, secret absence false, stale-render-live true) each made its vector/property fail, changed no traceability bytes, and were reverted. Separate transient profile tests proved missing vector, property drift, scenario drift, and mutation-declaration drift fail with traceability byte-identical.
+- Final verification:
+  - `npm --prefix contracts/ts run check:vectors`: 52 vectors, 15 promoted, 20 implementation checks, 100 proto refs, 40 mutation kills — pass.
+  - `check:drift`, `check:presentation` (5 registries + axe), `check:models` (8 checked-model / 0 checked-normative / 60 stated-normative) — pass.
+  - `cargo test --workspace`: 345 listed tests including doctests — pass; `cargo clippy --workspace --all-targets -- -D warnings` — pass.
+  - `npm --prefix token-commune-adapter test`: 60/60 — pass; both real-core E2Es green.
+  - `npm --prefix operator-domain test`: 9/9 — pass.
+  - `npm --prefix web-cockpit test`: 114/114 — pass; real token panel vector included.
+  - `git diff --check` — pass.
+- Verification execution note: an initial parallel command batch created transient build-artifact contention (the web build observed operator-domain `dist/` while that package was rebuilding, and Cargo doctest linkage overlapped contract regeneration). The authoritative commands were rerun sequentially and passed; no test expectation or production behavior was weakened.
+- Story commits: `7029c6d`, `b9f1b08`, `d5c13e8`, `a313872`, `f037e21`, `8df3a72`. No unrelated changes or deferred production defects were folded into the feature.
+- Assurance classification: promoted vector + implementation-checked only. No formal/model-checked, checked-normative, cross-adapter portability, or release-verified claim is made.
