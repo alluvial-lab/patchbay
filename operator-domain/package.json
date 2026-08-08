@@ -1,0 +1,29 @@
+{
+  "name": "@patchbay/operator-domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/token-commune.js",
+  "types": "./dist/src/token-commune.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/token-commune.d.ts",
+      "import": "./dist/src/token-commune.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@patchbay/contracts": "file:../contracts/ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

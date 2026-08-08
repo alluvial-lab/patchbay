@@ -1,14 +1,14 @@
 ---
 id: epic-token-commune-observer-cockpit-panel-projection-decoder
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # Shared manifest-bound token-commune decoder
@@ -35,3 +35,10 @@ Create the bounded Patchbay-owned `@patchbay/operator-domain` package and its lo
 ## Ordering
 
 First checkpoint. The pool compositor depends on these stable decoded types.
+
+## Implementation notes
+
+- Added the pure `@patchbay/operator-domain` package and exact dual-descriptor decoder for the two manifest-bound token-commune kinds.
+- Boundary parsing validates closed object shapes, bounded strings, closed discriminants, safe counts, finite fractions, RFC 3339 timestamps, anonymous contribution telemetry, draw reports, catalog rows, and literal `capacityAggregation: "none"`; invalid results retain neither bytes nor decoded identity-bearing rows.
+- The upstream-rejected bare `gpt-5.6` alias fails closed per the explicit implementation brief rather than being rendered as a Patchbay alias.
+- Verification: `cd operator-domain && npm test` — 7/7 tests passed, including descriptor mismatch-before-parse and byte non-retention witnesses.
