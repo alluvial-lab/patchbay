@@ -747,6 +747,72 @@ function validateAssertedCount(markdown, { label, pattern, derived, source }) {
   return [];
 }
 
+function validateTokenCommuneMutationLedger(markdown, vectors) {
+  const errors = [];
+  const heading = '### token-commune observer conformance evidence (implementation-checked)';
+  const start = markdown.indexOf(heading);
+  const end = start === -1 ? -1 : markdown.indexOf('\n### ', start + heading.length);
+  if (start === -1 || end === -1) {
+    return [`${rel(verificationPath)}: token-commune mutation ledger section is missing or malformed`];
+  }
+
+  const section = markdown.slice(start, end);
+  const expectedHeader = '| Property id | Executable vector | Product seam and independent oracle | Declared killed mutation ids (validated from vectors) | Assurance tier |';
+  if (!section.includes(expectedHeader)) {
+    errors.push(`${rel(verificationPath)}: token-commune mutation ledger header is missing or malformed`);
+  }
+
+  const byProperty = new Map(vectors.map((vector) => [vector.property_id, vector]));
+  const rows = new Map();
+  for (const line of section.split('\n')) {
+    if (!line.startsWith('| `TokenCommune')) continue;
+    const columns = line.slice(2, -2).split(' | ');
+    const property = columns[0]?.match(/^`([^`]+)`$/)?.[1];
+    if (property === undefined || columns.length !== 5) {
+      errors.push(`${rel(verificationPath)}: malformed token-commune mutation ledger row: ${line}`);
+      continue;
+    }
+    if (rows.has(property)) {
+      errors.push(`${rel(verificationPath)}: duplicate token-commune mutation ledger row for ${property}`);
+      continue;
+    }
+    rows.set(property, columns);
+  }
+
+  const expectedProperties = new Set(TOKEN_COMMUNE_PROFILE.map((profile) => profile.property));
+  for (const property of rows.keys()) {
+    if (!expectedProperties.has(property)) {
+      errors.push(`${rel(verificationPath)}: token-commune mutation ledger declares unregistered property ${property}`);
+    }
+  }
+
+  for (const profile of TOKEN_COMMUNE_PROFILE) {
+    const vector = byProperty.get(profile.property);
+    const columns = rows.get(profile.property);
+    if (vector === undefined) {
+      errors.push(`token-commune mutation ledger: missing vector declaration for ${profile.property}`);
+      continue;
+    }
+    if (columns === undefined) {
+      errors.push(`${rel(verificationPath)}: token-commune mutation ledger is missing ${profile.property}`);
+      continue;
+    }
+
+    const documentedVector = columns[1]?.match(/^`([^`]+)`$/)?.[1];
+    if (documentedVector !== vector.vector_id) {
+      errors.push(`${rel(verificationPath)}: ${profile.property} ledger vector mismatch: expected ${vector.vector_id}, got ${String(documentedVector)}`);
+    }
+
+    const documentedMutations = [...columns[3].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    const declaredMutations = (vector.mutation_witnesses ?? []).map((witness) => witness.mutation_id);
+    if (JSON.stringify(documentedMutations) !== JSON.stringify(declaredMutations)) {
+      errors.push(`${rel(verificationPath)}: ${profile.property} mutation ledger mismatch: expected ${JSON.stringify(declaredMutations)} from ${vector.filename}, got ${JSON.stringify(documentedMutations)}`);
+    }
+  }
+
+  return errors;
+}
+
 function validateEvidenceCounts(markdown, vectors, implementationExecuted, mutationsKilled) {
   const tokenVectorIds = new Set(TOKEN_COMMUNE_PROFILE.map((profile) => profile.vector));
   const resourceVectors = vectors.filter((vector) => vector.promotion_status === 'promoted' && !tokenVectorIds.has(vector.vector_id));
@@ -1099,7 +1165,10 @@ async function main() {
   const propertyErrors = validatePropertyReferences(vectors);
   const { errors: protoErrors, checked: protoReferencesChecked } = validatePromotedProtoReferences(vectors, protoSchema);
   const verificationMarkdown = await readFile(verificationPath, 'utf8');
-  const registryErrors = validateVerificationPropertyRegistry(verificationMarkdown);
+  const registryErrors = [
+    ...validateVerificationPropertyRegistry(verificationMarkdown),
+    ...validateTokenCommuneMutationLedger(verificationMarkdown, vectors),
+  ];
   const coverageErrors = validatePromotedCoverage(vectors);
   const { errors: invariantErrors, checked: invariantChecked } = validatePromotedInvariantExpectations(vectors);
   const staticErrors = [...envelopeErrors, ...profileErrors, ...propertyErrors, ...protoErrors, ...registryErrors, ...coverageErrors, ...invariantErrors];

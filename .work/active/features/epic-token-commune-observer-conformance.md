@@ -684,3 +684,12 @@ clippy, and `git diff --check`.
 - Corrected mutation ledger: **40 claimed → 32 genuine oracle-execution kills** (27 load-confirmed TypeScript, 5 service-boundary/materialized-snapshot Rust). The change drops five residual TypeScript entries and four manufactured Rust entries, then adds the credential-path witness.
 - Self-verification: all 27 TypeScript mutants loaded before their oracle failed (representatives span projector, latest-50 tracker/poller, gateway/diagnostics, terminalization, operator-domain compositor, and DOM renderer); all 5 Rust mutants crossed the service boundary and changed a materialized snapshot (including both degradation patches); the credential-path-only mutant was killed.
 - Pass-2 verification: `check:vectors` executed 20 implementation checks and killed 32/32 witnesses; `check:models` reported 8 checked-model / 0 checked-normative / 60 stated-normative; `check:presentation` checked 5 registries with axe passing; `check:drift` was clean; `cargo test --workspace` passed 345 tests including zero-test crates/doctests; token adapter 60/60, web cockpit 114/114, and operator domain 9/9 passed.
+
+## Deep-lane pass-3 remediation (2026-08-08)
+
+- Kept `stage: review`; the reviewer/autopilot owns the transition.
+- Replaced the stale representative-mutation prose with all 32 exact surviving mutation ids, grouped by their seven authoritative vector declarations.
+- `check:vectors` now parses that ledger directly from `docs/VERIFICATION.md` and requires each property's vector id and ordered mutation-id list to equal its `contracts/vectors/*.json` declaration. Missing, extra, renamed, reordered, duplicate, or removed-witness prose fails before package runners execute.
+- Appended pass-2 correction notes to the three child completion records without rewriting their historical implementation notes.
+- Fail-closed proof: temporarily reintroduced removed id `carry-prior-endpoint-value` in the degradation row; `check:vectors` exited 1 with an exact vector-vs-ledger mismatch before running implementation checks, then the row was restored.
+- Pass-3 verification: `check:vectors` reported 52 vectors / 15 promoted / 20 implementation checks / 100 proto references / 32 killed mutations; `check:models` reported 8 checked-model / 0 checked-normative / 60 stated-normative; `check:presentation` checked 5 registries with axe passing; `check:drift` was clean; `cargo test --workspace` passed 345 tests; token adapter 60/60, web cockpit 114/114, and operator domain 9/9 passed.
