@@ -3,7 +3,7 @@ id: research-handoff-pi-adapter-capability
 kind: feature
 stage: drafting
 tags: [adapter, v1]
-parent: null
+parent: epic-public-product-contract
 depends_on: [research-handoff-spawn]
 release_binding: null
 gate_origin: null

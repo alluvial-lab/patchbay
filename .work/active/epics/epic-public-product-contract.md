@@ -52,6 +52,21 @@ The scope changes the project's stated audience and release horizon, defines pub
 - **`v1.0.0` — reliable self-hosted public product.** Additional operators can independently deploy and operate Patchbay through the supported reference path; the designated public contracts and canonical semantics carry SemVer compatibility.
 - **Post-v1 reserved capabilities.** Multi-human shared deployments, delegation workflows, federation, HA/multi-core coordination, replicated storage, zero-downtime upgrades, and broader surface/adapter ecosystems remain named seams promoted by demonstrated product pressure.
 
+## v1 scope (consolidated, 2026-08-08)
+
+Operator-confirmed consolidation of the v1.0.0 bar after the 2026-08-08 product brainstorm + the `v1-control-plane-and-spawn` research campaign. This is the working v1 picture (must / could / post-v1 — **no "should" tier**: everything is either in-v1, opportunistic, or later). It supersedes the earlier feature-scope sketch, which predated the resource-plane, token-commune-observer, and spawn research.
+
+**Definition of done** — the operator's real daily workflow (herdr + outpost_pi) runs on Patchbay, and the known collaborator (NKlisch) can deploy + operate it: spawn/restart agents from any surface (mobile included); durable control across devices/machines; the two reference adapters (Pi + token-commune) prove the boundary via executable conformance; one supported self-hosted reference path; the public contract + assurance gates green.
+
+**MUST (in v1):**
+- *Adapters:* `research-handoff-spawn` (logical-target + generation + restart-as-continuation; adapter-owned Project seam); `research-handoff-pi-adapter-capability` (cursor recovery, restart-as-upgrade-boundary, minimum manifest); `epic-token-commune-control-attention` (mutations/approval/re-onboard — lives in its own epic; v1 adapter-proof names "attention/control").
+- *Product shell:* `self-hosted-operations` (dogfood-first reference path: Docker primary + bare-metal fallback); `public-compatibility` (SemVer surface); `publication-governance` (SemVer + release process); `executable-release-assurance` (the formal-coverage gates + the campaign's ~25 conformance vectors); `adapter-portability-proof` (Pi + token-commune cross-adapter boundary proof; blocked on control-attention).
+- *Surface:* mobile-responsive web cockpit at switch-quality (the outpost_pi replacement; responsive-web-over-Tailscale validated by the Cline precedent; mobile = control/monitor/review).
+
+**COULD (opportunistic, only if it fits):** native mobile (Expo, or evolve outpost_pi's app — push/background/Tailscale split-tunnel beyond responsive-web); IDE extension (desktop control surface); extra mobile ergonomics (one-tap spawn/restart, theming, log export).
+
+**post-v1 (later — soft, not forbidden):** mesh / agent-send · Elicitations (operator prefers conversational `instruct` flows) · multi-human / federation / HA / split-brain / second storage backend · broader adapter ecosystem + plugin marketplace · OKF third adapter kind · core `ProjectRef` promotion (only if cross-adapter project routing is needed) · richer token-commune views (gated on the contributor-attribution external prerequisite, not Patchbay work).
+
 ## Work classification rule
 
 Every adversarial-review finding entering this epic must be classified into exactly one bucket before implementation:
@@ -120,6 +135,10 @@ The epic is split by capability rather than implementation layer. The already-au
 - `epic-public-product-contract-verification-claim-correction` — re-inventory and correct, demote, relocate, or remove verification artifacts whose claims exceed their evidence — depends on: `[]`
 - `epic-public-product-contract-executable-release-assurance` — run real checkers and implementation-backed evidence for public claims and the four formally gated kernels — depends on: `[epic-public-product-contract-public-compatibility, epic-public-product-contract-self-hosted-operations, epic-public-product-contract-adapter-portability-proof, epic-public-product-contract-verification-claim-correction]`
 - `epic-public-product-contract-publication-governance` — clear the public identity and legally formalize licensing, trademark, generated-output, dependency, and contribution policy — depends on: `[]`
+- `research-handoff-spawn` *(research-origin: v1-control-plane-and-spawn; added 2026-08-08)* — the v1-must spawn lifecycle (logical-target + generation + restart-as-continuation; adapter-owned Project seam) that enables the operator's workflow migration off herdr — depends on: `[]`
+- `research-handoff-pi-adapter-capability` *(research-origin: v1-control-plane-and-spawn; added 2026-08-08)* — Pi adapter cursor recovery, restart-as-upgrade-boundary, restart-as-continuation orchestration, minimum capability manifest — depends on: `[research-handoff-spawn]`
+
+*Cross-epic v1-must:* `epic-token-commune-control-attention` (mutations/approval/re-onboard) is a v1-must that lives in its own epic; `adapter-portability-proof` depends on it.
 
 ### Decomposition risks
 

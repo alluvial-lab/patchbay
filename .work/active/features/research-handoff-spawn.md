@@ -3,7 +3,7 @@ id: research-handoff-spawn
 kind: feature
 stage: drafting
 tags: [adapter, protocol, v1]
-parent: null
+parent: epic-public-product-contract
 depends_on: []
 release_binding: null
 gate_origin: null
