@@ -1,9 +1,9 @@
 ---
-id: backlog-research-conformance-vectors
-kind: feature
-stage: backlog
+id: conformance-vectors-executable-evidence
+kind: story
+stage: drafting
 tags: [verification, v1]
-parent: null
+parent: epic-public-product-contract-executable-release-assurance
 depends_on: []
 release_binding: null
 gate_origin: null
@@ -13,6 +13,8 @@ updated: 2026-08-08
 ---
 
 # Conformance vectors — non-orphaning acceptance + incarnation fence + spawn lifecycle
+
+Executable evidence child of `epic-public-product-contract-executable-release-assurance`.
 
 Promote the campaign's consolidated conformance vectors into executable evidence. These are the moat-validating + spawn-lifecycle vectors — the peer-derived failure shapes no fetched peer closes, plus the spawn lifecycle contract vectors. Feed `epic-public-product-contract-executable-release-assurance` and `epic-public-product-contract-adapter-portability-proof`.
 

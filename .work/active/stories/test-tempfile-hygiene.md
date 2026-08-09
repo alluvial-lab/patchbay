@@ -1,8 +1,14 @@
 ---
-id: backlog-test-tempfile-hygiene
-created: 2026-07-24
-tags: [testing, hygiene]
-research_origin: null
+id: test-tempfile-hygiene
+kind: story
+stage: implementing
+tags: [testing, ops]
+parent: null
+depends_on: []
+release_binding: null
+gate_origin: null
+created: 2026-08-08
+updated: 2026-08-08
 ---
 
 # Backlog: test-suite tempfile hygiene (201K leaked SQLite temp files filled /tmp)

@@ -1,9 +1,9 @@
 ---
-id: backlog-research-mc-architectural-harvest
+id: mc-architectural-harvest
 kind: story
-stage: backlog
+stage: drafting
 tags: [adapter, architecture]
-parent: null
+parent: research-handoff-pi-adapter-capability
 depends_on: []
 release_binding: null
 gate_origin: null
@@ -13,6 +13,8 @@ updated: 2026-08-08
 ---
 
 # Mission Control architectural harvest — adapter-manifest design directions
+
+Child of `research-handoff-pi-adapter-capability`; harvest design directions, not code.
 
 Harvest Mission Control's adapter-neutral structural ideas as **design direction** (MIT, but inspiration not code reuse) for Patchbay's adapter-manifest + control-plane design. MC lacks the durable-operation contract (it's task/run governance + approvals), but its shipped structure is worth borrowing.
 

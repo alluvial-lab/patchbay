@@ -1,17 +1,19 @@
 ---
-id: backlog-fleet-target-resolution
-kind: feature
-stage: backlog
-tags: [protocol, foundation]
-parent: null
+id: fleet-spawn-target-resolution
+kind: story
+stage: drafting
+tags: [adapter, protocol]
+parent: research-handoff-spawn
 depends_on: []
 release_binding: null
 gate_origin: null
-created: 2026-07-13
-updated: 2026-07-14
+created: 2026-08-08
+updated: 2026-08-08
 ---
 
-# Backlog: OperationKind-aware target resolution (fleet spawn path)
+# OperationKind-aware target resolution (fleet spawn path)
+
+Child of spawn — OperationKind-aware target resolution for the fleet spawn path.
 
 ## Source
 Authority design review (R5 decision, revision 2). The existing `SessionRegistry`-backed `TargetResolver` rejects fleet spawn targets.

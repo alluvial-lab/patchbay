@@ -1,7 +1,7 @@
 ---
-id: backlog-research-outpost-pi-pitfall-harvest
+id: outpost-pi-pitfall-harvest
 kind: feature
-stage: backlog
+stage: drafting
 tags: [research, foundation]
 parent: null
 depends_on: []
@@ -10,6 +10,8 @@ gate_origin: null
 created: 2026-08-08
 updated: 2026-08-08
 ---
+
+Sequencing directive: run this research engagement FIRST in a fresh session; thread its findings (via research-handoff) into the engineering clusters before draining them.
 
 # Harvest outpost_pi for pitfalls / seams / gaps
 
