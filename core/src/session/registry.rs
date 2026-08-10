@@ -132,6 +132,19 @@ impl SessionRegistry {
             kind,
             StoredEventKind::SessionState | StoredEventKind::SecurityLockdown
         ) {
+            // Sibling kinds remain projection no-ops, including when their
+            // framing is malformed. The one exception is an identity already
+            // retained as an applied owned event: changing that durable
+            // envelope's kind is conflicting redelivery, not a sibling event.
+            if event.event_id.authority_domain_id.as_ref() == Some(&self.authority_domain_id) {
+                if let Some(lsn) = event.event_id.lsn.as_ref() {
+                    if self.applied_events.contains_key(&lsn.value) {
+                        return self
+                            .classify_redelivery(lsn.value, &event.payload)
+                            .map(|_| ());
+                    }
+                }
+            }
             return Ok(());
         }
 

@@ -322,7 +322,7 @@ async fn folds_axis_changes_relabel_and_generation_bump() {
     let binding =
         TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &live_target)
             .await
-        .expect("an unspecified generation binds the live generation");
+            .expect("an unspecified generation binds the live generation");
     assert!(matches!(
         binding,
         patchbay_core::acceptance::TargetBinding::RuntimeSession {
@@ -534,9 +534,17 @@ fn conflicting_and_unseen_owned_events_reject_without_mutation() {
             payload: Vec::new(),
         },
     };
+    let changed_to_sibling = RecordedEvent {
+        event_id: registration_event.event_id.clone(),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: Vec::new(),
+        },
+    };
     for (name, candidate) in [
         ("changed bytes", changed_bytes),
         ("changed owned kind", changed_kind),
+        ("changed to sibling kind", changed_to_sibling),
     ] {
         let mut registry = applied.clone();
         let before = registry.clone();

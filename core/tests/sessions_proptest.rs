@@ -178,7 +178,7 @@ fn projection_by_oracle_key(
             adapter: record.identity.adapter_id.value.clone(),
             deployment_scope: record.identity.deployment_scope.clone(),
             runtime_session: record.identity.runtime_session_id.value.clone(),
-    };
+        };
         if records.insert(key.clone(), record.clone()).is_some() {
             return Err(format!(
                 "projection exposed duplicate independent key {key:?}"

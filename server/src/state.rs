@@ -103,8 +103,8 @@ impl ProjectionState {
             .map_err(|error| error.to_string())?;
 
         let mut authority = AuthorityRegistry::new();
-        let mut sessions = SessionRegistry::new(authority_domain_id.clone())
-            .map_err(|error| error.to_string())?;
+        let mut sessions =
+            SessionRegistry::new(authority_domain_id.clone()).map_err(|error| error.to_string())?;
         let mut resources = ResourceRegistry::new();
         let mut adapters = AdapterRegistry::new();
         let mut commands = CommandIndex::new();

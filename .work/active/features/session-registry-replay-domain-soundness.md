@@ -1,7 +1,7 @@
 ---
 id: session-registry-replay-domain-soundness
 kind: feature
-stage: implementing
+stage: review
 tags: [protocol, foundation]
 parent: null
 depends_on: []
@@ -322,3 +322,27 @@ Fallback if exact-payload retention proves materially too costly under measured 
 
 ## Status (wrapped 2026-08-10)
 Design is committed at `implementing`; implementation was not started before the operator wrap and resumes from the two declared child checkpoints after the current replay boundary.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, explicitly selected by the caller for protocol/security/durability contracts; one feature-owning direct-read implementation, no nested subagents or peer review.
+- Review weight: `thorough`, source: explicit caller selection. The feature intentionally stops at `stage: review` for the independent lane.
+- Implementation commits: `4d7b3f6` (`session-registry-replay-domain-soundness-bound-registry-contract` → `done`) and `161b233` (`session-registry-replay-domain-soundness-integration-evidence` → `review`).
+- Files changed: session registry/ingress/replay/resolution and error contracts; composite/diagnostics/server constructor migration; focused registry/ingest/replay/acceptance/property tests; constructor-neighbor resource/conformance/diagnostics tests. No schema, model, vector, foundation-doc, UI, storage-schema, or wire artifact changed.
+- Tests added/strengthened: exact `StoredEventPayload` ledger equality for session/security mutations; malformed/conflict exact non-mutation table; immediate append-then-fold evidence for every report outcome and partial failure; domain-aware lookup/stale/acceptance rejection with both possible logs inspected; real acceptance seam; 100-case multi-identity oracle and three explicit key-omission mutants; preserved `CoreDecisionGate` race regression.
+- Simplification: removed domainless session/target construction, the inherent resolver, content-blind registration/generation replay paths, record-LSN replay no-ops, pre-supersession LSN-only handling, and caller-managed single-delta/property warming. One `append_and_apply` path and one owned-event ledger now define the contract.
+- Discrepancies from design/current-HEAD reconciliation: `DiagnosticsProjection` acquired an embedded `SessionRegistry` on current HEAD, so its constructor/callers were also migrated to an explicit domain. The recently landed shared complete-prefix validator remains unchanged and is still the cold-read framing authority; exact redelivery is layered only inside `SessionRegistry::observe`.
+- Lifecycle deviation: the `[verification]` integration child remains at `stage: review` rather than fast-closing to `done`, exactly as the caller and `.work/CONVENTIONS.md` require; the driver owns its completeness → adversarial deep lane. The feature is therefore at `review`, not self-approved.
+- Adjacent issues parked: none.
+
+## Integrated verification evidence
+
+- Focused core: `sessions_registry` 15/15, `sessions_ingest` 17/17, `sessions_replay_resolver` 9/9, `sessions_proptest` 9/9 (100 cases), and `acceptance_pipeline` 25/25.
+- Production composition: `cargo test -p patchbay-core-server concurrent_conflicting_model_reports_leave_a_replayable_log` — pass; this is evidence for server `CoreDecisionGate` serialization only, not global safety across independently stale projections.
+- Constructor/integration neighbors: diagnostics projection, replay integrity, resource acceptance/resolution, and conformance-vector runner all pass.
+- `cargo check --workspace --all-targets` — pass.
+- `cargo test --workspace` — pass across the complete Rust workspace.
+- `cargo clippy --workspace --all-targets -- -D warnings` — pass.
+- `node contracts/scripts/check-models.mjs` — pass (53 modeled properties; traceability current).
+- `node contracts/scripts/check-vectors.mjs` — pass (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses).
+- `git diff --check` — pass. Changed blocks were format-reconciled without broad churn. The required `cargo fmt --all -- --check` was run and remains blocked by the known repository-wide rustfmt baseline (13,224 diff lines; first failure is unrelated `core/src/acceptance/elicitation.rs:8`), which the caller explicitly excluded from scope.
