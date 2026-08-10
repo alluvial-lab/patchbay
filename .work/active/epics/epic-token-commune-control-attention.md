@@ -8,7 +8,7 @@ depends_on: [epic-token-commune-observer]
 release_binding: null
 gate_origin: null
 created: 2026-07-26
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # token-commune control and attention plane
@@ -61,7 +61,17 @@ Mesh exchange with the token-commune agent resolved mutation-half ownership and 
 - **Compatibility posture.** token-commune's principle is "schema evolves in place, never versioned, no deprecation contract." Patchbay's v1 SemVer scopes to the Patchbay-side adapter boundary and explicitly disclaims upstream token-commune wire stability (see `epic-public-product-contract-public-compatibility`).
 - **Consumption posture on token-commune caveats.** Patchbay treats contribution removal as corrective administration, not a ban (a member may re-register while the approval gate is off); Patchbay's attention/projection must not present it as a durable exclusion. fingerprint-accept disposition (recovery primitive vs durable op) is token-commune's call; Patchbay consumes whichever shape lands and treats a retained recovery primitive as out-of-band, not a durable Operation.
 
-**Decomposition gate:** do not decompose this epic until (a) the co-design wire-shape exchange with token-commune's `admin-control-surface-foundation` confirms the operation state machine + idempotency model, and (b) the managed-operation-credential shape is settled — observer half now unblocked (`authorizationScopes` read scopes landed); managed-op half gated on token-commune's foundation landing the `managed-op` scope. The 2026-08-09 adversarial review's Patchbay-internal blockers (absent attention/Elicitation producer machinery; secret-exclusion enforceability; OperationKind/grant matrix) remain and proceed independently of this external gate. Trigger status (2026-08-09): scope-dimension name **received** (`authorizationScopes`); foundation wire-shape concrete **pending**.
+**Decomposition gate: LIFTED (2026-08-10).** Both external lift-conditions are satisfied — token-commune's `admin-control-surface-foundation` is now **implemented + reviewed** (concrete, not just designed) and the managed-operation credential has landed (`managed:operate` scope over `authorizationScopes`). The external mutation contract this epic needs is real and documented (token-commune `docs/EXTERNAL-CONSUMER-API.md` + `ARCHITECTURE.md` + `PRINCIPLES.md`). The epic may now be decomposed; design the adapter client + Operation/Elicitation projection against the concrete wire-shape below. The 2026-08-09 adversarial review's **Patchbay-internal** blockers (absent attention/Elicitation producer machinery; secret-exclusion enforceability; OperationKind/grant matrix) remain and are the actual design work — they proceed independently of the (now-satisfied) external gate.
+
+**Concrete upstream wire-shape (token-commune, implemented 2026-08-10 — design against this; unversioned, change-in-place, re-flagged on evolution):**
+- **Operation state machine:** `managed_operations` table; outcomes are deterministic terminal `applied` / `not_applied`. token-commune never emits `unknown` (that stays Patchbay's transport terminal, resolved by re-query).
+- **Idempotency:** issuer-scoped table mapping `(issuer, key)` → resolved outcome, with typed conflict detection (same key, changed command). Indefinite retention (recorded risk).
+- **Correlation + atomicity:** operation-id + idempotency-key (as agreed); structured operation-lifecycle events committed atomically with the mutation + operation record + idempotency record in one SQLite transaction.
+- **Re-query (resolves Patchbay's transport ambiguity):** `GET /commune/operations/:operationId` and `GET /commune/operations/by-idempotency-key` — managed-op-credential gated, read-only, durable across restart.
+- **Authorization:** managed-op credential = separately-revocable, admin-bound, default-deny, `managed:operate` scope over `authorizationScopes`; distinct from the read-only observer credential (our two-credential model); incapable of inference/contribution-registration.
+- **Mode + surfaces:** entire surface behind a `managed` deployment profile (default `friends-only` unchanged); in-process SQLite only (no queue/worker/background loop). The three mutation surfaces (contribution removal, decree override, approve/reject) are implemented on top of this framework.
+
+Trigger status (2026-08-10): scope-dimension name ✅ received; foundation wire-shape concrete ✅ received + implemented.
 
 **Upstream constraints (token-commune, 2026-08-09 — design inputs for feature-design):**
 - **Atomic in-process-SQLite managed mode.** Ops resolve synchronously in one SQLite transaction (op-state + event + local mutation committed atomically); no queue/worker/second service/background loop. Once token-commune returns `applied` it is durably committed (survives restart). *Patchbay implication:* the `unknown` window is purely transport (did the response return), always resolvable by re-query with the idempotency-key — no eventual-consistency lag, no background retry queue to race with. Re-query-after-transport-loss is always safe and deterministic.
