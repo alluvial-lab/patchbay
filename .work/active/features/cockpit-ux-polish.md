@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish
 kind: feature
-stage: review
+stage: done
 tags: [ux]
 parent: null
 depends_on: []
@@ -229,3 +229,15 @@ The parent feature remains the ownership and review bundle; child stories are ch
 - `git diff --check` — passed.
 
 **Notes**: review weight `thorough`, explicit pass 2; execution capability `openai-codex/gpt-5.6-sol` xhigh. Direct implementation only per caller prohibition on nested/peer work. No backend target terminalization, protocol/core/adapter cancellation expansion, backlog item, foundation change, or out-of-scope file was introduced.
+
+## Review closure — pass 3
+
+- Fresh-context adversarial pass 3 found no material current-cycle blockers.
+- Confirmed reusable-sheet inert/focus restoration, typed presentation-only
+  control-request chronology for both durable orders, single production main
+  landmark, whole-document axe states, and the narrowed tested layout contract.
+- Recurring finding: mobile modal/focus behavior required two correction passes;
+  pass 2 fixed the reusable Elicitation-sheet lifecycle and pass 3 was clean.
+- Lower-risk live-render focus preservation and inherited Elicitation modal
+  hardening are parked separately rather than prolonging this cycle.
+- Effective weight: `thorough` (explicit operator). Verdict: approved.
