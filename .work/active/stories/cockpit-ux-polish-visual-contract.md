@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish-visual-contract
 kind: story
-stage: implementing
+stage: done
 parent: cockpit-ux-polish
 depends_on: []
 release_binding: null
@@ -22,6 +22,16 @@ Define the selected mockup direction as the implementation checkpoint for the co
 
 ## Acceptance evidence
 
-- [ ] The implementation plan maps each visual region to existing or explicitly named classes and does not invent protocol states.
-- [ ] The presentation conformance check remains green; canonical state labels remain derived from the existing registries.
-- [ ] The selected mockup is linked from the parent feature and remains committed alongside implementation work.
+- [x] The implementation plan maps each visual region to existing or explicitly named classes and does not invent protocol states.
+- [x] The presentation conformance check remains green; canonical state labels remain derived from the existing registries.
+- [x] The selected mockup is linked from the parent feature and remains committed alongside implementation work.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-luna` high, direct source mapping only; this checkpoint is documentation/conformance-only and nested delegation is prohibited.
+- Review weight: thorough (caller override), feature review remains pending after integrated implementation.
+- Files changed: `.work/active/stories/cockpit-ux-polish-visual-contract.md`.
+- Tests added/removed: none; `node contracts/scripts/check-presentation.mjs` passed with axe-core.
+- Simplification: retained the existing shell, design-system tokens, and registry-derived primitives; no new protocol states or visual vocabulary were introduced.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Evidence: selected `.mockups/screens/cockpit-ux-polish/option-1.html` maps to existing `.cockpit`, `.sidebar`, `.session-row`, `.session-detail`, `.msg`, `.delivery-line`, `.composer`, and new settings/instruction-card seams to be implemented in the following checkpoints.
