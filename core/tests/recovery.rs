@@ -479,3 +479,68 @@ async fn incompatible_checkpoint_dimensions_fall_back_to_full_replay() {
         );
     }
 }
+
+fn snapshot_tail_fixture(events: Vec<RecordedEvent>) -> SnapshotFixtureStorage {
+    SnapshotFixtureStorage {
+        snapshot: StoredSnapshot {
+            event_id: EventId {
+                authority_domain_id: Some(test_domain()),
+                lsn: Some(Lsn { value: 5 }),
+            },
+            payload: vec![0xA5],
+        },
+        events,
+    }
+}
+
+fn recovery_event(lsn: u64, kind: StoredEventKind) -> RecordedEvent {
+    RecordedEvent {
+        event_id: EventId {
+            authority_domain_id: Some(test_domain()),
+            lsn: Some(Lsn { value: lsn }),
+        },
+        payload: StoredEventPayload {
+            kind: kind as i32,
+            payload: vec![lsn as u8],
+        },
+    }
+}
+
+#[tokio::test]
+async fn recovery_validates_complete_snapshot_tail_from_snapshot_cursor() {
+    let storage = snapshot_tail_fixture(vec![
+        recovery_event(6, StoredEventKind::Grant),
+        recovery_event(7, StoredEventKind::Observation),
+    ]);
+    let recovered = recover(&storage, &test_domain(), |snapshot| {
+        Some(snapshot.payload.clone())
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(recovered.start_lsn().unwrap(), 5);
+    assert_eq!(
+        recovered
+            .tail
+            .iter()
+            .map(|event| event.event_id.lsn.as_ref().unwrap().value)
+            .collect::<Vec<_>>(),
+        vec![6, 7]
+    );
+}
+
+#[tokio::test]
+async fn recovery_rejects_missing_snapshot_successor_and_unspecified_kind() {
+    for events in [
+        vec![recovery_event(7, StoredEventKind::Grant)],
+        vec![recovery_event(6, StoredEventKind::Unspecified)],
+    ] {
+        let error = recover(&snapshot_tail_fixture(events), &test_domain(), |snapshot| {
+            Some(snapshot.payload.clone())
+        })
+        .await
+        .expect_err("corrupt complete snapshot tail must fail closed");
+        assert!(matches!(error, StorageError::CorruptRecord(_)));
+        assert!(error.to_string().contains("corrupt replay"));
+    }
+}

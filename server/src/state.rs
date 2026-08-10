@@ -1305,4 +1305,253 @@ mod tests {
             None
         );
     }
+
+    #[derive(Clone, Default)]
+    struct ScriptedReplayStorage {
+        events: Arc<Mutex<Vec<RecordedEvent>>>,
+    }
+
+    impl ScriptedReplayStorage {
+        fn new(events: Vec<RecordedEvent>) -> Self {
+            Self {
+                events: Arc::new(Mutex::new(events)),
+            }
+        }
+
+        async fn replace(&self, events: Vec<RecordedEvent>) {
+            *self.events.lock().await = events;
+        }
+    }
+
+    impl Storage for ScriptedReplayStorage {
+        async fn append(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _payload: StoredEventPayload,
+        ) -> Result<EventId, StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn append_dedup(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _key: &patchbay_contracts::patchbay::IdempotencyKey,
+            _target: &patchbay_core::storage::TargetKey,
+            _payload: StoredEventPayload,
+        ) -> Result<patchbay_core::storage::DedupOutcome, StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn read_after(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            cursor: Lsn,
+        ) -> Result<Vec<RecordedEvent>, StorageError> {
+            Ok(self
+                .events
+                .lock()
+                .await
+                .iter()
+                .filter(|event| {
+                    event
+                        .event_id
+                        .lsn
+                        .as_ref()
+                        .is_none_or(|lsn| lsn.value > cursor.value)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn write_snapshot(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _snapshot_lsn: Lsn,
+            _snapshot_payload: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn load_latest_snapshot(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _at_or_before: Option<Lsn>,
+        ) -> Result<Option<patchbay_core::storage::StoredSnapshot>, StorageError> {
+            Ok(None)
+        }
+    }
+
+    impl CoreGenerationStore for ScriptedReplayStorage {
+        async fn load_or_create_core_generation(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _candidate: Generation,
+        ) -> Result<Generation, StorageError> {
+            Ok(Generation { value: 1 })
+        }
+    }
+
+    fn replay_event(
+        authority_domain_id: &AuthorityDomainId,
+        lsn: u64,
+        kind: StoredEventKind,
+        payload: Vec<u8>,
+    ) -> RecordedEvent {
+        RecordedEvent {
+            event_id: EventId {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                lsn: Some(Lsn { value: lsn }),
+            },
+            payload: StoredEventPayload {
+                kind: kind as i32,
+                payload,
+            },
+        }
+    }
+
+    fn harmless_observation(
+        authority_domain_id: &AuthorityDomainId,
+        lsn: u64,
+    ) -> RecordedEvent {
+        replay_event(
+            authority_domain_id,
+            lsn,
+            StoredEventKind::Observation,
+            patchbay_contracts::patchbay::Observation::default().encode_to_vec(),
+        )
+    }
+
+    fn valid_elicitation(
+        authority_domain_id: &AuthorityDomainId,
+        lsn: u64,
+    ) -> RecordedEvent {
+        replay_event(
+            authority_domain_id,
+            lsn,
+            StoredEventKind::Elicitation,
+            Elicitation {
+                elicitation_id: Some(ElicitationId {
+                    value: format!("elicitation-{lsn}"),
+                }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+                state: ElicitationState::Opened as i32,
+                ..Elicitation::default()
+            }
+            .encode_to_vec(),
+        )
+    }
+
+    #[tokio::test]
+    async fn replay_integrity_startup_rejects_gap_and_unspecified() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        for events in [
+            vec![harmless_observation(&authority_domain_id, 2)],
+            vec![replay_event(
+                &authority_domain_id,
+                1,
+                StoredEventKind::Unspecified,
+                Vec::new(),
+            )],
+        ] {
+            let error = ProjectionState::rebuild(
+                &ScriptedReplayStorage::new(events),
+                &authority_domain_id,
+            )
+            .await
+            .err()
+            .expect("corrupt aggregate replay must fail before construction");
+            assert!(error.contains("corrupt replay"));
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_integrity_catch_up_preserves_cursor_on_validation_or_fold_failure() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let first = harmless_observation(&authority_domain_id, 1);
+        let storage = ScriptedReplayStorage::new(vec![first.clone()]);
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+        assert_eq!(state.current_lsn().await, 1);
+
+        for corrupt in [
+            harmless_observation(&authority_domain_id, 3),
+            replay_event(
+                &authority_domain_id,
+                2,
+                StoredEventKind::Unspecified,
+                Vec::new(),
+            ),
+            replay_event(
+                &authority_domain_id,
+                2,
+                StoredEventKind::Elicitation,
+                vec![0xff],
+            ),
+        ] {
+            storage.replace(vec![first.clone(), corrupt]).await;
+            state
+                .catch_up(&storage, &authority_domain_id)
+                .await
+                .expect_err("corrupt catch-up must fail closed");
+            assert_eq!(state.current_lsn().await, 1);
+        }
+
+        // ResourceRegistry may already cover an exact failed-fold LSN through
+        // an earlier sibling projection. Retrying the corrected complete event
+        // remains safe under its existing covered-prefix semantics.
+        storage
+            .replace(vec![first, valid_elicitation(&authority_domain_id, 2)])
+            .await;
+        state.catch_up(&storage, &authority_domain_id).await.unwrap();
+        assert_eq!(state.current_lsn().await, 2);
+    }
+
+    #[tokio::test]
+    async fn replay_integrity_as_of_diagnostics_rejects_gap_and_unspecified() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let first = harmless_observation(&authority_domain_id, 1);
+        let storage = ScriptedReplayStorage::new(vec![first.clone()]);
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+
+        for corrupt in [
+            harmless_observation(&authority_domain_id, 3),
+            replay_event(
+                &authority_domain_id,
+                2,
+                StoredEventKind::Unspecified,
+                Vec::new(),
+            ),
+        ] {
+            storage.replace(vec![first.clone(), corrupt]).await;
+            let error = state
+                .diagnostics_at(&storage, &authority_domain_id, 3)
+                .await
+                .expect_err("as-of projection must reject corrupt complete prefix");
+            assert!(error.to_string().contains("corrupt replay"));
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_integrity_accepts_valid_contiguous_mixed_kind_prefix() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let storage = ScriptedReplayStorage::new(vec![
+            harmless_observation(&authority_domain_id, 1),
+            valid_elicitation(&authority_domain_id, 2),
+        ]);
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .expect("known sibling kinds in a complete prefix remain valid");
+        assert_eq!(state.current_lsn().await, 2);
+    }
 }
