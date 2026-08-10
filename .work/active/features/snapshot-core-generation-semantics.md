@@ -1,7 +1,7 @@
 ---
 id: snapshot-core-generation-semantics
 kind: feature
-stage: implementing
+stage: review
 tags: [foundation, protocol]
 parent: null
 depends_on: []
@@ -248,3 +248,14 @@ node contracts/scripts/check-vectors.mjs
 - **Parked:** formal promotion of `SnapshotCrossDomainRejected` and process-incarnation fencing; neither is required to implement the current single-writer epoch honestly.
 - **Rejected:** restart counters with compatibility windows and a second process-generation field now, for the reasons in Architectural choice.
 - **Skipped/degraded:** the delegated endpoint explicitly prohibits nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking under policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection), and the 2026-08-09 review-vetted scope body remains the design input.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (explicit caller selection for the contract-bearing durable recovery epoch).
+- Review weight: `thorough` (explicit operator selection); implementation stops at `stage: review` for the required fresh review.
+- Files changed: `core/src/storage/{port,mod,rusqlite,audited}.rs`; `server/src/{identity,state,snapshot,lib,service,admin_service}.rs`; `core/tests/{rusqlite_storage,audit_records}.rs`; `server/tests/{grpc_smoke,conformance_vectors}.rs`; `contracts/vectors/snapshot-reconciliation.json`; `specs/seed/snapshot_recovery.qnt`; `docs/{PROTOCOL,GLOSSARY,VERIFICATION,ARCHITECTURE}.md`; this feature and its three children.
+- Tests added/strengthened: atomic first-writer-wins/domain/range/reopen/migration coverage; exact checkpoint-anchor unit tests; shared snapshot-carriage coverage; file-backed compatible-restart/stale/mismatch repair RPC evidence; deterministic session/resource conformance-vector generation assertions.
+- Simplification: one narrow metadata port, one persisted equality fence, and one reusable session-checkpoint decoder replace unset fields and scattered identity checks. No process counter, predecessor window, dual reader, new wire field, second ordering source, or generic checkpoint framework was added.
+- Discrepancies from design: storage/migration tests and the real restart/mismatch test landed with the checkpoints they verify rather than waiting for the final evidence commit. The server's rejection type implements `Error` directly because the server crate has no `thiserror` dependency. `cargo fmt --all -- --check` remains red on pre-existing workspace-wide rustfmt drift beginning in untouched `core/src/acceptance/elicitation.rs`; the new `server/src/snapshot.rs` passes standalone rustfmt checking, and unrelated formatting was preserved.
+- Adjacent issues parked: none.
+- Integrated verification: `scripts/test-rust` passed the full Rust workspace; `cargo clippy --workspace --all-targets -- -D warnings` passed; the requested targeted core/server tests passed; `PATH="$HOME/.npm-global/bin:$PATH" quint compile specs/seed/snapshot_recovery.qnt` passed; `node contracts/scripts/check-models.mjs` and `node contracts/scripts/check-vectors.mjs` passed with 20 implementation checks and 37 mutation witnesses. The first raw full-test attempt raced clippy and exhausted temporary disk; the repository's scoped `scripts/test-rust` rerun passed, confirming an environmental rather than product failure.
