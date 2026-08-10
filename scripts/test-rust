@@ -14,11 +14,57 @@ esac
 
 rm -rf -- "$test_tmp"
 mkdir -p -- "$test_tmp"
+
+cargo_pid=""
+terminate_cargo_group() {
+  local signal="$1"
+  [[ -n "$cargo_pid" ]] || return 0
+  kill "-$signal" -- "-$cargo_pid" 2>/dev/null || true
+
+  set +e
+  wait "$cargo_pid" 2>/dev/null
+  set -e
+
+  # Cargo normally waits for every test child. Give any remaining process-group
+  # members a bounded grace period, then prevent an orphan from retaining the
+  # scratch directory after wrapper cancellation.
+  for _ in {1..50}; do
+    if ! kill -0 -- "-$cargo_pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill -KILL -- "-$cargo_pid" 2>/dev/null || true
+}
+
+on_signal() {
+  local signal="$1"
+  local status="$2"
+  trap - INT TERM
+  terminate_cargo_group "$signal"
+  exit "$status"
+}
+
 cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "$cargo_pid" ]] && kill -0 -- "-$cargo_pid" 2>/dev/null; then
+    terminate_cargo_group TERM
+  fi
   rm -rf -- "$test_tmp"
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
 
 export TMPDIR="$test_tmp"
 cd "$repo_root"
-cargo test --workspace "$@"
+setsid cargo test --workspace "$@" &
+cargo_pid=$!
+set +e
+wait "$cargo_pid"
+cargo_status=$?
+set -e
+cargo_pid=""
+exit "$cargo_status"

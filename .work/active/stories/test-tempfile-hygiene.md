@@ -95,3 +95,14 @@ fix touches the whole test harness layout and deserves its own pass.
   syntax, clippy, and diff hygiene are green. No material current-cycle blocker
   remains.
 - Verdict: approved.
+
+## Phase 8 completion-review fix
+
+The consolidated completion pass found that terminating the wrapper could leave
+Cargo alive while the EXIT trap removed its scratch root. `scripts/test-rust`
+now runs Cargo in a managed process group, forwards INT/TERM, waits for group
+termination, and only then cleans `target/test-tmp`. The executable
+`scripts/test-rust-signal-test` proves wrapper TERM returns 143, leaves neither
+Cargo nor its test child alive, and removes the scoped root. Shell syntax, the
+signal regression, focused SQLite storage test, cleanup assertion, and diff
+hygiene pass.

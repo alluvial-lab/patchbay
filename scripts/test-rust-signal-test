@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$fixture"
+}
+trap cleanup EXIT
+
+cat >"$fixture/cargo" <<'FAKE_CARGO'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'exit 143' TERM
+trap 'exit 130' INT
+sleep 30 &
+child_pid=$!
+printf '%s %s\n' "$$" "$child_pid" >"$PATCHBAY_SIGNAL_TEST_PID_FILE"
+wait "$child_pid"
+FAKE_CARGO
+chmod +x "$fixture/cargo"
+
+pid_file="$fixture/pids"
+set +e
+PATH="$fixture:$PATH" PATCHBAY_SIGNAL_TEST_PID_FILE="$pid_file" \
+  "$repo_root/scripts/test-rust" --quiet &
+wrapper_pid=$!
+set -e
+
+for _ in {1..100}; do
+  [[ -s "$pid_file" ]] && break
+  sleep 0.05
+done
+[[ -s "$pid_file" ]] || {
+  printf 'fake cargo did not start\n' >&2
+  kill -KILL "$wrapper_pid" 2>/dev/null || true
+  exit 1
+}
+read -r cargo_pid child_pid <"$pid_file"
+
+kill -TERM "$wrapper_pid"
+set +e
+wait "$wrapper_pid"
+status=$?
+set -e
+[[ "$status" -eq 143 ]] || {
+  printf 'wrapper exited %s, expected 143\n' "$status" >&2
+  exit 1
+}
+
+for _ in {1..100}; do
+  if ! kill -0 "$cargo_pid" 2>/dev/null && ! kill -0 "$child_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+! kill -0 "$cargo_pid" 2>/dev/null
+! kill -0 "$child_pid" 2>/dev/null
+[[ ! -e "$repo_root/target/test-tmp" ]]
