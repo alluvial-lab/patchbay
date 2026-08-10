@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish
 kind: feature
-stage: implementing
+stage: review
 tags: [ux]
 parent: null
 depends_on: []
@@ -175,6 +175,17 @@ The parent feature remains the ownership and review bundle; child stories are ch
 - **Layout regression risk**: fixed action space may feel too sparse on very small screens. Mitigation: use a minimum slot that collapses to a full-width action row below the mobile breakpoint, while preserving the reserved vertical rhythm.
 - **Preference drift risk**: adding a field to existing local storage can encounter malformed prior values. Mitigation: parse defensively and default to visible, never block cockpit startup.
 - **Aesthetic overreach risk**: four options could imply a new visual language. Mitigation: selected option uses existing tokens/components; this feature does not alter `.mockups/design-system/`.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-luna` high, one feature-owning direct implementation with ordered child checkpoints; no nested delegation per caller posture.
+- Review weight: thorough (explicit caller override); feature is intentionally left at `stage: review` for fresh review.
+- Child commits: `5294dfa` visual contract, `23531a3` settings, `59dbadd` session rows, `16d0439` delivery cards.
+- Files changed: `web-cockpit/src/ui/settings-view.ts`, `web-cockpit/src/ui/shell.ts`, `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/src/ui/operation-delivery.ts`, `web-cockpit/src/ui/session-list.ts`, `web-cockpit/src/ui/shell.css`, and `web-cockpit/tests/shell.test.ts`.
+- Integrated verification: `npm --prefix web-cockpit test` passed (120 tests); `node contracts/scripts/check-presentation.mjs` passed (5 registries, axe-core accessibility); type build and browser bundle passed.
+- Acceptance: selected Option 1 topology remains the current shell; settings is presentation-only and authority-domain scoped; session rows preserve identity/status/needs-you; instruction cards compose canonical delivery state with a reserved action slot; transcript folding and protocol contracts are unchanged.
+- Simplification: reused existing shell, session/detail, delivery, status, failure, and registry-derived presentation primitives; no parallel transcript, delivery, settings, protocol state, or model was added.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
 
 ## Extension pressure classification
 
