@@ -127,6 +127,48 @@ fn decoded_semantic_redelivery_mutant_accepts(
     }
 }
 
+fn assert_applied_event_rejects_cross_outer_domain(
+    mut registry: SessionRegistry,
+    applied_event: &RecordedEvent,
+) {
+    let other = AuthorityDomainId {
+        value: "authority-other".to_owned(),
+    };
+
+    let exact_state = registry.clone();
+    registry
+        .observe(applied_event)
+        .expect("the fixture must already be an exact applied-event redelivery");
+    assert_eq!(
+        registry, exact_state,
+        "exact redelivery mutated the registry"
+    );
+
+    let mut candidate = applied_event.clone();
+    candidate.event_id.authority_domain_id = Some(other.clone());
+    assert_eq!(
+        applied_event.event_id.authority_domain_id.as_ref(),
+        Some(&domain())
+    );
+    assert_eq!(
+        candidate.event_id.authority_domain_id.as_ref(),
+        Some(&other)
+    );
+    assert_eq!(candidate.event_id.lsn, applied_event.event_id.lsn);
+    assert_eq!(candidate.payload, applied_event.payload);
+
+    let before = registry.clone();
+    assert!(matches!(
+        registry.observe(&candidate),
+        Err(SessionError::AuthorityDomainMismatch { expected, actual })
+            if expected == domain() && actual == other
+    ));
+    assert_eq!(
+        registry, before,
+        "a cross-outer-domain applied envelope mutated the registry"
+    );
+}
+
 #[test]
 fn registry_requires_and_exposes_a_non_empty_authority_domain() {
     assert!(matches!(
@@ -1066,6 +1108,43 @@ fn rejected_lockdown_semantics_are_non_mutating_and_do_not_claim_their_lsn() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn applied_session_state_cross_outer_domain_is_not_exact_redelivery() {
+    let applied_event = recorded(1, &registration());
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&applied_event).unwrap();
+
+    assert_eq!(
+        applied_event.payload.kind,
+        StoredEventKind::SessionState as i32
+    );
+    assert_applied_event_rejects_cross_outer_domain(registry, &applied_event);
+}
+
+#[test]
+fn applied_security_lockdown_cross_outer_domain_is_not_exact_redelivery() {
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&recorded(1, &registration())).unwrap();
+    let applied_event = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    registry.observe(&applied_event).unwrap();
+
+    assert_eq!(
+        applied_event.payload.kind,
+        StoredEventKind::SecurityLockdown as i32
+    );
+    assert_applied_event_rejects_cross_outer_domain(registry, &applied_event);
 }
 
 #[test]
