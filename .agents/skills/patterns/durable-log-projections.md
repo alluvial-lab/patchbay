@@ -53,7 +53,7 @@ The authority view folds the same ordered log through its own observer.
 
 ```rust
 pub async fn rebuild_from_log<S: Storage>(/* ... */) -> Result<SessionRegistry, SessionError> {
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(authority_domain_id.clone())?;
     for event in events {
         let (event_domain, event_lsn) = event_identity(&event)?;
         // reject wrong domain or any non-successor LSN (gap/duplicate/reversal)
@@ -63,7 +63,10 @@ pub async fn rebuild_from_log<S: Storage>(/* ... */) -> Result<SessionRegistry, 
 }
 ```
 
-The shape intentionally mirrors authority replay so each projection can reconstruct from durable facts without treating a sibling's view as source of truth.
+The fallible constructor binds the projection to the replayed authority domain.
+The shape intentionally mirrors authority replay so each projection can
+reconstruct from durable facts without treating a sibling's view as source of
+truth.
 
 ## When to Use
 

@@ -137,6 +137,13 @@ impl DiagnosticsProjection {
                 "diagnostics replay event kind is unspecified".to_owned(),
             ));
         }
+        // The embedded session view owns exact-envelope classification for its
+        // session and lockdown events. Feed every concrete durable event before
+        // diagnostics-specific dispatch so a sibling-kind re-encoding cannot
+        // bypass that ledger and recovery observes the same lockdown clamp.
+        self.sessions
+            .observe(event)
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
         match kind {
             StoredEventKind::Operation => {
                 let accepted = AcceptedOperation::decode(event.payload.payload.as_slice())
@@ -210,12 +217,8 @@ impl DiagnosticsProjection {
             StoredEventKind::Observation => self.observe_observation(event)?,
             StoredEventKind::AuditRecord => self.observe_audit(event)?,
             StoredEventKind::Revocation => self.observe_revocation(event)?,
-            StoredEventKind::SessionState => {
-                self.sessions
-                    .observe(event)
-                    .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
-            }
-            StoredEventKind::Elicitation
+            StoredEventKind::SessionState
+            | StoredEventKind::Elicitation
             | StoredEventKind::ResourceState
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
