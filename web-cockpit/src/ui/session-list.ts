@@ -5,6 +5,7 @@ import {
 
 import { renderAdapterStatus } from "../domain/adapter-diagnostics.js";
 import {
+  presentedActivityDetail,
   rendersLive,
   sessionKey,
   stableTarget,
@@ -17,6 +18,7 @@ export interface SessionListOptions {
   adapters?: ReadonlyMap<string, import("../domain/model.js").AdapterView>; 
   onSelect(session: SessionView): void;
   filter?: string;
+  showToolCalls?: boolean;
 }
 
 export function renderSessionList(
@@ -24,24 +26,37 @@ export function renderSessionList(
   sessions: Iterable<SessionView>,
   options: SessionListOptions,
 ): HTMLElement {
-  const list = document.createElement("div");
+  const list = document.createElement("ul");
   list.className = "session-list";
-  list.setAttribute("role", "list");
+  list.dataset.mobileBottomTarget = "session-list";
   const filter = options.filter?.trim().toLocaleLowerCase();
   const visible = [...sessions].filter((session) => !filter || searchableSession(session).includes(filter));
   visible.sort(compareSessions);
 
   if (visible.length === 0) {
+    const item = document.createElement("li");
+    item.className = "session-list__item";
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.append(textElement(document, "p", "empty-state__title", "No sessions"));
     empty.append(textElement(document, "p", "empty-state__body", "Attach or spawn a runtime session to begin."));
-    list.append(empty);
+    item.append(empty);
+    list.append(item);
     return list;
   }
 
   for (const session of visible) {
-    list.append(renderSessionRow(document, session, options.selectedKey === sessionKey(session.identity), options.onSelect, options.adapters?.get(session.identity.adapterId)));
+    const item = document.createElement("li");
+    item.className = "session-list__item";
+    item.append(renderSessionRow(
+      document,
+      session,
+      options.selectedKey === sessionKey(session.identity),
+      options.onSelect,
+      options.adapters?.get(session.identity.adapterId),
+      options.showToolCalls,
+    ));
+    list.append(item);
   }
   return list;
 }
@@ -52,11 +67,11 @@ export function renderSessionRow(
   selected: boolean,
   onSelect: (session: SessionView) => void,
   adapter?: import("../domain/model.js").AdapterView,
+  showToolCalls = true,
 ): HTMLButtonElement {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "session-row";
-  row.setAttribute("role", "listitem");
   row.setAttribute("aria-pressed", String(selected));
   row.dataset.sessionKey = sessionKey(session.identity);
   if (selected) row.classList.add("session-row--active");
@@ -73,7 +88,7 @@ export function renderSessionRow(
 
   const badges = document.createElement("span");
   badges.className = "session-row__badges";
-  badges.append(renderSessionStatus(document, session));
+  badges.append(renderSessionStatus(document, session, showToolCalls));
   if (adapter) {
     const adapterStatus = renderAdapterStatus(document, adapter);
     adapterStatus.classList.add("session-row__adapter-status");
@@ -91,7 +106,11 @@ export function renderSessionRow(
   return row;
 }
 
-export function renderSessionStatus(document: Document, session: SessionView): HTMLElement {
+export function renderSessionStatus(
+  document: Document,
+  session: SessionView,
+  showToolCalls = true,
+): HTMLElement {
   const connectivity = effectiveConnectivity(session);
   const connectivityName = connectivityStateName(connectivity);
   const activityName = activityStateName(session.activity);
@@ -107,8 +126,9 @@ export function renderSessionStatus(document: Document, session: SessionView): H
   activityIndicator.className = `activity-indicator activity-indicator--${activityName}`;
   activityIndicator.append(textElement(document, "span", "activity-indicator__icon", ""));
   activityIndicator.append(document.createTextNode(activityName));
-  if (session.activityDetail) {
-    activityIndicator.append(textElement(document, "span", "activity-indicator__detail", session.activityDetail));
+  const detail = presentedActivityDetail(session, showToolCalls);
+  if (detail) {
+    activityIndicator.append(textElement(document, "span", "activity-indicator__detail", detail));
   }
   status.append(connectivityIndicator, activityIndicator);
   return status;

@@ -29,6 +29,7 @@ import type { MarkdownRenderer } from "./markdown.js";
 import { renderSettingsView } from "./settings-view.js";
 
 export type CockpitDestination = "sessions" | "resources" | "security" | "diagnostics" | "files" | "git" | "settings";
+type NavigationSource = "rail" | "bottom-tabs" | "overflow";
 
 export interface CockpitShellPreferences {
   sessionsPanelCollapsed: boolean;
@@ -85,6 +86,8 @@ export function createCockpitShell(
   let filter = "";
   let destination: CockpitDestination = "sessions";
   let settingsOpen = false;
+  let settingsOpenerSource: NavigationSource | undefined;
+  let pendingSettingsFocusRestore: NavigationSource | undefined;
   const authorityDomainId = options.authorityDomainId
     ?? create(AuthorityDomainIdSchema, { value: model.authorityDomainId ?? "default" });
   const preferenceStore = options.preferenceStore ?? browserPreferenceStore(document);
@@ -117,8 +120,9 @@ export function createCockpitShell(
     root.replaceChildren();
     const content = document.createElement("div");
     content.className = "cockpit__content";
-    const rail = renderRail(document, destination, settingsOpen, (next) => selectDestination(next));
-    const sidebar = renderSidebar(document, model, selectedKey, filter, {
+    content.dataset.mobileBottomNavReserve = "bottom-tabs";
+    const rail = renderRail(document, destination, settingsOpen, (next, source) => selectDestination(next, source));
+    const sidebar = renderSidebar(document, model, selectedKey, filter, showToolCalls, {
       select(session) {
         selectedKey = sessionKey(session.identity);
         mobileDetailOpen = true;
@@ -166,11 +170,21 @@ export function createCockpitShell(
     detail.element.hidden = destination !== "sessions";
     main.append(detail.element, resourceDestination.element, security, planned);
     content.append(rail, sidebar, main);
-    const degraded = destination === "sessions" ? renderDegradedBanner(document, model, selectedSession()) : undefined;
+    const degraded = destination === "sessions"
+      ? renderDegradedBanner(document, model, selectedSession(), showToolCalls)
+      : undefined;
     if (degraded) root.append(degraded);
     if (model.lockdown.active) root.append(renderLockdownBanner(document, model));
-    root.append(content, renderBottomTabs(document, destination, (next) => selectDestination(next)));
-    root.append(renderOverflowMenu(document, destination, settingsOpen, (next) => selectDestination(next)));
+    root.append(
+      content,
+      renderBottomTabs(document, destination, settingsOpen, (next, source) => selectDestination(next, source)),
+    );
+    root.append(
+      renderOverflowMenu(document, destination, settingsOpen, (next, source) => selectDestination(next, source)),
+    );
+    if (options.elicitation?.mobileSheet) {
+      root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
+    }
     if (settingsOpen) {
       const settings = renderSettingsView(document, {
         showToolCalls,
@@ -181,18 +195,18 @@ export function createCockpitShell(
           preferenceStore.save(authorityDomainId.value, preferences);
           render();
         },
-        onClose() {
-          settingsOpen = false;
-          render();
-        },
+        onClose: closeSettings,
       });
+      for (const background of [...root.children]) background.setAttribute("inert", "");
       root.append(settings.backdrop, settings.dialog);
       queueMicrotask(() => settings.toggle.focus());
     }
-    if (options.elicitation?.mobileSheet) {
-      root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
-    }
     applyLayout();
+    if (pendingSettingsFocusRestore) {
+      const source = pendingSettingsFocusRestore;
+      pendingSettingsFocusRestore = undefined;
+      queueMicrotask(() => settingsOpener(root, source)?.focus());
+    }
     const timeline = root.querySelector<HTMLElement>(".timeline");
     if (timeline) {
       if (stickToBottom) timeline.scrollTop = timeline.scrollHeight;
@@ -235,8 +249,16 @@ export function createCockpitShell(
     resourceDestination.setMobile(mobile);
   }
 
-  function selectDestination(next: CockpitDestination): void {
+  function closeSettings(): void {
+    pendingSettingsFocusRestore = settingsOpenerSource;
+    settingsOpen = false;
+    render();
+  }
+
+  function selectDestination(next: CockpitDestination, source?: NavigationSource): void {
+    root.classList.remove("more-open");
     if (next === "settings") {
+      settingsOpenerSource = source ?? (isMobile() ? "overflow" : "rail");
       settingsOpen = true;
       render();
       return;
@@ -320,14 +342,14 @@ const DESTINATION_ICONS: Record<CockpitDestination, IconName> = {
   diagnostics: "chevron-down",
   files: "folder",
   git: "link",
-  settings: "plus",
+  settings: "settings",
 };
 
 function renderRail(
   document: Document,
   selected: CockpitDestination,
   settingsOpen: boolean,
-  onSelect: (destination: CockpitDestination) => void,
+  onSelect: (destination: CockpitDestination, source: NavigationSource) => void,
 ): HTMLElement {
   const rail = document.createElement("aside");
   rail.className = "rail";
@@ -344,7 +366,7 @@ function renderRail(
     if (selected === destination && !settingsOpen) button.setAttribute("aria-current", "page");
     if (destination === "settings") button.setAttribute("aria-expanded", String(settingsOpen));
     button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "destination__label", capitalize(destination)));
-    button.addEventListener("click", () => onSelect(destination));
+    button.addEventListener("click", () => onSelect(destination, "rail"));
     nav.append(button);
   }
   rail.append(nav);
@@ -354,10 +376,13 @@ function renderRail(
 function renderBottomTabs(
   document: Document,
   selected: CockpitDestination,
-  onSelect: (destination: CockpitDestination) => void,
+  settingsOpen: boolean,
+  onSelect: (destination: CockpitDestination, source: NavigationSource) => void,
 ): HTMLElement {
   const nav = document.createElement("nav");
+  nav.id = "cockpit-mobile-tabs";
   nav.className = "bottom-tabs";
+  nav.dataset.viewportObstruction = "bottom-tabs";
   nav.setAttribute("aria-label", "Cockpit destinations");
   for (const destination of ["sessions", "resources", "security"] as CockpitDestination[]) {
     const button = document.createElement("button");
@@ -366,16 +391,27 @@ function renderBottomTabs(
     button.setAttribute("aria-label", capitalize(destination));
     if (selected === destination) button.setAttribute("aria-current", "page");
     button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "", capitalize(destination)));
-    button.addEventListener("click", () => onSelect(destination));
+    button.addEventListener("click", () => onSelect(destination, "bottom-tabs"));
     nav.append(button);
   }
   const more = document.createElement("button");
   more.type = "button";
+  more.id = "cockpit-more-destinations";
   more.className = "tabs__tab";
   more.dataset.more = "true";
   more.setAttribute("aria-label", "More destinations");
+  more.setAttribute("aria-controls", "cockpit-overflow-menu");
+  more.setAttribute("aria-expanded", "false");
+  more.setAttribute("aria-haspopup", "true");
+  if (settingsOpen || isOverflowDestination(selected)) more.setAttribute("aria-current", "page");
   more.append(renderIcon(document, "chevron-down"), textElement(document, "span", "", "More"));
-  more.addEventListener("click", () => nav.parentElement?.classList.toggle("more-open"));
+  more.addEventListener("click", () => {
+    const root = nav.parentElement;
+    if (!root) return;
+    const expanded = !root.classList.contains("more-open");
+    root.classList.toggle("more-open", expanded);
+    more.setAttribute("aria-expanded", String(expanded));
+  });
   nav.append(more);
   return nav;
 }
@@ -384,9 +420,10 @@ function renderOverflowMenu(
   document: Document,
   selected: CockpitDestination,
   settingsOpen: boolean,
-  onSelect: (destination: CockpitDestination) => void,
+  onSelect: (destination: CockpitDestination, source: NavigationSource) => void,
 ): HTMLElement {
   const menu = document.createElement("nav");
+  menu.id = "cockpit-overflow-menu";
   menu.className = "overflow-menu";
   menu.setAttribute("aria-label", "More cockpit destinations");
   for (const destination of ["diagnostics", "files", "git", "settings"] as CockpitDestination[]) {
@@ -397,7 +434,7 @@ function renderOverflowMenu(
     button.setAttribute("aria-current", selected === destination && !settingsOpen ? "page" : "false");
     if (destination === "settings") button.setAttribute("aria-expanded", String(settingsOpen));
     button.textContent = capitalize(destination);
-    button.addEventListener("click", () => onSelect(destination));
+    button.addEventListener("click", () => onSelect(destination, "overflow"));
     menu.append(button);
   }
   return menu;
@@ -458,6 +495,19 @@ function browserPreferenceStore(document: Document): CockpitShellPreferenceStore
   };
 }
 
+function isOverflowDestination(value: CockpitDestination): boolean {
+  return value === "diagnostics" || value === "files" || value === "git" || value === "settings";
+}
+
+function settingsOpener(root: HTMLElement, source: NavigationSource): HTMLButtonElement | null {
+  const selector = source === "rail"
+    ? '.rail [data-destination="settings"]'
+    : source === "overflow"
+      ? '#cockpit-more-destinations'
+      : '[data-destination="settings"]';
+  return root.querySelector<HTMLButtonElement>(selector);
+}
+
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -472,6 +522,7 @@ function renderSidebar(
   model: PresentationModel,
   selectedKey: string | undefined,
   filter: string,
+  showToolCalls: boolean,
   actions: SidebarActions,
 ): HTMLElement {
   const sidebar = document.createElement("aside");
@@ -513,6 +564,7 @@ function renderSidebar(
       selectedKey,
       filter,
       adapters: model.adapters,
+      showToolCalls,
       onSelect: actions.select,
     }),
   );
@@ -534,6 +586,7 @@ function renderDegradedBanner(
   document: Document,
   model: PresentationModel,
   session: SessionView | undefined,
+  showToolCalls: boolean,
 ): HTMLElement | undefined {
   if (!model.reconciled) {
     const banner = alertBanner(
@@ -542,7 +595,7 @@ function renderDegradedBanner(
       "The projection is unreconciled. Cached session state remains stale until snapshot replay and the live stream catch up.",
       "warning",
     );
-    if (session) banner.append(renderSessionStatus(document, session));
+    if (session) banner.append(renderSessionStatus(document, session, showToolCalls));
     return banner;
   }
   if (!session || session.connectivity === SessionConnectivityState.LIVE) return undefined;
@@ -561,7 +614,7 @@ function renderDegradedBanner(
     "The current connectivity state is authoritative; delivery may be unavailable or delayed.",
     session.connectivity === SessionConnectivityState.FAILED ? "danger" : "warning",
   );
-  banner.append(renderSessionStatus(document, session));
+  banner.append(renderSessionStatus(document, session, showToolCalls));
   return banner;
 }
 

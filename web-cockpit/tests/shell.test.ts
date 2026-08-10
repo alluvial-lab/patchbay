@@ -4,7 +4,9 @@ import test from "node:test";
 
 import { create } from "@bufbuild/protobuf";
 import {
+  AdapterCapabilitySummarySchema,
   AdapterIdSchema,
+  AdapterStatusSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
   ElicitationState,
@@ -29,6 +31,7 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
 } from "@patchbay/contracts";
+import axe from "axe-core";
 import fc from "fast-check";
 import { JSDOM } from "jsdom";
 
@@ -97,7 +100,7 @@ test("shared Operation delivery renders lifecycle, failure, and contextual actio
   assert.equal(cancelled, command.id);
 });
 
-test("delivery reserves one action slot across canonical command states", () => {
+test("delivery reserves one action slot and exposes only state-valid actions", () => {
   const dom = new JSDOM();
   const states = [
     OperationState.ACCEPTED,
@@ -118,8 +121,17 @@ test("delivery reserves one action slot across canonical command states", () => 
       cancel: () => undefined,
       interrupt: () => undefined,
     });
-    assert.ok(delivery.querySelector(".delivery-line__actions"), `missing action slot for ${state}`);
-    assert.equal(delivery.querySelectorAll(".delivery-line__actions .btn").length, state === OperationState.RUNNING ? 2 : 0);
+    const slot = delivery.querySelector<HTMLElement>(".delivery-line__actions")!;
+    const expected = state === OperationState.RUNNING
+      ? [`Cancel running operation`, "Interrupt running operation"]
+      : state === OperationState.ACCEPTED || state === OperationState.DELIVERED
+        ? [`Cancel ${operationStateName(state)} operation`]
+        : [];
+    assert.deepEqual(
+      [...slot.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
+      expected,
+    );
+    assert.equal(slot.getAttribute("aria-hidden"), expected.length === 0 ? "true" : null);
   }
 });
 
@@ -133,6 +145,11 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
   assert.match(css, /@media \(max-width:\s*760px\)/);
   assert.match(css, /\.cockpit \.instruction-card__delivery\s*\{[^}]*min-height:\s*56px/s);
   assert.match(css, /\.cockpit \.delivery-line__actions\s*\{[^}]*flex:\s*0 0 96px/s);
+  assert.match(css, /--mobile-bottom-nav-reserve:\s*calc\(72px \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.match(css, /\.cockpit \.cockpit__content\s*\{[^}]*padding-bottom:\s*var\(--mobile-bottom-nav-reserve\)/s);
+  assert.match(css, /\.cockpit \.composer\s*\{[^}]*bottom:\s*var\(--mobile-bottom-nav-reserve\)/s);
+  assert.match(css, /\.cockpit \.delivery-line__actions \.btn\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.settings-dialog\s*\{[^}]*padding:\s*var\(--space-6\)/s);
   assert.doesNotMatch(css, /connectivity-indicator--(?:live|stale|offline|unknown|failed)/);
   assert.doesNotMatch(css, /command-step--(?:accepted|delivered|running|completed|rejected|failed|expired|cancelled|superseded)/);
   assert.doesNotMatch(css, /resource-freshness--(?:current|stale|unknown)/);
@@ -155,8 +172,12 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(shell.element.querySelector<HTMLElement>(".sidebar")!.hidden, false);
   assert.equal(shell.element.querySelector<HTMLElement>(".main")!.hidden, false);
   assert.equal(shell.detail.header.hidden, true);
-  const rows = [...shell.element.querySelectorAll<HTMLElement>(".session-row")];
+  const sessionList = shell.element.querySelector<HTMLElement>(".session-list")!;
+  const rows = [...sessionList.querySelectorAll<HTMLButtonElement>(".session-row")];
+  assert.equal(sessionList.localName, "ul");
+  assert.equal(sessionList.querySelectorAll(":scope > li.session-list__item").length, 2);
   assert.equal(rows.length, 2);
+  assert.equal(rows.every((row) => row.localName === "button" && !row.hasAttribute("role")), true);
   assert.equal(rows[0]!.firstElementChild!.className, "session-row__identity");
   assert.match(rows[0]!.querySelector(".session-row__identity")!.textContent!, /pi@laptop · runtime session-2 · gen 1/);
   assert.equal(rows[0]!.classList.contains("session-row--needs-you"), true);
@@ -202,9 +223,11 @@ test("destination rail uses the signed-off punch-out shell and persists panel co
   assert.equal(shell.element.classList.contains("cockpit--panel-collapsed"), true);
 });
 
-test("settings preference is domain-scoped, keyboard-labeled, and presentation-only", () => {
+test("settings preference is domain-scoped, modal, keyboard-contained, and presentation-only", async () => {
   const dom = new JSDOM("<!doctype html><body></body>", { url: "https://patchbay.test" });
   const view = session("session-1");
+  view.activityDetail = "using bash";
+  view.activityDetailProvenance = "tool";
   const model = withSessions(view);
   model.observations.push({
     id: "tool-1",
@@ -230,19 +253,49 @@ test("settings preference is domain-scoped, keyboard-labeled, and presentation-o
     preferenceStore: store,
   });
   dom.window.document.body.append(shell.element);
-  shell.selectDestination("settings");
-  const dialog = shell.element.querySelector<HTMLElement>(".settings-dialog")!;
+  const opener = shell.element.querySelector<HTMLButtonElement>('.rail [data-destination="settings"]')!;
+  opener.focus();
+  opener.click();
+  await Promise.resolve();
+
+  let dialog = shell.element.querySelector<HTMLElement>(".settings-dialog")!;
   assert.equal(dialog.getAttribute("aria-labelledby"), "cockpit-settings-title");
+  assert.equal(dialog.getAttribute("aria-modal"), "true");
   assert.match(dialog.textContent!, /Authority domain: operator-domain/);
-  const toggle = dialog.querySelector<HTMLInputElement>("input[type=checkbox]")!;
-  assert.equal(toggle.checked, true);
+  assert.equal(shell.element.querySelector(".cockpit__content")?.hasAttribute("inert"), true);
+  const backdrop = shell.element.querySelector<HTMLElement>(".settings-backdrop")!;
+  assert.equal(backdrop.localName, "div");
+  assert.equal(backdrop.tabIndex, -1);
+
+  let toggle = dialog.querySelector<HTMLButtonElement>(".settings-toggle")!;
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  assert.equal(dom.window.document.activeElement, toggle);
   toggle.click();
+  await Promise.resolve();
   assert.equal(saved.get("operator-domain")?.showToolCalls, false);
   assert.equal(shell.element.querySelector(".msg--tool"), null);
+  assert.equal(shell.element.textContent!.includes("using bash"), false);
+  assert.ok(shell.element.querySelector(".activity-indicator--working"));
   assert.equal(model.observations.length, 1);
-  assert.ok(notNull(shell.element.querySelector(".settings-dialog")));
+
+  dialog = shell.element.querySelector<HTMLElement>(".settings-dialog")!;
+  toggle = dialog.querySelector<HTMLButtonElement>(".settings-toggle")!;
+  const close = dialog.querySelector<HTMLButtonElement>('[aria-label="Close cockpit settings"]')!;
+  toggle.focus();
+  toggle.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  assert.equal(dom.window.document.activeElement, close);
+  close.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(dom.window.document.activeElement, toggle);
+
+  dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await Promise.resolve();
+  assert.equal(shell.element.querySelector(".settings-dialog"), null);
+  assert.equal(dom.window.document.activeElement, shell.element.querySelector('.rail [data-destination="settings"]'));
+
   shell.selectDestination("settings");
-  shell.element.querySelector<HTMLInputElement>("input[type=checkbox]")!.click();
+  await Promise.resolve();
+  shell.element.querySelector<HTMLButtonElement>(".settings-toggle")!.click();
+  await Promise.resolve();
   assert.equal(shell.element.querySelector(".msg--tool") !== null, true);
 
   const otherDom = new JSDOM("<!doctype html><body></body>", { url: "https://patchbay.test" });
@@ -252,15 +305,36 @@ test("settings preference is domain-scoped, keyboard-labeled, and presentation-o
     preferenceStore: store,
   });
   other.selectDestination("settings");
-  assert.equal(other.element.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked, true);
+  await Promise.resolve();
+  assert.equal(other.element.querySelector<HTMLButtonElement>(".settings-toggle")!.getAttribute("aria-pressed"), "true");
 });
 
-function notNull<T>(value: T | null): T {
-  assert.notEqual(value, null);
-  return value as T;
-}
+test("production cockpit shell and settings modal have no axe-core violations", async () => {
+  const dom = new JSDOM("<!doctype html><html lang='en'><head><title>Cockpit</title></head><body></body></html>", {
+    runScripts: "dangerously",
+    url: "https://patchbay.test",
+  });
+  const shell = createCockpitShell(dom.window.document, withSessions(session("session-1")), {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+  });
+  dom.window.document.body.append(shell.element);
+  shell.element.querySelector<HTMLButtonElement>('.rail [data-destination="settings"]')!.click();
+  await Promise.resolve();
 
-test("mobile uses equal-width bottom tabs and More destinations", () => {
+  dom.window.eval(axe.source);
+  const result = await (dom.window as unknown as { axe: typeof axe }).axe.run(shell.element, {
+    rules: { "color-contrast": { enabled: false } },
+  });
+  const violationIds = Array.from(result.violations, (violation) => violation.id);
+  assert.deepEqual(
+    violationIds,
+    [],
+    Array.from(result.violations, (violation) => `${violation.id}: ${violation.help}`).join("\n"),
+  );
+});
+
+test("mobile reserves bottom-navigation space and More has a complete expanded-state contract", async () => {
   const dom = new JSDOM();
   const shell = createCockpitShell(dom.window.document, withSessions(session("session-1")), {
     markdown: createMarkdownRenderer(dom.window as unknown as Window),
@@ -268,8 +342,34 @@ test("mobile uses equal-width bottom tabs and More destinations", () => {
   });
   dom.window.document.body.append(shell.element);
   assert.equal(shell.element.querySelectorAll(".bottom-tabs .tabs__tab").length, 4);
-  assert.equal(shell.element.querySelector<HTMLElement>(".bottom-tabs")!.getAttribute("aria-label"), "Cockpit destinations");
-  shell.element.querySelector<HTMLButtonElement>('[data-destination="security"]')!.click();
+  const tabs = shell.element.querySelector<HTMLElement>(".bottom-tabs")!;
+  assert.equal(tabs.getAttribute("aria-label"), "Cockpit destinations");
+  assert.equal(tabs.dataset.viewportObstruction, "bottom-tabs");
+  assert.equal(shell.element.querySelector(".cockpit__content")?.getAttribute("data-mobile-bottom-nav-reserve"), "bottom-tabs");
+  assert.ok(shell.element.querySelector('.session-list[data-mobile-bottom-target="session-list"]'));
+  assert.ok(shell.element.querySelector('.session-detail[data-mobile-bottom-target="session-detail"]'));
+  assert.ok(shell.element.querySelector('.composer[data-mobile-bottom-target="composer"]'));
+
+  let more = shell.element.querySelector<HTMLButtonElement>("#cockpit-more-destinations")!;
+  assert.equal(more.getAttribute("aria-controls"), "cockpit-overflow-menu");
+  assert.equal(more.getAttribute("aria-expanded"), "false");
+  more.click();
+  assert.equal(more.getAttribute("aria-expanded"), "true");
+  assert.equal(shell.element.classList.contains("more-open"), true);
+  shell.element.querySelector<HTMLButtonElement>('.overflow-menu [data-destination="settings"]')!.click();
+  await Promise.resolve();
+  assert.equal(shell.element.classList.contains("more-open"), false);
+  assert.ok(shell.element.querySelector(".settings-dialog"));
+  shell.element.querySelector<HTMLElement>(".settings-dialog")!.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  await Promise.resolve();
+  more = shell.element.querySelector<HTMLButtonElement>("#cockpit-more-destinations")!;
+  assert.equal(shell.element.classList.contains("more-open"), false);
+  assert.equal(more.getAttribute("aria-expanded"), "false");
+  assert.equal(dom.window.document.activeElement, more);
+
+  shell.element.querySelector<HTMLButtonElement>('.bottom-tabs [aria-label="Security"]')!.click();
   assert.equal(shell.element.dataset.destination, "security");
 });
 
@@ -334,6 +434,43 @@ test("session rows render unavailable models honestly", () => {
   const dom = new JSDOM();
   const row = renderSessionRow(dom.window.document, session("session-unknown"), false, () => undefined);
   assert.match(row.textContent!, /Model unknown/);
+});
+
+test("hidden tool calls suppress tool-derived detail everywhere but preserve canonical and runtime activity", () => {
+  const dom = new JSDOM();
+  const toolSession = session("tool-session");
+  toolSession.activityDetail = "using bash";
+  toolSession.activityDetailProvenance = "tool";
+  const model = withSessions(toolSession);
+  model.observations.push({
+    id: "tool-call",
+    session: toolSession.identity,
+    role: "tool",
+    kind: "tool_finished",
+    markdown: "**bash** failed",
+    detail: "exit 1",
+    lsn: 2n,
+  });
+
+  const row = renderSessionRow(dom.window.document, toolSession, false, () => undefined, undefined, false);
+  assert.doesNotMatch(row.textContent!, /using bash/);
+  assert.match(row.textContent!, /working/);
+
+  const detail = renderSessionDetail(dom.window.document, model, toolSession, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    showToolCalls: false,
+  });
+  dom.window.document.body.append(detail.element);
+  assert.equal(detail.element.querySelector(".msg--tool"), null);
+  assert.doesNotMatch(detail.header.textContent!, /using bash/);
+  assert.doesNotMatch(detail.element.querySelector(".timeline-activity")!.textContent!, /using bash/);
+  assert.match(detail.element.querySelector(".timeline-activity")!.textContent!, /working/);
+
+  const runtimeSession = session("runtime-session");
+  runtimeSession.activityDetail = "responding";
+  runtimeSession.activityDetailProvenance = "runtime";
+  const runtimeRow = renderSessionRow(dom.window.document, runtimeSession, false, () => undefined, undefined, false);
+  assert.match(runtimeRow.textContent!, /responding/);
 });
 
 test("mobile drill-in swaps containers around the same detail component", () => {
@@ -437,10 +574,64 @@ test("stale-never-live binding holds across generated reconciliation states", as
   );
 });
 
-test("detail integrates markdown, current plus last delivery, failures, contextual actions, and elicitations", () => {
+test("typed command correlation prevents concurrent or reconnect transcript mismatches", () => {
   const dom = new JSDOM();
   const view = session("session-1");
   const model = withSessions(view);
+  const first = runningCommand(view.identity, "command-a", "Payload from command A");
+  const second = runningCommand(view.identity, "command-b", "Payload from command B");
+  model.commands.set(first.id, first);
+  model.commands.set(second.id, second);
+  model.observations.push(
+    {
+      id: "operator-correlated",
+      session: view.identity,
+      role: "operator",
+      kind: "user_confirmed",
+      markdown: "Authoritative transcript for command B",
+      commandId: second.id,
+      lsn: 4n,
+    },
+    {
+      id: "operator-uncorrelated",
+      session: view.identity,
+      role: "operator",
+      kind: "user_confirmed",
+      markdown: "Replayed transcript with no command correlation",
+      lsn: 5n,
+    },
+    {
+      id: "operator-missing-command",
+      session: view.identity,
+      role: "operator",
+      kind: "user_confirmed",
+      markdown: "Transcript with an unavailable command",
+      commandId: "command-not-in-snapshot",
+      lsn: 6n,
+    },
+  );
+
+  const detail = renderSessionDetail(dom.window.document, model, view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+  });
+  dom.window.document.body.append(detail.element);
+
+  const merged = detail.element.querySelector<HTMLElement>('[data-command-id="command-b"]')!;
+  assert.match(merged.querySelector(".instruction-card__body")!.textContent!, /Authoritative transcript for command B/);
+  assert.doesNotMatch(merged.textContent!, /Payload from command B/);
+  assert.match(detail.element.querySelector<HTMLElement>('[data-command-id="command-a"]')!.textContent!, /Payload from command A/);
+  const plainOperatorMessages = [...detail.element.querySelectorAll<HTMLElement>(".msg--operator")]
+    .filter((message) => !message.querySelector(".instruction-card"))
+    .map((message) => message.textContent);
+  assert.equal(plainOperatorMessages.some((text) => text?.includes("Replayed transcript with no command correlation")), true);
+  assert.equal(plainOperatorMessages.some((text) => text?.includes("Transcript with an unavailable command")), true);
+  assert.equal(detail.element.querySelectorAll(".instruction-card").length, 2);
+});
+
+test("detail integrates markdown, current plus last delivery, failures, contextual actions, and elicitations", () => {
+  const dom = new JSDOM();
+  const view = session("session-1");
+  const model = withAdapterCapabilities(withSessions(view));
   const command = runningCommand(view.identity);
   model.commands.set(command.id, command);
   const failed = failedCommand(view.identity);
@@ -453,6 +644,7 @@ test("detail integrates markdown, current plus last delivery, failures, contextu
       role: "operator",
       kind: "user_confirmed",
       markdown: "Run the checks",
+      commandId: command.id,
       lsn: 3n,
     },
     {
@@ -509,6 +701,52 @@ test("detail integrates markdown, current plus last delivery, failures, contextu
   contextual[1]!.click();
   assert.equal(cancelled, 1);
   assert.equal(interrupted, 1);
+});
+
+test("session delivery actions require adapter-declared support and lockdown keeps supported actions inert", () => {
+  const view = session("session-1");
+  const callbacks = {
+    cancel: () => undefined,
+    interrupt: () => undefined,
+  };
+
+  const unsupportedDom = new JSDOM();
+  const unsupportedModel = withAdapterCapabilities(
+    withSessions(view),
+    [OperationKind.CANCEL, OperationKind.INTERRUPT],
+    false,
+  );
+  unsupportedModel.commands.set("command-1", runningCommand(view.identity));
+  const unsupported = renderSessionDetail(unsupportedDom.window.document, unsupportedModel, view, {
+    markdown: createMarkdownRenderer(unsupportedDom.window as unknown as Window),
+    actions: callbacks,
+  });
+  assert.equal(unsupported.element.querySelectorAll(".delivery-line__actions button").length, 0);
+  assert.equal(unsupported.element.querySelector(".delivery-line__actions")?.getAttribute("aria-hidden"), "true");
+
+  const cancelDom = new JSDOM();
+  const cancelModel = withAdapterCapabilities(withSessions(view), [OperationKind.CANCEL]);
+  cancelModel.commands.set("command-1", runningCommand(view.identity));
+  const cancelOnly = renderSessionDetail(cancelDom.window.document, cancelModel, view, {
+    markdown: createMarkdownRenderer(cancelDom.window as unknown as Window),
+    actions: callbacks,
+  });
+  assert.deepEqual(
+    [...cancelOnly.element.querySelectorAll(".delivery-line__actions button")].map((button) => button.getAttribute("aria-label")),
+    ["Cancel running operation"],
+  );
+
+  const lockedDom = new JSDOM();
+  const lockedModel = withAdapterCapabilities(withSessions(view));
+  lockedModel.commands.set("command-1", runningCommand(view.identity));
+  const locked = renderSessionDetail(lockedDom.window.document, lockedModel, view, {
+    markdown: createMarkdownRenderer(lockedDom.window as unknown as Window),
+    actions: callbacks,
+    lockdownActive: true,
+  });
+  const lockedActions = [...locked.element.querySelectorAll<HTMLButtonElement>(".delivery-line__actions button")];
+  assert.equal(lockedActions.length, 2);
+  assert.equal(lockedActions.every((button) => button.disabled && button.title.includes("Disabled during lockdown")), true);
 });
 
 test("same-correlation questions render as one integrated session-detail card", () => {
@@ -636,22 +874,45 @@ function withSessions(...sessions: SessionView[]): PresentationModel {
   return model;
 }
 
-function runningCommand(identity: SessionIdentity): CommandView {
+function withAdapterCapabilities(
+  model: PresentationModel,
+  supportedOperationKinds = [OperationKind.CANCEL, OperationKind.INTERRUPT],
+  cancellationSupport = true,
+): PresentationModel {
+  model.adapters.set("pi", {
+    adapterId: "pi",
+    status: create(AdapterStatusSchema, {
+      capability: create(AdapterCapabilitySummarySchema, {
+        cancellationSupport,
+        supportedOperationKinds,
+      }),
+    }),
+    asOfLsn: 1n,
+    recentDiagnostics: [],
+  });
+  return model;
+}
+
+function runningCommand(
+  identity: SessionIdentity,
+  id = "command-1",
+  text = "Run the checks",
+): CommandView {
   const targetScope = target(identity);
   const operation = create(OperationSchema, {
-    commandId: create(CommandIdSchema, { value: "command-1" }),
+    commandId: create(CommandIdSchema, { value: id }),
     authorityDomainId: DOMAIN,
     kind: OperationKind.INSTRUCT,
     targetScope,
-    idempotencyKey: "idem-command-1",
+    idempotencyKey: `idem-${id}`,
     payload: create(PayloadEnvelopeSchema, {
       contentType: PayloadContentType.TEXT_UTF8,
       schemaRef: "patchbay.InstructPayload",
-      payload: new TextEncoder().encode("Run the checks"),
+      payload: new TextEncoder().encode(text),
     }),
   });
   return {
-    id: "command-1",
+    id,
     state: OperationState.RUNNING,
     lsn: 2n,
     target: { kind: "runtime-session", identity },

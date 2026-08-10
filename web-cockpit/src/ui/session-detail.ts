@@ -2,16 +2,19 @@ import {
   AdapterDiagnosticSeverity,
   FailureCode,
   LocalSubmissionState,
+  OperationKind,
   PayloadContentType,
   SessionActivityState,
   type SubmissionResult,
 } from "@patchbay/contracts";
 
 import {
+  presentedActivityDetail,
   rendersLive,
   resourceKey,
   sessionKey,
   stableTarget,
+  type AdapterView,
   type CommandView,
   type ElicitationView,
   type ObservationView,
@@ -85,9 +88,10 @@ export function renderSessionDetail(
 ): SessionDetailComponent {
   const detail = document.createElement("section");
   detail.className = "session-detail";
+  detail.dataset.mobileBottomTarget = "session-detail";
   if (session) detail.dataset.sessionKey = sessionKey(session.identity);
 
-  const header = renderHeader(document, model, session, options.onBack);
+  const header = renderHeader(document, model, session, options.onBack, options.showToolCalls);
   const runtimeContext = session?.resourceLinkage
     ? renderRuntimeResourceLink(document, {
         resource: model.resources.get(resourceKey(session.resourceLinkage.usageResource)),
@@ -127,6 +131,7 @@ function renderHeader(
   model: PresentationModel,
   session: SessionView | undefined,
   onBack: (() => void) | undefined,
+  showToolCalls = true,
 ): HTMLElement {
   const header = document.createElement("header");
   header.className = "session-detail__header nav-bar";
@@ -136,7 +141,7 @@ function renderHeader(
   if (session) {
     header.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
     header.append(textElement(document, "span", "session-row__context", session.model ?? "Model unknown"));
-    header.append(renderSessionStatus(document, session));
+    header.append(renderSessionStatus(document, session, showToolCalls));
     const adapter = model.adapters.get(session.identity.adapterId);
     if (adapter) {
       header.append(renderAdapterStatus(document, adapter));
@@ -175,7 +180,9 @@ function renderTimeline(
   const observations = model.observations.filter((item) => sameIdentity(item.session, session.identity));
   const commands = [...model.commands.values()].filter((item) => sameSessionTarget(item.target, session.identity));
   const elicitations = [...model.elicitations.values()].filter((item) => sameIdentity(item.target, session.identity));
-  const diagnostics = diagnosticsForSession(model.adapters.get(session.identity.adapterId), session.identity);
+  const adapter = model.adapters.get(session.identity.adapterId);
+  const diagnostics = diagnosticsForSession(adapter, session.identity);
+  const deliveryActions = sessionDeliveryActions(options.actions, adapter);
   const associatedCommands = new Set<string>();
   const entries: TimelineEntry[] = [];
   let hiddenToolCalls = 0;
@@ -184,8 +191,8 @@ function renderTimeline(
     entries.push({ lsn: diagnostic.lsn, type: "diagnostic", diagnostic });
   }
   for (const observation of observations) {
-    const command = observation.role === "operator"
-      ? nearestCommand(observation, commands, associatedCommands)
+    const command = observation.role === "operator" && observation.commandId
+      ? commands.find((candidate) => candidate.id === observation.commandId)
       : undefined;
     if (command) associatedCommands.add(command.id);
     entries.push({ lsn: observation.lsn, type: "observation", observation, command });
@@ -225,7 +232,7 @@ function renderTimeline(
         : "Send an instruction to start this session timeline.",
     ));
     if (rendersLive(session) && session.activity === SessionActivityState.WORKING) {
-      timeline.append(renderTimelineActivity(document, session));
+      timeline.append(renderTimelineActivity(document, session, options.showToolCalls));
     }
     return;
   }
@@ -234,11 +241,17 @@ function renderTimeline(
     if (entry.type === "diagnostic") {
       timeline.append(renderDiagnostic(document, entry.diagnostic));
     } else if (entry.type === "observation") {
-      const rendered = renderObservation(document, entry.observation, entry.command, options);
+      const rendered = renderObservation(
+        document,
+        entry.observation,
+        entry.command,
+        deliveryActions,
+        options,
+      );
       if (rendered) timeline.append(rendered);
       else if (entry.observation.role === "tool") hiddenToolCalls += 1;
     } else if (entry.type === "command") {
-      timeline.append(renderCommandMessage(document, entry.command, options.actions, options.lockdownActive));
+      timeline.append(renderCommandMessage(document, entry.command, deliveryActions, options.lockdownActive));
     } else if (entry.type === "elicitation") {
       if (!options.elicitation) continue;
       const card = renderElicitation(document, entry.elicitation, {
@@ -271,18 +284,22 @@ function renderTimeline(
   // in live dogfooding: "nothing in the chatbox indicates the agent is
   // working"). Only for a live, working session.
   if (rendersLive(session) && session.activity === SessionActivityState.WORKING) {
-    timeline.append(renderTimelineActivity(document, session));
+    timeline.append(renderTimelineActivity(document, session, options.showToolCalls));
   }
 }
 
-function renderTimelineActivity(document: Document, session: SessionView): HTMLElement {
+function renderTimelineActivity(
+  document: Document,
+  session: SessionView,
+  showToolCalls = true,
+): HTMLElement {
   const row = document.createElement("div");
   row.className = "timeline-activity";
   row.setAttribute("role", "status");
   const indicator = document.createElement("span");
   indicator.className = "activity-indicator activity-indicator--working";
   indicator.append(textElement(document, "span", "activity-indicator__icon", ""));
-  indicator.append(document.createTextNode(session.activityDetail ?? "working"));
+  indicator.append(document.createTextNode(presentedActivityDetail(session, showToolCalls) ?? "working"));
   row.append(indicator);
   return row;
 }
@@ -311,6 +328,7 @@ function renderObservation(
   document: Document,
   observation: ObservationView,
   command: CommandView | undefined,
+  deliveryActions: OperationDeliveryActions | undefined,
   options: SessionDetailOptions,
 ): HTMLElement | undefined {
   if (observation.role === "tool" && options.showToolCalls === false) return undefined;
@@ -326,8 +344,9 @@ function renderObservation(
     message.append(renderInstructionCard(
       document,
       command,
-      sessionDeliveryActions(options.actions),
+      deliveryActions,
       options.lockdownActive,
+      observation.markdown,
     ));
   } else {
     const body = document.createElement("div");
@@ -357,6 +376,7 @@ export function renderInstructionCard(
   command: CommandView,
   actions?: OperationDeliveryActions,
   lockdownActive = false,
+  observedMarkdown?: string,
 ): HTMLElement {
   const card = document.createElement("div");
   card.className = "instruction-card";
@@ -369,7 +389,12 @@ export function renderInstructionCard(
     textElement(document, "code", "instruction-card__target", commandTargetLabel(command)),
   );
 
-  const body = textElement(document, "p", "instruction-card__body", operationText(command) || "No instruction payload");
+  const body = textElement(
+    document,
+    "p",
+    "instruction-card__body",
+    observedMarkdown ?? (operationText(command) || "No instruction payload"),
+  );
   const meta = textElement(
     document,
     "p",
@@ -398,12 +423,12 @@ function commandTargetGeneration(command: CommandView): string {
 function renderCommandMessage(
   document: Document,
   command: CommandView,
-  actions: SessionDetailActions | undefined,
+  actions: OperationDeliveryActions | undefined,
   lockdownActive = false,
 ): HTMLElement {
   const message = document.createElement("article");
   message.className = "msg msg--operator msg--action";
-  message.append(renderInstructionCard(document, command, sessionDeliveryActions(actions), lockdownActive));
+  message.append(renderInstructionCard(document, command, actions, lockdownActive));
   return message;
 }
 
@@ -416,6 +441,7 @@ function renderComposer(
 ): { composer: HTMLElement; input: HTMLTextAreaElement; send: HTMLButtonElement } {
   const composer = document.createElement("form");
   composer.className = "composer";
+  composer.dataset.mobileBottomTarget = "composer";
   const targetStable = stableTarget(session) && !lockdownActive;
 
   const attach = iconButton(document, "paperclip", "Attach file or image", "btn btn-secondary");
@@ -529,20 +555,6 @@ function disableSubmission(card: HTMLElement, document: Document, lockdownActive
   );
 }
 
-function nearestCommand(
-  observation: ObservationView,
-  commands: readonly CommandView[],
-  used: ReadonlySet<string>,
-): CommandView | undefined {
-  // Match on the command's accepted LSN: command.lsn advances with every
-  // transition (delivered/running/completed), so at final fold it would sit
-  // after the observation and never associate — duplicating the instruct as
-  // a separate card after the agent turn.
-  return commands
-    .filter((command) => !used.has(command.id) && acceptedLsn(command) <= observation.lsn)
-    .sort((left, right) => acceptedLsn(left) > acceptedLsn(right) ? -1 : acceptedLsn(left) < acceptedLsn(right) ? 1 : 0)[0];
-}
-
 function acceptedLsn(command: CommandView): bigint {
   return command.history.at(0)?.lsn ?? command.lsn;
 }
@@ -558,16 +570,21 @@ function sameSessionTarget(target: OperationTargetView | undefined, identity: Se
   );
 }
 
-function sessionDeliveryActions(actions: SessionDetailActions | undefined): OperationDeliveryActions | undefined {
-  if (!actions?.cancel && !actions?.interrupt) return undefined;
-  return {
-    cancel: actions.cancel
-      ? (command) => actions.cancel!(sessionActionCommand(command))
-      : undefined,
-    interrupt: actions.interrupt
-      ? (command) => actions.interrupt!(sessionActionCommand(command))
-      : undefined,
-  };
+function sessionDeliveryActions(
+  actions: SessionDetailActions | undefined,
+  adapter: AdapterView | undefined,
+): OperationDeliveryActions | undefined {
+  const capability = adapter?.status?.capability;
+  if (!capability?.cancellationSupport) return undefined;
+  const supportsCancel = capability.supportedOperationKinds.includes(OperationKind.CANCEL);
+  const supportsInterrupt = capability.supportedOperationKinds.includes(OperationKind.INTERRUPT);
+  const cancel = actions?.cancel && supportsCancel
+    ? (command: CommandView) => actions.cancel!(sessionActionCommand(command))
+    : undefined;
+  const interrupt = actions?.interrupt && supportsInterrupt
+    ? (command: CommandView) => actions.interrupt!(sessionActionCommand(command))
+    : undefined;
+  return cancel || interrupt ? { cancel, interrupt } : undefined;
 }
 
 function sessionActionCommand(command: CommandView): SessionCommandActionView {

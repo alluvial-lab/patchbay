@@ -142,8 +142,14 @@ body > [data-patchbay-cockpit] {
 
 .cockpit .session-list {
   flex: 1;
+  padding: 0;
+  margin: 0;
   overflow-y: auto;
+  list-style: none;
 }
+
+.cockpit .session-list__item { min-width: 0; }
+.cockpit .session-list__item .session-row { width: 100%; text-align: left; }
 
 .cockpit .main,
 .cockpit .session-detail {
@@ -739,7 +745,7 @@ body > [data-patchbay-cockpit] {
   width: min(380px, calc(100vw - var(--space-8)));
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-5);
+  padding: var(--space-6);
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
@@ -762,18 +768,47 @@ body > [data-patchbay-cockpit] {
   font: var(--font-size-sm)/1.5 var(--font-sans);
 }
 .settings-dialog__scope { font: var(--font-size-xs)/1.4 var(--font-mono); }
+.settings-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+.settings-list__item { margin: 0; }
 .settings-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
   gap: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
+  padding: var(--space-3) 0;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: 0;
   cursor: pointer;
+}
+.settings-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 .settings-toggle__copy { display: grid; gap: var(--space-1); }
 .settings-toggle__copy small { color: var(--color-text-secondary); }
-.settings-toggle input { width: 20px; height: 20px; accent-color: var(--color-accent); }
+.settings-toggle__control {
+  min-width: 44px;
+  padding: var(--space-1) var(--space-2);
+  text-align: center;
+  font: var(--font-size-xs)/1.4 var(--font-mono);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+}
+.settings-toggle[aria-pressed="true"] .settings-toggle__control {
+  color: var(--color-accent);
+  background: var(--color-accent-muted);
+  border-color: var(--color-accent);
+}
 
 .sheet-backdrop {
   position: fixed;
@@ -839,6 +874,9 @@ body > [data-patchbay-cockpit] {
 }
 
 @media (max-width: 760px) {
+  .cockpit {
+    --mobile-bottom-nav-reserve: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
   .cockpit .rail { display: none; }
   .cockpit .bottom-tabs {
     position: fixed;
@@ -857,6 +895,8 @@ body > [data-patchbay-cockpit] {
     display: flex;
     flex-direction: column;
     align-items: center;
+    min-width: 44px;
+    min-height: 44px;
     gap: var(--space-1);
     padding: var(--space-2) var(--space-1);
     border: 0;
@@ -868,7 +908,7 @@ body > [data-patchbay-cockpit] {
     position: fixed;
     z-index: 50;
     right: var(--space-2);
-    bottom: calc(72px + env(safe-area-inset-bottom));
+    bottom: var(--mobile-bottom-nav-reserve);
     display: grid;
     width: min(240px, calc(100% - var(--space-4)));
     gap: var(--space-1);
@@ -916,6 +956,12 @@ body > [data-patchbay-cockpit] {
 
   .cockpit .cockpit__content {
     display: block;
+    box-sizing: border-box;
+    padding-bottom: var(--mobile-bottom-nav-reserve);
+  }
+
+  .cockpit [data-mobile-bottom-target] {
+    scroll-padding-bottom: var(--mobile-bottom-nav-reserve);
   }
 
   .cockpit .sidebar,
@@ -949,6 +995,11 @@ body > [data-patchbay-cockpit] {
     flex: 0 0 auto;
     justify-content: flex-start;
     width: auto;
+    min-height: 44px;
+  }
+  .cockpit .delivery-line__actions .btn {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .cockpit .msg,
@@ -959,7 +1010,7 @@ body > [data-patchbay-cockpit] {
 
   .cockpit .composer {
     position: sticky;
-    bottom: 0;
+    bottom: var(--mobile-bottom-nav-reserve);
   }
 
   .cockpit .elicitation-card--inline-teaser {

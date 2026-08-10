@@ -1,6 +1,6 @@
 export const ICON_NAMES = [
   "arrow-left", "arrow-up", "paperclip", "plus", "link",
-  "chevron-down", "chevron-right", "x", "square", "folder", "sliders-horizontal",
+  "chevron-down", "chevron-right", "x", "square", "folder", "sliders-horizontal", "settings",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -31,6 +31,12 @@ export const LUCIDE_ICONS: Readonly<Record<IconName, IconDefinition>> = {
     paths: [
       "M21 4h-7", "M10 4H3", "M21 12h-9", "M8 12H3", "M21 20h-5", "M12 20H3",
       "M14 2v4", "M8 10v4", "M16 18v4",
+    ],
+  },
+  settings: {
+    paths: [
+      "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+      "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
     ],
   },
 };

@@ -6,6 +6,7 @@ import {
   ElicitationResponsePayloadSchema,
   ElicitationSchema,
   ElicitationState,
+  ObservationKind,
   ObservationSchema,
   OperationKind,
   OperationSchema,
@@ -24,7 +25,7 @@ import {
   SecurityLockdownEventSchema,
   StoredEventKind,
   type Elicitation,
-  type FailureCode,
+  FailureCode,
   type Observation,
   type Operation,
   type ResponseContract,
@@ -65,6 +66,8 @@ export interface SessionView {
   connectivity: SessionConnectivityState;
   activity: SessionActivityState;
   activityDetail?: string;
+  /** Typed presentation provenance; tool details can be hidden without guessing from copy. */
+  activityDetailProvenance?: "runtime" | "tool";
   needsYou: boolean;
   lastLsn: bigint;
   lastUpdate?: Date;
@@ -159,6 +162,8 @@ export interface ObservationView {
   markdown: string;
   lsn: bigint;
   messageId?: string;
+  /** Exact typed CommandId correlation carried by the source Observation. */
+  commandId?: string;
   /** Plain-text preview of tool args/result; rendered as text, never markdown. */
   detail?: string;
 }
@@ -501,6 +506,7 @@ export function replaceSecuritySnapshot(
         connectivity: SessionConnectivityState.STALE,
         activity: SessionActivityState.UNKNOWN,
         activityDetail: undefined,
+        activityDetailProvenance: undefined,
         lockdownActive: true,
         needsYou: false,
       }]),
@@ -527,6 +533,7 @@ export function markUnreconciled(model: PresentationModel): PresentationModel {
             : SessionConnectivityState.STALE,
         activity: SessionActivityState.UNKNOWN,
         activityDetail: undefined,
+        activityDetailProvenance: undefined,
         needsYou: false,
         reconciled: false,
       },
@@ -608,6 +615,16 @@ export function stableTarget(session: SessionView | undefined): session is Sessi
   );
 }
 
+/** Presentation-only tool filtering uses typed provenance, never activity-detail copy. */
+export function presentedActivityDetail(
+  session: SessionView,
+  showToolCalls = true,
+): string | undefined {
+  return showToolCalls || session.activityDetailProvenance !== "tool"
+    ? session.activityDetail
+    : undefined;
+}
+
 /** The view-binding dominance rule: only a reconciled, non-tombstoned LIVE axis is live. */
 export function rendersLive(session: SessionView): boolean {
   return stableTarget(session)
@@ -628,6 +645,22 @@ function foldOperation(model: PresentationModel, operation: Operation, lsn: bigi
       history: [{ state: OperationState.ACCEPTED, lsn }],
     });
   }
+
+  if (operation.kind !== OperationKind.CANCEL && operation.kind !== OperationKind.INTERRUPT) return;
+  const targetCommandId = exactCommandCorrelation(operation.correlations);
+  if (!targetCommandId) return;
+  const targetCommand = model.commands.get(targetCommandId);
+  if (
+    !targetCommand
+    || !isTerminalCommand(targetCommand.state)
+    || targetCommand.race
+    || lsn <= targetCommand.lsn
+  ) return;
+  const action = operation.kind === OperationKind.CANCEL ? "cancellation" : "interrupt";
+  model.commands.set(targetCommandId, {
+    ...targetCommand,
+    race: `${terminalStateLabel(targetCommand.state)} before ${action} arrived`,
+  });
 }
 
 function foldCommandTransition(
@@ -707,6 +740,9 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
     if (model.resourceObservations.length > 100) model.resourceObservations.splice(0, model.resourceObservations.length - 100);
     return;
   }
+  const commandId = exactCommandCorrelation(observation.correlations);
+  deriveTerminalRace(model, observation, commandId, lsn);
+
   const target = runtimeSessionFromScope(observation.targetScope);
   const transcript = decodeTranscriptEvent(observation);
   if (!transcript) return;
@@ -715,10 +751,15 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
   const session = key ? model.sessions.get(key) : undefined;
   if (session) {
     const detail = activityDetail(transcript);
-    model.sessions.set(key!, { ...session, activityDetail: detail, lastLsn: lsn });
+    model.sessions.set(key!, {
+      ...session,
+      activityDetail: detail?.text,
+      activityDetailProvenance: detail?.provenance,
+      lastLsn: lsn,
+    });
   }
 
-  foldTranscriptObservation(model, transcript, target, lsn);
+  foldTranscriptObservation(model, transcript, target, lsn, commandId);
 }
 
 function foldSecurityLockdown(
@@ -741,6 +782,7 @@ function foldSecurityLockdown(
           connectivity: SessionConnectivityState.STALE,
           activity: SessionActivityState.UNKNOWN,
           activityDetail: undefined,
+          activityDetailProvenance: undefined,
           lockdownActive: true,
           lastLsn: lsn,
           needsYou: false,
@@ -1088,6 +1130,7 @@ function foldSessionState(model: PresentationModel, event: ReturnType<typeof dec
         connectivity: SessionConnectivityState.STALE,
         activity: SessionActivityState.UNKNOWN,
         activityDetail: undefined,
+        activityDetailProvenance: undefined,
         tombstoned: true,
         needsYou: false,
         lastLsn: lsn,
@@ -1400,22 +1443,27 @@ function decodeTranscriptEvent(observation: Observation): TranscriptRecord | und
   return value as TranscriptRecord;
 }
 
-function activityDetail(event: TranscriptRecord): string | undefined {
+function activityDetail(
+  event: TranscriptRecord,
+): { text: string; provenance: "runtime" | "tool" } | undefined {
   switch (event.kind) {
     case "turn_started":
-      return "thinking";
+      return { text: "thinking", provenance: "runtime" };
     case "assistant_delta":
-      return "responding";
+      return { text: "responding", provenance: "runtime" };
     case "assistant_committed":
-      return "finishing response";
+      return { text: "finishing response", provenance: "runtime" };
     case "tool_requested":
-      return typeof event.tool === "string" ? `using ${event.tool}` : "using tool";
+      return {
+        text: typeof event.tool === "string" ? `using ${event.tool}` : "using tool",
+        provenance: "tool",
+      };
     case "tool_finished":
-      return event.error ? "tool failed" : "processing tool result";
+      return { text: event.error ? "tool failed" : "processing tool result", provenance: "tool" };
     case "turn_finished":
-      return "waiting for command";
+      return { text: "waiting for command", provenance: "runtime" };
     case "provider_error":
-      return "provider error";
+      return { text: "provider error", provenance: "runtime" };
     default:
       return undefined;
   }
@@ -1426,13 +1474,19 @@ function foldTranscriptObservation(
   event: TranscriptRecord,
   session: SessionIdentity | undefined,
   lsn: bigint,
+  commandId: string | undefined,
 ): void {
   const messageId = typeof event.messageId === "string" ? event.messageId : undefined;
   if (event.kind === "assistant_delta" && messageId && typeof event.delta === "string") {
     const index = model.observations.findIndex((item) => item.messageId === messageId);
     if (index >= 0) {
       const current = model.observations[index]!;
-      model.observations[index] = { ...current, markdown: current.markdown + event.delta, lsn };
+      model.observations[index] = {
+        ...current,
+        markdown: current.markdown + event.delta,
+        lsn,
+        commandId: commandId ?? current.commandId,
+      };
     } else {
       model.observations.push({
         id: messageId,
@@ -1442,6 +1496,7 @@ function foldTranscriptObservation(
         kind: event.kind,
         markdown: event.delta,
         lsn,
+        commandId,
       });
     }
     return;
@@ -1456,6 +1511,7 @@ function foldTranscriptObservation(
       kind: event.kind,
       markdown: event.text,
       lsn,
+      commandId,
     };
     if (index >= 0) model.observations[index] = next;
     else model.observations.push(next);
@@ -1470,6 +1526,7 @@ function foldTranscriptObservation(
       kind: event.kind,
       markdown: event.text,
       lsn,
+      commandId,
     });
     return;
   }
@@ -1482,7 +1539,87 @@ function foldTranscriptObservation(
       event.kind === "tool_requested"
         ? toolPreview(event.args)
         : toolPreview(event.error ?? event.result);
-    model.observations.push({ id, session, role: "tool", kind: event.kind, markdown: body, lsn, ...(detail ? { detail } : {}) });
+    model.observations.push({
+      id,
+      session,
+      role: "tool",
+      kind: event.kind,
+      markdown: body,
+      lsn,
+      commandId,
+      ...(detail ? { detail } : {}),
+    });
+  }
+}
+
+function exactCommandCorrelation(
+  correlations: readonly Observation["correlations"][number][],
+): string | undefined {
+  let commandId: string | undefined;
+  for (const correlation of correlations) {
+    if (correlation.ref.case !== "commandId") continue;
+    const candidate = correlation.ref.value.value;
+    if (!candidate || (commandId !== undefined && candidate !== commandId)) return undefined;
+    commandId = candidate;
+  }
+  return commandId;
+}
+
+function deriveTerminalRace(
+  model: PresentationModel,
+  observation: Observation,
+  commandId: string | undefined,
+  lsn: bigint,
+): void {
+  if (!commandId || observation.kind !== ObservationKind.RESULT) return;
+  const command = model.commands.get(commandId);
+  if (!command || !isTerminalCommand(command.state) || command.race || lsn <= command.lsn) return;
+
+  const candidate = observationTerminalCandidate(observation.failureCode);
+  if (candidate === undefined || candidate === command.state) return;
+
+  let race: string;
+  if (candidate === OperationState.CANCELLED) {
+    race = `${terminalStateLabel(command.state)} before cancellation arrived`;
+  } else if (candidate === OperationState.COMPLETED) {
+    race = command.state === OperationState.EXPIRED
+      ? "Expired before adapter completion"
+      : `${terminalStateLabel(command.state)} before completion arrived`;
+  } else {
+    race = `${terminalStateLabel(command.state)} before later ${terminalStateLabel(candidate).toLocaleLowerCase()}`;
+  }
+  model.commands.set(commandId, { ...command, race });
+}
+
+function observationTerminalCandidate(failureCode: FailureCode): OperationState | undefined {
+  switch (failureCode) {
+    case FailureCode.UNSPECIFIED:
+      return OperationState.COMPLETED;
+    case FailureCode.UNSUPPORTED_COMMAND:
+    case FailureCode.DELIVERY_REJECTED:
+      return OperationState.REJECTED;
+    case FailureCode.EXPIRED:
+      return OperationState.EXPIRED;
+    case FailureCode.CANCELLED:
+      return OperationState.CANCELLED;
+    case FailureCode.SUPERSEDED:
+      return OperationState.SUPERSEDED;
+    case FailureCode.STALE_EVENT:
+      return undefined;
+    default:
+      return OperationState.FAILED;
+  }
+}
+
+function terminalStateLabel(state: OperationState): string {
+  switch (state) {
+    case OperationState.COMPLETED: return "Completed";
+    case OperationState.REJECTED: return "Rejected";
+    case OperationState.FAILED: return "Failed";
+    case OperationState.EXPIRED: return "Expired";
+    case OperationState.CANCELLED: return "Cancelled";
+    case OperationState.SUPERSEDED: return "Superseded";
+    default: return "Terminal outcome committed";
   }
 }
 

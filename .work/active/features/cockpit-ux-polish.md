@@ -192,3 +192,21 @@ The parent feature remains the ownership and review bundle; child stories are ch
 - **Committed v0.1.0 surface behavior**: clearer identity, delivery, and responsive presentation in the existing web cockpit, with canonical registry bindings unchanged.
 - **Reserved seam preserved**: settings preference storage remains local to the control surface and can grow without protocol fields; skins/layouts remain surface-declared per `docs/UX.md`.
 - **Explicitly rejected**: protocol-level transcript filtering, a second transcript/delivery/settings model, and adapter- or core-owned UI variants. These would require a separate scope act and are not hidden gaps.
+
+## Review (2026-08-10) — thorough pass 1 fixes
+
+**Verdict**: Request changes addressed; retained at `stage: review` for the required thorough convergence pass.
+
+**Accepted findings fixed**:
+- instruction cards now merge only on exact typed command correlation and retain the source Observation text; uncorrelated/reconnect transcript entries remain separate;
+- the tool-call preference suppresses provenance-tagged tool activity detail across rows, header, banners, and timeline while preserving canonical/runtime activity and the folded transcript;
+- correlated cancel/interrupt and late result ordering now yields stable presentation-only race explanations, with state-valid capability-gated actions and inert terminal slots;
+- Settings now has modal focus containment, Escape and visible-opener restoration, inert background, semantic toggle/list/session-row controls, a conventional icon, and production-shell axe coverage;
+- mobile tabs reserve safe-area-aware list/detail/composer space, expose expanded-state semantics, clear More correctly, and keep mobile action targets at least 44px.
+
+**Verification**:
+- `npm --prefix web-cockpit test` — passed: build/typecheck/browser bundle plus 127 tests;
+- `npm --prefix contracts/ts run check:presentation` — passed: 5 registries, contrast, showcase bindings, and axe-core scan;
+- `git diff --check` — passed.
+
+**Notes**: review weight `thorough`, pass 1; direct-read/fix only per caller prohibition on nested reviewers. No protocol, generated contract, foundation assertion, selected mock, or feature scope changed.

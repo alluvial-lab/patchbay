@@ -47,20 +47,27 @@ export function renderOperationDelivery(
   // space keeps instruction cards from jumping as delivery advances.
   const actionSlot = document.createElement("div");
   actionSlot.className = "delivery-line__actions";
-  actionSlot.setAttribute("aria-label", "Operation actions");
-  if (command.state === OperationState.RUNNING && (actions?.cancel || actions?.interrupt)) {
+  const cancelAvailable = actions?.cancel && (
+    command.state === OperationState.ACCEPTED
+    || command.state === OperationState.DELIVERED
+    || command.state === OperationState.RUNNING
+  );
+  const interruptAvailable = actions?.interrupt && command.state === OperationState.RUNNING;
+  if (cancelAvailable || interruptAvailable) {
     actionSlot.classList.add("delivery-line__actions--available");
-    if (actions.cancel) {
+    actionSlot.setAttribute("role", "group");
+    actionSlot.setAttribute("aria-label", "Operation actions");
+    if (cancelAvailable) {
       actionSlot.append(contextButton(
         document,
         "x",
-        "Cancel running operation",
+        `Cancel ${current} operation`,
         () => actions.cancel!(command),
         false,
         lockdownActive,
       ));
     }
-    if (actions.interrupt) {
+    if (interruptAvailable) {
       actionSlot.append(contextButton(
         document,
         "square",
@@ -70,6 +77,10 @@ export function renderOperationDelivery(
         lockdownActive,
       ));
     }
+  } else {
+    // Terminal commands retain the same geometry without exposing a phantom
+    // accessible control or implying that terminal state can still mutate.
+    actionSlot.setAttribute("aria-hidden", "true");
   }
   wrapper.append(actionSlot);
   return wrapper;

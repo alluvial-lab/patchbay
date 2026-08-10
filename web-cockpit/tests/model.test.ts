@@ -15,6 +15,7 @@ import {
   ElicitationSchema,
   ElicitationState,
   EventIdSchema,
+  FailureCode,
   GenerationSchema,
   LsnSchema,
   ObservationKind,
@@ -71,6 +72,7 @@ import {
   fold,
   markUnreconciled,
   operationTargetFromScope,
+  presentedActivityDetail,
   rendersLive,
   rendersResourceCurrent,
   replaceFromSnapshots,
@@ -214,7 +216,69 @@ test("Observation detail composes without changing durable activity", () => {
   const session = [...next.sessions.values()][0]!;
   assert.equal(session.activity, SessionActivityState.WORKING);
   assert.equal(session.activityDetail, "using bash");
+  assert.equal(session.activityDetailProvenance, "tool");
+  assert.equal(presentedActivityDetail(session, false), undefined);
   assert.equal(registered.sessions.values().next().value!.activityDetail, undefined);
+});
+
+test("activity detail provenance distinguishes every tool outcome from runtime activity", () => {
+  const cases: Array<{
+    event: Record<string, unknown>;
+    detail: string;
+    provenance: "tool" | "runtime";
+  }> = [
+    {
+      event: { kind: "tool_requested", eventId: "requested", toolCallId: "tool-1", tool: "bash", args: {} },
+      detail: "using bash",
+      provenance: "tool",
+    },
+    {
+      event: { kind: "tool_finished", eventId: "result", toolCallId: "tool-1", tool: "bash", result: "ok" },
+      detail: "processing tool result",
+      provenance: "tool",
+    },
+    {
+      event: { kind: "tool_finished", eventId: "failure", toolCallId: "tool-1", tool: "bash", error: "exit 1" },
+      detail: "tool failed",
+      provenance: "tool",
+    },
+    {
+      event: { kind: "assistant_delta", eventId: "delta", messageId: "message-1", delta: "hello" },
+      detail: "responding",
+      provenance: "runtime",
+    },
+  ];
+
+  for (const item of cases) {
+    const model = fold(fold(emptyPresentationModel(), registration(1n, 1n)), observationEvent(2n, item.event));
+    const session = [...model.sessions.values()][0]!;
+    assert.equal(session.activityDetail, item.detail);
+    assert.equal(session.activityDetailProvenance, item.provenance);
+    assert.equal(
+      presentedActivityDetail(session, false),
+      item.provenance === "tool" ? undefined : item.detail,
+    );
+  }
+});
+
+test("typed command correlation survives transcript folding and conflicting correlation fails closed", () => {
+  let model = fold(emptyPresentationModel(), registration(1n, 1n));
+  model = fold(model, operationEvent(2n, "command-a"));
+  model = fold(model, operationEvent(3n, "command-b"));
+  model = fold(model, observationEvent(4n, {
+    kind: "user_confirmed",
+    messageId: "operator-b",
+    text: "authoritative B",
+  }, ["command-b"]));
+  model = fold(model, observationEvent(5n, {
+    kind: "user_confirmed",
+    messageId: "operator-conflict",
+    text: "ambiguous",
+  }, ["command-a", "command-b"]));
+
+  assert.equal(model.observations.find((item) => item.id === "operator-b")?.commandId, "command-b");
+  assert.equal(model.observations.find((item) => item.id === "operator-conflict")?.commandId, undefined);
+  assert.equal(model.commands.size, 2);
 });
 
 test("bounded safe token-commune resource observations reach the presentation model", () => {
@@ -319,6 +383,29 @@ test("first durable command terminal remains projected after a late terminal can
 
   assert.equal(model.commands.get("command-1")!.state, OperationState.COMPLETED);
   assert.equal(model.commands.get("command-1")!.history.length, 3);
+});
+
+test("terminal race labels derive from correlated durable ordering without rewriting state", () => {
+  let completedFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-1"));
+  completedFirst = fold(completedFirst, transitionEvent(2n, "command-1", OperationState.ACCEPTED, OperationState.DELIVERED));
+  completedFirst = fold(completedFirst, transitionEvent(3n, "command-1", OperationState.DELIVERED, OperationState.COMPLETED));
+  completedFirst = fold(completedFirst, correlatedOperationEvent(4n, "cancel-command", OperationKind.CANCEL, "command-1"));
+  assert.equal(completedFirst.commands.get("command-1")!.state, OperationState.COMPLETED);
+  assert.equal(completedFirst.commands.get("command-1")!.race, "Completed before cancellation arrived");
+
+  let cancelledFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-2"));
+  cancelledFirst = fold(cancelledFirst, transitionEvent(2n, "command-2", OperationState.ACCEPTED, OperationState.DELIVERED));
+  cancelledFirst = fold(cancelledFirst, transitionEvent(3n, "command-2", OperationState.DELIVERED, OperationState.CANCELLED));
+  cancelledFirst = fold(cancelledFirst, resultObservationEvent(4n, "command-2"));
+  assert.equal(cancelledFirst.commands.get("command-2")!.state, OperationState.CANCELLED);
+  assert.equal(cancelledFirst.commands.get("command-2")!.race, "Cancelled before completion arrived");
+
+  cancelledFirst = fold(cancelledFirst, resultObservationEvent(5n, "command-2", FailureCode.EXECUTION_FAILED));
+  assert.equal(
+    cancelledFirst.commands.get("command-2")!.race,
+    "Cancelled before completion arrived",
+    "the first later terminal candidate remains the stable explanation",
+  );
 });
 
 test("snapshot replacement discards the old projection and pending elicitations derive needs-you", () => {
@@ -458,7 +545,11 @@ function modelChange(lsn: bigint, from: string, to: string): SubscribeEvent {
   );
 }
 
-function observationEvent(lsn: bigint, transcript: Record<string, unknown>): SubscribeEvent {
+function observationEvent(
+  lsn: bigint,
+  transcript: Record<string, unknown>,
+  commandIds: readonly string[] = [],
+): SubscribeEvent {
   return stored(
     lsn,
     StoredEventKind.OBSERVATION,
@@ -467,6 +558,12 @@ function observationEvent(lsn: bigint, transcript: Record<string, unknown>): Sub
       authorityDomainId: DOMAIN,
       kind: ObservationKind.EVENT,
       targetScope: sessionTarget(1n),
+      correlations: commandIds.map((commandId) => create(TypedCorrelationSchema, {
+        ref: {
+          case: "commandId",
+          value: create(CommandIdSchema, { value: commandId }),
+        },
+      })),
       payload: create(PayloadEnvelopeSchema, {
         contentType: PayloadContentType.JSON,
         schemaRef: "patchbay.pi.TranscriptEvent.v1",
@@ -513,6 +610,56 @@ function operationEvent(lsn: bigint, commandId: string): SubscribeEvent {
       kind: OperationKind.INSTRUCT,
       targetScope: sessionTarget(1n),
       idempotencyKey: `key-${commandId}`,
+    }),
+  );
+}
+
+function correlatedOperationEvent(
+  lsn: bigint,
+  commandId: string,
+  kind: OperationKind,
+  targetCommandId: string,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.OPERATION,
+    OperationSchema,
+    create(OperationSchema, {
+      commandId: create(CommandIdSchema, { value: commandId }),
+      authorityDomainId: DOMAIN,
+      kind,
+      targetScope: sessionTarget(1n),
+      idempotencyKey: `key-${commandId}`,
+      correlations: [create(TypedCorrelationSchema, {
+        ref: {
+          case: "commandId",
+          value: create(CommandIdSchema, { value: targetCommandId }),
+        },
+      })],
+    }),
+  );
+}
+
+function resultObservationEvent(
+  lsn: bigint,
+  commandId: string,
+  failureCode = FailureCode.UNSPECIFIED,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.OBSERVATION,
+    ObservationSchema,
+    create(ObservationSchema, {
+      authorityDomainId: DOMAIN,
+      kind: ObservationKind.RESULT,
+      targetScope: sessionTarget(1n),
+      failureCode,
+      correlations: [create(TypedCorrelationSchema, {
+        ref: {
+          case: "commandId",
+          value: create(CommandIdSchema, { value: commandId }),
+        },
+      })],
     }),
   );
 }
