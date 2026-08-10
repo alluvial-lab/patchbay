@@ -13,7 +13,10 @@ use patchbay_contracts::patchbay::{
 
 use crate::{
     acceptance::Clock,
-    storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage},
+    storage::{
+        validate_next_replay_event, AuditRecordDraft, GrantAppendOutcome, GrantIdentityKey,
+        RecordedEvent, Storage, StorageError,
+    },
 };
 
 use super::{
@@ -40,26 +43,28 @@ where
         "grant",
     )?;
 
-    let grant_id = grant.grant_id.clone();
+    let grant_id = required_grant_id(grant.grant_id.as_ref(), "grant")?;
+    let audit_actor = grant.subject_actor_id.clone();
+    let audit_target = grant.target_scope.clone();
     let payload = events::grant(authority_domain_id.clone(), grant);
     preflight_creation(&payload, authority_domain_id)?;
-    let kind = if projection
-        .current_grant(&grant_id.expect("validated grant id"))
-        .await
-        .is_some()
-    {
-        patchbay_contracts::patchbay::AuditEventKind::GrantChanged
-    } else {
-        patchbay_contracts::patchbay::AuditEventKind::GrantCreated
-    };
-    let mut audit = AuditRecordDraft::new(crate::acceptance::SystemClock.now(), kind);
-    audit.reason_code = if kind == patchbay_contracts::patchbay::AuditEventKind::GrantChanged {
-        "grant_changed"
-    } else {
-        "grant_created"
-    }
-    .to_owned();
-    append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
+    let mut audit = AuditRecordDraft::new(
+        crate::acceptance::SystemClock.now(),
+        patchbay_contracts::patchbay::AuditEventKind::GrantCreated,
+    );
+    audit.actor_id = audit_actor;
+    audit.grant_id = Some(grant_id.clone());
+    audit.target_scope = audit_target;
+    audit.reason_code = "grant_created".to_owned();
+    append_and_warm_grant(
+        storage,
+        projection,
+        authority_domain_id,
+        grant_id,
+        payload,
+        audit,
+    )
+    .await
 }
 
 /// Validate, durably append, and project an auto-issued descendant grant.
@@ -121,8 +126,27 @@ where
         })?;
     validate_descendant_issuance_candidate(&grant, &issuance)?;
 
+    let grant_id = required_grant_id(grant.grant_id.as_ref(), "descendant grant")?;
+    let audit_actor = grant.subject_actor_id.clone();
+    let audit_target = grant.target_scope.clone();
     let payload = events::descendant_grant(authority_domain_id.clone(), grant);
-    append_and_warm(storage, projection, authority_domain_id, payload).await
+    let mut audit = AuditRecordDraft::new(
+        crate::acceptance::SystemClock.now(),
+        patchbay_contracts::patchbay::AuditEventKind::GrantCreated,
+    );
+    audit.actor_id = audit_actor;
+    audit.grant_id = Some(grant_id.clone());
+    audit.target_scope = audit_target;
+    audit.reason_code = "descendant_grant_created".to_owned();
+    append_and_warm_grant(
+        storage,
+        projection,
+        authority_domain_id,
+        grant_id,
+        payload,
+        audit,
+    )
+    .await
 }
 
 /// Validate, durably append, and project a revocation of exactly one grant.
@@ -227,25 +251,69 @@ where
     append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
 }
 
-async fn append_and_warm<S, L>(
+async fn append_and_warm_grant<S, L>(
     storage: &S,
     projection: &mut L,
     authority_domain_id: &AuthorityDomainId,
+    grant_id: GrantId,
     payload: StoredEventPayload,
+    audit: AuditRecordDraft,
 ) -> Result<EventId, AuthorityError>
 where
     S: Storage,
     L: GrantProjection,
 {
-    let event_id = storage.append(authority_domain_id, payload.clone()).await?;
-    validate_event_id(&event_id, authority_domain_id)?;
-
-    // Durability precedes projection mutation. If this fold fails, callers
-    // must rebuild the hot projection from the authoritative log.
-    projection.observe(&RecordedEvent {
-        event_id: event_id.clone(),
-        payload,
+    let identity = GrantIdentityKey::new(grant_id.value.clone()).ok_or_else(|| {
+        AuthorityError::InvalidGrant("grant identity is empty after validation".to_owned())
     })?;
+    let event_id = match storage
+        .append_grant_audited(authority_domain_id, &identity, payload.clone(), audit)
+        .await
+    {
+        Ok(GrantAppendOutcome::Appended(result)) => result.source_event_id,
+        Ok(GrantAppendOutcome::Existing(event_id)) => event_id,
+        Err(StorageError::GrantIdentityConflict {
+            grant_id,
+            existing_lsn,
+        }) => {
+            return Err(AuthorityError::CorruptLog(format!(
+                "authority domain {} grant {grant_id} conflicts with immutable source LSN {existing_lsn}",
+                authority_domain_id.value
+            )));
+        }
+        Err(error) => return Err(AuthorityError::Storage(error)),
+    };
+    validate_event_id(&event_id, authority_domain_id)?;
+    let source_lsn = event_id
+        .lsn
+        .as_ref()
+        .expect("validated event id has an LSN")
+        .value;
+    let committed = storage
+        .read_after(
+            authority_domain_id,
+            Lsn {
+                value: source_lsn - 1,
+            },
+        )
+        .await?
+        .into_iter()
+        .find(|event| event.event_id == event_id)
+        .ok_or_else(|| {
+            AuthorityError::CorruptLog(format!(
+                "grant {grant_id:?} source LSN {source_lsn} is missing during read-back"
+            ))
+        })?;
+    if committed.payload != payload {
+        return Err(AuthorityError::CorruptLog(format!(
+            "grant {grant_id:?} source LSN {source_lsn} differs from the canonical candidate"
+        )));
+    }
+
+    // Storage identity and audit commit precedes projection mutation. Always
+    // fold the exact immutable source read back from durability, never a
+    // synthetic event made from request bytes.
+    projection.observe(&committed)?;
     Ok(event_id)
 }
 
@@ -269,28 +337,6 @@ where
         payload,
     })?;
     Ok(result.source_event_id)
-}
-
-async fn append_and_warm_decision<S, L>(
-    storage: &S,
-    projection: &mut L,
-    authority_domain_id: &AuthorityDomainId,
-    payload: StoredEventPayload,
-    audit: AuditRecordDraft,
-) -> Result<EventId, AuthorityError>
-where
-    S: Storage,
-    L: GrantProjection,
-{
-    let event_id = storage
-        .append_decision(authority_domain_id, payload.clone(), audit)
-        .await?;
-    validate_event_id(&event_id, authority_domain_id)?;
-    projection.observe(&RecordedEvent {
-        event_id: event_id.clone(),
-        payload,
-    })?;
-    Ok(event_id)
 }
 
 /// Run the registry's canonical shape validation before durability.
@@ -467,9 +513,9 @@ fn validate_event_id(
             ));
         }
     }
-    if event_id.lsn.is_none() {
+    if event_id.lsn.as_ref().is_none_or(|lsn| lsn.value == 0) {
         return Err(AuthorityError::CorruptRecord(
-            "storage returned authority event without an LSN".to_owned(),
+            "storage returned authority event without a positive LSN".to_owned(),
         ));
     }
     Ok(())

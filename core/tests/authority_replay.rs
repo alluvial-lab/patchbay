@@ -10,8 +10,8 @@ use patchbay_core::{
         AuthorityRegistry, GrantLiveness, IssuerContext, IssuerRef,
     },
     storage::{
-        DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
-        TargetKey,
+        AuditRecordDraft, DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent,
+        RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
     },
 };
 
@@ -467,6 +467,18 @@ impl Storage for DomainMismatchingStorage {
     ) -> Result<DedupOutcome, StorageError> {
         self.inner
             .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        self.inner
+            .append_grant_audited(authority_domain_id, identity, source, audit)
             .await
     }
 

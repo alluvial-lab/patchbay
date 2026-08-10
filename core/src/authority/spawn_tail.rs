@@ -379,10 +379,81 @@ impl SpawnDescendantTail {
         }
         let mut scoped = self.clone();
         scoped.spawns.retain(|candidate, _| candidate == &key);
-        match scoped.next_action()? {
-            Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) => Ok(Some(issuance)),
-            _ => Ok(None),
+        if let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) =
+            scoped.next_action()?
+        {
+            return Ok(Some(issuance));
         }
+
+        // An exact writer retry reaches this path after the descendant source
+        // already committed. `next_action` has validated that source against
+        // the durable spawn context and now returns CommitCompleted (or no
+        // action for an already-completed historical prefix). Reconstruct the
+        // same canonical issuance from prior facts so ingress can compare the
+        // retry through the immutable storage identity transaction instead of
+        // rejecting it before idempotency is consulted.
+        let progress = scoped
+            .spawns
+            .get(&key)
+            .expect("scoped spawn remains present");
+        if progress.descendant_grant.is_none() {
+            return Ok(None);
+        }
+        let record = scoped.commands.get_command(command_id).ok_or_else(|| {
+            AuthorityError::CorruptLog(format!(
+                "spawn completion lost accepted command {command_id:?}"
+            ))
+        })?;
+        if !matches!(
+            record.state,
+            OperationState::Delivered | OperationState::Running | OperationState::Completed
+        ) {
+            return Ok(None);
+        }
+        let Some(accepted) = progress.accepted.as_ref() else {
+            return Ok(None);
+        };
+        let Some(session) = progress.session.as_ref() else {
+            return Ok(None);
+        };
+        let Some(audit) = progress.audit.as_ref() else {
+            return Ok(None);
+        };
+        let source_event_id = audit.record.source_event_id.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "spawn-completion audit for {command_id:?} has no source_event_id"
+            ))
+        })?;
+        validate_completion_audit(
+            audit,
+            authority_domain_id,
+            command_id,
+            accepted,
+            session,
+            source_event_id,
+        )?;
+        let audit_id = audit.record.audit_event_id.clone().ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "spawn-completion audit for {command_id:?} has no audit_event_id"
+            ))
+        })?;
+        let created_at = audit.record.occurred_at.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "spawn-completion audit for {command_id:?} has no occurred_at"
+            ))
+        })?;
+        Ok(Some(DescendantGrantIssuance {
+            spawn_operation_id: command_id.clone(),
+            spawning_grant_id: accepted.spawning_grant_id.clone(),
+            spawned_session_scope: session.target_scope.clone(),
+            subject_actor_id: accepted.subject_actor_id.clone(),
+            subject_endpoint_id: accepted.subject_endpoint_id.clone(),
+            authority_domain_id: authority_domain_id.clone(),
+            allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS.to_vec(),
+            descendant_grant_id: descendant_grant_id(authority_domain_id, command_id),
+            created_at,
+            audit_id,
+        }))
     }
 
     fn observe_operation(

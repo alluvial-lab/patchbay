@@ -1,7 +1,7 @@
 ---
 id: authority-writer-correctness-ingest-contract
 kind: story
-stage: implementing
+stage: done
 tags: [security, foundation]
 parent: authority-writer-correctness
 depends_on: [authority-writer-correctness-atomic-storage]
@@ -83,3 +83,13 @@ cargo clippy -p patchbay-core --all-targets -- -D warnings
 - Effective review weight inherited from parent: thorough.
 - Findings are proposals; the receiver adjudicates materiality from evidence.
 - Do not edit docs, backlog, other items, models, vectors, or generated contracts for this checkpoint.
+
+## Implementation notes
+- Both normal and descendant creation now build a canonical stored envelope and truthful `GrantCreated` audit, then call the atomic domain-qualified identity primitive. The projection-driven `GrantChanged` branch and generic append path were removed; revocation lookup/writer behavior is unchanged.
+- The shared private helper maps same-id changed content to `AuthorityError::CorruptLog`, accepts `Appended` or `Existing`, reads the exact returned source `EventId` back from storage, requires envelope equality, and only then folds that durable record. No `CoreDecisionGate` participates in this correctness path.
+- Descendant ingress still folds and validates the complete gap-free spawn prefix before storage. The completed spawn-tail interface was reconciled so an already-committed, context-valid descendant reconstructs the same canonical issuance for exact retry instead of being rejected before the identity transaction.
+- Creation audits retain subject/target attribution, carry the exact grant id, and occur only on the first atomic append. Exact normal/descendant retries return the original source id and make a fresh projection replay-equivalent; changed normal content and normal/descendant cross-kind collisions preserve the durable prefix and first identity.
+- Updated the one focused storage test adapter consumed by authority creation to delegate the new atomic primitive; the default remains fail-closed for unrelated fakes.
+- Verification: `cargo test -p patchbay-core --test authority_ingest --test authority_replay --test authority_proptest`; `cargo clippy -p patchbay-core --all-targets -- -D warnings`; `cargo check --workspace`; `git diff --check` — passed.
+- Formatting discrepancy: repository-wide rustfmt remains on the pre-existing red baseline; unrelated whole-file formatting was preserved.
+- Design discrepancies/blockers: no material flaw. The designed stable public writer signatures were preserved. `SpawnDescendantTail::descendant_issuance_for` required the narrow retry reconciliation above because the hardened descendant-completion implementation previously returned no issuance once the source already existed; leaving that interface unchanged would have contradicted the explicit descendant retry contract.
