@@ -1,7 +1,7 @@
 ---
 id: authority-grant-selection-determinism
 kind: feature
-stage: implementing
+stage: review
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -211,3 +211,27 @@ Fallback if implementation mapping shows the current sort has moved is to preser
 - **Fixed/active blockers**: none found during direct foundation and code review.
 - **Parked**: formal/conformance promotion and any future delegation-specific precedence require separate scope and review.
 - **Rejected**: unordered container selection, most-specific ranking, and ambiguity denial for the current contract, for the reasons in Architectural choice.
+
+## Implementation notes
+
+- **Execution capability:** `openai-codex/gpt-5.6-sol`, selected by the explicit autopilot caller for the security/provenance contract. Direct-read implementation only; no nested agent or peer mechanism was used.
+- **Review weight:** `thorough` (source: explicit operator selection). The feature stops at `review` for the required fresh reviewer.
+- **Files changed:** `docs/PROTOCOL.md`, `docs/SECURITY.md`, `core/src/authority/check.rs`, `core/tests/authority_replay.rs`, and this feature item.
+- **Tests added/removed:** added `overlapping_grants_select_the_same_lowest_id_before_and_after_replay`; it proves that broad and narrow live grants independently match, that reverse ingestion and narrower-scope pressure do not change the exact `grant-a-domain` winner, and that production replay plus `GrantCheck` returns the same provenance. No tests were removed.
+- **Simplification:** retained the existing sorted candidate vector and live → expired → revoked searches; added only the load-bearing contract comment, canonical prose, and one replay regression. No selector framework, scope rank, schema field, generated artifact, model, vector, or compatibility path was added.
+- **Discrepancies from design:** none. The existing implementation already matched the ratified rule.
+- **Adjacent issues parked:** none; the workspace-wide rustfmt baseline described below is outside this feature's allowed write set and was not changed.
+
+## Implementation verification
+
+- `cargo test -p patchbay-core --test authority_grant_check --test authority_replay` — passed (8/8).
+- `cargo test -p patchbay-core --test authority_proptest` — passed (13/13).
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `node contracts/scripts/check-models.mjs` — passed.
+- `node contracts/scripts/check-vectors.mjs` — passed after installing the repository's locked Node dependencies and building the existing local TypeScript packages; 20 implementation checks executed and 37 mutation witnesses killed. No generated source changed.
+- `rustfmt --edition 2021 --check core/src/authority/check.rs core/tests/authority_replay.rs` — passed. `cargo fmt --all -- --check` remains red on 70 pre-existing, out-of-scope Rust files; neither feature-owned Rust file appears in that diff, and the scope boundary forbids formatting unrelated files.
+- Focused reverse-order mutation — killed: changing the comparator to select `grant-z-adapter` made the new exact-winner regression fail against expected `grant-a-domain`; the production comparator was restored and the focused suite rerun green.
+- `git diff --check` — passed.
+
+All acceptance criteria are satisfied. This is implementation-level replay evidence only; no formal-model or conformance-vector promotion is claimed.

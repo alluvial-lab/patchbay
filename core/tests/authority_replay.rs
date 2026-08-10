@@ -1,11 +1,13 @@
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, EventId, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, Revocation, StoredEventPayload,
-    TargetScope, TargetScopeKind,
+    ActorId, AdapterId, AuthorityDomainId, DeviceId, EndpointId, EventId, Generation, Grant,
+    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind,
+    Revocation, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
+    acceptance::GrantCheck,
     authority::{
-        ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError, AuthorityRegistry,
+        grant_matches_request, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
+        AuthorityRegistry, IssuerContext, IssuerRef,
     },
     storage::{
         DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
@@ -44,6 +46,80 @@ fn grant(id: &str, actor: &str) -> Grant {
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     }
+}
+
+fn overlapping_grant(id: &str, target_scope: TargetScope) -> Grant {
+    Grant {
+        grant_id: Some(grant_id(id)),
+        authority_domain_id: Some(domain("authority-main")),
+        subject_actor_id: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
+        target_scope: Some(target_scope),
+        allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+        provenance: Some(GrantProvenance {
+            reason: "overlapping replay fixture".to_owned(),
+            ..GrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    }
+}
+
+struct VerifiedIssuer {
+    actor: ActorId,
+    authority_domain_id: AuthorityDomainId,
+}
+
+impl VerifiedIssuer {
+    fn operator() -> Self {
+        Self {
+            actor: ActorId {
+                value: "operator".to_owned(),
+            },
+            authority_domain_id: domain("authority-main"),
+        }
+    }
+}
+
+impl IssuerContext for VerifiedIssuer {
+    fn verified_actor(&self) -> Option<&ActorId> {
+        Some(&self.actor)
+    }
+
+    fn verified_endpoint(&self) -> Option<&EndpointId> {
+        None
+    }
+
+    fn verified_device(&self) -> Option<&DeviceId> {
+        None
+    }
+
+    fn endpoint_generation(&self) -> Option<Generation> {
+        None
+    }
+
+    fn authority_domain_id(&self) -> &AuthorityDomainId {
+        &self.authority_domain_id
+    }
+}
+
+async fn selected_grant_id(
+    registry: &AuthorityRegistry,
+    issuer: &dyn IssuerContext,
+    target: &TargetScope,
+) -> GrantId {
+    registry
+        .check(
+            &domain("authority-main"),
+            issuer,
+            OperationKind::Instruct,
+            target,
+        )
+        .await
+        .expect("one of the overlapping live grants must authorize")
+        .grant_id
+        .expect("authorization must retain grant provenance")
 }
 
 fn revocation(id: &str) -> Revocation {
@@ -101,6 +177,89 @@ async fn replay_reconstructs_the_live_authority_registry() {
         .get_grant(&grant_id("grant-revoked"))
         .expect("the revoked grant must be retained")
         .is_revoked());
+}
+
+#[tokio::test]
+async fn overlapping_grants_select_the_same_lowest_id_before_and_after_replay() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut live = AuthorityRegistry::new();
+    let request_target = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        ..TargetScope::default()
+    };
+
+    // Ingest the narrower, higher id first so neither creation order nor
+    // scope specificity can explain the selected provenance.
+    ingest_grant(
+        &storage,
+        &mut live,
+        &domain("authority-main"),
+        overlapping_grant(
+            "grant-z-adapter",
+            TargetScope {
+                kind: TargetScopeKind::Adapter as i32,
+                adapter_id: Some(AdapterId {
+                    value: "pi".to_owned(),
+                }),
+                ..TargetScope::default()
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    ingest_grant(
+        &storage,
+        &mut live,
+        &domain("authority-main"),
+        overlapping_grant(
+            "grant-a-domain",
+            TargetScope {
+                kind: TargetScopeKind::AuthorityDomain as i32,
+                ..TargetScope::default()
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    let issuer = VerifiedIssuer::operator();
+    let issuer_ref = IssuerRef {
+        actor: &issuer.actor,
+        endpoint: None,
+        authority_domain_id: &issuer.authority_domain_id,
+    };
+    for id in ["grant-z-adapter", "grant-a-domain"] {
+        let candidate = live
+            .get_grant(&grant_id(id))
+            .expect("the overlapping grant must be projected");
+        assert!(
+            grant_matches_request(
+                candidate,
+                &issuer_ref,
+                OperationKind::Instruct,
+                &request_target,
+            ),
+            "{id} must independently match the request",
+        );
+    }
+
+    let expected = grant_id("grant-a-domain");
+    assert_eq!(
+        selected_grant_id(&live, &issuer, &request_target).await,
+        expected,
+    );
+
+    let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
+        .await
+        .expect("the committed overlapping grants must replay");
+    assert_eq!(rebuilt, live);
+    assert_eq!(
+        selected_grant_id(&rebuilt, &issuer, &request_target).await,
+        expected,
+    );
 }
 
 /// A deliberately faulty storage adapter that returns one domain's records for

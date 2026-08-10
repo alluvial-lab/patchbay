@@ -137,7 +137,7 @@ An Operation is accepted only after Patchbay validates:
 5. Operation expiration window;
 6. a live, unrevoked grant permitting that issuer to perform that OperationKind on that target scope.
 
-Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, or kind-mismatched grants produce `SubmissionOutcome = rejected` with `authorization_denied` or the narrower applicable failure term from `docs/PROTOCOL.md`.
+Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, or kind-mismatched grants produce `SubmissionOutcome = rejected` with `authorization_denied` or the narrower applicable failure term from `docs/PROTOCOL.md`. When multiple grants match, decision provenance follows the canonical deterministic selection rule in `docs/PROTOCOL.md` § Authority grants; projection, storage, and container iteration order is never authority.
 
 Retries with the same idempotency key return the existing command record. A new intentional action requires a new command id/key.
 
