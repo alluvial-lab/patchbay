@@ -4,19 +4,18 @@
 //! log (replay determinism + corruption rejection) and that the `TargetResolver`
 //! impl binds targets per the design's existence + tombstone-only validation
 //! depth (Q3): tombstoned generations are rejected as stale targets;
-//! connectivity is a delivery concern and does NOT block resolution.
-//!
-//! Note: `SessionRegistry` has both an inherent `resolve(target_scope)` (the
-//! Option-returning lookup) and the `TargetResolver::resolve` trait method
-//! (the Result-returning acceptance seam). These tests exercise the trait impl,
-//! so calls are fully qualified as `TargetResolver::resolve(&registry, ...)`.
+//! connectivity is a delivery concern and does NOT block resolution. The
+//! acceptance-owned `TargetResolver` trait is the single runtime-session
+//! resolution boundary.
 
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, Generation, OperationKind, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::TargetResolver;
-use patchbay_core::session::{ingest_session_report, rebuild_from_log, SessionReport};
+use patchbay_core::session::{
+    ingest_session_report, rebuild_from_log, SessionError, SessionLookup, SessionReport,
+};
 use patchbay_core::storage::RusqliteStorage;
 
 fn domain() -> AuthorityDomainId {
@@ -99,6 +98,7 @@ async fn replay_reconstructs_a_live_registry() {
 
     // Rebuild from the log: the live generation must be 2, generation 1 tombstoned.
     let registry = rebuild(&storage).await;
+    assert_eq!(registry.authority_domain_id(), &domain());
     let live = registry
         .get_live_session(&adapter(), "local", &runtime_session("s-1"))
         .expect("live session exists after replay");
@@ -140,6 +140,45 @@ async fn resolve_binds_a_live_session() {
             session_generation: generation(1),
         }
     );
+}
+
+#[tokio::test]
+async fn lookup_and_resolution_reject_a_different_authority_domain() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = rebuild(&storage).await;
+    ingest_session_report(
+        &storage,
+        &mut registry,
+        report(1, SessionConnectivityState::Live),
+    )
+    .await
+    .unwrap();
+    let other_domain = AuthorityDomainId {
+        value: "other-domain".to_owned(),
+    };
+
+    let lookup = SessionLookup::current_session(
+        &registry,
+        &other_domain,
+        &adapter(),
+        "local",
+        &runtime_session("s-1"),
+    )
+    .await;
+    assert!(matches!(
+        lookup,
+        Err(SessionError::AuthorityDomainMismatch { expected, actual })
+            if expected == domain() && actual == other_domain
+    ));
+
+    assert!(TargetResolver::resolve(
+        &registry,
+        &other_domain,
+        OperationKind::Instruct,
+        &target_scope(Some(1)),
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]

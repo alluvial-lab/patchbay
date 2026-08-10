@@ -164,7 +164,7 @@ async fn exact_authorized_registered_resource_accepts_without_session_identity()
         .await
         .unwrap();
     let resources = resource_registry(std::slice::from_ref(&exact));
-    let targets = TargetRegistry::new(SessionRegistry::new(), resources);
+    let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     let result = submit_with_clock(
         &storage,
@@ -196,7 +196,7 @@ async fn exact_grant_fences_cross_adapter_and_kind_before_append() {
         identity("adapter-b", "pool", "shared"),
         identity("adapter-a", "window", "shared"),
     ]);
-    let targets = TargetRegistry::new(SessionRegistry::new(), resources);
+    let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     for (index, collision) in [
         identity("adapter-b", "pool", "shared"),
@@ -244,7 +244,7 @@ async fn adapter_grant_reaches_resolution_and_target_key_scopes_the_full_tuple()
     let first = identity("adapter-a", "pool", "shared");
     let second = identity("adapter-a", "window", "shared");
     let resources = resource_registry(&[first.clone(), second.clone()]);
-    let targets = TargetRegistry::new(SessionRegistry::new(), resources);
+    let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     let unknown = identity("adapter-a", "pool", "unknown");
     let missing = submit_with_clock(

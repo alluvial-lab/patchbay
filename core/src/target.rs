@@ -12,7 +12,7 @@ use crate::{
     storage::RecordedEvent,
 };
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TargetRegistry {
     sessions: SessionRegistry,
     resources: ResourceRegistry,

@@ -72,7 +72,7 @@ fn registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
 async fn registered_resource_resolves_by_the_exact_tuple() {
     let registered = identity("adapter-a", "pool", "shared");
     let resources = registry(std::slice::from_ref(&registered));
-    let targets = TargetRegistry::new(SessionRegistry::new(), resources);
+    let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     assert_eq!(
         TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &registered.to_scope()).await,
@@ -95,7 +95,7 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
 #[tokio::test]
 async fn malformed_legacy_and_nonordinary_resource_targets_fail_closed() {
     let resources = registry(&[identity("adapter-a", "pool", "shared")]);
-    let targets = TargetRegistry::new(SessionRegistry::new(), resources);
+    let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     let legacy = TargetScope {
         kind: TargetScopeKind::Resource as i32,
@@ -141,7 +141,7 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
     .await
     .unwrap();
     let targets = TargetRegistry::with_adapters(
-        SessionRegistry::new(),
+        SessionRegistry::new(domain()).unwrap(),
         registry(&[identity("adapter-a", "pool", "shared")]),
         adapters,
     );

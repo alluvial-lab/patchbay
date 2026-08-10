@@ -1373,6 +1373,10 @@ fn map_session_error(error: session::SessionError) -> Status {
         | session::SessionError::StaleGeneration { .. } => {
             Status::failed_precondition(error.to_string())
         }
+        error @ (session::SessionError::EmptyAuthorityDomain
+        | session::SessionError::AuthorityDomainMismatch { .. }) => {
+            Status::internal(error.to_string())
+        }
         session::SessionError::CorruptRecord(message) => Status::invalid_argument(message),
         session::SessionError::CorruptLog(message) => Status::internal(message),
         session::SessionError::Storage(error) => map_storage_error_to_status(error),

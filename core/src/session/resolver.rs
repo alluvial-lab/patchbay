@@ -17,10 +17,12 @@ use super::SessionRegistry;
 impl TargetResolver for SessionRegistry {
     async fn resolve(
         &self,
-        _authority_domain_id: &AuthorityDomainId,
+        authority_domain_id: &AuthorityDomainId,
         _operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
+        self.require_authority_domain(authority_domain_id)
+            .map_err(|_| not_found(target_scope, "session registry authority domain mismatch"))?;
         if TargetScopeKind::try_from(target_scope.kind).ok()
             != Some(TargetScopeKind::RuntimeSession)
         {

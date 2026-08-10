@@ -19,7 +19,7 @@ pub async fn rebuild_from_log<S: Storage>(
     let events = storage
         .read_after(authority_domain_id, Lsn { value: 0 })
         .await?;
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(authority_domain_id.clone())?;
     let mut previous_lsn = 0u64;
 
     for event in events {

@@ -103,12 +103,14 @@ impl ProjectionState {
             .map_err(|error| error.to_string())?;
 
         let mut authority = AuthorityRegistry::new();
-        let mut sessions = SessionRegistry::new();
+        let mut sessions = SessionRegistry::new(authority_domain_id.clone())
+            .map_err(|error| error.to_string())?;
         let mut resources = ResourceRegistry::new();
         let mut adapters = AdapterRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
-        let mut diagnostics = DiagnosticsProjection::new();
+        let mut diagnostics = DiagnosticsProjection::new(authority_domain_id.clone())
+            .map_err(|error| error.to_string())?;
         let mut security_posture = SecurityPostureProjection::new();
         let mut operators = OperatorRegistry::new();
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
@@ -209,7 +211,8 @@ impl ProjectionState {
         let events = storage
             .read_through(authority_domain_id, Lsn { value: 0 }, Lsn { value: as_of_lsn })
             .await?;
-        let mut projection = DiagnosticsProjection::new();
+        let mut projection = DiagnosticsProjection::new(authority_domain_id.clone())
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
         let mut previous_lsn = 0;
         for event in events {
             let event_lsn = event.event_id.lsn.as_ref().ok_or_else(|| {

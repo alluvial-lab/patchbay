@@ -364,7 +364,7 @@ fn unspecified_kind_mutation_witness_rejects_before_direct_projection_mutation()
     ));
     assert_eq!(operators, before);
 
-    let mut sessions = SessionRegistry::new();
+    let mut sessions = SessionRegistry::new(domain("authority-main")).unwrap();
     let before = sessions.clone();
     assert!(matches!(
         sessions.observe(&unspecified),
@@ -396,7 +396,7 @@ fn unspecified_kind_mutation_witness_rejects_before_direct_projection_mutation()
     ));
     assert_eq!(adapters, before);
 
-    let mut diagnostics = DiagnosticsProjection::new();
+    let mut diagnostics = DiagnosticsProjection::new(domain("authority-main")).unwrap();
     assert!(matches!(
         diagnostics.observe(&unspecified),
         Err(DiagnosticsError::CorruptEvent(_))

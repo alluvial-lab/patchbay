@@ -142,11 +142,11 @@ fn replay_and_incremental_command_folds_match() {
         }.encode_to_vec()),
         event(&domain, 2, StoredEventKind::CommandTransition, transition.encode_to_vec()),
     ];
-    let mut replay = DiagnosticsProjection::new();
+    let mut replay = DiagnosticsProjection::new(domain.clone()).unwrap();
     for item in &events {
         replay.observe(item).unwrap();
     }
-    let mut incremental = DiagnosticsProjection::new();
+    let mut incremental = DiagnosticsProjection::new(domain.clone()).unwrap();
     incremental.observe(&events[0]).unwrap();
     incremental.observe(&events[1]).unwrap();
     assert_eq!(replay.result_for_query(&command_id), incremental.result_for_query(&command_id));
@@ -210,7 +210,7 @@ fn multi_effect_revocation_is_atomic_in_command_and_diagnostics_projections() {
     );
 
     let mut commands = CommandIndex::new();
-    let mut diagnostics = DiagnosticsProjection::new();
+    let mut diagnostics = DiagnosticsProjection::new(domain.clone()).unwrap();
     for item in [&first, &second] {
         commands.apply(item).expect("accepted command projects");
         diagnostics.observe(item).expect("accepted diagnostic timeline projects");
@@ -273,7 +273,7 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
         ..Observation::default()
     };
     let record = event(&domain, 1, StoredEventKind::Observation, observation.encode_to_vec());
-    let mut projection = DiagnosticsProjection::new();
+    let mut projection = DiagnosticsProjection::new(domain.clone()).unwrap();
     projection.observe(&record).unwrap();
     let page = projection.adapter_page(&patchbay_contracts::patchbay::AdapterStatusQuery::default(), 1).unwrap();
     assert_eq!(page.adapters.len(), 1);
@@ -302,7 +302,7 @@ fn fresh_detach_and_failure_replace_attached_projection_state() {
         (2, AuditEventKind::AdapterDetached, AdapterDiagnosticState::Detached),
         (2, AuditEventKind::AdapterFailed, AdapterDiagnosticState::Failed),
     ] {
-        let mut projection = DiagnosticsProjection::new();
+        let mut projection = DiagnosticsProjection::new(domain.clone()).unwrap();
         projection.observe(&registration_event(&domain, 1, "adapter-1")).unwrap();
         assert_eq!(projection.adapter_page(&Default::default(), lsn - 1).unwrap().adapters[0].state, AdapterDiagnosticState::Attached as i32);
         projection.observe(&lifecycle_event(&domain, lsn, "adapter-1", kind)).unwrap();
@@ -313,7 +313,7 @@ fn fresh_detach_and_failure_replace_attached_projection_state() {
 #[test]
 fn historical_lifecycle_does_not_establish_state_after_restart_but_fresh_attach_does() {
     let domain = AuthorityDomainId { value: "main".to_owned() };
-    let mut projection = DiagnosticsProjection::new();
+    let mut projection = DiagnosticsProjection::new(domain.clone()).unwrap();
     projection.observe(&registration_event(&domain, 1, "adapter-1")).unwrap();
     projection.observe(&lifecycle_event(&domain, 2, "adapter-1", AuditEventKind::AdapterDetached)).unwrap();
     projection.reset_adapter_liveness();
@@ -327,7 +327,7 @@ fn historical_lifecycle_does_not_establish_state_after_restart_but_fresh_attach_
 #[test]
 fn recent_diagnostics_are_replayed_newest_first_and_bounded_by_query() {
     let domain = AuthorityDomainId { value: "main".to_owned() };
-    let mut projection = DiagnosticsProjection::new();
+    let mut projection = DiagnosticsProjection::new(domain.clone()).unwrap();
     projection.observe(&registration_event(&domain, 1, "adapter-1")).unwrap();
     // The source observations are intentionally minimal: the projection only
     // needs their prior EventIds to validate the correlated audit records.

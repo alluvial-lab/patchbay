@@ -4,7 +4,7 @@
 //! lookup path that callers rebuild and keep current by feeding committed
 //! [`RecordedEvent`] values through [`SessionRegistry::observe`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use patchbay_contracts::patchbay::{
     security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
@@ -12,11 +12,11 @@ use patchbay_contracts::patchbay::{
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
     SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
     SessionRelabeled,
-    SecurityLockdownEvent, SessionState, StoredEventKind, TargetScope,
+    SecurityLockdownEvent, SessionState, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
-use crate::{acceptance::TargetBinding, storage::RecordedEvent};
+use crate::storage::RecordedEvent;
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition, SessionError, SessionIdentity,
@@ -48,11 +48,19 @@ pub struct SessionTombstone {
 }
 
 /// The in-memory session projection for one authority-domain log.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRegistry {
+    authority_domain_id: AuthorityDomainId,
+    applied_events: BTreeMap<u64, StoredEventPayload>,
     sessions: HashMap<SessionLiveKey, SessionRecord>,
     tombstones: HashMap<SessionTombstoneKey, SessionTombstone>,
     lockdown_active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayDisposition {
+    New,
+    Exact,
 }
 
 /// Identity minus generation: one live generation occupies each key.
@@ -72,17 +80,45 @@ struct SessionTombstoneKey {
 }
 
 impl SessionRegistry {
-    /// Construct an empty session projection.
+    /// Construct an empty session projection bound to one authority domain.
+    pub fn new(authority_domain_id: AuthorityDomainId) -> Result<Self, SessionError> {
+        if authority_domain_id.value.is_empty() {
+            return Err(SessionError::EmptyAuthorityDomain);
+        }
+        Ok(Self {
+            authority_domain_id,
+            applied_events: BTreeMap::new(),
+            sessions: HashMap::new(),
+            tombstones: HashMap::new(),
+            lockdown_active: false,
+        })
+    }
+
+    /// Return the authority domain whose log this projection folds.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn authority_domain_id(&self) -> &AuthorityDomainId {
+        &self.authority_domain_id
+    }
+
+    pub(crate) fn require_authority_domain(
+        &self,
+        actual: &AuthorityDomainId,
+    ) -> Result<(), SessionError> {
+        if actual == &self.authority_domain_id {
+            Ok(())
+        } else {
+            Err(SessionError::AuthorityDomainMismatch {
+                expected: self.authority_domain_id.clone(),
+                actual: actual.clone(),
+            })
+        }
     }
 
     /// Fold one committed event into the projection.
     ///
-    /// Events outside the `SessionState` family are ignored. Re-delivery of a
-    /// previously folded session event is a no-op; malformed payloads and
-    /// impossible state transitions fail immediately.
+    /// Known events outside the session/security families are projection
+    /// no-ops. Exact re-delivery of an already applied owned envelope is inert;
+    /// reusing its domain-local LSN for different content is corrupt history.
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             SessionError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
@@ -92,61 +128,99 @@ impl SessionRegistry {
                 "session replay event kind is unspecified".to_owned(),
             ));
         }
-        if kind == StoredEventKind::SecurityLockdown {
-            return self.observe_security_lockdown(event);
-        }
-        if kind != StoredEventKind::SessionState {
+        if !matches!(
+            kind,
+            StoredEventKind::SessionState | StoredEventKind::SecurityLockdown
+        ) {
             return Ok(());
         }
 
         let (event_domain, event_lsn) = event_identity(event)?;
-        let state_event =
-            SessionStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
-                SessionError::CorruptRecord(format!(
-                    "cannot decode session state event at LSN {event_lsn}: {error}"
-                ))
-            })?;
-        let state_domain = state_event.authority_domain_id.as_ref().ok_or_else(|| {
-            SessionError::CorruptRecord(format!(
-                "session state event at LSN {event_lsn} is missing authority_domain_id"
-            ))
-        })?;
-        if state_domain.value.is_empty() {
-            return Err(SessionError::CorruptRecord(format!(
-                "session state event at LSN {event_lsn} has an empty authority_domain_id"
-            )));
-        }
-        if state_domain != event_domain {
-            return Err(SessionError::CorruptLog(format!(
-                "session state authority domain {:?} does not match event authority domain {:?} at LSN {event_lsn}",
-                state_domain, event_domain
-            )));
+        self.require_authority_domain(event_domain)?;
+        match self.classify_redelivery(event_lsn, &event.payload)? {
+            ReplayDisposition::Exact => return Ok(()),
+            ReplayDisposition::New => {}
         }
 
-        match state_event.mutation.as_ref().ok_or_else(|| {
-            SessionError::CorruptRecord(format!(
-                "session state event at LSN {event_lsn} is missing mutation"
-            ))
-        })? {
-            session_state_event::Mutation::Registered(mutation) => {
-                self.observe_registered(mutation, event_lsn)
+        if kind == StoredEventKind::SecurityLockdown {
+            self.observe_security_lockdown(event)?;
+        } else {
+            let state_event =
+                SessionStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    SessionError::CorruptRecord(format!(
+                        "cannot decode session state event at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            let state_domain = state_event.authority_domain_id.as_ref().ok_or_else(|| {
+                SessionError::CorruptRecord(format!(
+                    "session state event at LSN {event_lsn} is missing authority_domain_id"
+                ))
+            })?;
+            if state_domain.value.is_empty() {
+                return Err(SessionError::CorruptRecord(format!(
+                    "session state event at LSN {event_lsn} has an empty authority_domain_id"
+                )));
             }
-            session_state_event::Mutation::GenerationBumped(mutation) => {
-                self.observe_generation_bumped(mutation, event_lsn)
+            if state_domain != event_domain {
+                return Err(SessionError::CorruptLog(format!(
+                    "session state authority domain {:?} does not match event authority domain {:?} at LSN {event_lsn}",
+                    state_domain, event_domain
+                )));
             }
-            session_state_event::Mutation::ConnectivityChanged(mutation) => {
-                self.observe_connectivity_changed(mutation, event_lsn)
-            }
-            session_state_event::Mutation::ActivityChanged(mutation) => {
-                self.observe_activity_changed(mutation, event_lsn)
-            }
-            session_state_event::Mutation::Relabeled(mutation) => {
-                self.observe_relabeled(mutation, event_lsn)
-            }
-            session_state_event::Mutation::ModelChanged(mutation) => {
-                self.observe_model_changed(mutation, event_lsn)
+
+            match state_event.mutation.as_ref().ok_or_else(|| {
+                SessionError::CorruptRecord(format!(
+                    "session state event at LSN {event_lsn} is missing mutation"
+                ))
+            })? {
+                session_state_event::Mutation::Registered(mutation) => {
+                    self.observe_registered(mutation, event_lsn)?;
+                }
+                session_state_event::Mutation::GenerationBumped(mutation) => {
+                    self.observe_generation_bumped(mutation, event_lsn)?;
+                }
+                session_state_event::Mutation::ConnectivityChanged(mutation) => {
+                    self.observe_connectivity_changed(mutation, event_lsn)?;
+                }
+                session_state_event::Mutation::ActivityChanged(mutation) => {
+                    self.observe_activity_changed(mutation, event_lsn)?;
+                }
+                session_state_event::Mutation::Relabeled(mutation) => {
+                    self.observe_relabeled(mutation, event_lsn)?;
+                }
+                session_state_event::Mutation::ModelChanged(mutation) => {
+                    self.observe_model_changed(mutation, event_lsn)?;
+                }
             }
         }
+
+        self.applied_events.insert(event_lsn, event.payload.clone());
+        Ok(())
+    }
+
+    fn classify_redelivery(
+        &self,
+        event_lsn: u64,
+        payload: &StoredEventPayload,
+    ) -> Result<ReplayDisposition, SessionError> {
+        if let Some(applied) = self.applied_events.get(&event_lsn) {
+            return if applied == payload {
+                Ok(ReplayDisposition::Exact)
+            } else {
+                Err(SessionError::CorruptLog(format!(
+                    "session event identity ({:?}, {event_lsn}) has conflicting durable envelopes",
+                    self.authority_domain_id
+                )))
+            };
+        }
+        if let Some((&greatest_lsn, _)) = self.applied_events.last_key_value() {
+            if event_lsn < greatest_lsn {
+                return Err(SessionError::CorruptLog(format!(
+                    "unseen session event LSN {event_lsn} precedes applied owned-event high-water mark {greatest_lsn}"
+                )));
+            }
+        }
+        Ok(ReplayDisposition::New)
     }
 
     /// Whether the replayed security posture currently clamps reports.
@@ -163,6 +237,11 @@ impl SessionRegistry {
         let source_domain = source.authority_domain_id.as_ref().ok_or_else(|| {
             SessionError::CorruptRecord(format!("security event at LSN {event_lsn} has no authority domain"))
         })?;
+        if source_domain.value.is_empty() {
+            return Err(SessionError::CorruptRecord(format!(
+                "security event at LSN {event_lsn} has an empty authority domain"
+            )));
+        }
         if source_domain != event_domain {
             return Err(SessionError::CorruptLog(format!(
                 "security event domain {:?} does not match {:?} at LSN {event_lsn}",
@@ -198,48 +277,6 @@ impl SessionRegistry {
             }
         }
         Ok(())
-    }
-
-    /// Resolve a protocol target to the live delivery identity.
-    ///
-    /// A specifically requested tombstoned or non-live generation does not
-    /// resolve. If no generation is supplied, the current live generation is
-    /// selected. Connectivity is deliberately not a resolution criterion.
-    #[must_use]
-    pub fn resolve(&self, target_scope: &TargetScope) -> Option<TargetBinding> {
-        let adapter_id = target_scope.adapter_id.as_ref()?;
-        let runtime_session_id = target_scope.runtime_session_id.as_ref()?;
-
-        if let Some(generation) = target_scope.session_generation.as_ref() {
-            if self.is_tombstoned(
-                adapter_id,
-                &target_scope.deployment_scope,
-                runtime_session_id,
-                generation,
-            ) {
-                return None;
-            }
-        }
-
-        let record = self.get_live_session(
-            adapter_id,
-            &target_scope.deployment_scope,
-            runtime_session_id,
-        )?;
-        if target_scope
-            .session_generation
-            .as_ref()
-            .is_some_and(|generation| generation != &record.identity.session_generation)
-        {
-            return None;
-        }
-
-        Some(TargetBinding::RuntimeSession {
-            adapter_id: record.identity.adapter_id.clone(),
-            deployment_scope: record.identity.deployment_scope.clone(),
-            runtime_session_id: record.identity.runtime_session_id.clone(),
-            session_generation: record.identity.session_generation,
-        })
     }
 
     /// Iterate over the authoritative live-session projection.
@@ -332,10 +369,10 @@ impl SessionRegistry {
         }
         let key = live_key(&identity);
 
-        // First-write-wins. A replayed registration must never reset a later
-        // generation, state-axis change, or relabel.
         if self.sessions.contains_key(&key) {
-            return Ok(());
+            return Err(SessionError::CorruptLog(format!(
+                "session registration at LSN {event_lsn} duplicates an existing live slot"
+            )));
         }
 
         self.sessions.insert(
@@ -391,20 +428,17 @@ impl SessionRegistry {
             )));
         }
 
-        if let Some(existing) = self.get_tombstone(
-            &from_identity.adapter_id,
-            &from_identity.deployment_scope,
-            &from_identity.runtime_session_id,
-            &from_identity.session_generation,
-        ) {
-            if existing.adapter_id == from_identity.adapter_id
-                && existing.deployment_scope == from_identity.deployment_scope
-                && existing.superseded_at_lsn == event_lsn
-            {
-                return Ok(());
-            }
+        if self
+            .get_tombstone(
+                &from_identity.adapter_id,
+                &from_identity.deployment_scope,
+                &from_identity.runtime_session_id,
+                &from_identity.session_generation,
+            )
+            .is_some()
+        {
             return Err(SessionError::CorruptLog(format!(
-                "generation {:?} for runtime session {:?} has conflicting tombstones at LSN {event_lsn}",
+                "generation {:?} for runtime session {:?} was already superseded before LSN {event_lsn}",
                 from_identity.session_generation, from_identity.runtime_session_id
             )));
         }
@@ -480,17 +514,7 @@ impl SessionRegistry {
                 "disallowed connectivity transition {from:?} -> {to:?} at LSN {event_lsn}"
             )));
         }
-        if self.is_stale_replay(&identity, event_lsn)? {
-            return Ok(());
-        }
-
         let record = self.live_record_mut(&identity, "connectivity change", event_lsn)?;
-        if record
-            .last_authoritative_lsn
-            .is_some_and(|last_lsn| event_lsn <= last_lsn)
-        {
-            return Ok(());
-        }
         let current = connectivity_state(record.state.connectivity, "projected", event_lsn)?;
         if current != from {
             return Err(SessionError::CorruptLog(format!(
@@ -522,17 +546,7 @@ impl SessionRegistry {
                 "disallowed activity transition {from:?} -> {to:?} at LSN {event_lsn}"
             )));
         }
-        if self.is_stale_replay(&identity, event_lsn)? {
-            return Ok(());
-        }
-
         let record = self.live_record_mut(&identity, "activity change", event_lsn)?;
-        if record
-            .last_authoritative_lsn
-            .is_some_and(|last_lsn| event_lsn <= last_lsn)
-        {
-            return Ok(());
-        }
         let current = activity_state(record.state.activity, "projected", event_lsn)?;
         if current != from {
             return Err(SessionError::CorruptLog(format!(
@@ -557,17 +571,7 @@ impl SessionRegistry {
             "relabel",
             event_lsn,
         )?;
-        if self.is_stale_replay(&identity, event_lsn)? {
-            return Ok(());
-        }
-
         let record = self.live_record_mut(&identity, "relabel", event_lsn)?;
-        if record
-            .last_authoritative_lsn
-            .is_some_and(|last_lsn| event_lsn <= last_lsn)
-        {
-            return Ok(());
-        }
         record.project.clone_from(&mutation.project);
         record.cwd.clone_from(&mutation.cwd);
         record.name.clone_from(&mutation.name);
@@ -588,17 +592,7 @@ impl SessionRegistry {
             "model change",
             event_lsn,
         )?;
-        if self.is_stale_replay(&identity, event_lsn)? {
-            return Ok(());
-        }
-
         let record = self.live_record_mut(&identity, "model change", event_lsn)?;
-        if record
-            .last_authoritative_lsn
-            .is_some_and(|last_lsn| event_lsn <= last_lsn)
-        {
-            return Ok(());
-        }
         if record.model != mutation.from {
             return Err(SessionError::CorruptLog(format!(
                 "model change at LSN {event_lsn} expects prior model {:?}, but projected model is {:?}",
@@ -629,41 +623,6 @@ impl SessionRegistry {
             )));
         }
         Ok(record)
-    }
-
-    /// A redelivered pre-supersession event is inert. A newly committed event
-    /// aimed at a tombstoned generation is log corruption: stale external
-    /// evidence belongs in an audit/Observation record, not a SessionState
-    /// mutation.
-    fn is_stale_replay(
-        &self,
-        identity: &SessionIdentity,
-        event_lsn: u64,
-    ) -> Result<bool, SessionError> {
-        let Some(tombstone) = self.get_tombstone(
-            &identity.adapter_id,
-            &identity.deployment_scope,
-            &identity.runtime_session_id,
-            &identity.session_generation,
-        ) else {
-            return Ok(false);
-        };
-        if tombstone.adapter_id != identity.adapter_id
-            || tombstone.deployment_scope != identity.deployment_scope
-        {
-            return Err(SessionError::CorruptLog(format!(
-                "tombstone identity collision for runtime session {:?}, generation {:?}",
-                identity.runtime_session_id, identity.session_generation
-            )));
-        }
-        if event_lsn <= tombstone.superseded_at_lsn {
-            Ok(true)
-        } else {
-            Err(SessionError::CorruptLog(format!(
-                "session state event at LSN {event_lsn} targets tombstoned generation {} superseded at LSN {}",
-                identity.session_generation.value, tombstone.superseded_at_lsn
-            )))
-        }
     }
 }
 
@@ -770,5 +729,10 @@ fn event_identity(event: &RecordedEvent) -> Result<(&AuthorityDomainId, u64), Se
         .lsn
         .as_ref()
         .ok_or_else(|| SessionError::CorruptRecord("session event has no LSN".to_owned()))?;
+    if lsn.value == 0 {
+        return Err(SessionError::CorruptRecord(
+            "session event has zero LSN".to_owned(),
+        ));
+    }
     Ok((authority_domain_id, lsn.value))
 }

@@ -91,10 +91,11 @@ pub enum IngestResult {
 pub trait SessionLookup: Send + Sync {
     fn current_session(
         &self,
+        authority_domain_id: &AuthorityDomainId,
         adapter_id: &AdapterId,
         deployment_scope: &str,
         runtime_session_id: &RuntimeSessionId,
-    ) -> impl std::future::Future<Output = Option<SessionRecord>> + Send;
+    ) -> impl std::future::Future<Output = Result<Option<SessionRecord>, SessionError>> + Send;
 }
 
 /// A session projection that can fold a committed event before the next delta
@@ -115,12 +116,15 @@ pub trait SessionProjection: SessionLookup {
 impl SessionLookup for SessionRegistry {
     async fn current_session(
         &self,
+        authority_domain_id: &AuthorityDomainId,
         adapter_id: &AdapterId,
         deployment_scope: &str,
         runtime_session_id: &RuntimeSessionId,
-    ) -> Option<SessionRecord> {
-        self.get_live_session(adapter_id, deployment_scope, runtime_session_id)
-            .cloned()
+    ) -> Result<Option<SessionRecord>, SessionError> {
+        self.require_authority_domain(authority_domain_id)?;
+        Ok(self
+            .get_live_session(adapter_id, deployment_scope, runtime_session_id)
+            .cloned())
     }
 }
 
@@ -146,9 +150,10 @@ impl SessionProjection for SessionRegistry {
 /// connectivity, activity, metadata order. Storage has no atomic batch port,
 /// so every committed prefix of a multi-delta report is immediately folded
 /// into the projection. If a later append fails, a retry derives only the
-/// remaining deltas. If folding a committed event fails, the durable log is
-/// unchanged but the projection must be rebuilt from that log before reuse.
-/// Single-delta outcomes retain the existing caller-managed warm path.
+/// remaining deltas. If folding a committed event fails, that event remains
+/// durable and the projection must be rebuilt from the log before reuse. Every
+/// successful append is reflected in the supplied projection before the writer
+/// returns.
 pub async fn ingest_session_report<S, L>(
     storage: &S,
     session_lookup: &mut L,
@@ -160,19 +165,20 @@ where
 {
     validate_report(&report)?;
     let mut report = report;
+    let authority_domain_id = report.authority_domain_id.clone();
+    let live = session_lookup
+        .current_session(
+            &authority_domain_id,
+            &report.adapter_id,
+            &report.deployment_scope,
+            &report.runtime_session_id,
+        )
+        .await?;
     if session_lookup.lockdown_active() {
         // Lockdown is an event-folded stale clamp. Adapter evidence remains
         // ingestible for reconciliation, but cannot manufacture liveness.
         report.connectivity = SessionConnectivityState::Stale;
     }
-    let authority_domain_id = report.authority_domain_id.clone();
-    let live = session_lookup
-        .current_session(
-            &report.adapter_id,
-            &report.deployment_scope,
-            &report.runtime_session_id,
-        )
-        .await;
 
     let Some(current) = live else {
         let event = events::registered(
@@ -193,10 +199,8 @@ where
                 spawn_origin: report.spawn_origin,
             },
         );
-        let event_id = storage
-            .append(&authority_domain_id, events::encode(&event))
-            .await?;
-        validate_event_id(&event_id, &authority_domain_id)?;
+        let event_id =
+            append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
         return Ok(IngestResult::Registered { event_id });
     };
 
@@ -222,10 +226,8 @@ where
                     spawn_origin: report.spawn_origin,
                 },
             );
-            let event_id = storage
-                .append(&authority_domain_id, events::encode(&event))
-                .await?;
-            validate_event_id(&event_id, &authority_domain_id)?;
+            let event_id =
+                append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
 
             Ok(IngestResult::GenerationBumped {
                 tombstone_event_id: event_id.clone(),
@@ -279,7 +281,7 @@ where
                         },
                     );
                     event_ids.push(
-                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
                             .await?,
                     );
                     current = refreshed_current(session_lookup, &report).await?;
@@ -298,7 +300,7 @@ where
                         },
                     );
                     event_ids.push(
-                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
                             .await?,
                     );
                     current = refreshed_current(session_lookup, &report).await?;
@@ -317,7 +319,7 @@ where
                         },
                     );
                     event_ids.push(
-                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
                             .await?,
                     );
                     current = refreshed_current(session_lookup, &report).await?;
@@ -337,7 +339,7 @@ where
                         },
                     );
                     event_ids.push(
-                        append_and_warm(storage, session_lookup, &authority_domain_id, event)
+                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
                             .await?,
                     );
                 }
@@ -357,10 +359,8 @@ where
                         to: report.connectivity as i32,
                     },
                 );
-                let event_id = storage
-                    .append(&authority_domain_id, events::encode(&event))
-                    .await?;
-                validate_event_id(&event_id, &authority_domain_id)?;
+                let event_id =
+                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
                 return Ok(IngestResult::ConnectivityChanged {
                     event_id,
                     from: current_connectivity,
@@ -380,10 +380,8 @@ where
                         to: report.activity as i32,
                     },
                 );
-                let event_id = storage
-                    .append(&authority_domain_id, events::encode(&event))
-                    .await?;
-                validate_event_id(&event_id, &authority_domain_id)?;
+                let event_id =
+                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
                 return Ok(IngestResult::ActivityChanged {
                     event_id,
                     from: current_activity,
@@ -405,10 +403,8 @@ where
                         to: to.clone(),
                     },
                 );
-                let event_id = storage
-                    .append(&authority_domain_id, events::encode(&event))
-                    .await?;
-                validate_event_id(&event_id, &authority_domain_id)?;
+                let event_id =
+                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
                 return Ok(IngestResult::ModelChanged { event_id, from, to });
             }
 
@@ -424,10 +420,8 @@ where
                     name: report.name,
                 },
             );
-            let event_id = storage
-                .append(&authority_domain_id, events::encode(&event))
-                .await?;
-            validate_event_id(&event_id, &authority_domain_id)?;
+            let event_id =
+                append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
             Ok(IngestResult::Relabeled { event_id })
         }
         std::cmp::Ordering::Less => Err(SessionError::StaleGeneration {
@@ -449,6 +443,7 @@ pub fn adapter_stale_events(
     authority_domain_id: &AuthorityDomainId,
     adapter_id: &AdapterId,
 ) -> Result<Vec<patchbay_contracts::patchbay::StoredEventPayload>, SessionError> {
+    registry.require_authority_domain(authority_domain_id)?;
     let reports: Vec<_> = registry
         .sessions()
         .filter(|record| {
@@ -530,7 +525,7 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
     Ok(event_ids)
 }
 
-async fn append_and_warm<S, L>(
+async fn append_and_apply<S, L>(
     storage: &S,
     session_lookup: &mut L,
     authority_domain_id: &AuthorityDomainId,
@@ -560,11 +555,12 @@ async fn refreshed_current<L: SessionLookup>(
 ) -> Result<SessionRecord, SessionError> {
     session_lookup
         .current_session(
+            &report.authority_domain_id,
             &report.adapter_id,
             &report.deployment_scope,
             &report.runtime_session_id,
         )
-        .await
+        .await?
         .ok_or_else(|| {
             SessionError::CorruptLog(
                 "session projection lost the live record after folding a committed delta"
@@ -644,10 +640,18 @@ fn validate_event_id(
             ));
         }
     }
-    if event_id.lsn.is_none() {
-        return Err(SessionError::CorruptRecord(
-            "storage returned session state event without an LSN".to_owned(),
-        ));
+    match event_id.lsn.as_ref() {
+        Some(lsn) if lsn.value > 0 => {}
+        Some(_) => {
+            return Err(SessionError::CorruptRecord(
+                "storage returned session state event with zero LSN".to_owned(),
+            ));
+        }
+        None => {
+            return Err(SessionError::CorruptRecord(
+                "storage returned session state event without an LSN".to_owned(),
+            ));
+        }
     }
     Ok(())
 }

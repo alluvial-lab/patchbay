@@ -759,7 +759,7 @@ async fn generic_registration_schema_ingress_cannot_register_an_embedded_adapter
     );
 
     let targets = TargetRegistry::with_adapters(
-        SessionRegistry::new(),
+        SessionRegistry::new(domain.clone()).unwrap(),
         ResourceRegistry::new(),
         replayed,
     );

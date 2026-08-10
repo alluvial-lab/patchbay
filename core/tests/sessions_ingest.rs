@@ -8,8 +8,8 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     session::{
-        ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRegistry,
-        SessionReport,
+        ingest_session_report, mark_adapter_sessions_stale, rebuild_from_log, IngestResult,
+        SessionError, SessionRegistry, SessionReport,
     },
     storage::{
         DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
@@ -58,8 +58,15 @@ fn report(generation_value: u64) -> SessionReport {
 }
 
 async fn events<S: Storage>(storage: &S) -> Vec<RecordedEvent> {
+    events_in(storage, &domain()).await
+}
+
+async fn events_in<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+) -> Vec<RecordedEvent> {
     storage
-        .read_after(&domain(), Lsn { value: 0 })
+        .read_after(authority_domain_id, Lsn { value: 0 })
         .await
         .unwrap()
 }
@@ -77,12 +84,18 @@ async fn register<S: Storage>(
     registry: &mut SessionRegistry,
     initial_report: SessionReport,
 ) {
+    let expected_adapter = initial_report.adapter_id.clone();
+    let expected_scope = initial_report.deployment_scope.clone();
+    let expected_runtime = initial_report.runtime_session_id.clone();
+    let expected_generation = initial_report.session_generation;
     let result = ingest_session_report(storage, &mut *registry, initial_report)
         .await
         .unwrap();
     assert!(matches!(result, IngestResult::Registered { .. }));
-    let committed = events(storage).await;
-    registry.observe(committed.last().unwrap()).unwrap();
+    let live = registry
+        .get_live_session(&expected_adapter, &expected_scope, &expected_runtime)
+        .expect("successful registration must warm the supplied registry");
+    assert_eq!(live.identity.session_generation, expected_generation);
 }
 
 /// A storage adapter that fails a configured append before delegating it.
@@ -175,7 +188,7 @@ impl Storage for FailOnNthAppendStorage {
 #[tokio::test]
 async fn first_report_writes_registration() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
 
     let result = ingest_session_report(&storage, &mut registry, report(1))
         .await
@@ -186,6 +199,11 @@ async fn first_report_writes_registration() {
     };
     assert_eq!(event_id.authority_domain_id, Some(domain()));
     assert_eq!(event_id.lsn, Some(Lsn { value: 1 }));
+    let hot = registry
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .expect("registered result must be immediately visible");
+    assert_eq!(hot.identity.session_generation, generation(1));
+    assert_eq!(hot.model, "provider/model-1");
 
     let committed = events(&storage).await;
     assert_eq!(committed.len(), 1);
@@ -216,7 +234,7 @@ async fn malformed_spawn_origin_is_rejected_before_session_append() {
         TypedCorrelation { r#ref: None },
     ] {
         let storage = RusqliteStorage::open_in_memory().unwrap();
-        let mut registry = SessionRegistry::new();
+        let mut registry = SessionRegistry::new(domain()).unwrap();
         let mut candidate = report(1);
         candidate.spawn_origin = Some(origin);
         let error = ingest_session_report(&storage, &mut registry, candidate)
@@ -230,7 +248,7 @@ async fn malformed_spawn_origin_is_rejected_before_session_append() {
 #[tokio::test]
 async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     let mut initial = report(1);
     initial.connectivity = SessionConnectivityState::Offline;
     initial.activity = SessionActivityState::Working;
@@ -266,6 +284,16 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     assert_eq!(tombstone_event_id, new_generation_event_id);
     assert_eq!(from_generation, generation(1));
     assert_eq!(to_generation, generation(2));
+    assert!(registry.is_tombstoned(&adapter(), "machine-a", &runtime(), &generation(1)));
+    assert_eq!(
+        registry
+            .get_live_session(&adapter(), "machine-a", &runtime())
+            .unwrap()
+            .identity
+            .session_generation,
+        generation(2),
+        "generation result must be immediately visible"
+    );
 
     let committed = events(&storage).await;
     assert_eq!(committed.len(), 2, "a bump must append one event");
@@ -310,7 +338,7 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
 #[tokio::test]
 async fn equal_generation_connectivity_change_writes_delta() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
     let mut changed = report(1);
     changed.connectivity = SessionConnectivityState::Live;
@@ -327,6 +355,14 @@ async fn equal_generation_connectivity_change_writes_delta() {
             ..
         }
     ));
+    assert_eq!(
+        registry
+            .get_live_session(&adapter(), "machine-a", &runtime())
+            .unwrap()
+            .state
+            .connectivity(),
+        SessionConnectivityState::Live
+    );
     let committed = events(&storage).await;
     assert_eq!(committed.len(), 2);
     assert!(matches!(
@@ -338,7 +374,7 @@ async fn equal_generation_connectivity_change_writes_delta() {
 #[tokio::test]
 async fn equal_generation_activity_change_writes_delta() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
     let mut changed = report(1);
     changed.activity = SessionActivityState::Working;
@@ -355,6 +391,14 @@ async fn equal_generation_activity_change_writes_delta() {
             ..
         }
     ));
+    assert_eq!(
+        registry
+            .get_live_session(&adapter(), "machine-a", &runtime())
+            .unwrap()
+            .state
+            .activity(),
+        SessionActivityState::Working
+    );
     let committed = events(&storage).await;
     assert_eq!(committed.len(), 2);
     assert!(matches!(
@@ -366,7 +410,7 @@ async fn equal_generation_activity_change_writes_delta() {
 #[tokio::test]
 async fn equal_generation_model_change_writes_delta_and_rebuilds() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
     let mut changed = report(1);
     changed.model = "provider/model-2".to_owned();
@@ -384,14 +428,17 @@ async fn equal_generation_model_change_writes_delta_and_rebuilds() {
         decode(&committed[1]).mutation,
         Some(session_state_event::Mutation::ModelChanged(_))
     ));
-    registry.observe(&committed[1]).unwrap();
     assert_eq!(
         registry
             .get_live_session(&adapter(), "machine-a", &runtime())
             .unwrap()
             .model,
-        "provider/model-2"
+        "provider/model-2",
+        "model result must be immediately visible"
     );
+    let warm = registry.clone();
+    registry.observe(&committed[1]).unwrap();
+    assert_eq!(registry, warm, "exact caller redelivery must be inert");
     assert_eq!(
         rebuild_from_log(&storage, &domain())
             .await
@@ -406,7 +453,7 @@ async fn equal_generation_model_change_writes_delta_and_rebuilds() {
 #[tokio::test]
 async fn equal_generation_metadata_change_writes_relabel() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
     let mut changed = report(1);
     changed.project = "patchbay-next".to_owned();
@@ -427,12 +474,18 @@ async fn equal_generation_metadata_change_writes_relabel() {
     assert_eq!(relabel.project, "patchbay-next");
     assert_eq!(relabel.cwd, "/work/patchbay-next");
     assert_eq!(relabel.name, "replacement");
+    let hot = registry
+        .get_live_session(&adapter(), "machine-a", &runtime())
+        .unwrap();
+    assert_eq!(hot.project, "patchbay-next");
+    assert_eq!(hot.cwd, "/work/patchbay-next");
+    assert_eq!(hot.name, "replacement");
 }
 
 #[tokio::test]
 async fn identical_equal_generation_report_is_idempotent() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
 
     let result = ingest_session_report(&storage, &mut registry, report(1))
@@ -446,7 +499,7 @@ async fn identical_equal_generation_report_is_idempotent() {
 #[tokio::test]
 async fn lower_generation_is_rejected_without_writing() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(2)).await;
 
     let error = ingest_session_report(&storage, &mut registry, report(1))
@@ -472,7 +525,7 @@ async fn lower_generation_is_rejected_without_writing() {
 #[tokio::test]
 async fn one_report_persists_every_changed_axis_and_metadata() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
 
     let mut changed = report(1);
@@ -511,6 +564,10 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
     ));
 
     let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
+    assert_eq!(
+        registry, rebuilt,
+        "hot multi-delta fold must equal cold replay"
+    );
     let live = rebuilt
         .get_live_session(&adapter(), "machine-a", &runtime())
         .unwrap();
@@ -524,7 +581,7 @@ async fn one_report_persists_every_changed_axis_and_metadata() {
 #[tokio::test]
 async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
     let storage = FailOnNthAppendStorage::new();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     register(&storage, &mut registry, report(1)).await;
 
     let mut changed = report(1);
@@ -604,9 +661,69 @@ async fn multi_delta_retry_after_partial_failure_warms_registry_and_replays() {
 }
 
 #[tokio::test]
+async fn post_commit_fold_failure_is_fail_closed_and_requires_rebuild() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    let existing = patchbay_core::session::events::registered(
+        domain(),
+        patchbay_contracts::patchbay::SessionRegistered {
+            adapter_id: Some(adapter()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime()),
+            session_generation: Some(generation(1)),
+            initial_state: Some(patchbay_contracts::patchbay::SessionState {
+                connectivity: SessionConnectivityState::Unknown as i32,
+                activity: SessionActivityState::Unknown as i32,
+            }),
+            project: "patchbay".to_owned(),
+            cwd: "/work/patchbay".to_owned(),
+            name: "main".to_owned(),
+            model: "provider/model-1".to_owned(),
+            spawn_origin: None,
+        },
+    );
+    registry
+        .observe(&RecordedEvent {
+            event_id: EventId {
+                authority_domain_id: Some(domain()),
+                lsn: Some(Lsn { value: 10 }),
+            },
+            payload: patchbay_core::session::events::encode(&existing),
+        })
+        .unwrap();
+    let before = registry.clone();
+    let mut candidate = report(1);
+    candidate.runtime_session_id = RuntimeSessionId {
+        value: "runtime-2".to_owned(),
+    };
+
+    let error = ingest_session_report(&storage, &mut registry, candidate)
+        .await
+        .expect_err("the stale projection must reject the committed older identity");
+
+    assert!(matches!(error, SessionError::CorruptLog(_)));
+    assert_eq!(registry, before, "failed fold must not partially mutate");
+    assert_eq!(
+        events(&storage).await.len(),
+        1,
+        "the append committed before the fold failed"
+    );
+    let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
+    assert!(rebuilt
+        .get_live_session(
+            &adapter(),
+            "machine-a",
+            &RuntimeSessionId {
+                value: "runtime-2".to_owned(),
+            },
+        )
+        .is_some());
+}
+
+#[tokio::test]
 async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_replay() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
 
     let mut empty_adapter = report(1);
     empty_adapter.adapter_id.value.clear();
@@ -644,7 +761,7 @@ async fn empty_identity_fields_are_rejected_before_write_and_valid_reports_repla
 #[tokio::test]
 async fn empty_authority_domain_is_rejected_before_lookup_or_write() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     let mut invalid = report(1);
     invalid.authority_domain_id.value.clear();
 
@@ -659,9 +776,62 @@ async fn empty_authority_domain_is_rejected_before_lookup_or_write() {
 }
 
 #[tokio::test]
+async fn cross_domain_report_rejects_before_lookup_mutation_or_either_log_append() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    let other_domain = AuthorityDomainId {
+        value: "authority-other".to_owned(),
+    };
+    let mut candidate = report(1);
+    candidate.authority_domain_id = other_domain.clone();
+    let before = registry.clone();
+
+    let error = ingest_session_report(&storage, &mut registry, candidate)
+        .await
+        .expect_err("a report cannot cross the registry domain");
+
+    assert!(matches!(
+        error,
+        SessionError::AuthorityDomainMismatch { expected, actual }
+            if expected == domain() && actual == other_domain
+    ));
+    assert_eq!(registry, before);
+    assert!(events_in(&storage, &domain()).await.is_empty());
+    assert!(events_in(&storage, &other_domain).await.is_empty());
+}
+
+#[tokio::test]
+async fn cross_domain_adapter_stale_reconciliation_appends_to_neither_domain() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    ingest_session_report(&storage, &mut registry, report(1))
+        .await
+        .unwrap();
+    let other_domain = AuthorityDomainId {
+        value: "authority-other".to_owned(),
+    };
+    let registry_before = registry.clone();
+    let main_before = events_in(&storage, &domain()).await;
+    let other_before = events_in(&storage, &other_domain).await;
+
+    let error = mark_adapter_sessions_stale(&storage, &mut registry, &other_domain, &adapter())
+        .await
+        .expect_err("adapter stale reconciliation cannot cross the registry domain");
+
+    assert!(matches!(
+        error,
+        SessionError::AuthorityDomainMismatch { expected, actual }
+            if expected == domain() && actual == other_domain
+    ));
+    assert_eq!(registry, registry_before);
+    assert_eq!(events_in(&storage, &domain()).await, main_before);
+    assert_eq!(events_in(&storage, &other_domain).await, other_before);
+}
+
+#[tokio::test]
 async fn disallowed_axis_transition_is_rejected_before_writing() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let mut registry = SessionRegistry::new();
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     let mut initial = report(1);
     initial.connectivity = SessionConnectivityState::Live;
     register(&storage, &mut registry, initial).await;

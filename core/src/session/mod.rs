@@ -29,6 +29,17 @@ pub use state::{
 /// Errors detected while constructing, ingesting, or folding session state.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    /// A session projection cannot exist without an owning authority domain.
+    #[error("session registry authority_domain_id must not be empty")]
+    EmptyAuthorityDomain,
+
+    /// A caller or event attempted to cross the projection's authority domain.
+    #[error("session authority domain mismatch: expected {expected:?}, got {actual:?}")]
+    AuthorityDomainMismatch {
+        expected: patchbay_contracts::patchbay::AuthorityDomainId,
+        actual: patchbay_contracts::patchbay::AuthorityDomainId,
+    },
+
     /// A durable record cannot form a valid in-memory session projection.
     #[error("corrupt session record: {0}")]
     CorruptRecord(String),

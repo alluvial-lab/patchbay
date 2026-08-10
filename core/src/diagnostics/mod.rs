@@ -89,7 +89,7 @@ struct CommandTimeline {
     history: Vec<CommandHistoryEntry>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DiagnosticsProjection {
     commands: HashMap<CommandId, CommandTimeline>,
     adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
@@ -103,9 +103,17 @@ pub struct DiagnosticsProjection {
 }
 
 impl DiagnosticsProjection {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(authority_domain_id: AuthorityDomainId) -> Result<Self, DiagnosticsError> {
+        let sessions = SessionRegistry::new(authority_domain_id)
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        Ok(Self {
+            commands: HashMap::new(),
+            adapters: HashMap::new(),
+            current_process_adapters: HashMap::new(),
+            lifecycle: HashMap::new(),
+            sessions,
+            recent_diagnostics: HashMap::new(),
+        })
     }
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {

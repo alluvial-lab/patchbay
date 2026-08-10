@@ -443,7 +443,8 @@ fn session_registry(
             spawn_origin: None,
         },
     );
-    let mut sessions = SessionRegistry::new();
+    let mut sessions = SessionRegistry::new(authority_domain_id.clone())
+        .map_err(|error| error.to_string())?;
     sessions
         .observe(&RecordedEvent {
             event_id: event_id(authority_domain_id.clone(), 1),
@@ -475,7 +476,8 @@ async fn operation_case(
             return Err("registered resource differs from Operation target".to_owned());
         }
         (
-            SessionRegistry::new(),
+            SessionRegistry::new(authority_domain_id.clone())
+                .map_err(|error| error.to_string())?,
             resource_registry(&authority_domain_id, std::slice::from_ref(&identity)),
         )
     };
