@@ -42,6 +42,17 @@ Add a monotonic, generation-scoped adapter-side report revision to `SessionRepor
 
 Direct reading covered all eight foundation docs; generated Protobuf, registry-boundary, fail-fast, and durable-projection patterns; the adapter service authentication gate; session report ingestion, event encoding, replay, registry, snapshot materialization, and property tests; the Pi adapter's per-session promise tails and reattach behavior; the session-generation model; and vector promotion/runner machinery. No exploratory subagent was used because the caller explicitly prohibited nested delegation; the report surface was bounded and enumerable through `SessionReport` construction and fold call sites.
 
+## Current-HEAD reconciliation (2026-08-10)
+
+- `SessionRegistry::new(authority_domain_id)` is now fallible and domain-bound. Its `applied_events` ledger retains exact raw envelopes for owned `SESSION_STATE` and `SECURITY_LOCKDOWN` events, accepts only exact owned-event re-delivery, and rejects conflicting same-LSN envelopes. The new report fold must claim an owned event identity only after the complete atomic fold succeeds and must preserve sibling-event no-op behavior.
+- Full recovery already uses the shared `validate_next_replay_event` boundary, so gap/duplicate/`UNSPECIFIED` rejection remains outside the registry's owned-event high-water logic. Server aggregate catch-up stages every projection and publishes only after the complete suffix validates; this feature does not replace either prefix discipline.
+- `SessionGenerationBumped.spawn_origin` has landed at tag 11. The next stable tag for `SessionGenerationBumped.source_cursor` is therefore **12**, not the design-time sketch's tag 11. The other next tags remain `Session.last_source_cursor = 15`, `SessionRegistered.source_cursor = 11`, and `SessionStateEvent.report_applied = 8` after regeneration from `.proto`.
+- Session report ingress currently rebuilds under `CoreDecisionGate`, converts the generated RPC report into a handwritten core DTO, then append-and-folds up to four legacy deltas before rebuilding again. Reconciliation keeps the gate/rebuild safety and the append-then-fold hot path, removes the DTO and only the adapter-report multi-delta writer, and retains legacy/core-authored delta constructors and folds.
+- The authenticated adapter registry now owns the current attachment generation. Server ingress will validate the generated source cursor against that registration before core lookup/append; core still independently restores and compares the durable last cursor.
+- Pi currently computes `#identity(entry, model)` only when its promise tail runs. The sequencer must allocate the revision and capture identity/model/state before chaining while retaining transcript/session ordering and same-process reattachment behavior.
+- Current registries contain 53 vectors (16 promoted), 53 modeled properties (8 promoted), and no checked-normative property. The implementation must add the property/vector to the live registries and regenerate both documentation blocks; no design-time count or table shape is copied by hand.
+- Delivery posture remains direct-read, single feature owner, no nested agents/peeragent (caller boundary). Execution capability is `openai-codex/gpt-5.6-sol` at maximum reasoning for the wire/durability/formal surface; effective review weight is `thorough` from the caller, with stop-at-review for the feature and the `[verification]` child reserved for the project deep lane.
+
 ## UI fallback
 
 No UI surface. The current snapshot stays on the same session fields and gains only source-order evidence; no screen structure or presentation state changes, so no mockup is required.
@@ -387,5 +398,5 @@ npm --prefix contracts/ts run check:drift
 - Rejected: in-memory watermarking, fragmented delta cursors, and arrival-order authority because each fails restart or partial-append safety.
 - Skipped/degraded: the delegated endpoint explicitly forbids nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking by policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection).
 
-## Status (wrapped 2026-08-10)
-Design is committed at `implementing`; the wire/core/Pi/conformance implementation was not started before the operator wrap and must reconcile the now-landed session tag/replay changes on resume.
+## Status (reconciled 2026-08-10)
+Current HEAD reconciliation is recorded above. Implementation remains at `implementing`; the landed domain-bound exact-envelope session replay, shared prefix validation, cancellation-safe aggregate publication, diagnostics replay fixes, and tag-11 generation-bump correlation are preserved inputs rather than stale design assumptions.

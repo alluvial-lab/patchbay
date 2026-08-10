@@ -42,3 +42,9 @@ than when the promise tail later executes.
 Consumes `adapter-report-source-ordering-contract-foundation`. It is file-disjoint
 from the core checkpoint after generation, but both are one feature contract
 and must converge before promotion evidence runs.
+
+## Current-HEAD reconciliation (2026-08-10)
+
+- Pi uses one per-runtime-id promise tail for transcript and session observations, but `#identity(entry, model)` is currently evaluated only when the tail executes. The implementation allocates/captures the cursor and complete report values before chaining without disturbing transcript ordering.
+- `PatchbayCoreClient.#postAttach` retries one closure after an unauthenticated reattach. Passing a preallocated generated cursor plus captured primitives into that closure preserves the exact cursor/payload across the retry; revision allocation must stay outside `reportSession` and outside the retry closure.
+- Runtime entries are stable objects across their Pi session-generation changes, so a per-entry generation/revision sequence can reset on a strict runtime-generation bump and survive same-process attachment refresh. The configured adapter generation remains the producer epoch and a replacement process starts its own counters.

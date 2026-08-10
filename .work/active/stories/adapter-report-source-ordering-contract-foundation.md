@@ -45,3 +45,10 @@ adapter assertions and extension-seam classification forward.
 This is the first checkpoint. Core enforcement and Pi emission consume these
 generated types; conformance promotion must use the settled field paths and
 property id.
+
+## Current-HEAD reconciliation (2026-08-10)
+
+- `SessionGenerationBumped.spawn_origin` now occupies tag 11, so the generated source cursor uses the next stable tag 12 there. The design sketch's tag 11 is superseded; no existing tag is reused.
+- `SessionReport` still lives only in `adapter_control.proto` with tags 1–11. Moving it to `sessions.proto` preserves the package-qualified `patchbay.SessionReport` identity and adds `source_cursor = 12`.
+- Existing session delta variants/tags are durable data and stay readable. The new `report_applied = 8` variant is additive; generated Rust/TypeScript files remain outputs only.
+- Current model/vector traceability is generated from live registries, so this checkpoint updates normative prose/property registration without hand-editing either generated table.

@@ -44,3 +44,10 @@ traceability without hand-editing generated blocks.
 Runs only after `adapter-report-source-ordering-core-fence` and
 `adapter-report-source-ordering-pi-sequencer`. It is the final checkpoint before
 the integrated feature enters caller-selected `thorough` review.
+
+## Current-HEAD reconciliation (2026-08-10)
+
+- The live registries currently derive 53 vectors (16 promoted), 53 modeled properties (8 promoted), and zero checked-normative properties. `SessionReportSourceOrdering` becomes the first checked-normative intersection only after both its promoted model block and promoted authenticated server vector pass; generated counts/tables must be regenerated from artifacts.
+- The server runner already dispatches exact requested `rust-server` case ids and supports compiled conformance faults. This checkpoint adds one exact authenticated session-report case and a source-comparison fault without disturbing the token-commune mutation profile.
+- The model must use a separate environment-arrival pending phase and raw pending pre-state. Mutation evidence will weaken the apply comparison while leaving the oracle unchanged; a nonzero Quint counterexample exit is expected mutation success, not a tool failure.
+- Per project convention, implementation may establish green model/vector evidence but this `[verification]` child stays at `stage: review` for the independent deep lane rather than being self-closed.

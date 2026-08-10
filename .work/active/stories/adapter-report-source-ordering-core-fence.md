@@ -44,3 +44,10 @@ session projection and snapshot path.
 Consumes `adapter-report-source-ordering-contract-foundation`. It can proceed in
 the same feature-owned wave as the Pi sequencer, but the integrated
 conformance checkpoint waits for both producer and consumer.
+
+## Current-HEAD reconciliation (2026-08-10)
+
+- The session projection is now authority-domain-bound and fallible, with an exact raw owned-event replay ledger. `SessionReportApplied` must enter that ledger only after its full pre-state/cursor/axis validation and atomic record replacement succeeds; failed folds must remain exactly non-mutating and leave the LSN available to a corrected envelope.
+- Shared full-log replay already rejects missing/zero/gapped/duplicate/`UNSPECIFIED` records, while the registry intentionally ignores unowned sibling events. The report fold extends this division rather than adding a competing prefix cursor.
+- Server ingress currently rebuilds inside `CoreDecisionGate`, append-then-folds legacy report deltas, then rebuilds. The implementation retains the gate and rebuild boundaries and changes only adapter reports to one append-and-folded full-report event. Legacy deltas and core-authored disconnect/lockdown degradation remain and preserve the source cursor.
+- Aggregate `ProjectionState::catch_up` now stages all projections before publication; snapshot carriage must integrate with that cancellation-safe path rather than publishing a private session registry early.
