@@ -8,7 +8,7 @@ depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-08-09
 ---
 
 # Public compatibility contract
@@ -32,3 +32,7 @@ This feature operationalizes the commitments already present in the foundation d
 - `docs/PROTOCOL.md` — canonical protocol registries and extension seams
 - `docs/VERIFICATION.md` — artifact authority order and release-assurance vocabulary
 - `contracts/README.md` — existing generated-contract and drift-check machinery
+
+## Coordination note (2026-08-09)
+
+Adapter-contract stability scoping (from the token-commune coordination exchange): token-commune's stated principle is "schema evolves in place, never versioned, no deprecation contract; the consumer tracks breaking changes." Therefore the v1 public compatibility contract's SemVer stability claim for the token-commune adapter must scope to the **Patchbay-side** adapter boundary (the generated adapter client, the Operation/Elicitation/Observation projection, Patchbay's persisted schema) and **explicitly disclaim upstream token-commune wire stability**. Do not promise a stable token-commune endpoint/payload contract that token-commune itself will not promise. This is a v1-compatibility design input, not a protocol change.

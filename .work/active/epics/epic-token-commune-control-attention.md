@@ -8,7 +8,7 @@ depends_on: [epic-token-commune-observer]
 release_binding: null
 gate_origin: null
 created: 2026-07-26
-updated: 2026-07-26
+updated: 2026-08-09
 ---
 
 # token-commune control and attention plane
@@ -46,7 +46,22 @@ Depends on `epic-token-commune-observer`. It completes the token-commune referen
 
 ## External collaboration boundary
 
-Mutation endpoints, pending-approval identity, event/result correlation, and any end-to-end idempotency mechanism are token-commune contract work and must be tracked in token-commune's repository. Patchbay does not infer these guarantees from HTTP method choice or current implementation behavior.
+Mutation endpoints, pending-approval identity, event/result correlation, and any end-to-end idempotency mechanism are token-commune contract work and tracked in token-commune's repository. Patchbay does not infer these guarantees from HTTP method choice or current implementation behavior.
+
+**Owned upstream (2026-08-09 coordination):** token-commune now owns the mutation half in its `admin-control-surface` epic (4 child features: `foundation`, `contribution-removal`, `decree-ops`, `approval-gate`), behind a `managed` deployment mode (default `friends-only` unchanged). It depends on the read-side `external-consumer-api-identity` + `external-consumer-api-scoped-credentials` features; point dependency tracking at `admin-control-surface`. The read side (stable opaque ids, cursor/replay event-history, scoped read-only creds, completeness envelope) closes the observer's honest-stopgap compensations — this epic no longer assumes it must compensate for snapshot-local/anonymous ids or a 50-event window.
+
+## Cross-project coordination (2026-08-09)
+
+Mesh exchange with the token-commune agent resolved mutation-half ownership and locked several design positions. token-commune's `admin-control-surface-foundation` design is gated on this exchange (its operation state machine and idempotency model are wire-driven); a co-design reply was sent 2026-08-09.
+
+**Locked positions (Patchbay-side, recorded for feature-design):**
+- **Two-record split is the authority model.** Patchbay-owned Operation state is terminal-final and never rewritten; a separately-correlated upstream semantic-result Observation carries token-commune's deterministic `applied`/`not_applied`. Correlation key = token-commune op-id + idempotency-key.
+- **`unknown` is Patchbay's, not token-commune's.** token-commune's atomic-commit pattern (op-state + event + local mutation, in-process SQLite) means it always knows `applied`/`not_applied` once durable. Patchbay's `failed(execution_outcome_unknown)` is a Patchbay-Operation-side terminal for when Patchbay cannot confirm delivery or reach token-commune to query — not a value token-commune emits. token-commune's durable queryable-state + idempotency-key is what lets Patchbay resolve ambiguity by re-query.
+- **Managed-operation credential (new requirement).** Patchbay needs a managed-op credential distinct from the read-only observer scope (token-commune's scoped-credentials forbid mutation; a full admin key recreates overprivilege). Posture: two credentials (observer + managed-op), mapping to two Patchbay grant scopes. Managed-op cred is admin-member-bound, default-deny, incapable of inference/registration.
+- **Compatibility posture.** token-commune's principle is "schema evolves in place, never versioned, no deprecation contract." Patchbay's v1 SemVer scopes to the Patchbay-side adapter boundary and explicitly disclaims upstream token-commune wire stability (see `epic-public-product-contract-public-compatibility`).
+- **Consumption posture on token-commune caveats.** Patchbay treats contribution removal as corrective administration, not a ban (a member may re-register while the approval gate is off); Patchbay's attention/projection must not present it as a durable exclusion. fingerprint-accept disposition (recovery primitive vs durable op) is token-commune's call; Patchbay consumes whichever shape lands and treats a retained recovery primitive as out-of-band, not a durable Operation.
+
+**Decomposition gate:** do not decompose this epic until (a) the co-design wire-shape exchange with token-commune's `admin-control-surface-foundation` confirms the operation state machine + idempotency model, and (b) the managed-operation-credential shape is settled against `external-consumer-api-scoped-credentials`. The 2026-08-09 adversarial review's Patchbay-internal blockers (absent attention/Elicitation producer machinery; secret-exclusion enforceability; OperationKind/grant matrix) remain and proceed independently of this external gate.
 
 ## Scope boundaries
 
