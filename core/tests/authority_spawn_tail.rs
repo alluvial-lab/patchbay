@@ -427,13 +427,12 @@ fn wrong_verified_audit_or_conflicting_session_target_fails_closed() {
 }
 
 #[test]
-fn completion_requires_exactly_one_nonempty_command_correlation() {
+fn non_qualifying_duplicate_command_correlation_is_inert() {
     let mut duplicate = result_event(3);
     let mut observation = Observation::decode(duplicate.payload.payload.as_slice()).unwrap();
     observation.correlations.push(command_correlation());
     duplicate.payload.payload = observation.encode_to_vec();
-    assert!(matches!(
-        SpawnDescendantTail::new().observe(&duplicate),
-        Err(AuthorityError::CorruptRecord(_))
-    ));
+    let mut tail = SpawnDescendantTail::new();
+    tail.observe(&duplicate).unwrap();
+    assert_eq!(tail.next_action().unwrap(), None);
 }

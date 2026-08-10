@@ -1,7 +1,7 @@
 ---
 id: authority-descendant-grant-completion
 kind: feature
-stage: implementing
+stage: review
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -355,3 +355,16 @@ The implementation worker should also run `cargo fmt --all -- --check` and the r
 - **Risk:** high — authority creation, durable provenance, terminal-state exposure, restart repair, and a production background owner are cross-cutting security semantics.
 - **Design-time advisory:** not dispatched because this delegated endpoint explicitly forbids nested subagents and peer mechanisms. Per the non-blocking design-time policy, the design proceeds from direct foundation/code evidence and records the degradation rather than recursing.
 - **Effective implementation/feature review weight:** `thorough` (source: explicit operator selection). Pass unchanged to feature review and final completion review; reviewers propose, and the receiving orchestrator independently adjudicates materiality.
+
+## Implementation notes
+- Execution capability: Sol xhigh (explicit autopilot caller selection for security/provenance/live durability); one feature owner carried all three dependency-ordered checkpoints without nested agents, peers, or push.
+- Review weight: thorough (explicit caller selection); implementation stops at `stage: review` for the requested fresh review.
+- Child checkpoints: `authority-descendant-grant-completion-contract-fold`, `authority-descendant-grant-completion-crash-safe-writer`, and `authority-descendant-grant-completion-live-composition` are each `stage: done` in commits `c2a9a8c`, `bd60460`, and `43a83fe`.
+- Files changed: generated session contract and bindings; session bump ingestion; authority fold/registry/ingress/state; spawn observation deferral and command snapshots; production spawn-completion driver/composition; adapter result mapping; focused core/server tests; rolling foundation assertions in `ARCHITECTURE`, `PROTOCOL`, `SECURITY`, and `VERIFICATION`.
+- Integrated verification: `cargo test --workspace`; focused core/server spawn, acceptance, authority, session, and gRPC suites; `cargo clippy --workspace --all-targets -- -D warnings`; TypeScript contract build; generated drift; model metadata; and conformance vectors all pass. All touched Rust files pass `rustfmt --check --config skip_children=true`.
+- Tests added/updated: durable action ordering and arrival-order convergence; exact same-domain immutable audit/source validation; forged/missing provenance rejection; registration/bump equivalence and generated tag carriage; successful-spawn `CompletionDeferred`; crash-prefix repair; non-durable audit failure; gate-hidden intermediate prefix; continuous authenticated adapter consumption; restart idempotence; verified attribution; descendant authorization; and two-lever revocation.
+- Simplification: removed the in-memory `issued` truth and generic immediate spawn terminalization; one durable-log owner now derives progress and exposes completion last, without a spawn-specific storage API or handler callback mesh.
+- Discrepancies from design/current repo: (1) `SessionGenerationBumped.model` already occupied tag 10, so generated `spawn_origin` correctly uses unique tag 11 without renumbering; (2) current adapter delivery routing derives a destination only from `TargetScope.adapter_id`, so the real adapter E2E uses the valid adapter-scoped spawn seam. A default fleet-scoped spawn has no settled deterministic delivery selector; broadcasting would risk duplicate external spawns. The completion fold still accepts fleet-scoped committed evidence, but this feature does not invent delivery selection.
+- Verification discrepancy: repository-wide `cargo fmt --all -- --check` reports pre-existing formatting drift across many untouched Rust files under the current toolchain. Per ownership constraints those unrelated files were not reformatted; every Rust file touched by this feature passes a bounded rustfmt check.
+- Protocol/formal status: generated Rust and TypeScript outputs derive from `.proto`, model/vector metadata checks remain green, and `SpawnCreatesDescendantGrant` remains honestly stated-normative with no vector/model promotion.
+- Adjacent issues parked: none. Backlog/excluded-item edits were prohibited; the fleet delivery-selector gap is recorded above for receiver/reviewer disposition.

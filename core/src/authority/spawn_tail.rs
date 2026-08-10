@@ -426,11 +426,14 @@ impl SpawnDescendantTail {
         if failure != FailureCode::Unspecified {
             return Ok(());
         }
-        let command_id = exactly_one_command_correlation(
-            &observation.correlations,
-            "successful result observation",
-            event_lsn,
-        )?;
+        let Some(command_id) = single_nonempty_command_correlation(&observation.correlations)
+        else {
+            // A successful result for another command shape is not spawn
+            // completion evidence. Generic observation ingestion may retain
+            // duplicate correlations, so the global completion tail must not
+            // fail unrelated command processing on a non-qualifying fact.
+            return Ok(());
+        };
         let target_scope = observation.target_scope.ok_or_else(|| {
             AuthorityError::CorruptRecord(format!(
                 "successful result observation at LSN {event_lsn} has no target_scope"
@@ -960,24 +963,31 @@ pub(crate) fn descendant_grant_id(domain: &AuthorityDomainId, spawn_op: &Command
     }
 }
 
+fn single_nonempty_command_correlation(correlations: &[TypedCorrelation]) -> Option<CommandId> {
+    let mut command_ids =
+        correlations
+            .iter()
+            .filter_map(|correlation| match correlation.r#ref.as_ref() {
+                Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
+                _ => None,
+            });
+    let command_id = command_ids.next()?;
+    if command_id.value.is_empty() || command_ids.next().is_some() {
+        return None;
+    }
+    Some(command_id.clone())
+}
+
 fn exactly_one_command_correlation(
     correlations: &[TypedCorrelation],
     record_name: &str,
     event_lsn: u64,
 ) -> Result<CommandId, AuthorityError> {
-    let command_ids: Vec<_> = correlations
-        .iter()
-        .filter_map(|correlation| match correlation.r#ref.as_ref() {
-            Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
-            _ => None,
-        })
-        .collect();
-    if command_ids.len() != 1 || command_ids[0].value.is_empty() {
-        return Err(AuthorityError::CorruptRecord(format!(
+    single_nonempty_command_correlation(correlations).ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!(
             "{record_name} at LSN {event_lsn} must have exactly one non-empty command correlation"
-        )));
-    }
-    Ok(command_ids[0].clone())
+        ))
+    })
 }
 
 fn update_non_terminal(progress: &mut SpawnProgress, lsn: u64, state: OperationState) {
