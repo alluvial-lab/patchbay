@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish-delivery-cards
 kind: story
-stage: implementing
+stage: done
 parent: cockpit-ux-polish
 depends_on: [cockpit-ux-polish-settings, cockpit-ux-polish-session-rows]
 release_binding: null
@@ -23,7 +23,16 @@ Fold command delivery into the operator instruction card and reserve a stable ac
 
 ## Acceptance evidence
 
-- [ ] Running, completed, failed, and cancellation-race examples render delivery inside the instruction card and keep message ordering stable.
-- [ ] Cancel/interrupt controls remain keyboard reachable, disabled during lockdown, and labeled with the canonical reason when unavailable.
-- [ ] Delivery state remains visually distinct from session liveness and transcript content.
-- [ ] Narrow-width tests verify no horizontal overflow and no vertical jump when the action appears/disappears.
+- [x] Running, completed, failed, and cancellation-race examples render delivery inside the instruction card and keep message ordering stable.
+- [x] Cancel/interrupt controls remain keyboard reachable, disabled during lockdown, and labeled with the canonical reason when unavailable.
+- [x] Delivery state remains visually distinct from session liveness and transcript content.
+- [x] Narrow-width tests verify no horizontal overflow and no vertical jump when the action appears/disappears.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-luna` high, direct implementation after settings and session-row checkpoints.
+- Review weight: thorough (caller override), feature review remains pending after integrated implementation.
+- Files changed: `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/src/ui/operation-delivery.ts`, `web-cockpit/src/ui/shell.css`, `web-cockpit/tests/shell.test.ts`.
+- Tests added/removed: canonical-state action-slot coverage, instruction-card integration assertions, and responsive CSS checks; web-cockpit shell tests pass after type build.
+- Simplification: delivery remains one shared `renderOperationDelivery` primitive; instruction cards compose it without a second delivery registry or floating status box.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

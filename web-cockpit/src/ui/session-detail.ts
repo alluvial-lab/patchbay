@@ -322,31 +322,77 @@ function renderObservation(
       : "agent";
   message.className = `msg msg--${roleClass}`;
   message.dataset.observationId = observation.id;
-  const body = document.createElement("div");
-  body.className = "msg__body";
-  if (observation.role === "agent" || observation.role === "tool") {
-    body.innerHTML = options.markdown.render(observation.markdown);
+  if (command) {
+    message.append(renderInstructionCard(
+      document,
+      command,
+      sessionDeliveryActions(options.actions),
+      options.lockdownActive,
+    ));
   } else {
-    body.textContent = observation.markdown;
-  }
-  message.append(body);
-  if (observation.detail) {
-    // Args/result preview lives INSIDE the message body — one card with a
-    // divider, not a second floating box. Plain text, never markdown — tool
-    // args are untrusted content.
-    const detail = document.createElement("pre");
-    detail.className = "msg__detail";
-    detail.textContent = observation.detail;
-    body.append(detail);
+    const body = document.createElement("div");
+    body.className = "msg__body";
+    if (observation.role === "agent" || observation.role === "tool") {
+      body.innerHTML = options.markdown.render(observation.markdown);
+    } else {
+      body.textContent = observation.markdown;
+    }
+    message.append(body);
+    if (observation.detail) {
+      // Args/result preview lives INSIDE the message body — one card with a
+      // divider, not a second floating box. Plain text, never markdown — tool
+      // args are untrusted content.
+      const detail = document.createElement("pre");
+      detail.className = "msg__detail";
+      detail.textContent = observation.detail;
+      body.append(detail);
+    }
   }
   message.append(textElement(document, "div", "msg__footer", `${observation.role} · ${observation.kind}`));
-  if (command) message.append(renderOperationDelivery(
-    document,
-    command,
-    sessionDeliveryActions(options.actions),
-    options.lockdownActive,
-  ));
   return message;
+}
+
+export function renderInstructionCard(
+  document: Document,
+  command: CommandView,
+  actions?: OperationDeliveryActions,
+  lockdownActive = false,
+): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "instruction-card";
+  card.dataset.commandId = command.id;
+
+  const header = document.createElement("header");
+  header.className = "instruction-card__header";
+  header.append(
+    textElement(document, "strong", "instruction-card__kind", operationKindLabel(command.operation.kind)),
+    textElement(document, "code", "instruction-card__target", commandTargetLabel(command)),
+  );
+
+  const body = textElement(document, "p", "instruction-card__body", operationText(command) || "No instruction payload");
+  const meta = textElement(
+    document,
+    "p",
+    "instruction-card__meta",
+    `target generation ${commandTargetGeneration(command)} · accepted`,
+  );
+  const delivery = document.createElement("div");
+  delivery.className = "instruction-card__delivery";
+  delivery.append(renderOperationDelivery(document, command, actions, lockdownActive));
+  card.append(header, body, meta, delivery);
+  return card;
+}
+
+function commandTargetLabel(command: CommandView): string {
+  if (!command.target) return "target identity unavailable";
+  if (command.target.kind === "runtime-session") return formatSessionIdentity(command.target.identity);
+  return `${command.target.identity.adapterId} · ${command.target.identity.resourceKind} · ${command.target.identity.resourceId}`;
+}
+
+function commandTargetGeneration(command: CommandView): string {
+  return command.target?.kind === "runtime-session"
+    ? command.target.identity.generation.toString()
+    : "n/a";
 }
 
 function renderCommandMessage(
@@ -357,10 +403,7 @@ function renderCommandMessage(
 ): HTMLElement {
   const message = document.createElement("article");
   message.className = "msg msg--operator msg--action";
-  message.dataset.commandId = command.id;
-  const bodyText = operationText(command) || operationKindLabel(command.operation.kind);
-  if (bodyText) message.append(textElement(document, "div", "msg__body", bodyText));
-  message.append(renderOperationDelivery(document, command, sessionDeliveryActions(actions), lockdownActive));
+  message.append(renderInstructionCard(document, command, sessionDeliveryActions(actions), lockdownActive));
   return message;
 }
 

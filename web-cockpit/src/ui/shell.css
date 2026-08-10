@@ -312,13 +312,84 @@ body > [data-patchbay-cockpit] {
   }
 }
 
+.cockpit .instruction-card {
+  display: grid;
+  gap: var(--space-2);
+  width: min(640px, 100%);
+  max-width: 100%;
+  padding: var(--space-3);
+  overflow: hidden;
+  background: var(--color-accent-muted);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.cockpit .instruction-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cockpit .instruction-card__kind {
+  color: var(--color-text-primary);
+  font: var(--font-weight-semibold) var(--font-size-xs)/1.2 var(--font-mono);
+  text-transform: uppercase;
+}
+
+.cockpit .instruction-card__target,
+.cockpit .instruction-card__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font: var(--font-size-xs)/1.35 var(--font-mono);
+}
+
+.cockpit .instruction-card__target { text-align: right; }
+.cockpit .instruction-card__body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--font-size-sm)/1.5 var(--font-sans);
+}
+.cockpit .instruction-card__meta { margin: 0; }
+.cockpit .instruction-card__delivery {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.cockpit .instruction-card__delivery .delivery-line {
+  flex: 1;
+  min-width: 0;
+}
+
 .cockpit .delivery-line {
   max-width: 100%;
+  min-height: 40px;
   flex-wrap: wrap;
 }
 
 .cockpit .delivery-line .failure-banner {
   flex-basis: 100%;
+}
+
+.cockpit .delivery-line__actions {
+  display: flex;
+  flex: 0 0 96px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-height: 32px;
+}
+
+.cockpit .delivery-line__actions:not(.delivery-line__actions--available) {
+  visibility: hidden;
 }
 
 .cockpit .timeline > .elicitation-card {
@@ -862,6 +933,22 @@ body > [data-patchbay-cockpit] {
 
   .cockpit .timeline {
     padding: var(--space-3);
+  }
+
+  .cockpit .instruction-card__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .cockpit .instruction-card__target { text-align: left; }
+  .cockpit .instruction-card__delivery {
+    min-height: 56px;
+    flex-direction: column;
+  }
+  .cockpit .delivery-line__actions {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    width: auto;
   }
 
   .cockpit .msg,

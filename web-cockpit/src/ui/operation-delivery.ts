@@ -42,11 +42,16 @@ export function renderOperationDelivery(
     wrapper.append(renderFailureBanner(document, command.failureCode));
   }
 
+  // Keep an action slot in every state. Controls appear only when the
+  // canonical state and adapter-backed actions permit them, but the reserved
+  // space keeps instruction cards from jumping as delivery advances.
+  const actionSlot = document.createElement("div");
+  actionSlot.className = "delivery-line__actions";
+  actionSlot.setAttribute("aria-label", "Operation actions");
   if (command.state === OperationState.RUNNING && (actions?.cancel || actions?.interrupt)) {
-    const contextual = document.createElement("div");
-    contextual.className = "btn-group";
+    actionSlot.classList.add("delivery-line__actions--available");
     if (actions.cancel) {
-      contextual.append(contextButton(
+      actionSlot.append(contextButton(
         document,
         "x",
         "Cancel running operation",
@@ -56,7 +61,7 @@ export function renderOperationDelivery(
       ));
     }
     if (actions.interrupt) {
-      contextual.append(contextButton(
+      actionSlot.append(contextButton(
         document,
         "square",
         "Interrupt running operation",
@@ -65,8 +70,8 @@ export function renderOperationDelivery(
         lockdownActive,
       ));
     }
-    wrapper.append(contextual);
   }
+  wrapper.append(actionSlot);
   return wrapper;
 }
 

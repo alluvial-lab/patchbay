@@ -97,6 +97,32 @@ test("shared Operation delivery renders lifecycle, failure, and contextual actio
   assert.equal(cancelled, command.id);
 });
 
+test("delivery reserves one action slot across canonical command states", () => {
+  const dom = new JSDOM();
+  const states = [
+    OperationState.ACCEPTED,
+    OperationState.DELIVERED,
+    OperationState.RUNNING,
+    OperationState.COMPLETED,
+    OperationState.REJECTED,
+    OperationState.FAILED,
+    OperationState.EXPIRED,
+    OperationState.CANCELLED,
+    OperationState.SUPERSEDED,
+  ];
+  for (const state of states) {
+    const command = runningCommand(session("delivery").identity);
+    command.state = state;
+    command.history = [{ state, lsn: 1n }];
+    const delivery = renderOperationDelivery(dom.window.document, command, {
+      cancel: () => undefined,
+      interrupt: () => undefined,
+    });
+    assert.ok(delivery.querySelector(".delivery-line__actions"), `missing action slot for ${state}`);
+    assert.equal(delivery.querySelectorAll(".delivery-line__actions .btn").length, state === OperationState.RUNNING ? 2 : 0);
+  }
+});
+
 test("shell stylesheet provides responsive layout without rebinding protocol states", async () => {
   const css = await readFile(new URL("../src/ui/shell.css", import.meta.url), "utf8").catch(
     () => readFile(new URL("../../src/ui/shell.css", import.meta.url), "utf8"),
@@ -105,6 +131,8 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
   assert.match(css, /\.cockpit \.timeline\s*\{[^}]*max-width:\s*860px/s);
   assert.match(css, /\.cockpit \.msg--agent\s*\{[^}]*560px/s);
   assert.match(css, /@media \(max-width:\s*760px\)/);
+  assert.match(css, /\.cockpit \.instruction-card__delivery\s*\{[^}]*min-height:\s*56px/s);
+  assert.match(css, /\.cockpit \.delivery-line__actions\s*\{[^}]*flex:\s*0 0 96px/s);
   assert.doesNotMatch(css, /connectivity-indicator--(?:live|stale|offline|unknown|failed)/);
   assert.doesNotMatch(css, /command-step--(?:accepted|delivered|running|completed|rejected|failed|expired|cancelled|superseded)/);
   assert.doesNotMatch(css, /resource-freshness--(?:current|stale|unknown)/);
@@ -114,7 +142,7 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   const dom = new JSDOM();
   const first = session("session-1", 1n, { name: "core", project: "patchbay", cwd: "/projects/patchbay" });
   first.model = "provider/model-1";
-  const second = session("session-2", 1n, { name: "adapter", project: "patchbay" });
+  const second = session("session-2", 1n, { name: "adapter", project: "patchbay", cwd: "/projects/patchbay" });
   second.needsYou = true;
   const model = withSessions(first, second);
   const shell = createCockpitShell(dom.window.document, model, {
@@ -458,6 +486,9 @@ test("detail integrates markdown, current plus last delivery, failures, contextu
 
   assert.ok(detail.element.querySelector(".msg--agent .markdown-body h2"));
   const delivery = detail.element.querySelector<HTMLElement>('[data-command-id="command-1"]')!;
+  assert.equal(detail.element.querySelectorAll(".instruction-card").length, 2);
+  assert.equal(delivery.closest(".instruction-card") !== null, true);
+  assert.ok(delivery.querySelector(".delivery-line__actions"));
   assert.match(delivery.textContent!, /running/);
   assert.match(delivery.textContent!, /Last transition: accepted → running/);
   assert.equal(delivery.textContent!.includes("LSN"), false);
