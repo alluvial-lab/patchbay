@@ -1,7 +1,7 @@
 ---
 id: authority-descendant-grant-completion
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -407,3 +407,7 @@ The receiver-accepted registration-ingress/replay blocker is fixed; the feature 
 - **Standing semantics:** `ARCHITECTURE`, `PROTOCOL`, and `SECURITY` now distinguish durable replayed registration/routing identity from process-local attachment tokens and live delivery subscriptions. Restart replay keeps a registered adapter eligible for explicit spawn resolution; actual delivery continues to wait or fail through existing adapter delivery behavior. `VERIFICATION` records the implementation evidence without formal/vector promotion.
 - **Verification:** isolated-target `cargo test -p patchbay-core --test adapter_capability --test resource_resolver --test replay_integrity` (18 passed); isolated-target `cargo test -p patchbay-core-server --lib adapter_service::tests` (25 passed); `cargo test --workspace` (passed); `cargo clippy --workspace --all-targets -- -D warnings` (passed); and the full `npm --prefix contracts/ts run check:vectors` runner (53 vectors, 16 promoted vectors, 21 implementation checks, and 37 killed mutation witnesses) passed after installing the repository's pinned npm dependencies and building the TypeScript contracts. `git diff --check` passed.
 - **Scope discipline:** no attachment-token persistence, new delivery/liveness state, fleet/default selection, routing broadcast, generated-contract change, other substrate item, backlog entry, nested agent, or peer artifact was added.
+
+## Review closure — pass 4
+
+Fresh-context pass 4 approved with no material, important, or nit findings. All prior lifecycle, provenance, target, correlation, redelivery, registration-ingress, restart, and atomic-writer blockers were rechecked and did not recur. Effective weight: `thorough` (explicit operator). Verdict: approved.
