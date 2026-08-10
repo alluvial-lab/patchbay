@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cockpit-ux-polish — direction review</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    header { padding: 16px 24px; border-bottom: 1px solid #30363d; }
+    h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+    header p { margin: 0; color: #9aa4b2; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 8px; padding: 8px; height: calc(100vh - 88px); }
+    .cell { min-height: 0; background: #fff; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; }
+    .cell h2 { margin: 0; padding: 8px 12px; font-size: 13px; font-weight: 600; background: #222; color: #eee; display: flex; justify-content: space-between; gap: 12px; }
+    .cell h2 span { color: #9aa4b2; font-weight: 400; }
+    .cell a { color: #6cf; text-decoration: none; white-space: nowrap; }
+    .cell iframe { border: 0; flex: 1; width: 100%; min-height: 0; background: #fff; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; grid-template-rows: repeat(4, minmax(360px, 1fr)); height: auto; } }
+  </style>
+</head>
+<body>
+  <header><h1>cockpit-ux-polish — pick a direction</h1><p>Four distinct compositions for settings visibility, session-row hierarchy, and stable instruction-card delivery. Open any option for a full-size view.</p></header>
+  <main class="grid">
+    <section class="cell"><h2>Option 1 — Command deck <span>balanced / existing shell</span><a href="option-1.html" target="_blank">open ↗</a></h2><iframe title="Option 1 — Command deck" src="option-1.html"></iframe></section>
+    <section class="cell"><h2>Option 2 — Instrument console <span>dense / inspector</span><a href="option-2.html" target="_blank">open ↗</a></h2><iframe title="Option 2 — Instrument console" src="option-2.html"></iframe></section>
+    <section class="cell"><h2>Option 3 — Reading room <span>editorial / overlay</span><a href="option-3.html" target="_blank">open ↗</a></h2><iframe title="Option 3 — Reading room" src="option-3.html"></iframe></section>
+    <section class="cell"><h2>Option 4 — Mobile switchboard <span>mobile-first / drill-in</span><a href="option-4.html" target="_blank">open ↗</a></h2><iframe title="Option 4 — Mobile switchboard" src="option-4.html"></iframe></section>
+  </main>
+</body>
+</html>
