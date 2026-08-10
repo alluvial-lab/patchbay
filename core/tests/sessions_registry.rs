@@ -717,7 +717,79 @@ fn rejected_event_does_not_claim_its_replay_identity() {
 }
 
 #[test]
-fn exact_security_redelivery_is_inert_even_after_a_later_transition() {
+fn old_security_redeliveries_do_not_cancel_later_lockdown_posture() {
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&recorded(1, &registration())).unwrap();
+
+    let entered = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                reason_code: "first_entry".to_owned(),
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    registry.observe(&entered).unwrap();
+    assert!(registry.lockdown_active());
+
+    let exited = recorded_payload(
+        domain(),
+        3,
+        security_events::encode(&security_events::exited(
+            domain(),
+            SecurityLockdownExited {
+                reason_code: "first_exit".to_owned(),
+                ..SecurityLockdownExited::default()
+            },
+        )),
+    );
+    registry.observe(&exited).unwrap();
+    assert!(!registry.lockdown_active());
+
+    let after_exit = registry.clone();
+    registry.observe(&entered).unwrap();
+    assert_eq!(
+        registry, after_exit,
+        "redelivering the old entry must not reactivate lockdown"
+    );
+    assert!(
+        !registry.lockdown_active(),
+        "the old entry must remain inert before any compensating redelivery"
+    );
+
+    let reentered = recorded_payload(
+        domain(),
+        4,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                reason_code: "second_entry".to_owned(),
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    registry.observe(&reentered).unwrap();
+    assert!(registry.lockdown_active());
+
+    let after_reentry = registry.clone();
+    registry.observe(&exited).unwrap();
+    assert_eq!(
+        registry, after_reentry,
+        "redelivering the old exit must not clear the later entry"
+    );
+    assert!(
+        registry.lockdown_active(),
+        "the old exit must remain inert before any compensating redelivery"
+    );
+}
+
+#[test]
+fn conflicting_same_lsn_security_envelope_rejects_without_mutation() {
     let mut registry = SessionRegistry::new(domain()).unwrap();
     registry.observe(&recorded(1, &registration())).unwrap();
 
@@ -733,23 +805,78 @@ fn exact_security_redelivery_is_inert_even_after_a_later_transition() {
         )),
     );
     registry.observe(&entered).unwrap();
-    assert!(registry.lockdown_active());
 
-    let exited = recorded_payload(
+    let conflicting_exit = recorded_payload(
         domain(),
-        3,
+        2,
         security_events::encode(&security_events::exited(
             domain(),
             SecurityLockdownExited::default(),
         )),
     );
-    registry.observe(&exited).unwrap();
-    assert!(!registry.lockdown_active());
+    assert_ne!(entered.payload, conflicting_exit.payload);
 
-    let after_exit = registry.clone();
-    registry.observe(&entered).unwrap();
-    registry.observe(&exited).unwrap();
-    assert_eq!(registry, after_exit);
+    let before = registry.clone();
+    assert!(matches!(
+        registry.observe(&conflicting_exit),
+        Err(SessionError::CorruptLog(message))
+            if message.contains("conflicting durable envelopes")
+    ));
+    assert_eq!(
+        registry, before,
+        "a conflicting lockdown envelope mutated the registry"
+    );
+    assert!(registry.lockdown_active());
+}
+
+#[test]
+fn malformed_security_event_does_not_poison_corrected_same_lsn() {
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&recorded(1, &registration())).unwrap();
+
+    let mut malformed_source = security_events::entered(
+        domain(),
+        SecurityLockdownEntered {
+            affected_runtime_session_count: 1,
+            ..SecurityLockdownEntered::default()
+        },
+    );
+    malformed_source.transition = None;
+    let malformed = recorded_payload(domain(), 2, security_events::encode(&malformed_source));
+    let corrected = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    assert_ne!(malformed.payload, corrected.payload);
+
+    let before = registry.clone();
+    assert!(matches!(
+        registry.observe(&malformed),
+        Err(SessionError::CorruptRecord(message)) if message.contains("has no transition")
+    ));
+    assert_eq!(
+        registry, before,
+        "a malformed lockdown event claimed its replay identity"
+    );
+
+    registry
+        .observe(&corrected)
+        .expect("a corrected lockdown envelope must still claim the same LSN");
+    assert!(registry.lockdown_active());
+    assert_eq!(
+        registry
+            .get_session(&identity(1))
+            .unwrap()
+            .last_authoritative_lsn,
+        Some(2)
+    );
 }
 
 #[test]
