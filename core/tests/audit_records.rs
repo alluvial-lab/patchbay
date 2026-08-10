@@ -1,11 +1,12 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuditEventKind, AuthorityDomainId, ResourceId, ResourceIdentity, ResourceKind,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    ActorId, AdapterId, AuditEventKind, AuthorityDomainId, Grant, GrantId,
+    GrantRevocationPolicy, IdempotencyKey, OperationKind, ResourceId, ResourceIdentity,
+    ResourceKind, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 use patchbay_core::storage::{
-    AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, CoreGenerationStore, RusqliteStorage,
-    Storage, StorageError, TargetKey,
+    AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, AuditedStorage, CoreGenerationStore,
+    GrantAppendOutcome, GrantIdentityKey, RusqliteStorage, Storage, StorageError, TargetKey,
 };
 use prost_types::Timestamp;
 use tempfile::TempDir;
@@ -28,6 +29,37 @@ fn target_key(scope: &TargetScope) -> TargetKey {
         .flat_map(|byte| [HEX[(byte >> 4) as usize] as char, HEX[(byte & 0x0f) as usize] as char])
         .collect();
     TargetKey::new(encoded).unwrap()
+}
+
+fn grant_source(id: &str, kind: OperationKind) -> StoredEventPayload {
+    StoredEventPayload {
+        kind: StoredEventKind::Grant as i32,
+        payload: Grant {
+            grant_id: Some(GrantId {
+                value: id.to_owned(),
+            }),
+            authority_domain_id: Some(domain("main")),
+            subject_actor_id: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::FleetSupervisor as i32,
+                ..TargetScope::default()
+            }),
+            allowed_operation_kinds: vec![kind as i32],
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
+        }
+        .encode_to_vec(),
+    }
+}
+
+fn grant_audit(id: &str) -> AuditRecordDraft {
+    let mut audit = draft(AuditEventKind::GrantCreated, "grant_created");
+    audit.grant_id = Some(GrantId {
+        value: id.to_owned(),
+    });
+    audit
 }
 
 fn page(limit: u16) -> AuditPageSpec {
@@ -161,6 +193,115 @@ async fn audited_append_and_dedup_keep_source_and_audit_atomic() {
     assert_eq!(events.len(), 3, "source plus one audit per submission");
 }
 
+#[tokio::test]
+async fn grant_creation_audit_is_linked_once_across_retry_and_conflict() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let domain = domain("main");
+    let identity = GrantIdentityKey::new("grant-1".to_owned()).unwrap();
+    let source = grant_source("grant-1", OperationKind::Spawn);
+    let appended = storage
+        .append_grant_audited(&domain, &identity, source.clone(), grant_audit("grant-1"))
+        .await
+        .unwrap();
+    let source_event_id = match appended {
+        GrantAppendOutcome::Appended(result) => result.source_event_id,
+        GrantAppendOutcome::Existing(_) => panic!("first grant must append"),
+    };
+    assert!(matches!(
+        storage
+            .append_grant_audited(&domain, &identity, source, grant_audit("grant-1"))
+            .await
+            .unwrap(),
+        GrantAppendOutcome::Existing(event_id) if event_id == source_event_id
+    ));
+    assert!(matches!(
+        storage
+            .append_grant_audited(
+                &domain,
+                &identity,
+                grant_source("grant-1", OperationKind::Query),
+                grant_audit("grant-1"),
+            )
+            .await,
+        Err(StorageError::GrantIdentityConflict { .. })
+    ));
+
+    let mut filter = page(10);
+    filter.kinds = vec![AuditEventKind::GrantCreated];
+    filter.grant_id = Some(GrantId {
+        value: "grant-1".to_owned(),
+    });
+    let audits = storage.query_audit(&domain, filter).await.unwrap();
+    assert_eq!(audits.records.len(), 1);
+    assert_eq!(audits.records[0].source_event_id, Some(source_event_id));
+    assert_eq!(audits.records[0].reason_code, "grant_created");
+}
+
+#[tokio::test]
+async fn production_audited_storage_rejects_every_generic_grant_creation_route() {
+    let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    let domain = domain("main");
+    let source = grant_source("grant-1", OperationKind::Spawn);
+    let key = IdempotencyKey {
+        value: "grant-key".to_owned(),
+    };
+    let target = TargetKey::new("grant-target".to_owned()).unwrap();
+
+    assert!(matches!(
+        storage.append(&domain, source.clone()).await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_audited(&domain, source.clone(), grant_audit("grant-1"))
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_decision(&domain, source.clone(), grant_audit("grant-1"))
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_decision_audited_many(
+                &domain,
+                source.clone(),
+                vec![grant_audit("grant-1")],
+            )
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_batch_audited(
+                &domain,
+                vec![source.clone()],
+                grant_audit("grant-1"),
+            )
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_dedup(&domain, &key, &target, source.clone())
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_dedup_audited(&domain, &key, &target, source, grant_audit("grant-1"))
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 #[test]
 fn malformed_legacy_schema_is_rejected_without_mutation() {
     let directory = TempDir::new().unwrap();
@@ -214,7 +355,7 @@ async fn legacy_data_survives_versioned_migration() {
 }
 
 #[tokio::test]
-async fn v3_to_v4_migration_preserves_all_durable_rows_without_allocating_lsn() {
+async fn v3_to_latest_migration_preserves_all_durable_rows_without_allocating_lsn() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join("v3.sqlite3");
     {
@@ -282,7 +423,7 @@ async fn v3_to_v4_migration_preserves_all_durable_rows_without_allocating_lsn() 
     );
     let db = rusqlite::Connection::open(&path).unwrap();
     let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     for table in ["events", "idempotency_keys", "snapshots", "audit_records"] {
         let count: u64 = db
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
@@ -379,13 +520,13 @@ async fn malformed_v4_metadata_constraints_are_rejected_without_repair_or_versio
                 RusqliteStorage::open(path.to_str().unwrap()),
                 Err(StorageError::MalformedSchema(_))
             ),
-            "metadata mutation {name} passed v4 preflight"
+            "metadata mutation {name} passed schema preflight"
         );
         let db = rusqlite::Connection::open(&path).unwrap();
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4, "metadata mutation {name} changed version");
+        assert_eq!(version, 5, "metadata mutation {name} changed version");
         let schema_after: String = db
             .query_row(
                 "SELECT sql FROM sqlite_master

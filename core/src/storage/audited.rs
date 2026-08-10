@@ -8,7 +8,7 @@
 //! second, non-atomic audit write path.
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode, Grant,
+    AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
     Observation, ObservationKind, OperationKind, OperatorRecord, Revocation,
     SecurityLockdownEvent, StoredEventKind, StoredEventPayload,
 };
@@ -16,7 +16,8 @@ use prost::Message;
 
 use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
-    CoreGenerationStore, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+    CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage,
+    StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -139,22 +140,11 @@ pub fn audit_draft_for_source(
                 .ok()
                 .filter(|code| *code != FailureCode::Unspecified);
         }
-        StoredEventKind::Grant => {
-            let grant = Grant::decode(payload.payload.as_slice()).map_err(|error| {
-                StorageError::CorruptRecord(format!("cannot decode grant for audit: {error}"))
-            })?;
-            draft.actor_id = grant.subject_actor_id;
-            draft.target_scope = grant.target_scope;
-            draft.kind = AuditEventKind::GrantCreated;
-            draft.reason_code = "grant_created".to_owned();
-        }
-        StoredEventKind::DescendantGrant => {
-            let grant = patchbay_contracts::patchbay::DescendantGrant::decode(payload.payload.as_slice())
-                .map_err(|error| StorageError::CorruptRecord(format!("cannot decode descendant grant for audit: {error}")))?;
-            draft.actor_id = grant.subject_actor_id;
-            draft.target_scope = grant.target_scope;
-            draft.kind = AuditEventKind::GrantCreated;
-            draft.reason_code = "descendant_grant_created".to_owned();
+        StoredEventKind::Grant | StoredEventKind::DescendantGrant => {
+            // Immutable grant creation must provide its exact audit draft to
+            // the dedicated identity transaction. Inferring it here would
+            // retain a generic production bypass around that transaction.
+            return Err(StorageError::UnsupportedOperation);
         }
         StoredEventKind::Revocation => {
             let revocation = Revocation::decode(payload.payload.as_slice()).map_err(|error| {
@@ -269,6 +259,16 @@ fn operation_kind_reason(kind: i32) -> String {
         .unwrap_or_else(|| "operation".to_owned())
 }
 
+fn reject_generic_grant_creation(payload: &StoredEventPayload) -> Result<(), StorageError> {
+    let kind =
+        StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
+    if matches!(kind, StoredEventKind::Grant | StoredEventKind::DescendantGrant) {
+        Err(StorageError::UnsupportedOperation)
+    } else {
+        Ok(())
+    }
+}
+
 impl<S> CoreGenerationStore for AuditedStorage<S>
 where
     S: CoreGenerationStore,
@@ -298,6 +298,9 @@ where
         // different: it is already a domain-owned lifecycle mutation and must
         // never bypass the paired writer boundary.
         let kind = StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
+        if matches!(kind, StoredEventKind::Grant | StoredEventKind::DescendantGrant) {
+            return Err(StorageError::UnsupportedOperation);
+        }
         if kind == StoredEventKind::SessionState {
             let mut audit = AuditRecordDraft::new(
                 SystemClock.now(),
@@ -317,8 +320,6 @@ where
         if matches!(
             kind,
             StoredEventKind::Operation
-                | StoredEventKind::Grant
-                | StoredEventKind::DescendantGrant
                 | StoredEventKind::Revocation
                 | StoredEventKind::OperatorRecord
                 | StoredEventKind::ControlSurfacePrincipal
@@ -411,7 +412,20 @@ where
         source: StoredEventPayload,
         audit: AuditRecordDraft,
     ) -> Result<AuditedAppend, StorageError> {
+        reject_generic_grant_creation(&source)?;
         self.inner.append_audited(authority_domain_id, source, audit).await
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        self.inner
+            .append_grant_audited(authority_domain_id, identity, source, audit)
+            .await
     }
 
     async fn append_decision(
@@ -420,6 +434,7 @@ where
         source: StoredEventPayload,
         audit: AuditRecordDraft,
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        reject_generic_grant_creation(&source)?;
         self.inner
             .append_audited(authority_domain_id, source, audit)
             .await
@@ -432,6 +447,7 @@ where
         source: StoredEventPayload,
         audits: Vec<AuditRecordDraft>,
     ) -> Result<AuditedDecisionAppend, StorageError> {
+        reject_generic_grant_creation(&source)?;
         self.inner.append_decision_audited_many(authority_domain_id, source, audits).await
     }
 
@@ -444,6 +460,7 @@ where
         audit: AuditRecordDraft,
         logical_payload: Vec<u8>,
     ) -> Result<AuditedDedupOutcome, StorageError> {
+        reject_generic_grant_creation(&source)?;
         self.inner.append_dedup_audited_with_payload(authority_domain_id, key, target, source, audit, logical_payload).await
     }
 
@@ -453,6 +470,9 @@ where
         sources: Vec<StoredEventPayload>,
         audit: AuditRecordDraft,
     ) -> Result<super::AuditedBatchAppend, StorageError> {
+        for source in &sources {
+            reject_generic_grant_creation(source)?;
+        }
         self.inner.append_batch_audited(authority_domain_id, sources, audit).await
     }
 

@@ -55,6 +55,29 @@ impl TargetKey {
     }
 }
 
+/// A canonical, non-empty immutable grant identity.
+///
+/// The storage backend scopes this value by `AuthorityDomainId`. Normal and
+/// descendant grant records deliberately share the same namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GrantIdentityKey(String);
+
+impl GrantIdentityKey {
+    /// Construct an identity from a complete `GrantId` value.
+    pub fn new(value: String) -> Option<Self> {
+        if value.is_empty() {
+            None
+        } else {
+            Some(Self(value))
+        }
+    }
+
+    /// Return the exact opaque grant-id bytes represented as UTF-8.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A durably-recorded state-transition event in the authority-domain log.
 ///
 /// The `event_id` carries the full `(authority_domain_id, LSN)` tuple, not a
@@ -221,6 +244,15 @@ pub struct AuditedAppend {
     pub audit_event_id: EventId,
 }
 
+/// Result of atomically claiming and writing an immutable grant identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantAppendOutcome {
+    /// The identity was absent and the source plus creation audit committed.
+    Appended(AuditedAppend),
+    /// Exact canonical content already exists; no event or audit was written.
+    Existing(EventId),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditedDedupOutcome {
     Appended(AuditedAppend),
@@ -310,6 +342,15 @@ pub enum StorageError {
     /// "Idempotency and retry" (payload equivalence rule).
     #[error("idempotency key conflict: payload differs from the existing command")]
     IdempotencyConflict,
+
+    /// An immutable grant identity already points at different canonical
+    /// source content. The conflict is discovered before another source or
+    /// audit append.
+    #[error("grant identity {grant_id} conflicts with existing source LSN {existing_lsn}")]
+    GrantIdentityConflict {
+        grant_id: String,
+        existing_lsn: u64,
+    },
 
     /// The requested snapshot LSN does not correspond to a committed event.
     /// A snapshot must materialize at a real committed LSN.
@@ -525,6 +566,20 @@ pub trait Storage: Send + Sync {
         _source: StoredEventPayload,
         _audit: AuditRecordDraft,
     ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically enforce immutable grant identity, append the source and its
+    /// one truthful creation audit when absent, or return the original source
+    /// id for an exact retry. Backends must not implement this as a read plus
+    /// generic append; the fail-closed default is intentional.
+    fn append_grant_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _identity: &GrantIdentityKey,
+        _source: StoredEventPayload,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<GrantAppendOutcome, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
     }
 

@@ -8,13 +8,22 @@
 //! - WAL concurrent reads while a write is in flight
 //! - append_dedup atomic check-and-register (the formal model's appliedKeys)
 
+use std::path::Path;
+
 #[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{fs, os::unix::fs::PermissionsExt};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, Generation, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
+    ActorId, AuditEventKind, AuthorityDomainId, DescendantGrant, Generation, Grant, GrantId,
+    GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind,
 };
-use patchbay_core::storage::{CoreGenerationStore, DedupOutcome, Storage, StorageError, TargetKey};
+use patchbay_core::storage::{
+    AuditRecordDraft, CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
+    Storage, StorageError, TargetKey,
+};
+use prost::Message;
+use prost_types::Timestamp;
 
 fn test_domain() -> AuthorityDomainId {
     AuthorityDomainId {
@@ -37,6 +46,71 @@ fn test_key(value: &str) -> IdempotencyKey {
 
 fn test_target(value: &str) -> TargetKey {
     TargetKey::new(value.to_string()).unwrap()
+}
+
+fn grant_identity(value: &str) -> GrantIdentityKey {
+    GrantIdentityKey::new(value.to_owned()).unwrap()
+}
+
+fn grant_source(id: &str, kind: OperationKind) -> StoredEventPayload {
+    StoredEventPayload {
+        kind: StoredEventKind::Grant as i32,
+        payload: Grant {
+            grant_id: Some(GrantId {
+                value: id.to_owned(),
+            }),
+            authority_domain_id: Some(test_domain()),
+            subject_actor_id: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::FleetSupervisor as i32,
+                ..TargetScope::default()
+            }),
+            allowed_operation_kinds: vec![kind as i32],
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
+        }
+        .encode_to_vec(),
+    }
+}
+
+fn descendant_source(id: &str) -> StoredEventPayload {
+    StoredEventPayload {
+        kind: StoredEventKind::DescendantGrant as i32,
+        payload: DescendantGrant {
+            grant_id: Some(GrantId {
+                value: id.to_owned(),
+            }),
+            authority_domain_id: Some(test_domain()),
+            subject_actor_id: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                ..TargetScope::default()
+            }),
+            allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..DescendantGrant::default()
+        }
+        .encode_to_vec(),
+    }
+}
+
+fn grant_audit(id: &str, reason: &str) -> AuditRecordDraft {
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::GrantCreated,
+    );
+    audit.grant_id = Some(GrantId {
+        value: id.to_owned(),
+    });
+    audit.reason_code = reason.to_owned();
+    audit
 }
 
 #[cfg(unix)]
@@ -402,6 +476,348 @@ async fn append_dedup_different_targets_dont_dedup() {
     assert!(matches!(o2, DedupOutcome::Appended(_)));
     let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(events.len(), 2);
+}
+
+#[tokio::test]
+async fn grant_identity_append_is_atomic_idempotent_and_shared_across_kinds() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    let identity = grant_identity("grant-1");
+    let source = grant_source("grant-1", OperationKind::Spawn);
+
+    let first = storage
+        .append_grant_audited(
+            &domain,
+            &identity,
+            source.clone(),
+            grant_audit("grant-1", "grant_created"),
+        )
+        .await
+        .unwrap();
+    let first_append = match first {
+        GrantAppendOutcome::Appended(result) => result,
+        GrantAppendOutcome::Existing(_) => panic!("first identity must append"),
+    };
+    assert_eq!(first_append.source_event_id.lsn, Some(Lsn { value: 1 }));
+    assert_eq!(first_append.audit_event_id.lsn, Some(Lsn { value: 2 }));
+    let prefix = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap();
+
+    let retry = storage
+        .append_grant_audited(
+            &domain,
+            &identity,
+            source,
+            grant_audit("grant-1", "grant_created"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        retry,
+        GrantAppendOutcome::Existing(first_append.source_event_id.clone())
+    );
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap(),
+        prefix,
+        "an exact retry must write neither source nor creation audit"
+    );
+
+    let changed = storage
+        .append_grant_audited(
+            &domain,
+            &identity,
+            grant_source("grant-1", OperationKind::Query),
+            grant_audit("grant-1", "grant_created"),
+        )
+        .await;
+    assert!(matches!(
+        changed,
+        Err(StorageError::GrantIdentityConflict {
+            grant_id,
+            existing_lsn: 1
+        }) if grant_id == "grant-1"
+    ));
+    let cross_kind = storage
+        .append_grant_audited(
+            &domain,
+            &identity,
+            descendant_source("grant-1"),
+            grant_audit("grant-1", "descendant_grant_created"),
+        )
+        .await;
+    assert!(matches!(
+        cross_kind,
+        Err(StorageError::GrantIdentityConflict { existing_lsn: 1, .. })
+    ));
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap(),
+        prefix,
+        "conflicts must be rejected before append"
+    );
+}
+
+#[tokio::test]
+async fn grant_identity_append_rejects_mismatched_source_and_audit_without_writes() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    let source = grant_source("grant-1", OperationKind::Spawn);
+    let candidates = [
+        storage
+            .append_grant_audited(
+                &domain,
+                &grant_identity("other"),
+                source.clone(),
+                grant_audit("other", "grant_created"),
+            )
+            .await,
+        storage
+            .append_grant_audited(
+                &AuthorityDomainId {
+                    value: "other-domain".to_owned(),
+                },
+                &grant_identity("grant-1"),
+                source.clone(),
+                grant_audit("grant-1", "grant_created"),
+            )
+            .await,
+        storage
+            .append_grant_audited(
+                &domain,
+                &grant_identity("grant-1"),
+                source.clone(),
+                grant_audit("grant-1", "descendant_grant_created"),
+            )
+            .await,
+        storage
+            .append_grant_audited(
+                &domain,
+                &grant_identity("grant-1"),
+                source,
+                grant_audit("other", "grant_created"),
+            )
+            .await,
+    ];
+    assert!(candidates.iter().all(Result::is_err));
+    assert!(storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn concurrent_grant_identity_attempts_converge_on_one_transactional_winner() {
+    use std::sync::Arc;
+
+    let domain = test_domain();
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut exact_tasks = Vec::new();
+    for _ in 0..2 {
+        let storage = storage.clone();
+        let domain = domain.clone();
+        let barrier = barrier.clone();
+        exact_tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            storage
+                .append_grant_audited(
+                    &domain,
+                    &grant_identity("exact"),
+                    grant_source("exact", OperationKind::Spawn),
+                    grant_audit("exact", "grant_created"),
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+    let exact = [
+        exact_tasks.remove(0).await.unwrap().unwrap(),
+        exact_tasks.remove(0).await.unwrap().unwrap(),
+    ];
+    let source_ids = exact
+        .iter()
+        .map(|outcome| match outcome {
+            GrantAppendOutcome::Appended(result) => result.source_event_id.clone(),
+            GrantAppendOutcome::Existing(event_id) => event_id.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(source_ids[0], source_ids[1]);
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let conflicting = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut conflict_tasks = Vec::new();
+    for kind in [OperationKind::Spawn, OperationKind::Query] {
+        let storage = conflicting.clone();
+        let domain = domain.clone();
+        let barrier = barrier.clone();
+        conflict_tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            storage
+                .append_grant_audited(
+                    &domain,
+                    &grant_identity("conflict"),
+                    grant_source("conflict", kind),
+                    grant_audit("conflict", "grant_created"),
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+    let outcomes = [
+        conflict_tasks.remove(0).await.unwrap(),
+        conflict_tasks.remove(0).await.unwrap(),
+    ];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(result, Err(StorageError::GrantIdentityConflict { .. })))
+            .count(),
+        1
+    );
+    assert_eq!(
+        conflicting
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+async fn prepare_v4_grant_log(path: &Path, sources: &[StoredEventPayload]) {
+    let storage = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    drop(storage);
+    tokio::task::yield_now().await;
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch("DROP TABLE grant_identities; PRAGMA user_version = 4;")
+        .unwrap();
+    for (index, source) in sources.iter().enumerate() {
+        db.execute(
+            "INSERT INTO events (lsn, authority_domain_id, kind, payload) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                index as i64 + 1,
+                test_domain().value,
+                source.kind,
+                source.encode_to_vec()
+            ],
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn v4_migration_backfills_earliest_exact_grant_identity_without_consuming_lsn() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v4-grants.sqlite3");
+    let source = grant_source("legacy", OperationKind::Spawn);
+    prepare_v4_grant_log(&path, &[source.clone(), source.clone()]).await;
+
+    let storage = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    let retry = storage
+        .append_grant_audited(
+            &test_domain(),
+            &grant_identity("legacy"),
+            source,
+            grant_audit("legacy", "grant_created"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        retry,
+        GrantAppendOutcome::Existing(event_id) if event_id.lsn == Some(Lsn { value: 1 })
+    ));
+    assert_eq!(
+        storage
+            .read_after(&test_domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        2,
+        "migration and retry consume no LSN"
+    );
+    drop(storage);
+    tokio::task::yield_now().await;
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    let source_lsn: u64 = db
+        .query_row(
+            "SELECT source_lsn FROM grant_identities WHERE authority_domain_id = ?1 AND grant_id = 'legacy'",
+            [test_domain().value],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 5);
+    assert_eq!(source_lsn, 1);
+}
+
+#[tokio::test]
+async fn migration_and_open_reject_conflicting_or_inconsistent_grant_identity_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let conflict_path = directory.path().join("v4-conflict.sqlite3");
+    prepare_v4_grant_log(
+        &conflict_path,
+        &[
+            grant_source("legacy", OperationKind::Spawn),
+            grant_source("legacy", OperationKind::Query),
+        ],
+    )
+    .await;
+    assert!(matches!(
+        patchbay_core::storage::RusqliteStorage::open(conflict_path.to_str().unwrap()),
+        Err(StorageError::CorruptRecord(_))
+    ));
+    let db = rusqlite::Connection::open(&conflict_path).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 4, "failed backfill must roll the migration back");
+    assert!(!db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grant_identities')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap());
+    drop(db);
+
+    let inconsistent_path = directory.path().join("v5-missing-index.sqlite3");
+    prepare_v4_grant_log(
+        &inconsistent_path,
+        &[grant_source("legacy", OperationKind::Spawn)],
+    )
+    .await;
+    let storage = patchbay_core::storage::RusqliteStorage::open(
+        inconsistent_path.to_str().unwrap(),
+    )
+    .unwrap();
+    drop(storage);
+    tokio::task::yield_now().await;
+    let db = rusqlite::Connection::open(&inconsistent_path).unwrap();
+    db.execute("DELETE FROM grant_identities", []).unwrap();
+    drop(db);
+    assert!(matches!(
+        patchbay_core::storage::RusqliteStorage::open(inconsistent_path.to_str().unwrap()),
+        Err(StorageError::CorruptRecord(_))
+    ));
 }
 
 #[tokio::test]

@@ -21,7 +21,7 @@
 //!   writer commits.
 //! - The `Storage` trait impl bridges async callers to the actor + read conn.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 #[cfg(unix)]
 use std::{
@@ -30,8 +30,8 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, EventId, FailureCode, Generation,
-    IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
+    AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, DescendantGrant, EventId,
+    FailureCode, Generation, Grant, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection};
@@ -40,10 +40,11 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use super::port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
     AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage, StorageError, StoredSnapshot,
+    TargetKey,
 };
 
-pub const LATEST_SCHEMA_VERSION: u32 = 4;
+pub const LATEST_SCHEMA_VERSION: u32 = 5;
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
@@ -105,6 +106,16 @@ const MIGRATION_4: &str = r#"
 CREATE TABLE authority_domain_metadata (
     authority_domain_id TEXT NOT NULL PRIMARY KEY,
     core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+);
+"#;
+
+const MIGRATION_5: &str = r#"
+CREATE TABLE grant_identities (
+    authority_domain_id TEXT NOT NULL,
+    grant_id TEXT NOT NULL,
+    source_lsn INTEGER NOT NULL UNIQUE CHECK(source_lsn > 0),
+    PRIMARY KEY (authority_domain_id, grant_id),
+    FOREIGN KEY (source_lsn) REFERENCES events(lsn)
 );
 "#;
 
@@ -268,6 +279,224 @@ fn validate_authority_domain_metadata_schema(db: &Connection) -> Result<(), Stor
     Ok(())
 }
 
+fn normalize_schema_sql(sql: &str) -> String {
+    sql.chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+        .trim_end_matches(';')
+        .to_owned()
+}
+
+fn validate_grant_identities_schema(db: &Connection) -> Result<(), StorageError> {
+    validate_columns(
+        db,
+        "grant_identities",
+        &["authority_domain_id", "grant_id", "source_lsn"],
+    )?;
+    let column_count: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('grant_identities')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if column_count != 3 {
+        return Err(StorageError::MalformedSchema(format!(
+            "table grant_identities must have exactly 3 columns, found {column_count}"
+        )));
+    }
+    let create_sql: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'grant_identities'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if normalize_schema_sql(&create_sql) != normalize_schema_sql(MIGRATION_5) {
+        return Err(StorageError::MalformedSchema(
+            "table grant_identities must match the canonical v5 identity/index definition"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct GrantIdentitySource {
+    source_lsn: i64,
+    envelope_bytes: Vec<u8>,
+}
+
+fn decoded_grant_boundary(
+    payload: &StoredEventPayload,
+) -> Result<(String, String, &'static str), StorageError> {
+    let kind = validate_kind(payload)?;
+    let (grant_id, authority_domain_id, reason_code) = match kind {
+        StoredEventKind::Grant => {
+            let grant = Grant::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!("cannot decode grant identity: {error}"))
+            })?;
+            (grant.grant_id, grant.authority_domain_id, "grant_created")
+        }
+        StoredEventKind::DescendantGrant => {
+            let grant = DescendantGrant::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode descendant grant identity: {error}"
+                ))
+            })?;
+            (
+                grant.grant_id,
+                grant.authority_domain_id,
+                "descendant_grant_created",
+            )
+        }
+        _ => {
+            return Err(StorageError::CorruptRecord(
+                "grant identity source is not a grant or descendant grant".to_owned(),
+            ));
+        }
+    };
+    let grant_id = grant_id
+        .filter(|identity| !identity.value.is_empty())
+        .ok_or_else(|| StorageError::CorruptRecord("grant identity source has no non-empty grant_id".to_owned()))?;
+    let authority_domain_id = authority_domain_id
+        .filter(|identity| !identity.value.is_empty())
+        .ok_or_else(|| StorageError::CorruptRecord("grant identity source has no non-empty authority_domain_id".to_owned()))?;
+    Ok((grant_id.value, authority_domain_id.value, reason_code))
+}
+
+fn authoritative_grant_identities(
+    db: &Connection,
+) -> Result<BTreeMap<(String, String), GrantIdentitySource>, StorageError> {
+    let mut statement = db
+        .prepare(
+            "SELECT lsn, authority_domain_id, kind, payload
+             FROM events
+             WHERE kind IN (?1, ?2)
+             ORDER BY lsn",
+        )
+        .map_err(map_write_err)?;
+    let rows = statement
+        .query_map(
+            rusqlite::params![
+                StoredEventKind::Grant as i32,
+                StoredEventKind::DescendantGrant as i32
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            },
+        )
+        .map_err(map_write_err)?;
+    let mut identities: BTreeMap<(String, String), GrantIdentitySource> = BTreeMap::new();
+    for row in rows {
+        let (source_lsn, row_domain, sql_kind, envelope_bytes) = row.map_err(map_write_err)?;
+        if source_lsn <= 0 {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant identity source has invalid LSN {source_lsn}"
+            )));
+        }
+        let envelope = decode_payload(&envelope_bytes)?;
+        let envelope_kind = validate_kind(&envelope)?;
+        if envelope_kind as i32 != sql_kind
+            || !matches!(
+                envelope_kind,
+                StoredEventKind::Grant | StoredEventKind::DescendantGrant
+            )
+        {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant source kind disagrees at LSN {source_lsn}"
+            )));
+        }
+        let (grant_id, embedded_domain, _) = decoded_grant_boundary(&envelope)?;
+        if embedded_domain != row_domain {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant {grant_id} at LSN {source_lsn} embeds authority domain {embedded_domain}, row belongs to {row_domain}"
+            )));
+        }
+        let key = (row_domain, grant_id.clone());
+        if let Some(existing) = identities.get(&key) {
+            if existing.envelope_bytes != envelope_bytes {
+                return Err(StorageError::CorruptRecord(format!(
+                    "grant identity {grant_id} conflicts between LSNs {} and {source_lsn}",
+                    existing.source_lsn
+                )));
+            }
+            continue;
+        }
+        identities.insert(
+            key,
+            GrantIdentitySource {
+                source_lsn,
+                envelope_bytes,
+            },
+        );
+    }
+    Ok(identities)
+}
+
+fn validate_grant_identity_index(db: &Connection) -> Result<(), StorageError> {
+    let expected = authoritative_grant_identities(db)?;
+    let mut statement = db
+        .prepare(
+            "SELECT authority_domain_id, grant_id, source_lsn
+             FROM grant_identities
+             ORDER BY authority_domain_id, grant_id",
+        )
+        .map_err(map_write_err)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .map_err(map_write_err)?;
+    let mut actual_count = 0_usize;
+    for row in rows {
+        let (authority_domain_id, grant_id, source_lsn) = row.map_err(map_write_err)?;
+        actual_count += 1;
+        let Some(source) = expected.get(&(authority_domain_id.clone(), grant_id.clone())) else {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant identity index has extra row {authority_domain_id}/{grant_id}"
+            )));
+        };
+        if source.source_lsn != source_lsn {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant identity index {authority_domain_id}/{grant_id} points to LSN {source_lsn}, expected earliest LSN {}",
+                source.source_lsn
+            )));
+        }
+    }
+    if actual_count != expected.len() {
+        return Err(StorageError::CorruptRecord(format!(
+            "grant identity index covers {actual_count} identities, expected {}",
+            expected.len()
+        )));
+    }
+    Ok(())
+}
+
+fn backfill_grant_identity_index(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), StorageError> {
+    for ((authority_domain_id, grant_id), source) in authoritative_grant_identities(tx)? {
+        tx.execute(
+            "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![authority_domain_id, grant_id, source.source_lsn],
+        )
+        .map_err(map_write_err)?;
+    }
+    Ok(())
+}
+
 fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     // Complete every schema check before changing a persistent pragma or
     // user_version. A malformed legacy database must remain byte-for-byte
@@ -312,6 +541,16 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     if version >= 4 {
         validate_authority_domain_metadata_schema(db)?;
     }
+    let grant_identities_exists = table_exists(db, "grant_identities")?;
+    if grant_identities_exists && version < 5 {
+        return Err(StorageError::MalformedSchema(
+            "table grant_identities exists before schema version 5".to_owned(),
+        ));
+    }
+    if version >= 5 {
+        validate_grant_identities_schema(db)?;
+        validate_grant_identity_index(db)?;
+    }
 
     db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
         .map_err(map_write_err)?;
@@ -344,7 +583,19 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         tx.execute_batch("PRAGMA user_version = 4").map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
-    Ok(())
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(map_write_err)?;
+    if version < 5 {
+        let tx = db.transaction().map_err(map_write_err)?;
+        tx.execute_batch(MIGRATION_5).map_err(map_write_err)?;
+        backfill_grant_identity_index(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 5")
+            .map_err(map_write_err)?;
+        tx.commit().map_err(map_write_err)?;
+    }
+    validate_grant_identities_schema(db)?;
+    validate_grant_identity_index(db)
 }
 
 /// Commands sent to the writer actor.
@@ -383,6 +634,13 @@ enum WriterCommand {
         source: StoredEventPayload,
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<AuditedAppend, StorageError>>,
+    },
+    AppendGrantAudited {
+        authority_domain_id: String,
+        identity: String,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<GrantAppendOutcome, StorageError>>,
     },
     AppendDedupAudited {
         authority_domain_id: String,
@@ -546,6 +804,22 @@ async fn writer_actor(
                 reply,
             } => {
                 let result = do_append_audited(&mut db, &authority_domain_id, source, audit);
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendGrantAudited {
+                authority_domain_id,
+                identity,
+                source,
+                audit,
+                reply,
+            } => {
+                let result = do_append_grant_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    &identity,
+                    source,
+                    audit,
+                );
                 let _ = reply.send(result);
             }
             WriterCommand::AppendDedupAudited {
@@ -847,6 +1121,137 @@ fn do_append_audited(
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
     tx.commit().map_err(map_write_err)?;
     Ok(AuditedAppend { source_event_id, audit_event_id })
+}
+
+fn do_append_grant_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    identity: &str,
+    source: StoredEventPayload,
+    mut audit: AuditRecordDraft,
+) -> Result<GrantAppendOutcome, StorageError> {
+    if authority_domain_id.is_empty() || identity.is_empty() {
+        return Err(StorageError::CorruptRecord(
+            "grant identity append requires a non-empty domain and identity".to_owned(),
+        ));
+    }
+    let (embedded_identity, embedded_domain, expected_reason) =
+        decoded_grant_boundary(&source)?;
+    if embedded_domain != authority_domain_id {
+        return Err(StorageError::CorruptRecord(format!(
+            "grant identity source embeds authority domain {embedded_domain}, expected {authority_domain_id}"
+        )));
+    }
+    if embedded_identity != identity {
+        return Err(StorageError::CorruptRecord(format!(
+            "grant identity source embeds {embedded_identity}, requested {identity}"
+        )));
+    }
+    if audit.kind != AuditEventKind::GrantCreated || audit.reason_code != expected_reason {
+        return Err(StorageError::InvalidAuditRecord(format!(
+            "grant identity append requires GrantCreated/{expected_reason} audit framing"
+        )));
+    }
+    if audit.grant_id.as_ref().map(|grant_id| grant_id.value.as_str()) != Some(identity) {
+        return Err(StorageError::InvalidAuditRecord(
+            "grant creation audit grant_id must match the immutable identity".to_owned(),
+        ));
+    }
+    audit.source_event_id = None;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
+    let candidate_bytes = encode_payload(&source)?;
+    let tx = db.transaction().map_err(map_write_err)?;
+    let existing = match tx.query_row(
+        "SELECT identities.source_lsn, events.authority_domain_id, events.kind, events.payload
+         FROM grant_identities identities
+         LEFT JOIN events ON events.lsn = identities.source_lsn
+         WHERE identities.authority_domain_id = ?1 AND identities.grant_id = ?2",
+        rusqlite::params![authority_domain_id, identity],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i32>>(2)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+            ))
+        },
+    ) {
+        Ok(row) => Some(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(error) => return Err(map_write_err(error)),
+    };
+    if let Some((source_lsn, row_domain, sql_kind, existing_bytes)) = existing {
+        if source_lsn <= 0 {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant identity {identity} references invalid LSN {source_lsn}"
+            )));
+        }
+        let row_domain = row_domain.ok_or_else(|| {
+            StorageError::CorruptRecord(format!(
+                "grant identity {identity} references missing source LSN {source_lsn}"
+            ))
+        })?;
+        let sql_kind = sql_kind.ok_or_else(|| {
+            StorageError::CorruptRecord(format!(
+                "grant identity {identity} references missing source kind at LSN {source_lsn}"
+            ))
+        })?;
+        let existing_bytes = existing_bytes.ok_or_else(|| {
+            StorageError::CorruptRecord(format!(
+                "grant identity {identity} references missing source payload at LSN {source_lsn}"
+            ))
+        })?;
+        let existing_envelope = decode_payload(&existing_bytes)?;
+        let existing_kind = validate_kind(&existing_envelope)?;
+        let (existing_identity, existing_domain, _) =
+            decoded_grant_boundary(&existing_envelope)?;
+        if row_domain != authority_domain_id
+            || existing_domain != authority_domain_id
+            || existing_identity != identity
+            || existing_kind as i32 != sql_kind
+        {
+            return Err(StorageError::CorruptRecord(format!(
+                "grant identity {identity} disagrees with source LSN {source_lsn}"
+            )));
+        }
+        tx.rollback().map_err(map_write_err)?;
+        let source_event_id = event_id(
+            AuthorityDomainId {
+                value: authority_domain_id.to_owned(),
+            },
+            source_lsn as u64,
+        );
+        if existing_bytes == candidate_bytes {
+            return Ok(GrantAppendOutcome::Existing(source_event_id));
+        }
+        return Err(StorageError::GrantIdentityConflict {
+            grant_id: identity.to_owned(),
+            existing_lsn: source_lsn as u64,
+        });
+    }
+
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    tx.execute(
+        "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn)
+         VALUES (?1, ?2, ?3)",
+        rusqlite::params![authority_domain_id, identity, source_lsn],
+    )
+    .map_err(map_write_err)?;
+    let source_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        source_lsn as u64,
+    );
+    audit.source_event_id = Some(source_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(GrantAppendOutcome::Appended(AuditedAppend {
+        source_event_id,
+        audit_event_id,
+    }))
 }
 
 fn do_append_batch_audited(
@@ -1447,6 +1852,29 @@ impl Storage for RusqliteStorage {
         self.writer_tx
             .send(WriterCommand::AppendAudited {
                 authority_domain_id: authority_domain_id.value.clone(),
+                source,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendGrantAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                identity: identity.as_str().to_owned(),
                 source,
                 audit,
                 reply: reply_tx,

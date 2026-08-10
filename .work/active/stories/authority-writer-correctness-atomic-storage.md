@@ -1,7 +1,7 @@
 ---
 id: authority-writer-correctness-atomic-storage
 kind: story
-stage: implementing
+stage: done
 tags: [security, foundation]
 parent: authority-writer-correctness
 depends_on: []
@@ -89,3 +89,13 @@ cargo clippy -p patchbay-core --all-targets -- -D warnings
 - Effective review weight inherited from parent: thorough.
 - Findings are proposals; the receiver adjudicates materiality from evidence.
 - Do not edit docs, backlog, other items, models, vectors, or generated contracts for this checkpoint.
+
+## Implementation notes
+- Added the fail-closed `GrantIdentityKey` / `GrantAppendOutcome` storage contract and backend-neutral `GrantIdentityConflict` context. The server's exhaustive storage-error mapper was updated as a required interface reconciliation.
+- SQLite schema v5 adds the domain-qualified `grant_identities` key→source-LSN constraint. v4 migration decodes grant envelopes in LSN order, retains the earliest byte-exact duplicate, and rolls back on conflicting history. Every open validates the exact table definition and complete identity/log correspondence.
+- The dedicated writer validates embedded domain/id/kind plus `GrantCreated` reason and matching audit `grant_id`, then commits source, identity, and linked audit in one transaction. Exact retries return the earliest source `EventId` without writes; changed or cross-kind content conflicts before append.
+- `AuditedStorage` delegates the dedicated primitive and rejects grant creation through every generic append, audited, dedup, decision, and batch route. Bare `RusqliteStorage::append` remains the intentional trusted corruption-fixture seam.
+- Added focused storage/audit evidence for malformed framing, exact retry prefix stability, changed/cross-kind conflicts, barrier-controlled exact/conflicting races, audit cardinality/linkage, checked legacy migration, inconsistent-index rejection, and generic production bypass rejection.
+- Verification: `cargo test -p patchbay-core --test rusqlite_storage --test audit_records`; `cargo clippy -p patchbay-core --all-targets -- -D warnings`; `cargo check --workspace`; `git diff --check` — passed.
+- Formatting discrepancy: repository-wide `cargo fmt --all -- --check` remains red on pre-existing unrelated Rust drift. No unrelated whole-file reformat was applied.
+- Design discrepancies/blockers: none material. Audit framing requires the draft's `grant_id` to equal the immutable identity so the durable creation audit is truthfully queryable; this is the concrete fail-closed interpretation of the designed “truthful creation audit” requirement.

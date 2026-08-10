@@ -2295,6 +2295,12 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         StorageError::IdempotencyConflict => {
             Status::failed_precondition("idempotency key conflicts with the existing operation")
         }
+        StorageError::GrantIdentityConflict {
+            grant_id,
+            existing_lsn,
+        } => Status::failed_precondition(format!(
+            "grant identity {grant_id} conflicts with source LSN {existing_lsn}"
+        )),
         StorageError::CorruptRecord(message) => Status::internal(message),
         StorageError::WriteFailed { message, .. } | StorageError::ReadFailed { message, .. } => {
             Status::internal(message)
