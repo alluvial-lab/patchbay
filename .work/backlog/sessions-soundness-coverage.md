@@ -1,7 +1,7 @@
 ---
 id: sessions-soundness-coverage
 kind: feature
-stage: drafting
+stage: backlog
 tags: [protocol, foundation]
 parent: null
 depends_on: []
@@ -12,6 +12,12 @@ updated: 2026-08-09
 ---
 
 # Sessions soundness and coverage
+
+> **Superseded 2026-08-09 (split, option A).** This consolidation mixed three ownership boundaries (registry/replay/domain soundness; adapter source-ordering contract; production composition-root serialization). Split into standalone features for separate review boundaries:
+> - `session-registry-replay-domain-soundness` (authority-domain-isolation + idempotency replay-equality + test-coverage)
+> - `adapter-report-source-ordering` (report-source-ordering — a wire contract change, distinct from LSN ordering)
+>
+> Absorbed-findings detail + currency retained below as the analysis record.
 
 ## Brief
 Consolidate parked session-registry soundness and evidence gaps into one currency-checked feature. Absorbed findings:

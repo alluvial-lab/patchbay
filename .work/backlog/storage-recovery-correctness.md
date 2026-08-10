@@ -1,7 +1,7 @@
 ---
 id: storage-recovery-correctness
 kind: feature
-stage: drafting
+stage: backlog
 tags: [foundation, protocol]
 parent: null
 depends_on: []
@@ -12,6 +12,12 @@ updated: 2026-08-09
 ---
 
 # Storage recovery correctness
+
+> **Superseded 2026-08-09 (split, option A).** This consolidation merged a correctness item (core-generation semantics) with a perf item (checkpoint writer) and carried an internal contradiction + a foreclosing simplification. Split for separate review/routing:
+> - `snapshot-core-generation-semantics` (core-generation-persistence — OPEN; **resolves the generation-vs-checkpoint contradiction first**)
+> - `recovery-checkpoint-writer` (snapshot-checkpoint-writer — OPEN, `[perf]`-bearing; depends on the generation-semantics decision; corrects the foreclosing 'no second state store' line)
+>
+> Absorbed-findings detail + currency retained below as the analysis record.
 
 ## Brief
 Consolidate open durability and recovery-cost follow-ups into one storage correctness feature. Absorbed findings:

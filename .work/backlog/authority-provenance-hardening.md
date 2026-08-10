@@ -1,7 +1,7 @@
 ---
 id: authority-provenance-hardening
 kind: feature
-stage: drafting
+stage: backlog
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -12,6 +12,15 @@ updated: 2026-08-09
 ---
 
 # Authority provenance hardening
+
+> **Superseded 2026-08-09 (split, option A).** This consolidation grab-bag was split into standalone focused features for separate review boundaries (per the 2026-08-09 adversarial review). The absorbed-findings detail + currency below is retained as the analysis record; the actionable work now lives in:
+> - `authority-descendant-grant-completion` (durable-acceptance-metadata + live-composition — PARTIAL/OPEN)
+> - `authority-writer-correctness` (ingest-pre-append-conflict-check — OPEN)
+> - `replay-integrity-prefix-discipline` (replay-gap-detection — OPEN, cross-projection)
+> - `elicitation-responder-validation` (elicitation-responder-authority — OPEN)
+> - `authority-grant-selection-determinism` (grant-selection-determinism — PARTIAL)
+>
+> Already-DONE findings (`failed-authorization-audit`, `payload-actor-in-descendant-issuance`): retain no-regression coverage; fold into the relevant child's acceptance criteria.
 
 ## Brief
 Consolidate the authority follow-ups absorbed from the parked backlog so acceptance provenance, authorization decisions, replay, and live composition are explicit and durable. Absorbed findings:
