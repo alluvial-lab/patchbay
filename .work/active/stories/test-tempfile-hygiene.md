@@ -1,7 +1,7 @@
 ---
 id: test-tempfile-hygiene
 kind: story
-stage: review
+stage: done
 tags: [testing, ops]
 parent: null
 depends_on: []
@@ -82,3 +82,16 @@ fix touches the whole test harness layout and deserves its own pass.
 - Repository-wide `cargo fmt --all --check` is pre-existingly red on unrelated
   committed server test formatting; the touched Rust hunk follows its file's
   current formatting style.
+
+## Review
+
+- Lane: bounded inline standalone-story review; no independent or cross-model
+  reviewer is permitted for this item kind.
+- Effective weight: `thorough` (explicit caller), bounded by the standalone
+  lane rather than converted into feature-style independent passes.
+- Pass 1 found and fixed a material cleanup-ordering race in signal traps; the
+  wrapper now cleans only after Cargo and its children have exited.
+- Closure check: focused SQLite test, scoped-root removal assertion, shell
+  syntax, clippy, and diff hygiene are green. No material current-cycle blocker
+  remains.
+- Verdict: approved.
