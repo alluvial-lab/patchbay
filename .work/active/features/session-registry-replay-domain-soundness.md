@@ -319,3 +319,6 @@ Fallback if exact-payload retention proves materially too costly under measured 
 - **Parked**: checkpoint-backed equality-ledger pruning only if measured history cost justifies it; no backlog item was written because this delegated task forbids backlog changes and no present blocker exists.
 - **Rejected**: record-derived duplicate fingerprints, storage-only rebuilding, global core locking, domainless compatibility construction, and claims that production gate serialization proves core writer safety.
 - **Effective completion policy**: `review_weight: thorough`, source: explicit operator selection; pass unchanged to feature and final completion review.
+
+## Status (wrapped 2026-08-10)
+Design is committed at `implementing`; implementation was not started before the operator wrap and resumes from the two declared child checkpoints after the current replay boundary.
