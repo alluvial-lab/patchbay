@@ -1,7 +1,7 @@
 ---
 id: authority-writer-correctness
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation]
 parent: null
 depends_on: [authority-descendant-grant-completion]
@@ -322,3 +322,7 @@ The integrated feature is at `review` by explicit stop boundary. Effective revie
 - `git diff --check` passed.
 
 **Disposition notes**: no lower-risk finding was parked, no unrelated item or foundation document was changed, and no nested agent, peer mechanism, or push was used. Per the caller's explicit boundary, this pass records fix verification only and retains `stage: review`; no follow-on independent pass is claimed in this commit.
+
+## Review closure — pass 2
+
+Fresh-context pass 2 approved with no material blocker or follow-up proposal. It rechecked legacy duplicate migration/bootstrap, revoked fresh-projection retry equality, v2→v5 migration, raw-bypass closure, atomic source/index/audit persistence, races, lost acknowledgements, and spawn integration. Effective weight: `thorough` (explicit operator). Verdict: approved.
