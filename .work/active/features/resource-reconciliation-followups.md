@@ -1,7 +1,7 @@
 ---
 id: resource-reconciliation-followups
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: null
 depends_on: []
@@ -247,3 +247,22 @@ node contracts/scripts/check-generated-drift.mjs
 - Parked: none created here. Cross-projection consolidation already exists as `replay-integrity-prefix-discipline` and remains independent.
 - Rejected: per-record filtering and per-adapter cursor duplication for the reasons above.
 - Skipped/degraded: the delegated endpoint explicitly prohibited nested subagents and peeragent. Design-time independent advice was therefore unavailable and non-blocking per policy. The caller-selected `thorough` feature and final completion review remains mandatory.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`; explicit caller selection for protocol replay integrity and negative-state atomicity.
+- Review weight: `thorough` from the explicit caller selection; implementation stops at `stage: review` for a fresh reviewer.
+- Child commits: `af9ee64` (`resource-reconciliation-followups-applied-prefix-semantics`) and `3eea778` (`resource-reconciliation-followups-cross-dimensional-evidence`).
+- Files changed: `core/src/resource/{registry,replay,ingest}.rs`; `core/tests/{resource_state,resource_replay,resource_ingest,resource_reconciliation,conformance_vectors}.rs`; `contracts/vectors/resource-replay-prefix-idempotent.json`; `contracts/scripts/check-vectors.mjs`; `docs/{PROTOCOL,ARCHITECTURE,GLOSSARY,VERIFICATION}.md`.
+- Tests added/removed: added prefix framing/atomicity and ingest catch-up regressions, replaced the generic bounded sampler with the 100-case cross-dimensional trace, and added the promoted vector's exact Rust runner/static expectation; removed no focused contract tests.
+- Simplification: whole-event applied-prefix classification replaces both per-view/per-record obsolete branches; existing storage, fold, report, reconciliation, and `IdempotentLogReplay` surfaces carry all evidence without a new service/model/property id.
+- Discrepancies from design: none. An initial repeat of the workspace test encountered environmental disk exhaustion from generated incremental artifacts; the target directory was cleared and the final full run passed with `CARGO_INCREMENTAL=0`.
+- Adjacent issues parked: none.
+
+## Integrated verification
+- Both child checkpoints are `stage: done` with their own implementation evidence and commits.
+- `CARGO_INCREMENTAL=0 cargo test --workspace` — passed on the final tree, including core/server integration, conformance runners, and doc tests.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `node contracts/scripts/check-vectors.mjs` — passed: 53 vectors, 16 promoted, 21 implementation checks, 37 existing declared mutation witnesses.
+- `node contracts/scripts/check-models.mjs` — passed with generated traceability current; `IdempotentLogReplay` remains stated-normative because its model is draft.
+- `node contracts/scripts/check-generated-drift.mjs` — passed; generated Rust/TypeScript contracts are unchanged.
+- Acceptance walk: covered generation-1 re-feed after generation 2 is a complete no-op; the same generation at the next LSN is atomic corruption; sibling framing/gaps/full replay and report catch-up are enforced; accepted trace prefixes converge across hot/two-fresh/covered replays; rejected next-generation and terminal candidates preserve exact durable events and the full cursor-bearing projection; the promoted vector and verification prose retain implementation-checked rather than model-checked authority.
