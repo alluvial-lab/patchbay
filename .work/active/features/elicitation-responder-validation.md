@@ -1,7 +1,7 @@
 ---
 id: elicitation-responder-validation
 kind: feature
-stage: review
+stage: done
 tags: [security, protocol]
 parent: null
 depends_on: []
@@ -311,3 +311,16 @@ Fallback if enriching the active context proves unexpectedly invasive: keep the 
 - Focused verification: `cargo test -p patchbay-core --lib elicitation_response` (7 passed), `cargo test -p patchbay-core --test acceptance_pipeline` (23 passed), and `cargo test -p patchbay-core --test authority_proptest` (14 passed).
 - Integrated verification: `cargo test --workspace` passed; `cargo clippy --workspace --all-targets -- -D warnings` passed; `node contracts/scripts/check-vectors.mjs` passed (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses killed); `git diff --check` passed.
 - Repository-wide `cargo fmt --all -- --check` retains the pre-existing baseline drift already recorded above, beginning in untouched acceptance files; no unrelated formatting was bundled.
+
+## Review closure — pass 2
+
+- Fresh-context adversarial pass 2 found no material security or protocol
+  blockers.
+- Confirmed sender-insensitive equality is private to terminal pre-dedup
+  comparison, clears only `Operation.sender`, and leaves storage logical-byte
+  conflict protection exact for every original field.
+- Confirmed both response kinds, wrong-actor denial, projection carriage, audit
+  attribution, and one-gate/one-lookup behavior.
+- Recurring findings: none. The pass-1 normalized-sender retry defect did not
+  recur.
+- Effective weight: `thorough` (explicit operator). Verdict: approved.
