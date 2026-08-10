@@ -7,14 +7,16 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, DescendantGrant, Grant, GrantId, GrantRevocationPolicy,
-    OperationKind, Revocation, StoredEventKind, TargetScope, TargetScopeKind,
+    typed_correlation, ActorId, AuditRecord, AuthorityDomainId, CommandTransition, DescendantGrant,
+    EventId, FailureCode, Grant, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
+    OperationKind, OperationState, Revocation, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 
 use crate::{resource::ResourceIdentity, storage::RecordedEvent};
 
 use super::{
+    spawn_tail::{descendant_grant_id, validate_descendant_audit_link},
     AuthorityError, GrantLiveness, GrantProvenanceKind, GrantRecord,
     DESCENDANT_GRANT_ALLOWED_KINDS,
 };
@@ -26,6 +28,12 @@ pub struct AuthorityRegistry {
     /// Original creation-event records, retained so replaying a creation event
     /// after a later revocation can still be recognized as exact redelivery.
     source_grants: HashMap<GrantId, GrantRecord>,
+    /// Immutable successful-result or completed-transition records that may be
+    /// named by a spawn-completion audit.
+    completion_sources: HashMap<(String, u64), RecordedEvent>,
+    /// Qualified spawn-completion audit records retained for descendant-link
+    /// validation during replay.
+    completion_audits: HashMap<(String, u64), RecordedEvent>,
 }
 
 impl AuthorityRegistry {
@@ -52,19 +60,21 @@ impl AuthorityRegistry {
             StoredEventKind::Grant => self.observe_grant(event),
             StoredEventKind::DescendantGrant => self.observe_descendant_grant(event),
             StoredEventKind::Revocation => self.observe_revocation(event),
+            StoredEventKind::Observation => self.observe_completion_observation(event),
+            StoredEventKind::CommandTransition => self.observe_completion_transition(event),
+            StoredEventKind::AuditRecord => self.observe_completion_audit(event),
             StoredEventKind::Operation
-            | StoredEventKind::Observation
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
-            | StoredEventKind::CommandTransition
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
-            | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord
-            | StoredEventKind::Unspecified => Ok(()),
+            | StoredEventKind::SecurityLockdown => Ok(()),
+            StoredEventKind::Unspecified => Err(AuthorityError::CorruptRecord(
+                "authority event kind is unspecified".to_owned(),
+            )),
         }
     }
 
@@ -79,8 +89,13 @@ impl AuthorityRegistry {
     }
 
     /// Iterate over grants live at the supplied core instant.
-    pub fn live_grants_at<'a>(&'a self, now: &'a prost_types::Timestamp) -> impl Iterator<Item = &'a GrantRecord> + 'a {
-        self.grants.values().filter(move |grant| grant.is_live_at(now))
+    pub fn live_grants_at<'a>(
+        &'a self,
+        now: &'a prost_types::Timestamp,
+    ) -> impl Iterator<Item = &'a GrantRecord> + 'a {
+        self.grants
+            .values()
+            .filter(move |grant| grant.is_live_at(now))
     }
 
     /// Iterate over grants live at the production instant. New authorization
@@ -93,7 +108,9 @@ impl AuthorityRegistry {
         &'a self,
         now: &'a prost_types::Timestamp,
     ) -> impl Iterator<Item = (&'a GrantRecord, GrantLiveness)> + 'a {
-        self.grants.values().map(move |grant| (grant, grant.liveness_at(now)))
+        self.grants
+            .values()
+            .map(move |grant| (grant, grant.liveness_at(now)))
     }
 
     fn observe_grant(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
@@ -107,6 +124,94 @@ impl AuthorityRegistry {
         self.insert_grant(record, event_lsn)
     }
 
+    fn observe_completion_observation(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), AuthorityError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let observation =
+            Observation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode observation at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if observation.kind == ObservationKind::Result as i32
+            && observation.failure_code == FailureCode::Unspecified as i32
+            && exactly_one_nonempty_command(&observation.correlations).is_some()
+        {
+            insert_recorded_event(&mut self.completion_sources, event, "completion source")?;
+        }
+        Ok(())
+    }
+
+    fn observe_completion_transition(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), AuthorityError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let transition =
+            CommandTransition::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode command transition at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if transition.to_state == OperationState::Completed as i32
+            && transition.failure_code == FailureCode::Unspecified as i32
+            && transition
+                .command_id
+                .as_ref()
+                .is_some_and(|id| !id.value.is_empty())
+        {
+            insert_recorded_event(&mut self.completion_sources, event, "completion source")?;
+        }
+        Ok(())
+    }
+
+    fn observe_completion_audit(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let audit = AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AuthorityError::CorruptRecord(format!(
+                "cannot decode audit record at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        if audit.audit_event_id.as_ref() != Some(&event.event_id) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "audit record identity does not match event at LSN {event_lsn}"
+            )));
+        }
+        if audit.reason_code != "spawn_completion" {
+            return Ok(());
+        }
+        if audit.kind != patchbay_contracts::patchbay::AuditEventKind::CommandCompleted as i32
+            || audit
+                .command_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+        {
+            return Err(AuthorityError::CorruptLog(format!(
+                "spawn-completion audit at LSN {event_lsn} has invalid kind or command"
+            )));
+        }
+        let source_id = audit.source_event_id.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptLog(format!(
+                "spawn-completion audit at LSN {event_lsn} has no source_event_id"
+            ))
+        })?;
+        if source_id.authority_domain_id.as_ref() != Some(event_domain) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "spawn-completion audit at LSN {event_lsn} has a foreign source"
+            )));
+        }
+        let source_key = event_key(source_id, "spawn-completion audit source")?;
+        let source = self.completion_sources.get(&source_key).ok_or_else(|| {
+            AuthorityError::CorruptLog(format!(
+                "spawn-completion audit at LSN {event_lsn} references a missing or invalid source"
+            ))
+        })?;
+        validate_completion_source_matches_audit(source, &audit, event_lsn)?;
+        insert_recorded_event(&mut self.completion_audits, event, "spawn-completion audit")
+    }
+
     fn observe_descendant_grant(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
         let (event_domain, event_lsn) = event_identity(event)?;
         let grant = DescendantGrant::decode(event.payload.payload.as_slice()).map_err(|error| {
@@ -114,6 +219,48 @@ impl AuthorityRegistry {
                 "cannot decode descendant grant at LSN {event_lsn}: {error}"
             ))
         })?;
+        let audit_id = grant.audit_id.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant at LSN {event_lsn} is missing audit_id"
+            ))
+        })?;
+        if audit_id.authority_domain_id.as_ref() != Some(event_domain)
+            || audit_id
+                .lsn
+                .as_ref()
+                .is_none_or(|lsn| lsn.value == 0 || lsn.value >= event_lsn)
+        {
+            return Err(AuthorityError::InvalidGrant(format!(
+                "descendant grant at LSN {event_lsn} has an invalid prior same-domain audit_id"
+            )));
+        }
+        let audit_key = event_key(audit_id, "descendant audit")?;
+        let audit_event = self.completion_audits.get(&audit_key).ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant at LSN {event_lsn} references an unknown completion audit"
+            ))
+        })?;
+        let audit =
+            AuditRecord::decode(audit_event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode linked audit at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        let source_key = event_key(
+            audit.source_event_id.as_ref().ok_or_else(|| {
+                AuthorityError::InvalidGrant(
+                    "completion audit is missing source_event_id".to_owned(),
+                )
+            })?,
+            "completion source",
+        )?;
+        let source_event = self.completion_sources.get(&source_key).ok_or_else(|| {
+            AuthorityError::InvalidGrant(
+                "completion audit references an unknown successful result/completed transition"
+                    .to_owned(),
+            )
+        })?;
+        validate_descendant_audit_link(&grant, audit_event, source_event)?;
         let record = descendant_grant_record(grant, event_domain, event_lsn)?;
         self.insert_grant(record, event_lsn)
     }
@@ -304,12 +451,68 @@ fn descendant_grant_record(
         "descendant grant revocation_policy",
         event_lsn,
     )?;
+    if TargetScopeKind::try_from(target_scope.kind).ok() != Some(TargetScopeKind::RuntimeSession) {
+        return Err(AuthorityError::InvalidGrant(format!(
+            "descendant grant {:?} at LSN {event_lsn} must target one runtime session",
+            grant_id
+        )));
+    }
     let provenance = grant.provenance.ok_or_else(|| {
         AuthorityError::InvalidGrant(format!(
             "descendant grant {:?} at LSN {event_lsn} is missing provenance",
             grant_id
         ))
     })?;
+    let spawn_operation_id = provenance
+        .spawn_operation_id
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant {:?} at LSN {event_lsn} has no non-empty spawn_operation_id",
+                grant_id
+            ))
+        })?;
+    let spawning_grant_id = provenance
+        .spawning_grant_id
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant {:?} at LSN {event_lsn} has no non-empty spawning_grant_id",
+                grant_id
+            ))
+        })?;
+    let audit_id = grant
+        .audit_id
+        .filter(|id| {
+            id.authority_domain_id.as_ref() == Some(&authority_domain_id)
+                && id
+                    .lsn
+                    .as_ref()
+                    .is_some_and(|lsn| lsn.value > 0 && lsn.value < event_lsn)
+        })
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant {:?} at LSN {event_lsn} has no valid prior same-domain audit_id",
+                grant_id
+            ))
+        })?;
+    if grant_id != descendant_grant_id(&authority_domain_id, &spawn_operation_id) {
+        return Err(AuthorityError::InvalidGrant(format!(
+            "descendant grant {:?} at LSN {event_lsn} does not use the deterministic spawn id",
+            grant_id
+        )));
+    }
+    if grant.created_at.is_none()
+        || grant.expires_at.is_some()
+        || grant.revocation_generation.is_some()
+        || grant.revoked_at.is_some()
+        || policy != GrantRevocationPolicy::Continue
+    {
+        return Err(AuthorityError::InvalidGrant(format!(
+            "descendant grant {:?} at LSN {event_lsn} has invalid lifecycle metadata",
+            grant_id
+        )));
+    }
 
     Ok(GrantRecord {
         grant_id,
@@ -329,8 +532,9 @@ fn descendant_grant_record(
         revocation_audit_id: None,
         is_descendant: true,
         provenance: GrantProvenanceKind::Descendant {
-            spawn_operation_id: provenance.spawn_operation_id,
-            spawning_grant_id: provenance.spawning_grant_id,
+            spawn_operation_id: Some(spawn_operation_id),
+            spawning_grant_id: Some(spawning_grant_id),
+            audit_id: Some(audit_id),
         },
     })
 }
@@ -523,6 +727,121 @@ fn revocation_policy(
         )));
     }
     Ok(policy)
+}
+
+fn exactly_one_nonempty_command(
+    correlations: &[patchbay_contracts::patchbay::TypedCorrelation],
+) -> Option<&patchbay_contracts::patchbay::CommandId> {
+    let mut commands =
+        correlations
+            .iter()
+            .filter_map(|correlation| match correlation.r#ref.as_ref() {
+                Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
+                _ => None,
+            });
+    let command = commands.next()?;
+    if command.value.is_empty() || commands.next().is_some() {
+        return None;
+    }
+    Some(command)
+}
+
+fn validate_completion_source_matches_audit(
+    source: &RecordedEvent,
+    audit: &AuditRecord,
+    audit_lsn: u64,
+) -> Result<(), AuthorityError> {
+    let (_, source_lsn) = event_identity(source)?;
+    if source_lsn >= audit_lsn {
+        return Err(AuthorityError::CorruptLog(format!(
+            "spawn-completion audit at LSN {audit_lsn} references non-prior source LSN {source_lsn}"
+        )));
+    }
+    let command_id = audit.command_id.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!(
+            "spawn-completion audit at LSN {audit_lsn} has no command_id"
+        ))
+    })?;
+    match StoredEventKind::try_from(source.payload.kind).ok() {
+        Some(StoredEventKind::Observation) => {
+            let observation =
+                Observation::decode(source.payload.payload.as_slice()).map_err(|error| {
+                    AuthorityError::CorruptRecord(format!(
+                        "cannot decode completion source at LSN {source_lsn}: {error}"
+                    ))
+                })?;
+            if observation.kind != ObservationKind::Result as i32
+                || observation.failure_code != FailureCode::Unspecified as i32
+                || exactly_one_nonempty_command(&observation.correlations) != Some(command_id)
+            {
+                return Err(AuthorityError::CorruptLog(format!(
+                    "spawn-completion audit at LSN {audit_lsn} references a non-matching result"
+                )));
+            }
+        }
+        Some(StoredEventKind::CommandTransition) => {
+            let transition =
+                CommandTransition::decode(source.payload.payload.as_slice()).map_err(|error| {
+                    AuthorityError::CorruptRecord(format!(
+                        "cannot decode completion source at LSN {source_lsn}: {error}"
+                    ))
+                })?;
+            if transition.command_id.as_ref() != Some(command_id)
+                || transition.to_state != OperationState::Completed as i32
+                || transition.failure_code != FailureCode::Unspecified as i32
+            {
+                return Err(AuthorityError::CorruptLog(format!(
+                    "spawn-completion audit at LSN {audit_lsn} references a non-matching transition"
+                )));
+            }
+        }
+        _ => {
+            return Err(AuthorityError::CorruptLog(format!(
+                "spawn-completion audit at LSN {audit_lsn} references the wrong source kind"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn insert_recorded_event(
+    map: &mut HashMap<(String, u64), RecordedEvent>,
+    event: &RecordedEvent,
+    record_name: &str,
+) -> Result<(), AuthorityError> {
+    let key = event_key(&event.event_id, record_name)?;
+    match map.get(&key) {
+        Some(existing) if existing == event => Ok(()),
+        Some(_) => Err(AuthorityError::CorruptLog(format!(
+            "{record_name} has conflicting immutable records at LSN {}",
+            key.1
+        ))),
+        None => {
+            map.insert(key, event.clone());
+            Ok(())
+        }
+    }
+}
+
+fn event_key(event_id: &EventId, record_name: &str) -> Result<(String, u64), AuthorityError> {
+    let domain = event_id.authority_domain_id.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!("{record_name} has no authority domain"))
+    })?;
+    if domain.value.is_empty() {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} has an empty authority domain"
+        )));
+    }
+    let lsn = event_id
+        .lsn
+        .as_ref()
+        .ok_or_else(|| AuthorityError::CorruptRecord(format!("{record_name} has no LSN")))?;
+    if lsn.value == 0 {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} has zero LSN"
+        )));
+    }
+    Ok((domain.value.clone(), lsn.value))
 }
 
 fn event_identity(event: &RecordedEvent) -> Result<(&AuthorityDomainId, u64), AuthorityError> {

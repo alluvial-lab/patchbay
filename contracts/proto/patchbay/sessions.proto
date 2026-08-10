@@ -104,6 +104,10 @@ message SessionGenerationBumped {
   string cwd = 8;
   string name = 9;
   string model = 10;
+  // Optional: the spawn Operation that produced the replacement generation.
+  // Tag 11 follows the independently-added model field at tag 10; tags remain
+  // unique and existing wire identities are unchanged.
+  TypedCorrelation spawn_origin = 11;
 }
 
 message SessionConnectivityChanged {

@@ -1,15 +1,19 @@
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId, DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, Generation,
-    Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn, OperationKind, Revocation,
-    RuntimeSessionId, StoredEventKind, TargetScope, TargetScopeKind,
+    typed_correlation, ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId,
+    CommandId, DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, FailureCode,
+    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn, Observation,
+    ObservationKind, OperationKind, Revocation, RuntimeSessionId, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, AuthorityError,
         AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
-    storage::{AuditPageSpec, RecordedEvent, RusqliteStorage, Storage},
+    storage::{AuditPageSpec, AuditRecordDraft, RecordedEvent, RusqliteStorage, Storage},
 };
+use prost::Message;
+use prost_types::Timestamp;
 
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId {
@@ -88,6 +92,58 @@ fn descendant_grant(id: &str, spawning_grant_id: &str) -> DescendantGrant {
     }
 }
 
+async fn ingest_valid_descendant(
+    storage: &RusqliteStorage,
+    registry: &mut AuthorityRegistry,
+    parent_id: &str,
+) -> Result<(patchbay_contracts::patchbay::EventId, GrantId), AuthorityError> {
+    let command_id = CommandId {
+        value: "spawn-1".to_owned(),
+    };
+    let source = Observation {
+        authority_domain_id: Some(domain()),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![TypedCorrelation {
+            r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+        }],
+        target_scope: Some(fleet_scope()),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    };
+    let source_event_id = storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: source.encode_to_vec(),
+            },
+        )
+        .await?;
+    let occurred_at = Timestamp {
+        seconds: 10,
+        nanos: 0,
+    };
+    let mut audit = AuditRecordDraft::new(occurred_at, AuditEventKind::CommandCompleted);
+    audit.actor_id = Some(actor());
+    audit.command_id = Some(command_id.clone());
+    audit.grant_id = Some(grant_id(parent_id));
+    audit.target_scope = Some(session_scope());
+    audit.reason_code = "spawn_completion".to_owned();
+    audit.source_event_id = Some(source_event_id);
+    let audit_id = storage.append_audit(&domain(), audit).await?;
+    let id = grant_id("desc:authority-main:spawn-1");
+    let mut descendant = descendant_grant(&id.value, parent_id);
+    descendant.subject_endpoint_class.clear();
+    descendant.provenance = Some(DescendantGrantProvenance {
+        spawn_operation_id: Some(command_id),
+        spawning_grant_id: Some(grant_id(parent_id)),
+    });
+    descendant.created_at = Some(occurred_at);
+    descendant.audit_id = Some(audit_id);
+    let event_id = ingest_descendant_grant(storage, registry, &domain(), descendant).await?;
+    Ok((event_id, id))
+}
+
 fn revocation(id: &str) -> Revocation {
     Revocation {
         authority_domain_id: Some(domain()),
@@ -154,18 +210,13 @@ async fn descendant_with_canonical_kind_set_succeeds() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = AuthorityRegistry::new();
 
-    let event_id = ingest_descendant_grant(
-        &storage,
-        &mut registry,
-        &domain(),
-        descendant_grant("descendant", "parent"),
-    )
-    .await
-    .expect("the canonical descendant grant must be ingested");
+    let (event_id, descendant_id) = ingest_valid_descendant(&storage, &mut registry, "parent")
+        .await
+        .expect("the canonical descendant grant must be ingested");
 
-    assert_eq!(event_id.lsn, Some(Lsn { value: 1 }));
+    assert_eq!(event_id.lsn, Some(Lsn { value: 3 }));
     let record = registry
-        .get_grant(&grant_id("descendant"))
+        .get_grant(&descendant_id)
         .expect("ingestion must warm the descendant projection");
     assert!(record.is_descendant);
     assert_eq!(
@@ -181,14 +232,9 @@ async fn revoking_parent_does_not_cascade_to_descendant() {
     ingest_grant(&storage, &mut registry, &domain(), grant("parent"))
         .await
         .unwrap();
-    ingest_descendant_grant(
-        &storage,
-        &mut registry,
-        &domain(),
-        descendant_grant("descendant", "parent"),
-    )
-    .await
-    .unwrap();
+    let (_, descendant_id) = ingest_valid_descendant(&storage, &mut registry, "parent")
+        .await
+        .unwrap();
 
     ingest_revocation(&storage, &mut registry, &domain(), revocation("parent"))
         .await
@@ -199,10 +245,10 @@ async fn revoking_parent_does_not_cascade_to_descendant() {
         .expect("revocation retains the parent record")
         .is_revoked());
     assert!(registry
-        .get_grant(&grant_id("descendant"))
+        .get_grant(&descendant_id)
         .expect("non-cascade retains the descendant record")
         .is_live());
-    assert_eq!(events(&storage).await.len(), 4);
+    assert_eq!(events(&storage).await.len(), 6);
 }
 
 #[tokio::test]
@@ -215,8 +261,12 @@ async fn revocation_audits_preserve_verified_actor_and_endpoint_attribution() {
     let mut revocation = revocation("attributed");
     revocation.revoked_by = Some(ActorEndpointRef {
         actor_id: Some(actor()),
-        endpoint_id: Some(EndpointId { value: "cli-endpoint".to_owned() }),
-        device_id: Some(DeviceId { value: "cli-device".to_owned() }),
+        endpoint_id: Some(EndpointId {
+            value: "cli-endpoint".to_owned(),
+        }),
+        device_id: Some(DeviceId {
+            value: "cli-device".to_owned(),
+        }),
         ..ActorEndpointRef::default()
     });
 
@@ -225,26 +275,39 @@ async fn revocation_audits_preserve_verified_actor_and_endpoint_attribution() {
         .expect("attributed revocation must append");
 
     let page = storage
-        .query_audit(&domain(), AuditPageSpec {
-            kinds: vec![AuditEventKind::GrantRevoked],
-            actor_id: None,
-            endpoint_id: None,
-            command_id: None,
-            grant_id: Some(grant_id("attributed")),
-            target: None,
-            failure_codes: vec![],
-            reason_codes: vec![],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 10,
-        })
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantRevoked],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(grant_id("attributed")),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec![],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].actor_id, Some(actor()));
-    assert_eq!(page.records[0].endpoint_id, Some(EndpointId { value: "cli-endpoint".to_owned() }));
-    assert_eq!(page.records[0].device_id, Some(DeviceId { value: "cli-device".to_owned() }));
+    assert_eq!(
+        page.records[0].endpoint_id,
+        Some(EndpointId {
+            value: "cli-endpoint".to_owned()
+        })
+    );
+    assert_eq!(
+        page.records[0].device_id,
+        Some(DeviceId {
+            value: "cli-device".to_owned()
+        })
+    );
 }
 
 #[tokio::test]

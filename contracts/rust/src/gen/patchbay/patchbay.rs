@@ -1327,6 +1327,11 @@ pub struct SessionGenerationBumped {
     pub name: ::prost::alloc::string::String,
     #[prost(string, tag = "10")]
     pub model: ::prost::alloc::string::String,
+    /// Optional: the spawn Operation that produced the replacement generation.
+    /// Tag 11 follows the independently-added model field at tag 10; tags remain
+    /// unique and existing wire identities are unchanged.
+    #[prost(message, optional, tag = "11")]
+    pub spawn_origin: ::core::option::Option<TypedCorrelation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionConnectivityChanged {

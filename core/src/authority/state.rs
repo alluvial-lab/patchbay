@@ -1,13 +1,13 @@
 //! In-memory authority state and grant-matching predicates.
 
-use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
-    GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
-};
 use crate::{
     resource::ResourceIdentity,
     target::target_adapter_id,
     time::{Clock, SystemClock},
+};
+use patchbay_contracts::patchbay::{
+    ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
+    GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
 };
 
 /// The in-memory grant record derived from the durable authority log.
@@ -121,6 +121,8 @@ pub enum GrantProvenanceKind {
     Descendant {
         spawn_operation_id: Option<CommandId>,
         spawning_grant_id: Option<GrantId>,
+        /// Exact durable spawn-completion audit that created this grant.
+        audit_id: Option<EventId>,
     },
 }
 
@@ -148,12 +150,18 @@ pub fn authorize_self_revocation_at(
     {
         return Err(GrantAdministrationDenied::MissingOrForeign);
     }
-    if grant.subject_endpoint_id.as_ref().is_some_and(|expected| issuer.endpoint != Some(expected)) {
+    if grant
+        .subject_endpoint_id
+        .as_ref()
+        .is_some_and(|expected| issuer.endpoint != Some(expected))
+    {
         return Err(GrantAdministrationDenied::EndpointMismatch);
     }
     match grant.liveness_at(now) {
         GrantLiveness::Live | GrantLiveness::Revoked => Ok(()),
-        GrantLiveness::Expired => Err(GrantAdministrationDenied::Expired { grant_id: grant.grant_id.clone() }),
+        GrantLiveness::Expired => Err(GrantAdministrationDenied::Expired {
+            grant_id: grant.grant_id.clone(),
+        }),
     }
 }
 
@@ -195,7 +203,13 @@ pub fn grant_authorizes(
     operation_kind: OperationKind,
     target_scope: &TargetScope,
 ) -> bool {
-    grant_authorizes_at(grant, issuer, operation_kind, target_scope, &SystemClock.now())
+    grant_authorizes_at(
+        grant,
+        issuer,
+        operation_kind,
+        target_scope,
+        &SystemClock.now(),
+    )
 }
 
 #[must_use]

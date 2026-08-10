@@ -2,8 +2,7 @@ use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, Lsn, RuntimeSessionId,
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
     SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
-    SessionRelabeled,
-    SessionState, StoredEventKind, StoredEventPayload, TargetScope,
+    SessionRelabeled, SessionState, StoredEventKind, StoredEventPayload, TargetScope,
 };
 use patchbay_core::{
     acceptance::TargetResolver,
@@ -164,6 +163,7 @@ fn folds_axis_changes_relabel_and_generation_bump() {
             cwd: "/work/patchbay-next".to_owned(),
             name: "replacement".to_owned(),
             model: "provider/model-2".to_owned(),
+            spawn_origin: None,
         },
     );
     registry.observe(&recorded(5, &bump)).unwrap();
@@ -231,6 +231,7 @@ fn generation_bump_without_initial_state_is_corrupt_record() {
             cwd: "/work/new".to_owned(),
             name: "new-name".to_owned(),
             model: "provider/model-2".to_owned(),
+            spawn_origin: None,
         },
     );
 
@@ -281,6 +282,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             cwd: "/work/patchbay".to_owned(),
             name: "main".to_owned(),
             model: "provider/model-2".to_owned(),
+            spawn_origin: None,
         },
     );
 
@@ -353,7 +355,8 @@ fn reobserving_a_committed_prefix_is_idempotent() {
             cwd: "/work/renamed".to_owned(),
             name: "renamed".to_owned(),
             model: "provider/model-2".to_owned(),
-        }
+            spawn_origin: None,
+        },
     );
     let activity = events::activity_changed(
         domain(),
@@ -468,7 +471,10 @@ fn model_change_preserves_identity_and_rejects_mismatched_prior_value() {
         registry.observe(&recorded(3, &invalid)),
         Err(SessionError::CorruptLog(message)) if message.contains("expects prior model")
     ));
-    assert_eq!(registry.get_session(&identity(1)).unwrap().model, "provider/model-2");
+    assert_eq!(
+        registry.get_session(&identity(1)).unwrap().model,
+        "provider/model-2"
+    );
 }
 
 #[test]

@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, DescendantGrant,
-    DescendantGrantProvenance, EndpointId, EventId, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, Lsn, OperationKind, ResourceId, ResourceIdentity, ResourceKind,
-    Revocation, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    typed_correlation, ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuditRecord,
+    AuthorityDomainId, CommandId, DescendantGrant, DescendantGrantProvenance, EndpointId, EventId,
+    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
+    Observation, ObservationKind, OperationKind, ResourceId, ResourceIdentity, ResourceKind,
+    Revocation, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
@@ -14,6 +16,7 @@ use patchbay_core::{
     storage::RecordedEvent,
 };
 use prost::Message;
+use prost_types::Timestamp;
 
 fn domain(value: &str) -> AuthorityDomainId {
     AuthorityDomainId {
@@ -79,8 +82,12 @@ fn resource_scope(adapter_value: &str, kind: &str, id: &str) -> TargetScope {
         kind: TargetScopeKind::Resource as i32,
         resource: Some(ResourceIdentity {
             adapter_id: Some(adapter(adapter_value)),
-            resource_id: Some(ResourceId { value: id.to_owned() }),
-            resource_kind: Some(ResourceKind { value: kind.to_owned() }),
+            resource_id: Some(ResourceId {
+                value: id.to_owned(),
+            }),
+            resource_kind: Some(ResourceKind {
+                value: kind.to_owned(),
+            }),
         }),
         ..TargetScope::default()
     }
@@ -107,25 +114,79 @@ fn operator_grant() -> Grant {
     }
 }
 
+fn descendant_source() -> Observation {
+    Observation {
+        authority_domain_id: Some(domain("authority-main")),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![TypedCorrelation {
+            r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+                value: "spawn-1".to_owned(),
+            })),
+        }],
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::FleetSupervisor as i32,
+            ..TargetScope::default()
+        }),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    }
+}
+
+fn descendant_audit() -> AuditRecord {
+    AuditRecord {
+        audit_event_id: Some(EventId {
+            authority_domain_id: Some(domain("authority-main")),
+            lsn: Some(Lsn { value: 2 }),
+        }),
+        occurred_at: Some(Timestamp {
+            seconds: 10,
+            nanos: 0,
+        }),
+        kind: AuditEventKind::CommandCompleted as i32,
+        actor_id: Some(actor("operator")),
+        endpoint_id: Some(endpoint("browser-1")),
+        command_id: Some(CommandId {
+            value: "spawn-1".to_owned(),
+        }),
+        grant_id: Some(grant_id("parent")),
+        target_scope: Some(runtime_scope("pi", "session-1", 1)),
+        failure_code: FailureCode::Unspecified as i32,
+        reason_code: "spawn_completion".to_owned(),
+        source_event_id: Some(EventId {
+            authority_domain_id: Some(domain("authority-main")),
+            lsn: Some(Lsn { value: 1 }),
+        }),
+        ..AuditRecord::default()
+    }
+}
+
 fn descendant_grant() -> DescendantGrant {
     DescendantGrant {
-        grant_id: Some(grant_id("descendant-1")),
+        grant_id: Some(grant_id("desc:authority-main:spawn-1")),
         authority_domain_id: Some(domain("authority-main")),
         subject_actor_id: Some(actor("operator")),
         subject_endpoint_id: Some(endpoint("browser-1")),
-        subject_endpoint_class: "web".to_owned(),
         target_scope: Some(runtime_scope("pi", "session-1", 1)),
         allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
             .iter()
             .map(|kind| *kind as i32)
             .collect(),
-        provenance: Some(DescendantGrantProvenance::default()),
-        created_at: None,
+        provenance: Some(DescendantGrantProvenance {
+            spawn_operation_id: Some(CommandId {
+                value: "spawn-1".to_owned(),
+            }),
+            spawning_grant_id: Some(grant_id("parent")),
+        }),
+        created_at: Some(Timestamp {
+            seconds: 10,
+            nanos: 0,
+        }),
         expires_at: None,
         revocation_generation: None,
         revoked_at: None,
         revocation_policy: GrantRevocationPolicy::Continue as i32,
-        audit_id: None,
+        audit_id: descendant_audit().audit_event_id,
+        subject_endpoint_class: String::new(),
     }
 }
 
@@ -290,13 +351,27 @@ fn descendant_grants_require_the_exact_canonical_kind_set() {
     registry
         .observe(&recorded(
             1,
+            StoredEventKind::Observation,
+            &descendant_source(),
+        ))
+        .unwrap();
+    registry
+        .observe(&recorded(
+            2,
+            StoredEventKind::AuditRecord,
+            &descendant_audit(),
+        ))
+        .unwrap();
+    registry
+        .observe(&recorded(
+            3,
             StoredEventKind::DescendantGrant,
             &descendant_grant(),
         ))
         .unwrap();
 
     let record = registry
-        .get_grant(&grant_id("descendant-1"))
+        .get_grant(&grant_id("desc:authority-main:spawn-1"))
         .expect("a valid descendant grant must be projected");
     assert!(record.is_descendant);
     assert_eq!(
@@ -304,15 +379,31 @@ fn descendant_grants_require_the_exact_canonical_kind_set() {
         DESCENDANT_GRANT_ALLOWED_KINDS
     );
 
+    let mut wrong_registry = AuthorityRegistry::new();
+    wrong_registry
+        .observe(&recorded(
+            1,
+            StoredEventKind::Observation,
+            &descendant_source(),
+        ))
+        .unwrap();
+    wrong_registry
+        .observe(&recorded(
+            2,
+            StoredEventKind::AuditRecord,
+            &descendant_audit(),
+        ))
+        .unwrap();
     let mut wrong = descendant_grant();
-    wrong.grant_id = Some(grant_id("descendant-wrong"));
     wrong.allowed_operation_kinds.pop();
     assert!(matches!(
-        registry.observe(&recorded(2, StoredEventKind::DescendantGrant, &wrong)),
+        wrong_registry.observe(&recorded(3, StoredEventKind::DescendantGrant, &wrong)),
         Err(AuthorityError::InvalidGrant(message))
             if message.contains("exactly the canonical")
     ));
-    assert!(registry.get_grant(&grant_id("descendant-wrong")).is_none());
+    assert!(wrong_registry
+        .get_grant(&grant_id("desc:authority-main:spawn-1"))
+        .is_none());
 }
 
 #[test]
@@ -644,13 +735,15 @@ fn malformed_grants_and_cross_domain_records_are_rejected() {
 
 #[test]
 fn non_authority_events_are_ignored() {
-    let event = RecordedEvent {
-        event_id: EventId::default(),
-        payload: StoredEventPayload {
-            kind: StoredEventKind::Observation as i32,
-            payload: vec![0xff],
+    let event = recorded(
+        1,
+        StoredEventKind::Observation,
+        &Observation {
+            authority_domain_id: Some(domain("authority-main")),
+            kind: ObservationKind::Event as i32,
+            ..Observation::default()
         },
-    };
+    );
     let mut registry = AuthorityRegistry::new();
     registry.observe(&event).unwrap();
     assert_eq!(registry.live_grants().count(), 0);

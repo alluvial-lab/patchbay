@@ -18,21 +18,22 @@ pub mod state;
 pub use ingest::{ingest_descendant_grant, ingest_grant, ingest_revocation};
 pub use issuer::IssuerContext;
 pub use operator::{
-    hash_principal_credential, ingest_control_surface_principal,
-    ingest_control_surface_revocation, ingest_operator_record,
-    ingest_operator_session_revocation, rebuild_operator_registry, validate_operator_record,
-    ControlSurfaceRevocationTarget, OperatorError, OperatorRegistry,
+    hash_principal_credential, ingest_control_surface_principal, ingest_control_surface_revocation,
+    ingest_operator_record, ingest_operator_session_revocation, rebuild_operator_registry,
+    validate_operator_record, ControlSurfaceRevocationTarget, OperatorError, OperatorRegistry,
     RecordedControlSurfaceRevocation, RecordedOperatorSessionRevocation, RevocationIngestResult,
 };
 pub use projection::{GrantLookup, GrantProjection};
 pub use registry::AuthorityRegistry;
 pub use replay::rebuild_from_log;
-pub use spawn_tail::{DescendantGrantIssuance, SpawnDescendantTail};
+pub use spawn_tail::{
+    DescendantGrantIssuance, SpawnCompletionAction, SpawnCompletionAudit, SpawnCompletionCommit,
+    SpawnDescendantTail,
+};
 pub use state::{
     authorize_self_revocation_at, grant_authorizes, grant_authorizes_at, grant_matches_request,
     target_scope_matches, GrantAdministrationDenied, GrantLiveness, GrantProvenanceKind,
-    GrantRecord, IssuerRef,
-    DESCENDANT_GRANT_ALLOWED_KINDS,
+    GrantRecord, IssuerRef, DESCENDANT_GRANT_ALLOWED_KINDS,
 };
 
 /// Errors detected while constructing or folding authority state.

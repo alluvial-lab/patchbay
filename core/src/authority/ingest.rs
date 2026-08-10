@@ -6,12 +6,16 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, DescendantGrant, EventId, FailureCode, Grant, GrantId,
+    AuditRecord, AuthorityDomainId, DescendantGrant, EventId, FailureCode, Grant, GrantId,
     GrantRevocationEffect, GrantRevocationPolicy, Lsn, OperationState, Revocation,
     StoredEventPayload, TargetScope, TargetScopeKind,
 };
+use prost::Message;
 
-use crate::{acceptance::Clock, storage::{AuditRecordDraft, RecordedEvent, Storage}};
+use crate::{
+    acceptance::Clock,
+    storage::{AuditRecordDraft, RecordedEvent, Storage},
+};
 
 use super::{
     events, AuthorityError, AuthorityRegistry, GrantProjection, DESCENDANT_GRANT_ALLOWED_KINDS,
@@ -39,7 +43,11 @@ where
     let grant_id = grant.grant_id.clone();
     let payload = events::grant(authority_domain_id.clone(), grant);
     preflight_creation(&payload, authority_domain_id)?;
-    let kind = if projection.current_grant(&grant_id.expect("validated grant id")).await.is_some() {
+    let kind = if projection
+        .current_grant(&grant_id.expect("validated grant id"))
+        .await
+        .is_some()
+    {
         patchbay_contracts::patchbay::AuditEventKind::GrantChanged
     } else {
         patchbay_contracts::patchbay::AuditEventKind::GrantCreated
@@ -49,7 +57,8 @@ where
         "grant_changed"
     } else {
         "grant_created"
-    }.to_owned();
+    }
+    .to_owned();
     append_and_warm_decision(storage, projection, authority_domain_id, payload, audit).await
 }
 
@@ -73,8 +82,49 @@ where
     )?;
     validate_descendant_kinds(&grant.allowed_operation_kinds)?;
 
+    // The audit id is not trusted as a bare LSN. Resolve the exact immutable
+    // event, then resolve the exact immutable source named by that audit and
+    // run the same link validator used by AuthorityRegistry replay.
+    let audit_id = grant.audit_id.clone().ok_or_else(|| {
+        AuthorityError::InvalidGrant("descendant grant is missing audit_id".to_owned())
+    })?;
+    let audit_event = read_exact_event(storage, authority_domain_id, &audit_id).await?;
+    let audit = AuditRecord::decode(audit_event.payload.payload.as_slice()).map_err(|error| {
+        AuthorityError::InvalidGrant(format!("cannot decode descendant audit: {error}"))
+    })?;
+    let source_id = audit.source_event_id.as_ref().ok_or_else(|| {
+        AuthorityError::InvalidGrant(
+            "descendant completion audit is missing source_event_id".to_owned(),
+        )
+    })?;
+    let source_event = read_exact_event(storage, authority_domain_id, source_id).await?;
+    super::spawn_tail::validate_descendant_audit_link(&grant, &audit_event, &source_event)?;
+
     let payload = events::descendant_grant(authority_domain_id.clone(), grant);
-    preflight_creation(&payload, authority_domain_id)?;
+    let audit_lsn = audit_id
+        .lsn
+        .as_ref()
+        .expect("read_exact_event validated LSN")
+        .value;
+    let mut validator = AuthorityRegistry::new();
+    validator.observe(&source_event)?;
+    validator.observe(&audit_event)?;
+    validator.observe(&RecordedEvent {
+        event_id: EventId {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            lsn: Some(Lsn {
+                value: audit_lsn.checked_add(1).ok_or_else(|| {
+                    AuthorityError::InvalidGrant("descendant audit LSN overflow".to_owned())
+                })?,
+            }),
+        },
+        payload: payload.clone(),
+    })?;
+
+    // Warm the caller's projection with the already-durable prerequisites so
+    // the newly appended grant can be validated by the same replay path.
+    projection.observe(&source_event)?;
+    projection.observe(&audit_event)?;
     append_and_warm(storage, projection, authority_domain_id, payload).await
 }
 
@@ -131,10 +181,15 @@ where
 
     validate_revocation_effects(&revocation.command_effects, &grant_id)?;
     let payload = events::revocation(authority_domain_id.clone(), revocation.clone());
-    let occurred_at = revocation.revoked_at.unwrap_or_else(|| crate::time::SystemClock.now());
+    let occurred_at = revocation
+        .revoked_at
+        .unwrap_or_else(|| crate::time::SystemClock.now());
     let mut audits = Vec::with_capacity(1 + revocation.command_effects.len());
     let revoked_by = revocation.revoked_by.as_ref();
-    let mut audit = AuditRecordDraft::new(occurred_at, patchbay_contracts::patchbay::AuditEventKind::GrantRevoked);
+    let mut audit = AuditRecordDraft::new(
+        occurred_at,
+        patchbay_contracts::patchbay::AuditEventKind::GrantRevoked,
+    );
     audit.actor_id = revoked_by.and_then(|attribution| attribution.actor_id.clone());
     audit.endpoint_id = revoked_by.and_then(|attribution| attribution.endpoint_id.clone());
     audit.device_id = revoked_by.and_then(|attribution| attribution.device_id.clone());
@@ -143,19 +198,28 @@ where
     audits.push(audit);
     for effect in &revocation.command_effects {
         let mut effect_audit = AuditRecordDraft::new(
-            revocation.revoked_at.unwrap_or_else(|| crate::time::SystemClock.now()),
+            revocation
+                .revoked_at
+                .unwrap_or_else(|| crate::time::SystemClock.now()),
             match OperationState::try_from(effect.to_state).ok() {
-                Some(OperationState::Cancelled) => patchbay_contracts::patchbay::AuditEventKind::CommandCancelled,
-                Some(OperationState::Rejected) => patchbay_contracts::patchbay::AuditEventKind::CommandRejected,
+                Some(OperationState::Cancelled) => {
+                    patchbay_contracts::patchbay::AuditEventKind::CommandCancelled
+                }
+                Some(OperationState::Rejected) => {
+                    patchbay_contracts::patchbay::AuditEventKind::CommandRejected
+                }
                 _ => patchbay_contracts::patchbay::AuditEventKind::CommandSubmissionRejected,
             },
         );
         effect_audit.actor_id = revoked_by.and_then(|attribution| attribution.actor_id.clone());
-        effect_audit.endpoint_id = revoked_by.and_then(|attribution| attribution.endpoint_id.clone());
+        effect_audit.endpoint_id =
+            revoked_by.and_then(|attribution| attribution.endpoint_id.clone());
         effect_audit.device_id = revoked_by.and_then(|attribution| attribution.device_id.clone());
         effect_audit.grant_id = Some(grant_id.clone());
         effect_audit.command_id = effect.command_id.clone();
-        effect_audit.failure_code = FailureCode::try_from(effect.failure_code).ok().filter(|code| *code != FailureCode::Unspecified);
+        effect_audit.failure_code = FailureCode::try_from(effect.failure_code)
+            .ok()
+            .filter(|code| *code != FailureCode::Unspecified);
         effect_audit.reason_code = "grant_revocation_policy".to_owned();
         audits.push(effect_audit);
     }
@@ -164,6 +228,38 @@ where
     // storage implementation cannot silently persist the source without its
     // required GrantRevoked audit.
     append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
+}
+
+async fn read_exact_event<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    event_id: &EventId,
+) -> Result<RecordedEvent, AuthorityError> {
+    if event_id.authority_domain_id.as_ref() != Some(authority_domain_id) {
+        return Err(AuthorityError::InvalidGrant(
+            "descendant link has a foreign authority domain".to_owned(),
+        ));
+    }
+    let lsn = event_id
+        .lsn
+        .as_ref()
+        .filter(|lsn| lsn.value > 0)
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant("descendant link has no positive LSN".to_owned())
+        })?;
+    let cursor = Lsn {
+        value: lsn.value - 1,
+    };
+    let events = storage
+        .read_through(authority_domain_id, cursor, *lsn)
+        .await?;
+    if events.len() != 1 || events[0].event_id != *event_id {
+        return Err(AuthorityError::InvalidGrant(format!(
+            "descendant link does not resolve to exact immutable event {:?}",
+            event_id
+        )));
+    }
+    Ok(events.into_iter().next().expect("length checked"))
 }
 
 async fn append_and_warm<S, L>(
@@ -199,9 +295,14 @@ where
     S: Storage,
     L: GrantProjection,
 {
-    let result = storage.append_decision_audited_many(authority_domain_id, payload.clone(), audits).await?;
+    let result = storage
+        .append_decision_audited_many(authority_domain_id, payload.clone(), audits)
+        .await?;
     validate_event_id(&result.source_event_id, authority_domain_id)?;
-    projection.observe(&RecordedEvent { event_id: result.source_event_id.clone(), payload })?;
+    projection.observe(&RecordedEvent {
+        event_id: result.source_event_id.clone(),
+        payload,
+    })?;
     Ok(result.source_event_id)
 }
 
@@ -216,9 +317,14 @@ where
     S: Storage,
     L: GrantProjection,
 {
-    let event_id = storage.append_decision(authority_domain_id, payload.clone(), audit).await?;
+    let event_id = storage
+        .append_decision(authority_domain_id, payload.clone(), audit)
+        .await?;
     validate_event_id(&event_id, authority_domain_id)?;
-    projection.observe(&RecordedEvent { event_id: event_id.clone(), payload })?;
+    projection.observe(&RecordedEvent {
+        event_id: event_id.clone(),
+        payload,
+    })?;
     Ok(event_id)
 }
 
@@ -328,7 +434,10 @@ fn validate_revocation_effects(
     let mut command_ids = HashSet::new();
     for effect in effects {
         let command_id = effect.command_id.as_ref().ok_or_else(|| {
-            AuthorityError::InvalidGrant(format!("revocation of grant {:?} has an effect without command_id", grant_id))
+            AuthorityError::InvalidGrant(format!(
+                "revocation of grant {:?} has an effect without command_id",
+                grant_id
+            ))
         })?;
         if command_id.value.is_empty() || !command_ids.insert(command_id.value.clone()) {
             return Err(AuthorityError::InvalidGrant(format!(
@@ -337,19 +446,39 @@ fn validate_revocation_effects(
             )));
         }
         let from = OperationState::try_from(effect.from_state).map_err(|_| {
-            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown from_state", command_id))
+            AuthorityError::InvalidGrant(format!(
+                "revocation effect for {:?} has unknown from_state",
+                command_id
+            ))
         })?;
         let to = OperationState::try_from(effect.to_state).map_err(|_| {
-            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown to_state", command_id))
+            AuthorityError::InvalidGrant(format!(
+                "revocation effect for {:?} has unknown to_state",
+                command_id
+            ))
         })?;
         let failure = FailureCode::try_from(effect.failure_code).map_err(|_| {
-            AuthorityError::InvalidGrant(format!("revocation effect for {:?} has unknown failure_code", command_id))
+            AuthorityError::InvalidGrant(format!(
+                "revocation effect for {:?} has unknown failure_code",
+                command_id
+            ))
         })?;
-        if !matches!((from, to, failure),
-            (OperationState::Accepted | OperationState::Delivered | OperationState::Running, OperationState::Cancelled, FailureCode::Cancelled)
-            | (OperationState::Accepted, OperationState::Rejected, FailureCode::AuthorizationDenied)
+        if !matches!(
+            (from, to, failure),
+            (
+                OperationState::Accepted | OperationState::Delivered | OperationState::Running,
+                OperationState::Cancelled,
+                FailureCode::Cancelled
+            ) | (
+                OperationState::Accepted,
+                OperationState::Rejected,
+                FailureCode::AuthorizationDenied
+            )
         ) {
-            return Err(AuthorityError::InvalidGrant(format!("revocation effect for {:?} has invalid state/failure combination", command_id)));
+            return Err(AuthorityError::InvalidGrant(format!(
+                "revocation effect for {:?} has invalid state/failure combination",
+                command_id
+            )));
         }
     }
     Ok(())

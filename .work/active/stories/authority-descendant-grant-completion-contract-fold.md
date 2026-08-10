@@ -1,7 +1,7 @@
 ---
 id: authority-descendant-grant-completion-contract-fold
 kind: story
-stage: implementing
+stage: done
 tags: [security, protocol]
 parent: authority-descendant-grant-completion
 depends_on: []
@@ -39,3 +39,12 @@ npm --prefix contracts/ts run build
 PATH="$HOME/.npm-global/bin:$PATH" npm --prefix contracts/ts run check:drift
 cargo test -p patchbay-core --test authority_spawn_tail --test authority_ingest --test authority_registry --test sessions_ingest
 ```
+
+## Implementation notes
+- Execution capability: Sol xhigh (explicit autopilot caller selection for security/provenance and durable-log correctness); direct-read only, with no nested agents or peers per the endpoint constraint.
+- Review weight: thorough (explicit caller selection; parent feature stops at review for a fresh pass).
+- Files changed: `contracts/proto/patchbay/sessions.proto`; generated Rust/TypeScript session bindings; `core/src/session/ingest.rs`; authority action fold, registry, state, ingestion, and exports; focused authority/session tests.
+- Tests added/updated: mutation-sensitive ordered-action, registration/generation-bump equivalence, durable redelivery, legacy repair, competing-terminal, verified-attribution, exact audit-link, forged-link, deterministic-id, replay, and generated-contract coverage. `cargo test -p patchbay-core`, TypeScript contract build, and core Clippy passed.
+- Simplification: removed the ephemeral `issued` latch and the old three-fact immediate issuance API; durable audit/grant/terminal facts now determine progress and replay.
+- Discrepancies from design: `SessionGenerationBumped.model` already occupied tag 10 in current repo reality, so `spawn_origin` was generated at unique tag 11 exactly as settled; no existing tag was renumbered. Production `AuditedStorage` continues to supply the ordinary descendant-grant creation audit while the required spawn-completion audit remains the grant's explicit `audit_id`.
+- Adjacent issues parked: none (generic concurrent authority-writer correctness remains owned by the excluded downstream feature).

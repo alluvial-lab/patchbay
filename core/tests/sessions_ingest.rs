@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    session_state_event, AdapterId, AuthorityDomainId, EventId, Generation, IdempotencyKey, Lsn,
-    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionStateEvent,
-    StoredEventKind, StoredEventPayload,
+    session_state_event, typed_correlation, AdapterId, AuthorityDomainId, CommandId, EventId,
+    Generation, IdempotencyKey, Lsn, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityState, SessionStateEvent, StoredEventKind, StoredEventPayload,
+    TypedCorrelation,
 };
 use patchbay_core::{
     session::{
@@ -222,6 +223,11 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     replacement.project = "new-project".to_owned();
     replacement.cwd = "/work/new".to_owned();
     replacement.name = "new-name".to_owned();
+    replacement.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+            value: "spawn-replacement".to_owned(),
+        })),
+    });
     let result = ingest_session_report(&storage, &mut registry, replacement)
         .await
         .unwrap();
@@ -254,6 +260,14 @@ async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation
     assert_eq!(bump.cwd, "/work/new");
     assert_eq!(bump.name, "new-name");
     assert_eq!(bump.model, "provider/model-1");
+    assert_eq!(
+        bump.spawn_origin,
+        Some(TypedCorrelation {
+            r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+                value: "spawn-replacement".to_owned(),
+            })),
+        })
+    );
 
     let rebuilt = rebuild_from_log(&storage, &domain()).await.unwrap();
     let tombstone = rebuilt
@@ -335,7 +349,9 @@ async fn equal_generation_model_change_writes_delta_and_rebuilds() {
     let mut changed = report(1);
     changed.model = "provider/model-2".to_owned();
 
-    let result = ingest_session_report(&storage, &mut registry, changed).await.unwrap();
+    let result = ingest_session_report(&storage, &mut registry, changed)
+        .await
+        .unwrap();
     assert!(matches!(
         result,
         IngestResult::ModelChanged { ref from, ref to, .. }
@@ -347,10 +363,20 @@ async fn equal_generation_model_change_writes_delta_and_rebuilds() {
         Some(session_state_event::Mutation::ModelChanged(_))
     ));
     registry.observe(&committed[1]).unwrap();
-    assert_eq!(registry.get_live_session(&adapter(), "machine-a", &runtime()).unwrap().model, "provider/model-2");
     assert_eq!(
-        rebuild_from_log(&storage, &domain()).await.unwrap()
-            .get_live_session(&adapter(), "machine-a", &runtime()).unwrap().model,
+        registry
+            .get_live_session(&adapter(), "machine-a", &runtime())
+            .unwrap()
+            .model,
+        "provider/model-2"
+    );
+    assert_eq!(
+        rebuild_from_log(&storage, &domain())
+            .await
+            .unwrap()
+            .get_live_session(&adapter(), "machine-a", &runtime())
+            .unwrap()
+            .model,
         "provider/model-2"
     );
 }

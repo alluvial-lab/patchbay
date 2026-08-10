@@ -1,86 +1,142 @@
-//! Order-independent descendant-grant issuance derived from durable spawn facts.
+//! Durable descendant-grant completion derived from committed spawn facts.
 //!
-//! This module is a pure log fold. It does not write grants or own a live
-//! consumer loop: callers feed committed events through [`SpawnDescendantTail::observe`]
-//! and decide how to persist the returned issuance.
+//! The fold never treats an in-memory latch as durable progress. It observes
+//! accepted spawn Operations, successful result evidence, correlated session
+//! registration/replacement, completion audit records, descendant grants, and
+//! terminal transitions. [`SpawnDescendantTail::next_action`] then returns the
+//! next missing durable step in audit → grant → completion order.
 
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation,
-    session_state_event, typed_correlation, ActorId, AuthorityDomainId, CommandId,
-    CommandTransition, EventId, GrantId, OperationKind, OperationState,
-    SessionStateEvent, StoredEventKind, TargetScope, TargetScopeKind,
+    session_state_event, typed_correlation, AcceptedOperation, ActorId, AuditEventKind,
+    AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DeviceId,
+    EndpointId, EventId, FailureCode, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
+    OperationKind, OperationState, SessionGenerationBumped, SessionRegistered, SessionStateEvent,
+    StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use prost::Message;
+use prost_types::Timestamp;
 
 use crate::storage::RecordedEvent;
 
 use super::{AuthorityError, DESCENDANT_GRANT_ALLOWED_KINDS};
 
+const SPAWN_COMPLETION_REASON: &str = "spawn_completion";
+
 type SpawnKey = (AuthorityDomainId, CommandId);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SpawnOpInfo {
-    spawner_actor: Option<ActorId>,
-    // AcceptedOperation retains the authorizing grant for spawn provenance.
-    spawning_grant_id: Option<GrantId>,
+struct AcceptedSpawn {
+    target_scope: TargetScope,
+    spawning_grant_id: GrantId,
+    subject_actor_id: ActorId,
+    subject_endpoint_id: Option<EndpointId>,
+    subject_device_id: Option<DeviceId>,
+    correlations: Vec<TypedCorrelation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RegistrationInfo {
-    spawned_session_scope: TargetScope,
-    authority_domain_id: AuthorityDomainId,
+struct CompletionEvidence {
+    event_id: EventId,
+    target_scope: TargetScope,
+    correlations: Vec<TypedCorrelation>,
 }
 
-/// A descendant grant that should be persisted for one completed spawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionFact {
+    target_scope: TargetScope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompletionAuditFact {
+    event: RecordedEvent,
+    record: AuditRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalFact {
+    event_id: EventId,
+    state: OperationState,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SpawnProgress {
+    accepted: Option<AcceptedSpawn>,
+    successful_result: Option<CompletionEvidence>,
+    session: Option<SessionFact>,
+    audit: Option<CompletionAuditFact>,
+    descendant_grant: Option<DescendantGrant>,
+    latest_non_terminal: Option<(u64, OperationState)>,
+    terminal: Option<(u64, TerminalFact)>,
+}
+
+/// The next durable action required to finish one spawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpawnCompletionAction {
+    RecordAudit(SpawnCompletionAudit),
+    IssueDescendantGrant(DescendantGrantIssuance),
+    CommitCompleted(SpawnCompletionCommit),
+}
+
+/// Verified fields for the durable spawn-completion audit producer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnCompletionAudit {
+    pub authority_domain_id: AuthorityDomainId,
+    pub spawn_operation_id: CommandId,
+    pub completion_source_event_id: EventId,
+    pub spawning_grant_id: GrantId,
+    pub subject_actor_id: ActorId,
+    pub subject_endpoint_id: Option<EndpointId>,
+    pub subject_device_id: Option<DeviceId>,
+    pub spawned_session_scope: TargetScope,
+}
+
+/// A descendant grant that should be durably persisted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DescendantGrantIssuance {
     pub spawn_operation_id: CommandId,
-    pub spawning_grant_id: Option<GrantId>,
+    pub spawning_grant_id: GrantId,
     pub spawned_session_scope: TargetScope,
     pub subject_actor_id: ActorId,
+    pub subject_endpoint_id: Option<EndpointId>,
     pub authority_domain_id: AuthorityDomainId,
     pub allowed_operation_kinds: Vec<OperationKind>,
     pub descendant_grant_id: GrantId,
-    /// `None` in v0.1.0; the spawn-completion audit producer is deferred.
-    pub audit_id: Option<EventId>,
+    pub created_at: Timestamp,
+    pub audit_id: EventId,
 }
 
-/// Pure, order-independent fold joining spawn, completion, and registration.
-///
-/// A tail instance is bound to the authority domain of its first event. Every
-/// later event must belong to that same domain. Issuance occurs exactly once
-/// after all three facts have arrived, regardless of their arrival order.
-#[derive(Debug, Clone, Default)]
+/// The final lifecycle transition, emitted only after authority is durable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnCompletionCommit {
+    pub spawn_operation_id: CommandId,
+    pub from_state: OperationState,
+    pub correlations: Vec<TypedCorrelation>,
+}
+
+/// Pure durable-action fold for descendant-grant completion.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpawnDescendantTail {
     authority_domain_id: Option<AuthorityDomainId>,
-    spawn_ops: HashMap<SpawnKey, SpawnOpInfo>,
-    completed: HashSet<SpawnKey>,
-    registrations: HashMap<SpawnKey, RegistrationInfo>,
-    issued: HashSet<SpawnKey>,
+    spawns: HashMap<SpawnKey, SpawnProgress>,
 }
 
 impl SpawnDescendantTail {
-    /// Construct an empty spawn-tail fold.
+    /// Construct an empty spawn-completion fold.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fold one committed event and return a newly-complete issuance, if any.
+    /// Fold one committed event.
     ///
-    /// Exact redelivery is idempotent. Conflicting spawn or registration facts
-    /// for the same `(authority_domain_id, command_id)` fail as corrupt log
-    /// history rather than silently selecting one.
-    pub fn observe(
-        &mut self,
-        event: &RecordedEvent,
-    ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        let (event_domain, event_lsn) = event_identity(event)?;
+    /// Exact redelivery is idempotent. Conflicting durable facts for the same
+    /// spawn are corrupt history and fail closed.
+    pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
+        let (event_domain, event_lsn) = event_identity(event, "spawn-tail event")?;
         self.bind_domain(event_domain)?;
         let event_domain = event_domain.clone();
-
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             AuthorityError::CorruptRecord(format!(
                 "unknown stored event kind {} at LSN {event_lsn}",
@@ -90,26 +146,167 @@ impl SpawnDescendantTail {
 
         match kind {
             StoredEventKind::Operation => self.observe_operation(event, &event_domain, event_lsn),
-            StoredEventKind::CommandTransition => {
-                self.observe_command_transition(event, &event_domain, event_lsn)
+            StoredEventKind::Observation => {
+                self.observe_observation(event, &event_domain, event_lsn)
             }
             StoredEventKind::SessionState => {
                 self.observe_session_state(event, &event_domain, event_lsn)
             }
-            StoredEventKind::Observation
-            | StoredEventKind::ResourceState
+            StoredEventKind::AuditRecord => self.observe_audit(event, &event_domain, event_lsn),
+            StoredEventKind::DescendantGrant => {
+                self.observe_descendant_grant(event, &event_domain, event_lsn)
+            }
+            StoredEventKind::CommandTransition => {
+                self.observe_command_transition(event, &event_domain, event_lsn)
+            }
+            StoredEventKind::ResourceState
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
-            | StoredEventKind::DescendantGrant
             | StoredEventKind::Revocation
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
-            | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord
-            | StoredEventKind::Unspecified => Ok(None),
+            | StoredEventKind::SecurityLockdown => Ok(()),
+            StoredEventKind::Unspecified => Err(AuthorityError::CorruptRecord(format!(
+                "spawn-tail event at LSN {event_lsn} has unspecified kind"
+            ))),
         }
+    }
+
+    /// Return the deterministic next missing durable action.
+    ///
+    /// Across ready spawns the successful-completion evidence LSN (or legacy
+    /// completed-transition LSN during repair) orders work, followed by the
+    /// exact command-id UTF-8 value.
+    pub fn next_action(&self) -> Result<Option<SpawnCompletionAction>, AuthorityError> {
+        let mut ready = Vec::new();
+        for ((domain, command_id), progress) in &self.spawns {
+            let Some(accepted) = progress.accepted.as_ref() else {
+                continue;
+            };
+            let Some(session) = progress.session.as_ref() else {
+                continue;
+            };
+
+            if let Some((_, terminal)) = &progress.terminal {
+                if terminal.state != OperationState::Completed {
+                    // The earliest durable terminal competitor won.
+                    continue;
+                }
+            }
+
+            let source_event_id = if let Some((_, terminal)) = &progress.terminal {
+                // A historical completed transition is the repair source. New
+                // completions have no terminal fact until the final step.
+                terminal.event_id.clone()
+            } else {
+                let Some(result) = progress.successful_result.as_ref() else {
+                    continue;
+                };
+                if result.target_scope != accepted.target_scope {
+                    return Err(AuthorityError::CorruptLog(format!(
+                        "successful result target conflicts with accepted spawn {:?}",
+                        command_id
+                    )));
+                }
+                result.event_id.clone()
+            };
+            let source_lsn = required_event_lsn(&source_event_id, "spawn completion source")?;
+
+            let action = match progress.audit.as_ref() {
+                None => SpawnCompletionAction::RecordAudit(SpawnCompletionAudit {
+                    authority_domain_id: domain.clone(),
+                    spawn_operation_id: command_id.clone(),
+                    completion_source_event_id: source_event_id,
+                    spawning_grant_id: accepted.spawning_grant_id.clone(),
+                    subject_actor_id: accepted.subject_actor_id.clone(),
+                    subject_endpoint_id: accepted.subject_endpoint_id.clone(),
+                    subject_device_id: accepted.subject_device_id.clone(),
+                    spawned_session_scope: session.target_scope.clone(),
+                }),
+                Some(audit) => {
+                    validate_completion_audit(
+                        audit,
+                        domain,
+                        command_id,
+                        accepted,
+                        session,
+                        &source_event_id,
+                    )?;
+                    if let Some(descendant_grant) = progress.descendant_grant.as_ref() {
+                        validate_observed_descendant_grant(
+                            descendant_grant,
+                            domain,
+                            command_id,
+                            accepted,
+                            session,
+                            audit,
+                        )?;
+                        if progress.terminal.is_some() {
+                            // Legacy completed history is repaired by audit and
+                            // grant only; never append a second terminal fact.
+                            continue;
+                        }
+                        let from_state = progress
+                            .latest_non_terminal
+                            .map(|(_, state)| state)
+                            .ok_or_else(|| {
+                                AuthorityError::CorruptLog(format!(
+                                    "spawn {:?} has completion evidence without lifecycle state",
+                                    command_id
+                                ))
+                            })?;
+                        if !matches!(
+                            from_state,
+                            OperationState::Delivered | OperationState::Running
+                        ) {
+                            // Preserve the checked no-accepted→completed rule.
+                            continue;
+                        }
+                        let mut correlations = accepted.correlations.clone();
+                        if let Some(result) = progress.successful_result.as_ref() {
+                            merge_correlations(&mut correlations, &result.correlations);
+                        }
+                        SpawnCompletionAction::CommitCompleted(SpawnCompletionCommit {
+                            spawn_operation_id: command_id.clone(),
+                            from_state,
+                            correlations,
+                        })
+                    } else {
+                        let audit_id = audit.record.audit_event_id.clone().ok_or_else(|| {
+                            AuthorityError::CorruptRecord(format!(
+                                "spawn-completion audit for {:?} has no audit_event_id",
+                                command_id
+                            ))
+                        })?;
+                        let created_at = audit.record.occurred_at.ok_or_else(|| {
+                            AuthorityError::CorruptRecord(format!(
+                                "spawn-completion audit for {:?} has no occurred_at",
+                                command_id
+                            ))
+                        })?;
+                        SpawnCompletionAction::IssueDescendantGrant(DescendantGrantIssuance {
+                            spawn_operation_id: command_id.clone(),
+                            spawning_grant_id: accepted.spawning_grant_id.clone(),
+                            spawned_session_scope: session.target_scope.clone(),
+                            subject_actor_id: accepted.subject_actor_id.clone(),
+                            subject_endpoint_id: accepted.subject_endpoint_id.clone(),
+                            authority_domain_id: domain.clone(),
+                            allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS.to_vec(),
+                            descendant_grant_id: descendant_grant_id(domain, command_id),
+                            created_at,
+                            audit_id,
+                        })
+                    }
+                }
+            };
+            ready.push((source_lsn, command_id.value.clone(), action));
+        }
+
+        ready
+            .sort_by(|left, right| (left.0, left.1.as_bytes()).cmp(&(right.0, right.1.as_bytes())));
+        Ok(ready.into_iter().next().map(|(_, _, action)| action))
     }
 
     fn observe_operation(
@@ -117,12 +314,13 @@ impl SpawnDescendantTail {
         event: &RecordedEvent,
         event_domain: &AuthorityDomainId,
         event_lsn: u64,
-    ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
-            AuthorityError::CorruptRecord(format!(
-                "cannot decode accepted operation at LSN {event_lsn}: {error}"
-            ))
-        })?;
+    ) -> Result<(), AuthorityError> {
+        let accepted =
+            AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode accepted operation at LSN {event_lsn}: {error}"
+                ))
+            })?;
         let operation = accepted.operation.ok_or_else(|| {
             AuthorityError::CorruptRecord(format!(
                 "accepted operation at LSN {event_lsn} has no operation"
@@ -134,7 +332,6 @@ impl SpawnDescendantTail {
             "operation",
             event_lsn,
         )?;
-
         let kind = OperationKind::try_from(operation.kind).map_err(|_| {
             AuthorityError::CorruptRecord(format!(
                 "operation at LSN {event_lsn} has unknown kind {}",
@@ -142,52 +339,110 @@ impl SpawnDescendantTail {
             ))
         })?;
         if kind != OperationKind::Spawn {
-            return Ok(None);
+            return Ok(());
         }
 
         let command_id = required_command_id(operation.command_id, "spawn operation", event_lsn)?;
-        let key = (event_domain.clone(), command_id);
-        let incoming = SpawnOpInfo {
-            spawner_actor: operation.sender.and_then(|sender| sender.actor_id),
-            spawning_grant_id: accepted.authorizing_grant_id,
+        let sender = operation.sender.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "spawn operation at LSN {event_lsn} has no verified sender"
+            ))
+        })?;
+        let subject_actor_id = required_actor(sender.actor_id, "spawn sender", event_lsn)?;
+        validate_optional_endpoint(sender.endpoint_id.as_ref(), "spawn sender", event_lsn)?;
+        validate_optional_device(sender.device_id.as_ref(), "spawn sender", event_lsn)?;
+        let spawning_grant_id =
+            required_grant_id(accepted.authorizing_grant_id, "accepted spawn", event_lsn)?;
+        let target_scope = operation.target_scope.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "accepted spawn at LSN {event_lsn} has no target_scope"
+            ))
+        })?;
+        let incoming = AcceptedSpawn {
+            target_scope,
+            spawning_grant_id,
+            subject_actor_id,
+            subject_endpoint_id: sender.endpoint_id,
+            subject_device_id: sender.device_id,
+            correlations: operation.correlations,
         };
-        insert_consistent(
-            &mut self.spawn_ops,
-            key.clone(),
+        let key = (event_domain.clone(), command_id);
+        let progress = self.spawns.entry(key.clone()).or_default();
+        insert_consistent_option(
+            &mut progress.accepted,
             incoming,
-            "spawn operation",
+            "accepted spawn",
+            &key,
             event_lsn,
         )?;
-        self.try_issue(&key)
+        update_non_terminal(progress, event_lsn, OperationState::Accepted);
+        validate_known_target(progress, &key)
     }
 
-    fn observe_command_transition(
+    fn observe_observation(
         &mut self,
         event: &RecordedEvent,
         event_domain: &AuthorityDomainId,
         event_lsn: u64,
-    ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        let transition =
-            CommandTransition::decode(event.payload.payload.as_slice()).map_err(|error| {
+    ) -> Result<(), AuthorityError> {
+        let observation =
+            Observation::decode(event.payload.payload.as_slice()).map_err(|error| {
                 AuthorityError::CorruptRecord(format!(
-                    "cannot decode command transition at LSN {event_lsn}: {error}"
+                    "cannot decode observation at LSN {event_lsn}: {error}"
                 ))
             })?;
-        let to_state = OperationState::try_from(transition.to_state).map_err(|_| {
-            AuthorityError::CorruptLog(format!(
-                "command transition at LSN {event_lsn} has unknown to_state {}",
-                transition.to_state
+        validate_message_domain(
+            observation.authority_domain_id.as_ref(),
+            event_domain,
+            "observation",
+            event_lsn,
+        )?;
+        let kind = ObservationKind::try_from(observation.kind).map_err(|_| {
+            AuthorityError::CorruptRecord(format!(
+                "observation at LSN {event_lsn} has unknown kind {}",
+                observation.kind
             ))
         })?;
-        if to_state != OperationState::Completed {
-            return Ok(None);
+        if kind != ObservationKind::Result {
+            return Ok(());
         }
-
-        let command_id =
-            required_command_id(transition.command_id, "command transition", event_lsn)?;
+        let failure = FailureCode::try_from(observation.failure_code).map_err(|_| {
+            AuthorityError::CorruptRecord(format!(
+                "result observation at LSN {event_lsn} has unknown failure code {}",
+                observation.failure_code
+            ))
+        })?;
+        if failure != FailureCode::Unspecified {
+            return Ok(());
+        }
+        let command_id = exactly_one_command_correlation(
+            &observation.correlations,
+            "successful result observation",
+            event_lsn,
+        )?;
+        let target_scope = observation.target_scope.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "successful result observation at LSN {event_lsn} has no target_scope"
+            ))
+        })?;
         let key = (event_domain.clone(), command_id);
-        self.completed.insert(key.clone());
-        self.try_issue(&key)
+        let progress = self.spawns.entry(key.clone()).or_default();
+        let incoming = CompletionEvidence {
+            event_id: event.event_id.clone(),
+            target_scope,
+            correlations: observation.correlations,
+        };
+        match progress.successful_result.as_ref() {
+            Some(existing) if existing.target_scope != incoming.target_scope => {
+                return Err(AuthorityError::CorruptLog(format!(
+                    "successful result has conflicting targets for key {key:?} at LSN {event_lsn}"
+                )));
+            }
+            Some(existing)
+                if required_event_lsn(&existing.event_id, "successful result")? <= event_lsn => {}
+            _ => progress.successful_result = Some(incoming),
+        }
+        validate_known_target(progress, &key)
     }
 
     fn observe_session_state(
@@ -195,7 +450,7 @@ impl SpawnDescendantTail {
         event: &RecordedEvent,
         event_domain: &AuthorityDomainId,
         event_lsn: u64,
-    ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
+    ) -> Result<(), AuthorityError> {
         let state_event =
             SessionStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
                 AuthorityError::CorruptRecord(format!(
@@ -209,93 +464,157 @@ impl SpawnDescendantTail {
             event_lsn,
         )?;
 
-        let Some(session_state_event::Mutation::Registered(registered)) = state_event.mutation
-        else {
-            return Ok(None);
+        let correlated = match state_event.mutation {
+            Some(session_state_event::Mutation::Registered(registered)) => {
+                session_from_registration(registered, event_lsn)?
+            }
+            Some(session_state_event::Mutation::GenerationBumped(bumped)) => {
+                session_from_generation_bump(bumped, event_lsn)?
+            }
+            _ => None,
         };
-        let Some(spawn_origin) = registered.spawn_origin else {
-            return Ok(None);
-        };
-        let Some(typed_correlation::Ref::CommandId(spawn_command_id)) = spawn_origin.r#ref else {
-            return Ok(None);
-        };
-        if spawn_command_id.value.is_empty() {
-            return Err(AuthorityError::CorruptRecord(format!(
-                "session registration at LSN {event_lsn} has an empty spawn command id"
-            )));
-        }
-
-        let spawned_session_scope = TargetScope {
-            kind: TargetScopeKind::RuntimeSession as i32,
-            adapter_id: Some(required_identifier(
-                registered.adapter_id,
-                "adapter_id",
-                event_lsn,
-            )?),
-            runtime_session_id: Some(required_identifier(
-                registered.runtime_session_id,
-                "runtime_session_id",
-                event_lsn,
-            )?),
-            session_generation: Some(registered.session_generation.ok_or_else(|| {
-                AuthorityError::CorruptRecord(format!(
-                    "session registration at LSN {event_lsn} is missing session_generation"
-                ))
-            })?),
-            deployment_scope: required_string(
-                registered.deployment_scope,
-                "deployment_scope",
-                event_lsn,
-            )?,
-            ..TargetScope::default()
+        let Some((spawn_command_id, target_scope)) = correlated else {
+            return Ok(());
         };
         let key = (event_domain.clone(), spawn_command_id);
-        let incoming = RegistrationInfo {
-            spawned_session_scope,
-            authority_domain_id: event_domain.clone(),
-        };
-        insert_consistent(
-            &mut self.registrations,
-            key.clone(),
-            incoming,
-            "spawn-correlated session registration",
+        let progress = self.spawns.entry(key.clone()).or_default();
+        insert_consistent_option(
+            &mut progress.session,
+            SessionFact { target_scope },
+            "spawn-correlated session fact",
+            &key,
             event_lsn,
-        )?;
-        self.try_issue(&key)
+        )
     }
 
-    fn try_issue(
+    fn observe_audit(
         &mut self,
-        key: &SpawnKey,
-    ) -> Result<Option<DescendantGrantIssuance>, AuthorityError> {
-        if self.issued.contains(key) || !self.completed.contains(key) {
-            return Ok(None);
-        }
-        let Some(spawn_op) = self.spawn_ops.get(key) else {
-            return Ok(None);
-        };
-        let Some(registration) = self.registrations.get(key) else {
-            return Ok(None);
-        };
-        let subject_actor_id = spawn_op.spawner_actor.clone().ok_or_else(|| {
+        event: &RecordedEvent,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
+        let record = AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
             AuthorityError::CorruptRecord(format!(
-                "completed spawn operation {:?} in authority domain {:?} has no sender actor",
-                key.1, key.0
+                "cannot decode audit record at LSN {event_lsn}: {error}"
             ))
         })?;
+        if record.audit_event_id.as_ref() != Some(&event.event_id) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "audit record identity does not match event at LSN {event_lsn}"
+            )));
+        }
+        if record.reason_code != SPAWN_COMPLETION_REASON {
+            return Ok(());
+        }
+        let command_id = required_command_id(
+            record.command_id.clone(),
+            "spawn-completion audit",
+            event_lsn,
+        )?;
+        let key = (event_domain.clone(), command_id);
+        let progress = self.spawns.entry(key.clone()).or_default();
+        insert_consistent_option(
+            &mut progress.audit,
+            CompletionAuditFact {
+                event: event.clone(),
+                record,
+            },
+            "spawn-completion audit",
+            &key,
+            event_lsn,
+        )
+    }
 
-        let issuance = DescendantGrantIssuance {
-            spawn_operation_id: key.1.clone(),
-            spawning_grant_id: spawn_op.spawning_grant_id.clone(),
-            spawned_session_scope: registration.spawned_session_scope.clone(),
-            subject_actor_id,
-            authority_domain_id: registration.authority_domain_id.clone(),
-            allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS.to_vec(),
-            descendant_grant_id: descendant_grant_id(&key.0, &key.1),
-            audit_id: None,
-        };
-        self.issued.insert(key.clone());
-        Ok(Some(issuance))
+    fn observe_descendant_grant(
+        &mut self,
+        event: &RecordedEvent,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
+        let grant = DescendantGrant::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AuthorityError::CorruptRecord(format!(
+                "cannot decode descendant grant at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        validate_message_domain(
+            grant.authority_domain_id.as_ref(),
+            event_domain,
+            "descendant grant",
+            event_lsn,
+        )?;
+        let provenance = grant.provenance.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "descendant grant at LSN {event_lsn} is missing provenance"
+            ))
+        })?;
+        let command_id = required_command_id(
+            provenance.spawn_operation_id.clone(),
+            "descendant grant provenance",
+            event_lsn,
+        )?;
+        required_grant_id(
+            provenance.spawning_grant_id.clone(),
+            "descendant grant provenance",
+            event_lsn,
+        )?;
+        let key = (event_domain.clone(), command_id);
+        let progress = self.spawns.entry(key.clone()).or_default();
+        insert_consistent_option(
+            &mut progress.descendant_grant,
+            grant,
+            "descendant grant",
+            &key,
+            event_lsn,
+        )
+    }
+
+    fn observe_command_transition(
+        &mut self,
+        event: &RecordedEvent,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
+        let transition =
+            CommandTransition::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode command transition at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        let command_id =
+            required_command_id(transition.command_id, "command transition", event_lsn)?;
+        let to_state = OperationState::try_from(transition.to_state).map_err(|_| {
+            AuthorityError::CorruptLog(format!(
+                "command transition at LSN {event_lsn} has unknown to_state {}",
+                transition.to_state
+            ))
+        })?;
+        if to_state == OperationState::Unspecified {
+            return Err(AuthorityError::CorruptLog(format!(
+                "command transition at LSN {event_lsn} has unspecified to_state"
+            )));
+        }
+        let key = (event_domain.clone(), command_id);
+        let progress = self.spawns.entry(key).or_default();
+        if is_terminal(to_state) {
+            let incoming = TerminalFact {
+                event_id: event.event_id.clone(),
+                state: to_state,
+            };
+            match &progress.terminal {
+                Some((existing_lsn, existing)) if *existing_lsn < event_lsn => {}
+                Some((existing_lsn, existing)) if *existing_lsn == event_lsn => {
+                    if existing != &incoming {
+                        return Err(AuthorityError::CorruptLog(format!(
+                            "conflicting terminal transition at LSN {event_lsn}"
+                        )));
+                    }
+                }
+                _ => progress.terminal = Some((event_lsn, incoming)),
+            }
+        } else {
+            update_non_terminal(progress, event_lsn, to_state);
+        }
+        Ok(())
     }
 
     fn bind_domain(&mut self, event_domain: &AuthorityDomainId) -> Result<(), AuthorityError> {
@@ -313,27 +632,418 @@ impl SpawnDescendantTail {
     }
 }
 
+fn session_from_registration(
+    registered: SessionRegistered,
+    event_lsn: u64,
+) -> Result<Option<(CommandId, TargetScope)>, AuthorityError> {
+    let Some(spawn_command_id) = spawn_command_id(registered.spawn_origin, event_lsn)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        spawn_command_id,
+        runtime_session_scope(
+            registered.adapter_id,
+            registered.deployment_scope,
+            registered.runtime_session_id,
+            registered.session_generation,
+            "session registration",
+            event_lsn,
+        )?,
+    )))
+}
+
+fn session_from_generation_bump(
+    bumped: SessionGenerationBumped,
+    event_lsn: u64,
+) -> Result<Option<(CommandId, TargetScope)>, AuthorityError> {
+    let Some(spawn_command_id) = spawn_command_id(bumped.spawn_origin, event_lsn)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        spawn_command_id,
+        runtime_session_scope(
+            bumped.adapter_id,
+            bumped.deployment_scope,
+            bumped.runtime_session_id,
+            bumped.to_generation,
+            "session generation bump",
+            event_lsn,
+        )?,
+    )))
+}
+
+fn spawn_command_id(
+    origin: Option<TypedCorrelation>,
+    event_lsn: u64,
+) -> Result<Option<CommandId>, AuthorityError> {
+    let Some(origin) = origin else {
+        return Ok(None);
+    };
+    match origin.r#ref {
+        Some(typed_correlation::Ref::CommandId(command_id)) if !command_id.value.is_empty() => {
+            Ok(Some(command_id))
+        }
+        Some(typed_correlation::Ref::CommandId(_)) => Err(AuthorityError::CorruptRecord(format!(
+            "session spawn_origin at LSN {event_lsn} has an empty command id"
+        ))),
+        Some(_) => Err(AuthorityError::CorruptRecord(format!(
+            "session spawn_origin at LSN {event_lsn} is not a command correlation"
+        ))),
+        None => Err(AuthorityError::CorruptRecord(format!(
+            "session spawn_origin at LSN {event_lsn} has no typed reference"
+        ))),
+    }
+}
+
+fn runtime_session_scope(
+    adapter_id: Option<patchbay_contracts::patchbay::AdapterId>,
+    deployment_scope: String,
+    runtime_session_id: Option<patchbay_contracts::patchbay::RuntimeSessionId>,
+    generation: Option<patchbay_contracts::patchbay::Generation>,
+    record_name: &str,
+    event_lsn: u64,
+) -> Result<TargetScope, AuthorityError> {
+    let adapter_id = adapter_id
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "{record_name} at LSN {event_lsn} is missing adapter_id"
+            ))
+        })?;
+    if deployment_scope.is_empty() {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} has an empty deployment_scope"
+        )));
+    }
+    let runtime_session_id = runtime_session_id
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "{record_name} at LSN {event_lsn} is missing runtime_session_id"
+            ))
+        })?;
+    let generation = generation.ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} is missing session generation"
+        ))
+    })?;
+    Ok(TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: Some(adapter_id),
+        deployment_scope,
+        runtime_session_id: Some(runtime_session_id),
+        session_generation: Some(generation),
+        ..TargetScope::default()
+    })
+}
+
+fn validate_known_target(progress: &SpawnProgress, key: &SpawnKey) -> Result<(), AuthorityError> {
+    if let (Some(accepted), Some(result)) = (&progress.accepted, &progress.successful_result) {
+        if accepted.target_scope != result.target_scope {
+            return Err(AuthorityError::CorruptLog(format!(
+                "successful result target conflicts with accepted spawn for key {key:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_completion_audit(
+    fact: &CompletionAuditFact,
+    domain: &AuthorityDomainId,
+    command_id: &CommandId,
+    accepted: &AcceptedSpawn,
+    session: &SessionFact,
+    source_event_id: &EventId,
+) -> Result<(), AuthorityError> {
+    let record = &fact.record;
+    if record.audit_event_id.as_ref() != Some(&fact.event.event_id)
+        || record.kind != AuditEventKind::CommandCompleted as i32
+        || record.reason_code != SPAWN_COMPLETION_REASON
+        || record.command_id.as_ref() != Some(command_id)
+        || record.actor_id.as_ref() != Some(&accepted.subject_actor_id)
+        || record.endpoint_id != accepted.subject_endpoint_id
+        || record.device_id != accepted.subject_device_id
+        || record.grant_id.as_ref() != Some(&accepted.spawning_grant_id)
+        || record.target_scope.as_ref() != Some(&session.target_scope)
+        || record.source_event_id.as_ref() != Some(source_event_id)
+        || record.failure_code != FailureCode::Unspecified as i32
+        || record.occurred_at.is_none()
+    {
+        return Err(AuthorityError::CorruptLog(format!(
+            "spawn-completion audit does not match verified spawn {:?}",
+            command_id
+        )));
+    }
+    validate_message_domain(
+        record
+            .audit_event_id
+            .as_ref()
+            .and_then(|id| id.authority_domain_id.as_ref()),
+        domain,
+        "spawn-completion audit",
+        required_event_lsn(&fact.event.event_id, "spawn-completion audit")?,
+    )?;
+    Ok(())
+}
+
+fn validate_observed_descendant_grant(
+    grant: &DescendantGrant,
+    domain: &AuthorityDomainId,
+    command_id: &CommandId,
+    accepted: &AcceptedSpawn,
+    session: &SessionFact,
+    audit: &CompletionAuditFact,
+) -> Result<(), AuthorityError> {
+    let expected_id = descendant_grant_id(domain, command_id);
+    let provenance = grant.provenance.as_ref().ok_or_else(|| {
+        AuthorityError::InvalidGrant(format!(
+            "descendant grant {:?} is missing provenance",
+            grant.grant_id
+        ))
+    })?;
+    let actual_kinds: HashSet<_> = grant.allowed_operation_kinds.iter().copied().collect();
+    let expected_kinds: HashSet<_> = DESCENDANT_GRANT_ALLOWED_KINDS
+        .iter()
+        .map(|kind| *kind as i32)
+        .collect();
+    if grant.grant_id.as_ref() != Some(&expected_id)
+        || grant.authority_domain_id.as_ref() != Some(domain)
+        || grant.subject_actor_id.as_ref() != Some(&accepted.subject_actor_id)
+        || grant.subject_endpoint_id != accepted.subject_endpoint_id
+        || !grant.subject_endpoint_class.is_empty()
+        || grant.target_scope.as_ref() != Some(&session.target_scope)
+        || grant.allowed_operation_kinds.len() != DESCENDANT_GRANT_ALLOWED_KINDS.len()
+        || actual_kinds != expected_kinds
+        || provenance.spawn_operation_id.as_ref() != Some(command_id)
+        || provenance.spawning_grant_id.as_ref() != Some(&accepted.spawning_grant_id)
+        || grant.created_at != audit.record.occurred_at
+        || grant.expires_at.is_some()
+        || grant.revocation_generation.is_some()
+        || grant.revoked_at.is_some()
+        || grant.revocation_policy != GrantRevocationPolicy::Continue as i32
+        || grant.audit_id != audit.record.audit_event_id
+    {
+        return Err(AuthorityError::CorruptLog(format!(
+            "observed descendant grant does not match verified spawn {:?}",
+            command_id
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the immutable completion audit/source link carried by a descendant
+/// grant. Authority replay and the live ingestion boundary share this helper.
+pub(crate) fn validate_descendant_audit_link(
+    grant: &DescendantGrant,
+    audit_event: &RecordedEvent,
+    source_event: &RecordedEvent,
+) -> Result<(), AuthorityError> {
+    let audit_lsn = required_event_lsn(&audit_event.event_id, "descendant audit")?;
+    let source_lsn = required_event_lsn(&source_event.event_id, "completion source")?;
+    let domain = audit_event
+        .event_id
+        .authority_domain_id
+        .as_ref()
+        .ok_or_else(|| AuthorityError::InvalidGrant("descendant audit has no domain".to_owned()))?;
+    if source_event.event_id.authority_domain_id.as_ref() != Some(domain) || source_lsn >= audit_lsn
+    {
+        return Err(AuthorityError::InvalidGrant(
+            "descendant completion source must be a prior same-domain event".to_owned(),
+        ));
+    }
+    let audit = AuditRecord::decode(audit_event.payload.payload.as_slice()).map_err(|error| {
+        AuthorityError::InvalidGrant(format!(
+            "cannot decode descendant completion audit: {error}"
+        ))
+    })?;
+    let provenance = grant.provenance.as_ref().ok_or_else(|| {
+        AuthorityError::InvalidGrant("descendant grant is missing provenance".to_owned())
+    })?;
+    let command_id = provenance.spawn_operation_id.as_ref().ok_or_else(|| {
+        AuthorityError::InvalidGrant(
+            "descendant provenance is missing spawn_operation_id".to_owned(),
+        )
+    })?;
+    let spawning_grant_id = provenance.spawning_grant_id.as_ref().ok_or_else(|| {
+        AuthorityError::InvalidGrant(
+            "descendant provenance is missing spawning_grant_id".to_owned(),
+        )
+    })?;
+    if command_id.value.is_empty() || spawning_grant_id.value.is_empty() {
+        return Err(AuthorityError::InvalidGrant(
+            "descendant provenance identifiers must be non-empty".to_owned(),
+        ));
+    }
+    if audit_event.payload.kind != StoredEventKind::AuditRecord as i32
+        || audit.audit_event_id.as_ref() != Some(&audit_event.event_id)
+        || grant.audit_id.as_ref() != Some(&audit_event.event_id)
+        || audit.kind != AuditEventKind::CommandCompleted as i32
+        || audit.reason_code != SPAWN_COMPLETION_REASON
+        || audit.command_id.as_ref() != Some(command_id)
+        || audit.grant_id.as_ref() != Some(spawning_grant_id)
+        || audit.actor_id != grant.subject_actor_id
+        || audit.endpoint_id != grant.subject_endpoint_id
+        || audit.target_scope != grant.target_scope
+        || audit.source_event_id.as_ref() != Some(&source_event.event_id)
+        || audit.failure_code != FailureCode::Unspecified as i32
+        || audit.occurred_at.is_none()
+        || audit.occurred_at != grant.created_at
+    {
+        return Err(AuthorityError::InvalidGrant(
+            "descendant grant does not match its spawn-completion audit".to_owned(),
+        ));
+    }
+
+    match StoredEventKind::try_from(source_event.payload.kind).ok() {
+        Some(StoredEventKind::Observation) => {
+            let observation = Observation::decode(source_event.payload.payload.as_slice())
+                .map_err(|error| {
+                    AuthorityError::InvalidGrant(format!(
+                        "cannot decode descendant completion observation: {error}"
+                    ))
+                })?;
+            let source_command = exactly_one_command_correlation(
+                &observation.correlations,
+                "descendant completion observation",
+                source_lsn,
+            )?;
+            if observation.kind != ObservationKind::Result as i32
+                || observation.failure_code != FailureCode::Unspecified as i32
+                || &source_command != command_id
+            {
+                return Err(AuthorityError::InvalidGrant(
+                    "descendant audit source is not a matching successful result".to_owned(),
+                ));
+            }
+        }
+        Some(StoredEventKind::CommandTransition) => {
+            let transition = CommandTransition::decode(source_event.payload.payload.as_slice())
+                .map_err(|error| {
+                    AuthorityError::InvalidGrant(format!(
+                        "cannot decode descendant completion transition: {error}"
+                    ))
+                })?;
+            if transition.command_id.as_ref() != Some(command_id)
+                || transition.to_state != OperationState::Completed as i32
+                || transition.failure_code != FailureCode::Unspecified as i32
+            {
+                return Err(AuthorityError::InvalidGrant(
+                    "descendant audit source is not a matching completed transition".to_owned(),
+                ));
+            }
+        }
+        _ => {
+            return Err(AuthorityError::InvalidGrant(
+                "descendant audit source has the wrong durable event kind".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Canonical deterministic descendant-grant id, namespaced from operator grants.
-fn descendant_grant_id(domain: &AuthorityDomainId, spawn_op: &CommandId) -> GrantId {
+pub(crate) fn descendant_grant_id(domain: &AuthorityDomainId, spawn_op: &CommandId) -> GrantId {
     GrantId {
         value: format!("desc:{}:{}", domain.value, spawn_op.value),
     }
 }
 
-fn event_identity(event: &RecordedEvent) -> Result<(&AuthorityDomainId, u64), AuthorityError> {
+fn exactly_one_command_correlation(
+    correlations: &[TypedCorrelation],
+    record_name: &str,
+    event_lsn: u64,
+) -> Result<CommandId, AuthorityError> {
+    let command_ids: Vec<_> = correlations
+        .iter()
+        .filter_map(|correlation| match correlation.r#ref.as_ref() {
+            Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
+            _ => None,
+        })
+        .collect();
+    if command_ids.len() != 1 || command_ids[0].value.is_empty() {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} must have exactly one non-empty command correlation"
+        )));
+    }
+    Ok(command_ids[0].clone())
+}
+
+fn update_non_terminal(progress: &mut SpawnProgress, lsn: u64, state: OperationState) {
+    if progress
+        .latest_non_terminal
+        .is_none_or(|(existing_lsn, _)| lsn >= existing_lsn)
+    {
+        progress.latest_non_terminal = Some((lsn, state));
+    }
+}
+
+fn is_terminal(state: OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Completed
+            | OperationState::Rejected
+            | OperationState::Failed
+            | OperationState::Expired
+            | OperationState::Cancelled
+            | OperationState::Superseded
+    )
+}
+
+fn merge_correlations(target: &mut Vec<TypedCorrelation>, incoming: &[TypedCorrelation]) {
+    for correlation in incoming {
+        if !target.iter().any(|existing| existing == correlation) {
+            target.push(correlation.clone());
+        }
+    }
+}
+
+fn insert_consistent_option<K: std::fmt::Debug, V: PartialEq>(
+    slot: &mut Option<V>,
+    incoming: V,
+    record_name: &str,
+    key: &K,
+    event_lsn: u64,
+) -> Result<(), AuthorityError> {
+    if let Some(existing) = slot {
+        if existing == &incoming {
+            return Ok(());
+        }
+        return Err(AuthorityError::CorruptLog(format!(
+            "{record_name} has conflicting records for key {key:?} at LSN {event_lsn}"
+        )));
+    }
+    *slot = Some(incoming);
+    Ok(())
+}
+
+fn event_identity<'a>(
+    event: &'a RecordedEvent,
+    record_name: &str,
+) -> Result<(&'a AuthorityDomainId, u64), AuthorityError> {
     let domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-        AuthorityError::CorruptRecord("spawn-tail event has no authority domain".to_owned())
+        AuthorityError::CorruptRecord(format!("{record_name} has no authority domain"))
     })?;
     if domain.value.is_empty() {
-        return Err(AuthorityError::CorruptRecord(
-            "spawn-tail event has an empty authority domain".to_owned(),
-        ));
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} has an empty authority domain"
+        )));
     }
-    let lsn =
-        event.event_id.lsn.as_ref().ok_or_else(|| {
-            AuthorityError::CorruptRecord("spawn-tail event has no LSN".to_owned())
-        })?;
-    Ok((domain, lsn.value))
+    let lsn = required_event_lsn(&event.event_id, record_name)?;
+    Ok((domain, lsn))
+}
+
+fn required_event_lsn(event_id: &EventId, record_name: &str) -> Result<u64, AuthorityError> {
+    let lsn = event_id
+        .lsn
+        .as_ref()
+        .ok_or_else(|| AuthorityError::CorruptRecord(format!("{record_name} has no LSN")))?;
+    if lsn.value == 0 {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} has zero LSN"
+        )));
+    }
+    Ok(lsn.value)
 }
 
 fn validate_message_domain(
@@ -366,95 +1076,59 @@ fn required_command_id(
     record_name: &str,
     event_lsn: u64,
 ) -> Result<CommandId, AuthorityError> {
-    let command_id = command_id.ok_or_else(|| {
+    command_id.filter(|id| !id.value.is_empty()).ok_or_else(|| {
         AuthorityError::CorruptRecord(format!(
-            "{record_name} at LSN {event_lsn} is missing command_id"
+            "{record_name} at LSN {event_lsn} is missing a non-empty command_id"
         ))
-    })?;
-    if command_id.value.is_empty() {
-        return Err(AuthorityError::CorruptRecord(format!(
-            "{record_name} at LSN {event_lsn} has an empty command_id"
-        )));
-    }
-    Ok(command_id)
+    })
 }
 
-trait NonEmptyIdentifier {
-    fn is_empty(&self) -> bool;
-    fn field_name() -> &'static str;
-}
-
-impl NonEmptyIdentifier for patchbay_contracts::patchbay::AdapterId {
-    fn is_empty(&self) -> bool {
-        self.value.is_empty()
-    }
-
-    fn field_name() -> &'static str {
-        "adapter_id"
-    }
-}
-
-impl NonEmptyIdentifier for patchbay_contracts::patchbay::RuntimeSessionId {
-    fn is_empty(&self) -> bool {
-        self.value.is_empty()
-    }
-
-    fn field_name() -> &'static str {
-        "runtime_session_id"
-    }
-}
-
-fn required_identifier<T: NonEmptyIdentifier>(
-    identifier: Option<T>,
-    field_name: &str,
-    event_lsn: u64,
-) -> Result<T, AuthorityError> {
-    let identifier = identifier.ok_or_else(|| {
-        AuthorityError::CorruptRecord(format!(
-            "session registration at LSN {event_lsn} is missing {field_name}"
-        ))
-    })?;
-    if identifier.is_empty() {
-        return Err(AuthorityError::CorruptRecord(format!(
-            "session registration at LSN {event_lsn} has an empty {}",
-            T::field_name()
-        )));
-    }
-    Ok(identifier)
-}
-
-fn required_string(
-    value: String,
-    field_name: &str,
-    event_lsn: u64,
-) -> Result<String, AuthorityError> {
-    if value.is_empty() {
-        return Err(AuthorityError::CorruptRecord(format!(
-            "session registration at LSN {event_lsn} has an empty {field_name}"
-        )));
-    }
-    Ok(value)
-}
-
-fn insert_consistent<K, V>(
-    map: &mut HashMap<K, V>,
-    key: K,
-    incoming: V,
+fn required_grant_id(
+    grant_id: Option<GrantId>,
     record_name: &str,
     event_lsn: u64,
-) -> Result<(), AuthorityError>
-where
-    K: std::hash::Hash + Eq + std::fmt::Debug,
-    V: PartialEq,
-{
-    if let Some(existing) = map.get(&key) {
-        if existing == &incoming {
-            return Ok(());
-        }
-        return Err(AuthorityError::CorruptLog(format!(
-            "{record_name} has conflicting records for key {key:?} at LSN {event_lsn}"
+) -> Result<GrantId, AuthorityError> {
+    grant_id.filter(|id| !id.value.is_empty()).ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} is missing a non-empty grant_id"
+        ))
+    })
+}
+
+fn required_actor(
+    actor_id: Option<ActorId>,
+    record_name: &str,
+    event_lsn: u64,
+) -> Result<ActorId, AuthorityError> {
+    actor_id.filter(|id| !id.value.is_empty()).ok_or_else(|| {
+        AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} is missing a non-empty actor_id"
+        ))
+    })
+}
+
+fn validate_optional_endpoint(
+    endpoint: Option<&EndpointId>,
+    record_name: &str,
+    event_lsn: u64,
+) -> Result<(), AuthorityError> {
+    if endpoint.is_some_and(|id| id.value.is_empty()) {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} has an empty endpoint_id"
         )));
     }
-    map.insert(key, incoming);
+    Ok(())
+}
+
+fn validate_optional_device(
+    device: Option<&DeviceId>,
+    record_name: &str,
+    event_lsn: u64,
+) -> Result<(), AuthorityError> {
+    if device.is_some_and(|id| id.value.is_empty()) {
+        return Err(AuthorityError::CorruptRecord(format!(
+            "{record_name} at LSN {event_lsn} has an empty device_id"
+        )));
+    }
     Ok(())
 }

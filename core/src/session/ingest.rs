@@ -8,11 +8,14 @@
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled, SessionState,
-    TypedCorrelation,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
+    SessionState, TypedCorrelation,
 };
 
-use crate::{acceptance::Clock, storage::{RecordedEvent, Storage}};
+use crate::{
+    acceptance::Clock,
+    storage::{RecordedEvent, Storage},
+};
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition, events, SessionError,
@@ -216,6 +219,7 @@ where
                     cwd: report.cwd,
                     name: report.name,
                     model: report.model,
+                    spawn_origin: report.spawn_origin,
                 },
             );
             let event_id = storage
@@ -475,7 +479,11 @@ pub fn adapter_stale_events(
                 &report.deployment_scope,
                 &report.runtime_session_id,
             )
-            .ok_or_else(|| SessionError::CorruptLog("session disappeared during detach reconciliation".to_owned()))?;
+            .ok_or_else(|| {
+                SessionError::CorruptLog(
+                    "session disappeared during detach reconciliation".to_owned(),
+                )
+            })?;
         sources.push(events::encode(&events::connectivity_changed(
             authority_domain_id.clone(),
             SessionConnectivityChanged {
@@ -504,7 +512,9 @@ pub async fn mark_adapter_sessions_stale<S: Storage>(
         crate::acceptance::SystemClock.now(),
         patchbay_contracts::patchbay::AuditEventKind::AdapterDetached,
     );
-    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId { value: adapter_id.value.clone() });
+    audit.actor_id = Some(patchbay_contracts::patchbay::ActorId {
+        value: adapter_id.value.clone(),
+    });
     audit.reason_code = "adapter_detached".to_owned();
     let event_ids = if sources.is_empty() {
         storage.append_audit(authority_domain_id, audit).await?;
