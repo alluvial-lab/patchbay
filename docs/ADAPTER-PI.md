@@ -77,6 +77,7 @@ This mapping must satisfy the checked-model and stated-normative properties docu
 - `LabelsCannotOverrideIdentity` (**stated-normative**) — `project`/`cwd`/`name` cannot override the identity tuple.
 - `GenerationMonotonic` (**checked-model**) — the checked temporal property proves that the live session generation never decreases. Strict-supersession for `session_new` / fresh-session restart (lower reports rejected, equal reports no-op) is enforced by the action guard, not established by this checked temporal property.
 - `LateGenerationInert` (**stated-normative**) — events/replies binding to a tombstoned generation are `stale_event` audit records and do not mutate the live generation.
+- `SessionReportSourceOrdering` (**stated-normative until its model/vector promotion lands**) — Pi reports one immutable whole-session snapshot with a positive source revision allocated at enqueue time; equal/lower revisions cannot roll report fields backward.
 
 > **`session_new` is a session replacement, not a `/clear`.** remote_pi's own code groups `session_new` with `fork`/`switch`/`reload` as "session replacement" and marks the pre-replacement SDK context permanently stale. A `/clear` on other harnesses preserves the session handle and wipes the transcript in place; Pi does the opposite — persisted entries are projected for the replacement generation and the old context becomes permanently unusable. This is why the mapping bumps `session_generation` rather than treating it as a same-generation clear.
 
@@ -122,6 +123,7 @@ This section covers the specific parity surface the migration floor requires.
 - **Stream / read replies.** Pi event hooks (`message_update`/`message_end`, `tool_call`, `tool_execution_*`, `model_select`/`thinking_level_select`, `session_before_compact`/`session_compact`, `agent_end`, `turn_*`) map to `Observation`s — source-authenticated output, lifecycle facts, and status emissions (including reconfiguration-status facts). Observation streams are delivery optimizations; the durable core record and snapshots remain authoritative.
 - **Reconnect recovery.** On reconnect the control surface submits its cursor and reconciles against the `partial` snapshot (Pi persisted entries projected as transcript events) and newer events. The snapshot tier is adapter-declared (`partial`); the core reconciles per the degraded-behavior rules and marks unreconciled axes `unknown` or `stale` rather than synthesizing live state.
 - **Working / idle / stale / offline status.** `turn_start`/`turn_end` → `SessionActivityState`; endpoint connectivity → `SessionConnectivityState` (`live` / `stale` / `offline` / `unknown` / `failed`). Status is protocol-derived, not invented by the UI.
+- **Session-report source order.** Pi maintains an independent positive report revision for each runtime entry and runtime-session generation. It allocates the revision and captures identity, connectivity/activity, labels, and model before enqueueing the report. A same-process authenticated reattach preserves the sequence; a newer adapter process generation or runtime-session generation starts at revision one. Promise-tail serialization remains defense in depth—the core accepts only authenticated cursor order—and an unauthenticated retry reuses the same captured cursor and payload.
 
 The snapshot tier is adapter-declared (`partial`) and recorded here as the Pi adapter's declaration. This checklist does not pin the tier in a foundation document; if the Pi adapter's live behavior changes (e.g. as bugs close), the declaration is revised here.
 
@@ -165,13 +167,16 @@ This is the local committed-v0.1.0 / reserved-seam / rejected classification for
 - **Committed v0.1.0:**
   - the `OperationKind` mappings in §4;
   - the `partial` snapshot tier;
-  - the `session_new` generation-bump mapping (session replacement, not a same-generation clear).
+  - the `session_new` generation-bump mapping (session replacement, not a same-generation clear);
+  - enqueue-time immutable whole-report sequencing with the generated `(adapter_generation, revision)` cursor.
 - **Reserved seams:**
   - supervisord-control `spawn` (follow-on promotion);
   - free-form question Elicitation support in the Pi adapter (the core `question` contract is committed; Pi-adapter support is the reserved seam);
   - `/fork` (SDK-internal);
-  - tighter Elicitation responder binding (endpoint class / fallback chain).
+  - tighter Elicitation responder binding (endpoint class / fallback chain);
+  - multiple concurrent report producers and vector-clock/per-field merge policy.
 - **Rejected for v0.1.0:**
   - Pi-specific state names in core protocol;
   - treating `session_new` as a same-generation clear;
-  - treating `session_new` as `spawn`.
+  - treating `session_new` as `spawn`;
+  - treating promise-tail serialization, wall-clock time, or core arrival LSN as Pi report source authority.

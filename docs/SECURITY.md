@@ -143,6 +143,12 @@ Retries with the same idempotency key return the existing command record. A new 
 
 Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0.1.0 mediated behavior.
 
+### Runtime-session report source boundary
+
+A fresh typed session report is accepted only on the current authenticated adapter attachment. The core replaces source authority with the verified adapter id, requires the report cursor's adapter generation to equal the current attachment generation, and requires a positive revision. Missing/zero cursors, stale tokens, old or mismatched adapter generations, lower runtime-session generations, and non-increasing same-generation revisions fail closed before a session-state append.
+
+The source cursor covers the complete report; payload labels and mutable values cannot choose their own order or producer epoch. Only a strictly newer authenticated cursor may atomically replace report-carried fields and advance the durable watermark. Equal/lower cursors produce bounded `STALE_EVENT_IGNORED` evidence with canonical `stale_event` failure and do not append a session mutation. Core LSN, wall-clock time, and adapter-local promise serialization are not source authentication or source-order evidence. Core-authored disconnect/lockdown degradation never advances the adapter cursor.
+
 ### Operational-resource report boundary (post-v0.1)
 
 A typed resource report is accepted only on the current authenticated adapter
@@ -311,6 +317,7 @@ Committed v0.1.0 behavior:
 - deny-by-default Operation authorization;
 - idempotent Operation retry at the Patchbay boundary;
 - target session generation checks;
+- authenticated monotonic whole-session-report source cursors with stale-report audit evidence;
 - emergency revocation controls;
 - security event audit with secret redaction.
 
@@ -322,6 +329,7 @@ Reserved extension seams:
 - mutual TLS for browser or adapter endpoints;
 - fine-grained RBAC administration;
 - third-party control surfaces;
+- multiple concurrent session-report producers and vector-clock/per-field merge policy;
 - SIEM export and long-retention compliance archives;
 - lease-backed exclusive coordination.
 
@@ -331,5 +339,6 @@ Rejected v0.1.0 directions:
 - UI-only authorization;
 - long-lived JavaScript-readable browser bearer tokens as the primary session model;
 - Pi-specific principals or Pi-specific permission names in core protocol;
+- treating core arrival LSN, wall-clock time, or Pi promise tails as authenticated adapter source order;
 - best-effort hidden delivery when a grant is absent;
 - logging raw secrets or prompt bodies by default.

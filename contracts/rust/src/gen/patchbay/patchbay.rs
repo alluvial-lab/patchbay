@@ -1217,6 +1217,9 @@ pub struct Session {
     /// Current adapter-reported opaque provider/model id; empty means unavailable.
     #[prost(string, tag = "14")]
     pub model: ::prost::alloc::string::String,
+    /// Last accepted adapter-side report order, distinct from core LSN order.
+    #[prost(message, optional, tag = "15")]
+    pub last_source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionState {
@@ -1224,6 +1227,45 @@ pub struct SessionState {
     pub connectivity: i32,
     #[prost(enumeration = "SessionActivityState", tag = "2")]
     pub activity: i32,
+}
+/// Adapter-side order for full session reports. Revision is positive and
+/// strictly increasing within one authenticated adapter generation and runtime
+/// session generation. Core LSN remains the durable arrival/commit order.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionReportSourceCursor {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+}
+/// One adapter-reported snapshot of every report-carried session field.
+/// Adapter ingress authenticates adapter_id and source_cursor before durability.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionReport {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub session_generation: ::core::option::Option<Generation>,
+    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
+    pub connectivity: i32,
+    #[prost(enumeration = "SessionActivityState", tag = "6")]
+    pub activity: i32,
+    #[prost(string, tag = "7")]
+    pub project: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag = "9")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "10")]
+    pub spawn_origin: ::core::option::Option<TypedCorrelation>,
+    #[prost(string, tag = "11")]
+    pub model: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "12")]
+    pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionSnapshot {
@@ -1256,7 +1298,7 @@ pub struct ViewRevision {
 pub struct SessionStateEvent {
     #[prost(message, optional, tag = "1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6, 7, 8")]
     pub mutation: ::core::option::Option<session_state_event::Mutation>,
 }
 /// Nested message and enum types in `SessionStateEvent`.
@@ -1275,6 +1317,8 @@ pub mod session_state_event {
         Relabeled(super::SessionRelabeled),
         #[prost(message, tag = "7")]
         ModelChanged(super::SessionModelChanged),
+        #[prost(message, tag = "8")]
+        ReportApplied(super::SessionReportApplied),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1302,6 +1346,9 @@ pub struct SessionRegistered {
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
     #[prost(string, tag = "10")]
     pub model: ::prost::alloc::string::String,
+    /// Absent only in legacy durable events written before source ordering.
+    #[prost(message, optional, tag = "11")]
+    pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionGenerationBumped {
@@ -1332,6 +1379,19 @@ pub struct SessionGenerationBumped {
     /// unique and existing wire identities are unchanged.
     #[prost(message, optional, tag = "11")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
+    /// Absent only in legacy durable events written before source ordering.
+    #[prost(message, optional, tag = "12")]
+    pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
+}
+/// Atomic equal-runtime-generation application of one complete adapter report.
+/// The prior cursor makes replay validate the exact projected pre-state.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionReportApplied {
+    #[prost(message, optional, tag = "1")]
+    pub report: ::core::option::Option<SessionReport>,
+    /// Absent only when the projected generation has no legacy source watermark.
+    #[prost(message, optional, tag = "2")]
+    pub previous_source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionConnectivityChanged {
@@ -1920,32 +1980,6 @@ pub struct AttachResult {
     pub attach_event_id: ::core::option::Option<EventId>,
     #[prost(string, tag = "3")]
     pub failure_code: ::prost::alloc::string::String,
-}
-/// Wire counterpart of patchbay_core::session::SessionReport.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SessionReport {
-    #[prost(message, optional, tag = "1")]
-    pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
-    pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
-    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
-    pub session_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
-    pub connectivity: i32,
-    #[prost(enumeration = "SessionActivityState", tag = "6")]
-    pub activity: i32,
-    #[prost(string, tag = "7")]
-    pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "8")]
-    pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "9")]
-    pub name: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "10")]
-    pub spawn_origin: ::core::option::Option<TypedCorrelation>,
-    #[prost(string, tag = "11")]
-    pub model: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ObservationRequest {

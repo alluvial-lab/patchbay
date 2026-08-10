@@ -48,6 +48,10 @@ A new lifetime of an entity that retains its identity. Patchbay uses generation 
 
 The four scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / runtime-session / operator-session / adapter) is the collision-protection discipline.
 
+## Session report source cursor
+
+Adapter-authenticated ordering evidence for one complete runtime-session report: `(adapter_generation, revision)` inside one runtime-session generation. The positive adapter-assigned revision increases strictly within the current producer epoch; a newer authenticated adapter generation or runtime-session generation may restart it. The cursor is durably restored in the session projection and snapshot. It is not a core log cursor, LSN/revision, timestamp, or bearer credential.
+
 ## Device
 
 A physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
@@ -218,7 +222,7 @@ A policy action that prevents future authority for an operator session, principa
 
 ## Revision
 
-The log sequence number at which a specific view (command, session, actor, grant, audit record) was last durably updated. Used to decide whether a snapshot or cached view is older than the core's current state for that view.
+The core log sequence number at which a specific view (command, session, actor, grant, audit record) was last durably updated. Used to decide whether a snapshot or cached view is older than the core's current state for that view. This core-owned revision is distinct from the adapter-assigned revision inside a Session report source cursor: LSN orders durable arrival, while the source revision orders production before arrival.
 
 ## Running
 

@@ -44,6 +44,7 @@ The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft 
 - Subscription audit, cursor-replay authorization, and grant authorization: `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized`, and `SubscriptionGrantChecked` remain stated-normative until the model separates attempted audit/replay/actor/scope evidence from state written by the subscription actions.
 - Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
 - Session identity and stale-generation refinements: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, and `LateGenerationInert` remain stated-normative until models represent per-session identity, target selection, and stale-event audit state.
+- Session-report source order: `SessionReportSourceOrdering` is a stated-normative obligation until a trace-faithful pending-report model, claim-breaking mutation, and promoted authenticated-ingress vector clear both promotion gates. The implementation must keep equal/lower producer cursors inert without confusing adapter source revision with core LSN order.
 - Elicitation lifecycle and timeout semantics: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`, and `ElicitationTimeoutNeitherSuccessNorDenial` remain stated-normative until the model uses mutation-survivable independent attempted evidence and represents the timeout grant boundary.
 - Relational actor identity: `ActorIdsUnique` remains a stated-normative injectivity obligation; its retained Alloy fact-consequence check is only a structural regression test, not promoted assurance.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
@@ -186,8 +187,11 @@ Properties:
 
 - Commands bind to target session identity and generation. Session identity is the tuple adapter id + deployment scope + runtime session id + session generation; project, cwd, and name are metadata, not identity.
 - **LateGenerationInert**: events/replies binding to a tombstoned session generation are `stale_event` audit records; they do not mutate the live generation.
-- **GenerationMonotonic**: the checked temporal property proves that the live session generation never decreases. Strict-supersession (lower reports are rejected and equal reports are no-ops) is enforced by the action guard, not established by this checked temporal property.
+- **GenerationMonotonic**: the checked temporal property proves that the live session generation never decreases. Strict-supersession (lower generations are rejected and equal generations do not replace the session) is enforced by the action guard, not established by this checked temporal property.
+- **SessionReportSourceOrdering** (stated-normative until promoted): for one runtime-session generation, an attempted report from an older adapter generation or with a revision not strictly greater than the last applied revision leaves every report-carried mutable value and the source watermark unchanged. A current newer adapter generation or newer runtime-session generation may establish a fresh positive local revision. The oracle must inspect pending environment evidence the apply action cannot rewrite.
 - Human-readable labels cannot override verified target identity.
+
+Normative source-order variables include the live runtime-session generation, live authenticated adapter generation, last applied source revision, mutable report value(s), and separately arrived pending report generation/adapter generation/revision/value. Core LSN remains a distinct durable-order variable and is not the source-order predicate.
 
 ### Reply and response-Operation correlation
 
@@ -450,6 +454,7 @@ Reserve the following conformance-vector families. Each is draft until its refer
 - `subscription-audited`: subscription allow/deny decisions create security audit records without creating Operation records.
 - `subscription-cursor-replay-authorized`: reconnect replay by cursor returns only events within the authorized subscription filter.
 - `session-model-change-preserves-identity`: a `SessionModelChanged` mutation changes only opaque current-model metadata while retaining adapter id, deployment scope, runtime session id, and generation; it exercises `LabelsCannotOverrideIdentity` as a draft wire-shape example.
+- `session-report-source-ordering`: a current authenticated producer applies `A/r1`, then `B/r3`, then submits delayed `A/r2`; the last report is stale/audited and hot, replayed, and snapshotted state remains `B/r3`. This reservation promotes only after the matching model and mutation gate pass.
 
 Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt` (see § Idempotent retry above for the boundary-vs-end-to-end scope statement); adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
 

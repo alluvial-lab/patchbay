@@ -22,6 +22,8 @@ message Session {
   Lsn superseded_at_lsn = 13;
   // Current adapter-reported opaque provider/model id; empty means unavailable.
   string model = 14;
+  // Last accepted adapter-side report order, distinct from core LSN order.
+  SessionReportSourceCursor last_source_cursor = 15;
 }
 
 message SessionState {
@@ -43,6 +45,31 @@ enum SessionActivityState {
   SESSION_ACTIVITY_STATE_IDLE = 1;
   SESSION_ACTIVITY_STATE_WORKING = 2;
   SESSION_ACTIVITY_STATE_UNKNOWN = 3;
+}
+
+// Adapter-side order for full session reports. Revision is positive and
+// strictly increasing within one authenticated adapter generation and runtime
+// session generation. Core LSN remains the durable arrival/commit order.
+message SessionReportSourceCursor {
+  Generation adapter_generation = 1;
+  uint64 revision = 2;
+}
+
+// One adapter-reported snapshot of every report-carried session field.
+// Adapter ingress authenticates adapter_id and source_cursor before durability.
+message SessionReport {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation session_generation = 4;
+  SessionConnectivityState connectivity = 5;
+  SessionActivityState activity = 6;
+  string project = 7;
+  string cwd = 8;
+  string name = 9;
+  TypedCorrelation spawn_origin = 10;
+  string model = 11;
+  SessionReportSourceCursor source_cursor = 12;
 }
 
 message SessionSnapshot {
@@ -72,6 +99,7 @@ message SessionStateEvent {
     SessionActivityChanged activity_changed = 5;
     SessionRelabeled relabeled = 6;
     SessionModelChanged model_changed = 7;
+    SessionReportApplied report_applied = 8;
   }
 }
 
@@ -89,6 +117,8 @@ message SessionRegistered {
   // descendant-grant reactor correlate the session to its spawn command.
   TypedCorrelation spawn_origin = 9;
   string model = 10;
+  // Absent only in legacy durable events written before source ordering.
+  SessionReportSourceCursor source_cursor = 11;
 }
 
 message SessionGenerationBumped {
@@ -108,6 +138,16 @@ message SessionGenerationBumped {
   // Tag 11 follows the independently-added model field at tag 10; tags remain
   // unique and existing wire identities are unchanged.
   TypedCorrelation spawn_origin = 11;
+  // Absent only in legacy durable events written before source ordering.
+  SessionReportSourceCursor source_cursor = 12;
+}
+
+// Atomic equal-runtime-generation application of one complete adapter report.
+// The prior cursor makes replay validate the exact projected pre-state.
+message SessionReportApplied {
+  SessionReport report = 1;
+  // Absent only when the projected generation has no legacy source watermark.
+  SessionReportSourceCursor previous_source_cursor = 2;
 }
 
 message SessionConnectivityChanged {

@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/sessions.proto.
  */
 export const file_patchbay_sessions: GenFile = /*@__PURE__*/
-  fileDesc("ChdwYXRjaGJheS9zZXNzaW9ucy5wcm90bxIIcGF0Y2hiYXki8AMKB1Nlc3Npb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEicKCmFkYXB0ZXJfaWQYAiABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgDIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYBCABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgFIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDwoHcHJvamVjdBgGIAEoCRILCgNjd2QYByABKAkSDAoEbmFtZRgIIAEoCRIlCgVzdGF0ZRgJIAEoCzIWLnBhdGNoYmF5LlNlc3Npb25TdGF0ZRItChZsYXN0X2F1dGhvcml0YXRpdmVfbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgp0b21ic3RvbmVkGAwgASgIEigKEXN1cGVyc2VkZWRfYXRfbHNuGA0gASgLMg0ucGF0Y2hiYXkuTHNuEg0KBW1vZGVsGA4gASgJInoKDFNlc3Npb25TdGF0ZRI4Cgxjb25uZWN0aXZpdHkYASABKA4yIi5wYXRjaGJheS5TZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSMAoIYWN0aXZpdHkYAiABKA4yHi5wYXRjaGJheS5TZXNzaW9uQWN0aXZpdHlTdGF0ZSLcAgoPU2Vzc2lvblNuYXBzaG90EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIjCgxzbmFwc2hvdF9sc24YAiABKAsyDS5wYXRjaGJheS5Mc24SLQoPY29yZV9nZW5lcmF0aW9uGAMgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIjCghzZXNzaW9ucxgEIAMoCzIRLnBhdGNoYmF5LlNlc3Npb24SLgoOdmlld19yZXZpc2lvbnMYBSADKAsyFi5wYXRjaGJheS5WaWV3UmV2aXNpb24SMwoPbWF0ZXJpYWxpemVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIxCghsb2NrZG93bhgHIAEoCzIfLnBhdGNoYmF5LlNlY3VyaXR5TG9ja2Rvd25TdGF0ZSJgCgxWaWV3UmV2aXNpb24SKwoMdGFyZ2V0X3Njb3BlGAEgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSIwoMcmV2aXNpb25fbHNuGAIgASgLMg0ucGF0Y2hiYXkuTHNuIrkDChFTZXNzaW9uU3RhdGVFdmVudBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMQoKcmVnaXN0ZXJlZBgCIAEoCzIbLnBhdGNoYmF5LlNlc3Npb25SZWdpc3RlcmVkSAASPgoRZ2VuZXJhdGlvbl9idW1wZWQYAyABKAsyIS5wYXRjaGJheS5TZXNzaW9uR2VuZXJhdGlvbkJ1bXBlZEgAEkQKFGNvbm5lY3Rpdml0eV9jaGFuZ2VkGAQgASgLMiQucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eUNoYW5nZWRIABI8ChBhY3Rpdml0eV9jaGFuZ2VkGAUgASgLMiAucGF0Y2hiYXkuU2Vzc2lvbkFjdGl2aXR5Q2hhbmdlZEgAEi8KCXJlbGFiZWxlZBgGIAEoCzIaLnBhdGNoYmF5LlNlc3Npb25SZWxhYmVsZWRIABI2Cg1tb2RlbF9jaGFuZ2VkGAcgASgLMh0ucGF0Y2hiYXkuU2Vzc2lvbk1vZGVsQ2hhbmdlZEgAQgoKCG11dGF0aW9uItwCChFTZXNzaW9uUmVnaXN0ZXJlZBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEi0KDWluaXRpYWxfc3RhdGUYBSABKAsyFi5wYXRjaGJheS5TZXNzaW9uU3RhdGUSDwoHcHJvamVjdBgGIAEoCRILCgNjd2QYByABKAkSDAoEbmFtZRgIIAEoCRIwCgxzcGF3bl9vcmlnaW4YCSABKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEg0KBW1vZGVsGAogASgJIowDChdTZXNzaW9uR2VuZXJhdGlvbkJ1bXBlZBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBItCg9mcm9tX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEisKDXRvX2dlbmVyYXRpb24YBSABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEi0KDWluaXRpYWxfc3RhdGUYBiABKAsyFi5wYXRjaGJheS5TZXNzaW9uU3RhdGUSDwoHcHJvamVjdBgHIAEoCRILCgNjd2QYCCABKAkSDAoEbmFtZRgJIAEoCRINCgVtb2RlbBgKIAEoCRIwCgxzcGF3bl9vcmlnaW4YCyABKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uIqsCChpTZXNzaW9uQ29ubmVjdGl2aXR5Q2hhbmdlZBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjAKBGZyb20YBSABKA4yIi5wYXRjaGJheS5TZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSLgoCdG8YBiABKA4yIi5wYXRjaGJheS5TZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUinwIKFlNlc3Npb25BY3Rpdml0eUNoYW5nZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIsCgRmcm9tGAUgASgOMh4ucGF0Y2hiYXkuU2Vzc2lvbkFjdGl2aXR5U3RhdGUSKgoCdG8YBiABKA4yHi5wYXRjaGJheS5TZXNzaW9uQWN0aXZpdHlTdGF0ZSLrAQoQU2Vzc2lvblJlbGFiZWxlZBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEg8KB3Byb2plY3QYBSABKAkSCwoDY3dkGAYgASgJEgwKBG5hbWUYByABKAki3AEKE1Nlc3Npb25Nb2RlbENoYW5nZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIMCgRmcm9tGAUgASgJEgoKAnRvGAYgASgJKogCChhTZXNzaW9uQ29ubmVjdGl2aXR5U3RhdGUSKgomU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfVU5TUEVDSUZJRUQQABIjCh9TRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9MSVZFEAESJAogU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfU1RBTEUQAhImCiJTRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9PRkZMSU5FEAMSJgoiU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfVU5LTk9XThAEEiUKIVNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX0ZBSUxFRBAFKqcBChRTZXNzaW9uQWN0aXZpdHlTdGF0ZRImCiJTRVNTSU9OX0FDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASHwobU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9JRExFEAESIgoeU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9XT1JLSU5HEAISIgoeU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9VTktOT1dOEANiBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_security]);
+  fileDesc("ChdwYXRjaGJheS9zZXNzaW9ucy5wcm90bxIIcGF0Y2hiYXkisQQKB1Nlc3Npb24SOAoTYXV0aG9yaXR5X2RvbWFpbl9pZBgBIAEoCzIbLnBhdGNoYmF5LkF1dGhvcml0eURvbWFpbklkEicKCmFkYXB0ZXJfaWQYAiABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgDIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYBCABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgFIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDwoHcHJvamVjdBgGIAEoCRILCgNjd2QYByABKAkSDAoEbmFtZRgIIAEoCRIlCgVzdGF0ZRgJIAEoCzIWLnBhdGNoYmF5LlNlc3Npb25TdGF0ZRItChZsYXN0X2F1dGhvcml0YXRpdmVfbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgp0b21ic3RvbmVkGAwgASgIEigKEXN1cGVyc2VkZWRfYXRfbHNuGA0gASgLMg0ucGF0Y2hiYXkuTHNuEg0KBW1vZGVsGA4gASgJEj8KEmxhc3Rfc291cmNlX2N1cnNvchgPIAEoCzIjLnBhdGNoYmF5LlNlc3Npb25SZXBvcnRTb3VyY2VDdXJzb3IiegoMU2Vzc2lvblN0YXRlEjgKDGNvbm5lY3Rpdml0eRgBIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRIwCghhY3Rpdml0eRgCIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlIl8KGVNlc3Npb25SZXBvcnRTb3VyY2VDdXJzb3ISMAoSYWRhcHRlcl9nZW5lcmF0aW9uGAEgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIQCghyZXZpc2lvbhgCIAEoBCLRAwoNU2Vzc2lvblJlcG9ydBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEhgKEGRlcGxveW1lbnRfc2NvcGUYAiABKAkSNgoScnVudGltZV9zZXNzaW9uX2lkGAMgASgLMhoucGF0Y2hiYXkuUnVudGltZVNlc3Npb25JZBIwChJzZXNzaW9uX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEjgKDGNvbm5lY3Rpdml0eRgFIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRIwCghhY3Rpdml0eRgGIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlEg8KB3Byb2plY3QYByABKAkSCwoDY3dkGAggASgJEgwKBG5hbWUYCSABKAkSMAoMc3Bhd25fb3JpZ2luGAogASgLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhINCgVtb2RlbBgLIAEoCRI6Cg1zb3VyY2VfY3Vyc29yGAwgASgLMiMucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydFNvdXJjZUN1cnNvciLcAgoPU2Vzc2lvblNuYXBzaG90EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIjCgxzbmFwc2hvdF9sc24YAiABKAsyDS5wYXRjaGJheS5Mc24SLQoPY29yZV9nZW5lcmF0aW9uGAMgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIjCghzZXNzaW9ucxgEIAMoCzIRLnBhdGNoYmF5LlNlc3Npb24SLgoOdmlld19yZXZpc2lvbnMYBSADKAsyFi5wYXRjaGJheS5WaWV3UmV2aXNpb24SMwoPbWF0ZXJpYWxpemVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIxCghsb2NrZG93bhgHIAEoCzIfLnBhdGNoYmF5LlNlY3VyaXR5TG9ja2Rvd25TdGF0ZSJgCgxWaWV3UmV2aXNpb24SKwoMdGFyZ2V0X3Njb3BlGAEgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSIwoMcmV2aXNpb25fbHNuGAIgASgLMg0ucGF0Y2hiYXkuTHNuIvMDChFTZXNzaW9uU3RhdGVFdmVudBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMQoKcmVnaXN0ZXJlZBgCIAEoCzIbLnBhdGNoYmF5LlNlc3Npb25SZWdpc3RlcmVkSAASPgoRZ2VuZXJhdGlvbl9idW1wZWQYAyABKAsyIS5wYXRjaGJheS5TZXNzaW9uR2VuZXJhdGlvbkJ1bXBlZEgAEkQKFGNvbm5lY3Rpdml0eV9jaGFuZ2VkGAQgASgLMiQucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eUNoYW5nZWRIABI8ChBhY3Rpdml0eV9jaGFuZ2VkGAUgASgLMiAucGF0Y2hiYXkuU2Vzc2lvbkFjdGl2aXR5Q2hhbmdlZEgAEi8KCXJlbGFiZWxlZBgGIAEoCzIaLnBhdGNoYmF5LlNlc3Npb25SZWxhYmVsZWRIABI2Cg1tb2RlbF9jaGFuZ2VkGAcgASgLMh0ucGF0Y2hiYXkuU2Vzc2lvbk1vZGVsQ2hhbmdlZEgAEjgKDnJlcG9ydF9hcHBsaWVkGAggASgLMh4ucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydEFwcGxpZWRIAEIKCghtdXRhdGlvbiKYAwoRU2Vzc2lvblJlZ2lzdGVyZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhItCg1pbml0aWFsX3N0YXRlGAUgASgLMhYucGF0Y2hiYXkuU2Vzc2lvblN0YXRlEg8KB3Byb2plY3QYBiABKAkSCwoDY3dkGAcgASgJEgwKBG5hbWUYCCABKAkSMAoMc3Bhd25fb3JpZ2luGAkgASgLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhINCgVtb2RlbBgKIAEoCRI6Cg1zb3VyY2VfY3Vyc29yGAsgASgLMiMucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydFNvdXJjZUN1cnNvciLIAwoXU2Vzc2lvbkdlbmVyYXRpb25CdW1wZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSLQoPZnJvbV9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIrCg10b19nZW5lcmF0aW9uGAUgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhItCg1pbml0aWFsX3N0YXRlGAYgASgLMhYucGF0Y2hiYXkuU2Vzc2lvblN0YXRlEg8KB3Byb2plY3QYByABKAkSCwoDY3dkGAggASgJEgwKBG5hbWUYCSABKAkSDQoFbW9kZWwYCiABKAkSMAoMc3Bhd25fb3JpZ2luGAsgASgLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhI6Cg1zb3VyY2VfY3Vyc29yGAwgASgLMiMucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydFNvdXJjZUN1cnNvciKEAQoUU2Vzc2lvblJlcG9ydEFwcGxpZWQSJwoGcmVwb3J0GAEgASgLMhcucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydBJDChZwcmV2aW91c19zb3VyY2VfY3Vyc29yGAIgASgLMiMucGF0Y2hiYXkuU2Vzc2lvblJlcG9ydFNvdXJjZUN1cnNvciKrAgoaU2Vzc2lvbkNvbm5lY3Rpdml0eUNoYW5nZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIwCgRmcm9tGAUgASgOMiIucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eVN0YXRlEi4KAnRvGAYgASgOMiIucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eVN0YXRlIp8CChZTZXNzaW9uQWN0aXZpdHlDaGFuZ2VkEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgCIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYAyABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SLAoEZnJvbRgFIAEoDjIeLnBhdGNoYmF5LlNlc3Npb25BY3Rpdml0eVN0YXRlEioKAnRvGAYgASgOMh4ucGF0Y2hiYXkuU2Vzc2lvbkFjdGl2aXR5U3RhdGUi6wEKEFNlc3Npb25SZWxhYmVsZWQSJwoKYWRhcHRlcl9pZBgBIAEoCzITLnBhdGNoYmF5LkFkYXB0ZXJJZBIYChBkZXBsb3ltZW50X3Njb3BlGAIgASgJEjYKEnJ1bnRpbWVfc2Vzc2lvbl9pZBgDIAEoCzIaLnBhdGNoYmF5LlJ1bnRpbWVTZXNzaW9uSWQSMAoSc2Vzc2lvbl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIPCgdwcm9qZWN0GAUgASgJEgsKA2N3ZBgGIAEoCRIMCgRuYW1lGAcgASgJItwBChNTZXNzaW9uTW9kZWxDaGFuZ2VkEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSGAoQZGVwbG95bWVudF9zY29wZRgCIAEoCRI2ChJydW50aW1lX3Nlc3Npb25faWQYAyABKAsyGi5wYXRjaGJheS5SdW50aW1lU2Vzc2lvbklkEjAKEnNlc3Npb25fZ2VuZXJhdGlvbhgEIAEoCzIULnBhdGNoYmF5LkdlbmVyYXRpb24SDAoEZnJvbRgFIAEoCRIKCgJ0bxgGIAEoCSqIAgoYU2Vzc2lvbkNvbm5lY3Rpdml0eVN0YXRlEioKJlNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASIwofU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfTElWRRABEiQKIFNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1NUQUxFEAISJgoiU0VTU0lPTl9DT05ORUNUSVZJVFlfU1RBVEVfT0ZGTElORRADEiYKIlNFU1NJT05fQ09OTkVDVElWSVRZX1NUQVRFX1VOS05PV04QBBIlCiFTRVNTSU9OX0NPTk5FQ1RJVklUWV9TVEFURV9GQUlMRUQQBSqnAQoUU2Vzc2lvbkFjdGl2aXR5U3RhdGUSJgoiU0VTU0lPTl9BQ1RJVklUWV9TVEFURV9VTlNQRUNJRklFRBAAEh8KG1NFU1NJT05fQUNUSVZJVFlfU1RBVEVfSURMRRABEiIKHlNFU1NJT05fQUNUSVZJVFlfU1RBVEVfV09SS0lORxACEiIKHlNFU1NJT05fQUNUSVZJVFlfU1RBVEVfVU5LTk9XThADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_security]);
 
 /**
  * @generated from message patchbay.Session
@@ -93,6 +93,13 @@ export type Session = Message<"patchbay.Session"> & {
    * @generated from field: string model = 14;
    */
   model: string;
+
+  /**
+   * Last accepted adapter-side report order, distinct from core LSN order.
+   *
+   * @generated from field: patchbay.SessionReportSourceCursor last_source_cursor = 15;
+   */
+  lastSourceCursor?: SessionReportSourceCursor | undefined;
 };
 
 /**
@@ -123,6 +130,107 @@ export type SessionState = Message<"patchbay.SessionState"> & {
  */
 export const SessionStateSchema: GenMessage<SessionState> = /*@__PURE__*/
   messageDesc(file_patchbay_sessions, 1);
+
+/**
+ * Adapter-side order for full session reports. Revision is positive and
+ * strictly increasing within one authenticated adapter generation and runtime
+ * session generation. Core LSN remains the durable arrival/commit order.
+ *
+ * @generated from message patchbay.SessionReportSourceCursor
+ */
+export type SessionReportSourceCursor = Message<"patchbay.SessionReportSourceCursor"> & {
+  /**
+   * @generated from field: patchbay.Generation adapter_generation = 1;
+   */
+  adapterGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: uint64 revision = 2;
+   */
+  revision: bigint;
+};
+
+/**
+ * Describes the message patchbay.SessionReportSourceCursor.
+ * Use `create(SessionReportSourceCursorSchema)` to create a new message.
+ */
+export const SessionReportSourceCursorSchema: GenMessage<SessionReportSourceCursor> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 2);
+
+/**
+ * One adapter-reported snapshot of every report-carried session field.
+ * Adapter ingress authenticates adapter_id and source_cursor before durability.
+ *
+ * @generated from message patchbay.SessionReport
+ */
+export type SessionReport = Message<"patchbay.SessionReport"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: string deployment_scope = 2;
+   */
+  deploymentScope: string;
+
+  /**
+   * @generated from field: patchbay.RuntimeSessionId runtime_session_id = 3;
+   */
+  runtimeSessionId?: RuntimeSessionId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation session_generation = 4;
+   */
+  sessionGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.SessionConnectivityState connectivity = 5;
+   */
+  connectivity: SessionConnectivityState;
+
+  /**
+   * @generated from field: patchbay.SessionActivityState activity = 6;
+   */
+  activity: SessionActivityState;
+
+  /**
+   * @generated from field: string project = 7;
+   */
+  project: string;
+
+  /**
+   * @generated from field: string cwd = 8;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string name = 9;
+   */
+  name: string;
+
+  /**
+   * @generated from field: patchbay.TypedCorrelation spawn_origin = 10;
+   */
+  spawnOrigin?: TypedCorrelation | undefined;
+
+  /**
+   * @generated from field: string model = 11;
+   */
+  model: string;
+
+  /**
+   * @generated from field: patchbay.SessionReportSourceCursor source_cursor = 12;
+   */
+  sourceCursor?: SessionReportSourceCursor | undefined;
+};
+
+/**
+ * Describes the message patchbay.SessionReport.
+ * Use `create(SessionReportSchema)` to create a new message.
+ */
+export const SessionReportSchema: GenMessage<SessionReport> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 3);
 
 /**
  * @generated from message patchbay.SessionSnapshot
@@ -169,7 +277,7 @@ export type SessionSnapshot = Message<"patchbay.SessionSnapshot"> & {
  * Use `create(SessionSnapshotSchema)` to create a new message.
  */
 export const SessionSnapshotSchema: GenMessage<SessionSnapshot> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 2);
+  messageDesc(file_patchbay_sessions, 4);
 
 /**
  * @generated from message patchbay.ViewRevision
@@ -191,7 +299,7 @@ export type ViewRevision = Message<"patchbay.ViewRevision"> & {
  * Use `create(ViewRevisionSchema)` to create a new message.
  */
 export const ViewRevisionSchema: GenMessage<ViewRevision> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 3);
+  messageDesc(file_patchbay_sessions, 5);
 
 /**
  * A durable session-state delta event. One event per mutation kind. The payload
@@ -245,6 +353,12 @@ export type SessionStateEvent = Message<"patchbay.SessionStateEvent"> & {
      */
     value: SessionModelChanged;
     case: "modelChanged";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionReportApplied report_applied = 8;
+     */
+    value: SessionReportApplied;
+    case: "reportApplied";
   } | { case: undefined; value?: undefined };
 };
 
@@ -253,7 +367,7 @@ export type SessionStateEvent = Message<"patchbay.SessionStateEvent"> & {
  * Use `create(SessionStateEventSchema)` to create a new message.
  */
 export const SessionStateEventSchema: GenMessage<SessionStateEvent> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 4);
+  messageDesc(file_patchbay_sessions, 6);
 
 /**
  * @generated from message patchbay.SessionRegistered
@@ -312,6 +426,13 @@ export type SessionRegistered = Message<"patchbay.SessionRegistered"> & {
    * @generated from field: string model = 10;
    */
   model: string;
+
+  /**
+   * Absent only in legacy durable events written before source ordering.
+   *
+   * @generated from field: patchbay.SessionReportSourceCursor source_cursor = 11;
+   */
+  sourceCursor?: SessionReportSourceCursor | undefined;
 };
 
 /**
@@ -319,7 +440,7 @@ export type SessionRegistered = Message<"patchbay.SessionRegistered"> & {
  * Use `create(SessionRegisteredSchema)` to create a new message.
  */
 export const SessionRegisteredSchema: GenMessage<SessionRegistered> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 5);
+  messageDesc(file_patchbay_sessions, 7);
 
 /**
  * @generated from message patchbay.SessionGenerationBumped
@@ -386,6 +507,13 @@ export type SessionGenerationBumped = Message<"patchbay.SessionGenerationBumped"
    * @generated from field: patchbay.TypedCorrelation spawn_origin = 11;
    */
   spawnOrigin?: TypedCorrelation | undefined;
+
+  /**
+   * Absent only in legacy durable events written before source ordering.
+   *
+   * @generated from field: patchbay.SessionReportSourceCursor source_cursor = 12;
+   */
+  sourceCursor?: SessionReportSourceCursor | undefined;
 };
 
 /**
@@ -393,7 +521,34 @@ export type SessionGenerationBumped = Message<"patchbay.SessionGenerationBumped"
  * Use `create(SessionGenerationBumpedSchema)` to create a new message.
  */
 export const SessionGenerationBumpedSchema: GenMessage<SessionGenerationBumped> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 6);
+  messageDesc(file_patchbay_sessions, 8);
+
+/**
+ * Atomic equal-runtime-generation application of one complete adapter report.
+ * The prior cursor makes replay validate the exact projected pre-state.
+ *
+ * @generated from message patchbay.SessionReportApplied
+ */
+export type SessionReportApplied = Message<"patchbay.SessionReportApplied"> & {
+  /**
+   * @generated from field: patchbay.SessionReport report = 1;
+   */
+  report?: SessionReport | undefined;
+
+  /**
+   * Absent only when the projected generation has no legacy source watermark.
+   *
+   * @generated from field: patchbay.SessionReportSourceCursor previous_source_cursor = 2;
+   */
+  previousSourceCursor?: SessionReportSourceCursor | undefined;
+};
+
+/**
+ * Describes the message patchbay.SessionReportApplied.
+ * Use `create(SessionReportAppliedSchema)` to create a new message.
+ */
+export const SessionReportAppliedSchema: GenMessage<SessionReportApplied> = /*@__PURE__*/
+  messageDesc(file_patchbay_sessions, 9);
 
 /**
  * @generated from message patchbay.SessionConnectivityChanged
@@ -435,7 +590,7 @@ export type SessionConnectivityChanged = Message<"patchbay.SessionConnectivityCh
  * Use `create(SessionConnectivityChangedSchema)` to create a new message.
  */
 export const SessionConnectivityChangedSchema: GenMessage<SessionConnectivityChanged> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 7);
+  messageDesc(file_patchbay_sessions, 10);
 
 /**
  * @generated from message patchbay.SessionActivityChanged
@@ -477,7 +632,7 @@ export type SessionActivityChanged = Message<"patchbay.SessionActivityChanged"> 
  * Use `create(SessionActivityChangedSchema)` to create a new message.
  */
 export const SessionActivityChangedSchema: GenMessage<SessionActivityChanged> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 8);
+  messageDesc(file_patchbay_sessions, 11);
 
 /**
  * @generated from message patchbay.SessionRelabeled
@@ -524,7 +679,7 @@ export type SessionRelabeled = Message<"patchbay.SessionRelabeled"> & {
  * Use `create(SessionRelabeledSchema)` to create a new message.
  */
 export const SessionRelabeledSchema: GenMessage<SessionRelabeled> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 9);
+  messageDesc(file_patchbay_sessions, 12);
 
 /**
  * @generated from message patchbay.SessionModelChanged
@@ -566,7 +721,7 @@ export type SessionModelChanged = Message<"patchbay.SessionModelChanged"> & {
  * Use `create(SessionModelChangedSchema)` to create a new message.
  */
 export const SessionModelChangedSchema: GenMessage<SessionModelChanged> = /*@__PURE__*/
-  messageDesc(file_patchbay_sessions, 10);
+  messageDesc(file_patchbay_sessions, 13);
 
 /**
  * @generated from enum patchbay.SessionConnectivityState
