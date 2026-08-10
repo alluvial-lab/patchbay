@@ -1,8 +1,15 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use patchbay_contracts::patchbay::{
     session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterId, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
-    DescendantGrantProvenance, DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation,
+    DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
+    GrantId,
+    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind,
+    Operation,
     OperationKind, OperationState, Revocation, RuntimeSessionId, SessionRegistered,
     SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -12,7 +19,10 @@ use patchbay_core::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log,
         AuthorityError, AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
-    storage::{AuditPageSpec, AuditRecordDraft, RecordedEvent, RusqliteStorage, Storage},
+    storage::{
+        AuditPageSpec, AuditRecordDraft, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
+        RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+    },
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -235,6 +245,94 @@ async fn events(storage: &RusqliteStorage) -> Vec<RecordedEvent> {
         .expect("the in-memory authority log remains readable")
 }
 
+#[derive(Clone)]
+struct LoseFirstGrantAppendAcknowledgement {
+    inner: RusqliteStorage,
+    lose_next_append: Arc<AtomicBool>,
+}
+
+impl LoseFirstGrantAppendAcknowledgement {
+    fn new(inner: RusqliteStorage) -> Self {
+        Self {
+            inner,
+            lose_next_append: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
+impl Storage for LoseFirstGrantAppendAcknowledgement {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        let outcome = self
+            .inner
+            .append_grant_audited(authority_domain_id, identity, source, audit)
+            .await?;
+        if matches!(outcome, GrantAppendOutcome::Appended(_))
+            && self.lose_next_append.swap(false, Ordering::SeqCst)
+        {
+            return Err(StorageError::WriteFailed {
+                message: "synthetic lost grant append acknowledgement".to_owned(),
+                retryable: true,
+            });
+        }
+        Ok(outcome)
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+}
+
 #[tokio::test]
 async fn ingest_grant_writes_event_and_warms_registry() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
@@ -330,6 +428,217 @@ async fn normal_grant_retry_returns_original_id_without_source_or_audit_duplicat
         .unwrap()
         .records
         .is_empty());
+}
+
+#[tokio::test]
+async fn committed_but_unacknowledged_normal_and_descendant_grants_retry_to_original_ids() {
+    let normal_inner = RusqliteStorage::open_in_memory().unwrap();
+    let normal_storage = LoseFirstGrantAppendAcknowledgement::new(normal_inner.clone());
+    let normal = grant("ambiguous-normal");
+    let mut normal_projection = AuthorityRegistry::new();
+    assert!(matches!(
+        ingest_grant(
+            &normal_storage,
+            &mut normal_projection,
+            &domain(),
+            normal.clone(),
+        )
+        .await,
+        Err(AuthorityError::Storage(StorageError::WriteFailed {
+            retryable: true,
+            ..
+        }))
+    ));
+    let normal_prefix = events(&normal_inner).await;
+    let normal_source_id = normal_prefix
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::Grant as i32)
+        .unwrap()
+        .event_id
+        .clone();
+    let mut normal_fresh = AuthorityRegistry::new();
+    assert_eq!(
+        ingest_grant(
+            &normal_storage,
+            &mut normal_fresh,
+            &domain(),
+            normal,
+        )
+        .await
+        .unwrap(),
+        normal_source_id
+    );
+    assert_eq!(events(&normal_inner).await, normal_prefix);
+
+    let descendant_inner = RusqliteStorage::open_in_memory().unwrap();
+    let mut descendant_projection = AuthorityRegistry::new();
+    ingest_grant(
+        &descendant_inner,
+        &mut descendant_projection,
+        &domain(),
+        grant("parent"),
+    )
+    .await
+    .unwrap();
+    let (descendant_id, descendant) =
+        valid_descendant_candidate(&descendant_inner, "parent")
+            .await
+            .unwrap();
+    let descendant_storage =
+        LoseFirstGrantAppendAcknowledgement::new(descendant_inner.clone());
+    assert!(matches!(
+        ingest_descendant_grant(
+            &descendant_storage,
+            &mut descendant_projection,
+            &domain(),
+            descendant.clone(),
+        )
+        .await,
+        Err(AuthorityError::Storage(StorageError::WriteFailed {
+            retryable: true,
+            ..
+        }))
+    ));
+    let descendant_prefix = events(&descendant_inner).await;
+    let descendant_source_id = descendant_prefix
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::DescendantGrant as i32)
+        .unwrap()
+        .event_id
+        .clone();
+    let mut descendant_fresh = AuthorityRegistry::new();
+    assert_eq!(
+        ingest_descendant_grant(
+            &descendant_storage,
+            &mut descendant_fresh,
+            &domain(),
+            descendant,
+        )
+        .await
+        .unwrap(),
+        descendant_source_id
+    );
+    assert_eq!(events(&descendant_inner).await, descendant_prefix);
+
+    for (storage, grant_id, reason) in [
+        (
+            &normal_inner,
+            grant_id("ambiguous-normal"),
+            "grant_created",
+        ),
+        (
+            &descendant_inner,
+            descendant_id,
+            "descendant_grant_created",
+        ),
+    ] {
+        let audits = storage
+            .query_audit(
+                &domain(),
+                AuditPageSpec {
+                    kinds: vec![AuditEventKind::GrantCreated],
+                    actor_id: None,
+                    endpoint_id: None,
+                    command_id: None,
+                    grant_id: Some(grant_id),
+                    target: None,
+                    failure_codes: vec![],
+                    reason_codes: vec![reason.to_owned()],
+                    occurred_from: None,
+                    occurred_before: None,
+                    before_lsn: None,
+                    limit: 10,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(audits.records.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn independent_projections_race_through_storage_identity_not_a_process_gate() {
+    let exact_storage = RusqliteStorage::open_in_memory().unwrap();
+    let exact_barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut exact_tasks = Vec::new();
+    for _ in 0..2 {
+        let storage = exact_storage.clone();
+        let barrier = exact_barrier.clone();
+        exact_tasks.push(tokio::spawn(async move {
+            let mut projection = AuthorityRegistry::new();
+            barrier.wait().await;
+            ingest_grant(
+                &storage,
+                &mut projection,
+                &domain(),
+                grant("raced-exact"),
+            )
+            .await
+        }));
+    }
+    exact_barrier.wait().await;
+    let exact_ids = [
+        exact_tasks.remove(0).await.unwrap().unwrap(),
+        exact_tasks.remove(0).await.unwrap().unwrap(),
+    ];
+    assert_eq!(exact_ids[0], exact_ids[1]);
+    assert_eq!(events(&exact_storage).await.len(), 2);
+
+    let conflict_storage = RusqliteStorage::open_in_memory().unwrap();
+    let conflict_barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut conflict_tasks = Vec::new();
+    for kind in [OperationKind::Spawn, OperationKind::Query] {
+        let storage = conflict_storage.clone();
+        let barrier = conflict_barrier.clone();
+        conflict_tasks.push(tokio::spawn(async move {
+            let mut projection = AuthorityRegistry::new();
+            let mut candidate = grant("raced-conflict");
+            candidate.allowed_operation_kinds = vec![kind as i32];
+            barrier.wait().await;
+            ingest_grant(&storage, &mut projection, &domain(), candidate).await
+        }));
+    }
+    conflict_barrier.wait().await;
+    let conflict_results = [
+        conflict_tasks.remove(0).await.unwrap(),
+        conflict_tasks.remove(0).await.unwrap(),
+    ];
+    assert_eq!(
+        conflict_results.iter().filter(|result| result.is_ok()).count(),
+        1
+    );
+    assert_eq!(
+        conflict_results
+            .iter()
+            .filter(|result| matches!(result, Err(AuthorityError::CorruptLog(_))))
+            .count(),
+        1
+    );
+    assert_eq!(events(&conflict_storage).await.len(), 2);
+    rebuild_from_log(&conflict_storage, &domain())
+        .await
+        .expect("the transactional winner leaves replayable authority history");
+    let audits = conflict_storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantCreated],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(grant_id("raced-conflict")),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec![],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.records.len(), 1);
 }
 
 #[tokio::test]
@@ -639,7 +948,7 @@ async fn revoking_nonexistent_grant_fails_before_write() {
 }
 
 #[tokio::test]
-async fn committed_event_redelivery_is_consistent_after_warm() {
+async fn committed_event_redelivery_is_projection_idempotence_only() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = AuthorityRegistry::new();
     ingest_grant(&storage, &mut registry, &domain(), grant("parent"))

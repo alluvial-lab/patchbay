@@ -76,14 +76,18 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::storage::{recover, Storage, StoredSnapshot, TargetKey};
 use proptest::prelude::*;
 
-/// Any concrete (non-`Unspecified`) event kind.
+/// Any concrete generic event kind whose payload is opaque to storage.
+///
+/// Grant and descendant-grant sources are intentionally excluded: schema v5
+/// validates those identity-bearing envelopes on every open, so arbitrary
+/// bytes under either discriminator are corrupt fixtures rather than generic
+/// storage inputs. Their crash/retry behavior is covered through the dedicated
+/// atomic grant-identity contract tests.
 fn any_event_kind() -> impl Strategy<Value = StoredEventKind> {
     prop_oneof![
         Just(StoredEventKind::Operation),
         Just(StoredEventKind::Observation),
         Just(StoredEventKind::Elicitation),
-        Just(StoredEventKind::Grant),
-        Just(StoredEventKind::DescendantGrant),
         Just(StoredEventKind::Revocation),
         Just(StoredEventKind::SessionState),
     ]

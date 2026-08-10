@@ -1,7 +1,7 @@
 ---
 id: authority-writer-correctness-retry-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [security, foundation]
 parent: authority-writer-correctness
 depends_on: [authority-writer-correctness-ingest-contract]
@@ -59,3 +59,13 @@ npm --prefix contracts/ts run check:vectors
 - Effective review weight inherited from parent: thorough.
 - Findings are proposals; the receiver adjudicates materiality from evidence.
 - Do not edit docs, backlog, other items, models, vectors, or generated contracts for this checkpoint.
+
+## Implementation notes
+- Added a real-backend acknowledgement-loss wrapper: the atomic grant transaction commits once, the caller receives a synthetic retryable write failure, and a fresh normal or descendant projection retries to the exact original source `EventId` with an unchanged prefix and one creation audit.
+- Added barrier-controlled exact and changed-content races through two independent `AuthorityRegistry` instances sharing one SQLite store. Exact attempts converge on one id; changed candidates leave one replayable winner and one pre-append `CorruptLog`. No `CoreDecisionGate` is present in the test or writer proof.
+- Renamed the prior warm-event redelivery test to state its honest projection-only scope. Audit queries now assert one linked `GrantCreated` across success, exact retry, conflict, and acknowledgement-loss repair.
+- Extended `SpawnCompletionDriver` evidence with a descendant transaction that commits and loses its response. The interrupted prefix contains one completion provenance audit and one descendant source but no terminal transition; fresh bootstrap appends only the missing terminal transition and retains one descendant-creation audit.
+- Repaired two stale generic storage property fixtures: arbitrary bytes are no longer generated under grant discriminators because v5 correctly validates those identity-bearing envelopes on reopen. Dedicated grant storage tests own that contract. The checkpoint restart seed now uses `ingest_grant` so its v5 identity index is truthful.
+- Verification: focused authority/storage/audit/server tests passed; `cargo test --workspace` passed; `cargo clippy --workspace --all-targets -- -D warnings` passed; `npm --prefix contracts/ts run check:models` passed; after installing declared local package dependencies and building the contract/operator packages, `npm --prefix contracts/ts run check:vectors` passed with 21 implementation checks and 37 killed mutation witnesses; `git diff --check` passed.
+- Formatting discrepancy: `cargo fmt --all -- --check` remains red from the existing repository baseline beginning in untouched `core/src/acceptance/elicitation.rs`; unrelated whole-file formatting was not applied.
+- Design discrepancies/blockers: none material. The generated model/vector metadata was not changed or regenerated. Node conformance initially lacked local `node_modules`/built file-dependency artifacts; dependency installation plus ordinary package builds resolved the environment without tracked changes.

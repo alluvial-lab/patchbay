@@ -27,7 +27,9 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
-    authority::{events as authority_events, hash_principal_credential},
+    authority::{
+        events as authority_events, hash_principal_credential, ingest_grant, AuthorityRegistry,
+    },
     session::events as session_events,
     time::{Clock, TestClock},
     storage::{
@@ -2297,6 +2299,7 @@ where
 
 async fn seed_authority_and_session(storage: &RusqliteStorage) {
     let target = target_scope();
+    let mut authority = AuthorityRegistry::new();
     let grant = Grant {
         grant_id: Some(GrantId {
             value: "operator-grant".to_owned(),
@@ -2314,8 +2317,7 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
-    storage
-        .append(&domain(), authority_events::grant(domain(), grant))
+    ingest_grant(storage, &mut authority, &domain(), grant)
         .await
         .expect("grant fixture must append");
     let query_grant = Grant {
@@ -2331,8 +2333,7 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
-    storage
-        .append(&domain(), authority_events::grant(domain(), query_grant))
+    ingest_grant(storage, &mut authority, &domain(), query_grant)
         .await
         .expect("query grant fixture must append");
     let lockdown_grant = Grant {
@@ -2345,8 +2346,7 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
-    storage
-        .append(&domain(), authority_events::grant(domain(), lockdown_grant))
+    ingest_grant(storage, &mut authority, &domain(), lockdown_grant)
         .await
         .expect("lockdown grant fixture must append");
 

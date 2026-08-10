@@ -24,11 +24,13 @@ use patchbay_core::{
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{
         grant_authorizes, ingest_descendant_grant, ingest_grant, ingest_revocation,
-        rebuild_from_log, AuthorityRegistry, IssuerRef, DESCENDANT_GRANT_ALLOWED_KINDS,
+        rebuild_from_log, AuthorityError, AuthorityRegistry, IssuerRef,
+        DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::{
-        AuditRecordDraft, AuditedStorage, CoreGenerationStore, DedupOutcome, RecordedEvent,
-        RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+        AuditPageSpec, AuditRecordDraft, AuditedStorage, CoreGenerationStore, DedupOutcome,
+        GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage, Storage, StorageError,
+        StoredSnapshot, TargetKey,
     },
     time::TestClock,
 };
@@ -656,6 +658,177 @@ fn completion_counts(events: &[RecordedEvent]) -> (usize, usize, usize) {
     (audits, grants, transitions)
 }
 
+#[derive(Clone)]
+struct LoseFirstDescendantAppendAcknowledgement {
+    inner: AuditedStorage<RusqliteStorage>,
+    lose_next_append: Arc<AtomicBool>,
+}
+
+impl LoseFirstDescendantAppendAcknowledgement {
+    fn new(inner: AuditedStorage<RusqliteStorage>) -> Self {
+        Self {
+            inner,
+            lose_next_append: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
+impl Storage for LoseFirstDescendantAppendAcknowledgement {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        let is_descendant = source.kind == StoredEventKind::DescendantGrant as i32;
+        let outcome = self
+            .inner
+            .append_grant_audited(authority_domain_id, identity, source, audit)
+            .await?;
+        if is_descendant
+            && matches!(outcome, GrantAppendOutcome::Appended(_))
+            && self.lose_next_append.swap(false, Ordering::SeqCst)
+        {
+            return Err(StorageError::WriteFailed {
+                message: "synthetic lost descendant append acknowledgement".to_owned(),
+                retryable: true,
+            });
+        }
+        Ok(outcome)
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
+    }
+}
+
+#[tokio::test]
+async fn committed_descendant_with_lost_ack_repairs_without_duplicate_grant_or_creation_audit() {
+    let inner = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    seed_evidence(&inner).await;
+    let storage = LoseFirstDescendantAppendAcknowledgement::new(inner.clone());
+    let error = match SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage),
+        clock(),
+    )
+    .await
+    {
+        Ok(_) => panic!("lost descendant acknowledgement must interrupt the first driver"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        SpawnCompletionError::Authority(AuthorityError::Storage(
+            StorageError::WriteFailed {
+                retryable: true,
+                ..
+            }
+        ))
+    ));
+    let ambiguous_prefix = all_events(&inner).await;
+    assert_eq!(completion_counts(&ambiguous_prefix), (1, 1, 0));
+    let descendant_source_id = ambiguous_prefix
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::DescendantGrant as i32)
+        .unwrap()
+        .event_id
+        .clone();
+
+    let restarted = SpawnCompletionDriver::bootstrap(
+        inner.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(inner.clone()),
+        clock(),
+    )
+    .await
+    .unwrap();
+    drop(restarted);
+    assert_eq!(completion_counts(&all_events(&inner).await), (1, 1, 1));
+
+    let audits = inner
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantCreated],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(GrantId {
+                    value: "desc:authority-main:spawn-1".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["descendant_grant_created".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.records.len(), 1);
+    assert_eq!(audits.records[0].source_event_id, Some(descendant_source_id));
+}
+
 #[tokio::test]
 async fn crash_prefixes_repair_to_one_audit_grant_and_terminal_transition() {
     for prefix in 0..=3 {
@@ -777,6 +950,18 @@ impl Storage for BlockingTransitionStorage {
     ) -> Result<DedupOutcome, StorageError> {
         self.inner
             .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn append_grant_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        identity: &GrantIdentityKey,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<GrantAppendOutcome, StorageError> {
+        self.inner
+            .append_grant_audited(authority_domain_id, identity, source, audit)
             .await
     }
 
