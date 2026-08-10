@@ -209,6 +209,8 @@ Successful spawn completion records an explicit, auditable **descendant grant** 
 
 The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0.1.0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
 
+Spawn completion is exposed only after verified provenance is durable. Generic Observation ingestion records a successful spawn result without terminalizing the command. A single core owner correlates that evidence with the exact registered/replacement session target, writes a `CommandCompleted` audit with reason `spawn_completion` using the verified accepted actor/endpoint/device and authorizing grant, stores its exact event id on the descendant grant, and appends the completed transition last while holding the shared decision gate. Restart repair derives progress only from the durable log and finishes before listeners open; self-asserted Observation sender fields do not become descendant authority.
+
 Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0.1.0 behavior; future cascade is a query over grant provenance and needs no schema change.
 
 ### Elicitation responder authorization

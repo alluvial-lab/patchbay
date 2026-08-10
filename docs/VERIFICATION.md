@@ -123,6 +123,8 @@ Reserved future authority properties (not v0.1.0 obligations): actor-neutral/non
 
 Classification: all eight property ids above remain **stated-normative until promoted** with genuine, mutation-survivable formulas.
 
+`SpawnCreatesDescendantGrant` now has mutation-sensitive implementation evidence over the production fold and composition seam: successful spawn results defer generic terminalization; registration and generation-bump correlation converge; the driver repairs evidence-only, audit-only, audit+grant, and complete crash prefixes; exact audit linkage and verified accepted attribution survive replay; and a barrier-controlled shared-gate test prevents a public audit/grant-only completion view. Registration/bump real-adapter cases authorize through the generated descendant grant and preserve independent parent/child revocation. This evidence does not promote `authority.qnt`, does not promote the reserved `spawn-descendant-grant` vector, and is not described as checked-model or checked-normative assurance.
+
 ### Subscription authority obligations (stated-normative)
 
 Subscriptions remain grant-checked protocol obligations without `OperationState` lifecycle, but `specs/seed/subscription_authority.qnt` currently has no promoted properties. `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized`, and `SubscriptionGrantChecked` are **stated-normative** with no executable property formula. Their removed invariants compared audit/replay/actor/scope state written by the same establishment or replay actions rather than independent attempted evidence, so coordinated lies could pass.

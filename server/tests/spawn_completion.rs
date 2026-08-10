@@ -4,17 +4,22 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition,
-    DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode,
-    Generation, GrantId, GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind,
-    Operation, OperationKind, OperationState, RuntimeSessionId, SessionRegistered,
-    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    observation_request, session_state_event, typed_correlation, AcceptedOperation,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuditRecord,
+    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
+    DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind, ObservationRequest,
+    Operation, OperationKind, OperationState, Revocation, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityState, SessionRegistered, SessionStateEvent, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
-    authority::{ingest_descendant_grant, AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS},
+    authority::{
+        grant_authorizes, ingest_descendant_grant, ingest_grant, ingest_revocation,
+        rebuild_from_log, AuthorityRegistry, IssuerRef, DESCENDANT_GRANT_ALLOWED_KINDS,
+    },
     storage::{
         AuditRecordDraft, AuditedStorage, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
         StorageError, StoredSnapshot, TargetKey,
@@ -22,12 +27,18 @@ use patchbay_core::{
     time::TestClock,
 };
 use patchbay_core_server::{
+    adapter_service::{
+        AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
+    },
     decision_gate::CoreDecisionGate,
+    rpc::adapter_control_service_server::AdapterControlService,
     spawn_completion::{SpawnCompletionDriver, SpawnCompletionError},
 };
 use prost::Message;
 use prost_types::Timestamp;
 use tokio::sync::Semaphore;
+use tonic::{Request, Response};
 
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId {
@@ -70,7 +81,21 @@ fn fleet_scope() -> TargetScope {
         ..TargetScope::default()
     }
 }
+fn adapter_scope() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        ..TargetScope::default()
+    }
+}
+
 fn session_scope() -> TargetScope {
+    session_scope_for(7)
+}
+
+fn session_scope_for(generation: u64) -> TargetScope {
     TargetScope {
         kind: TargetScopeKind::RuntimeSession as i32,
         adapter_id: Some(AdapterId {
@@ -80,7 +105,7 @@ fn session_scope() -> TargetScope {
         runtime_session_id: Some(RuntimeSessionId {
             value: "spawned-session".to_owned(),
         }),
-        session_generation: Some(Generation { value: 7 }),
+        session_generation: Some(Generation { value: generation }),
         ..TargetScope::default()
     }
 }
@@ -241,6 +266,207 @@ where
     )
     .await
     .unwrap();
+}
+
+async fn seed_parent_grant<S: Storage>(storage: &S) {
+    let mut authority = AuthorityRegistry::new();
+    ingest_grant(
+        storage,
+        &mut authority,
+        &domain(),
+        Grant {
+            grant_id: Some(parent_grant_id()),
+            authority_domain_id: Some(domain()),
+            subject_actor_id: Some(actor()),
+            subject_endpoint_id: Some(endpoint()),
+            target_scope: Some(fleet_scope()),
+            allowed_operation_kinds: vec![OperationKind::Spawn as i32],
+            provenance: Some(GrantProvenance {
+                reason: "spawn authority fixture".to_owned(),
+                ..GrantProvenance::default()
+            }),
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
+        },
+    )
+    .await
+    .unwrap();
+}
+
+fn adapter_registration() -> AdapterRegistration {
+    AdapterRegistration {
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        endpoint_id: Some(EndpointId {
+            value: "pi-adapter-endpoint".to_owned(),
+        }),
+        authority_domain_id: Some(domain()),
+        adapter_generation: Some(Generation { value: 1 }),
+        capability: Some(AdapterCapability {
+            supported_operation_kinds: vec![OperationKind::Spawn as i32],
+            streaming_support: true,
+            session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+            session_replacement_support: true,
+            target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            ..AdapterCapability::default()
+        }),
+        ..AdapterRegistration::default()
+    }
+}
+
+fn authenticated<T>(message: T, attachment_token: &str) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert(ADAPTER_ID_HEADER, "pi".parse().unwrap());
+    request.metadata_mut().insert(
+        ADAPTER_EVIDENCE_HEADER,
+        "adapter-test-secret".parse().unwrap(),
+    );
+    request.metadata_mut().insert(
+        ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        attachment_token.parse().unwrap(),
+    );
+    request
+}
+
+fn attachment_token<T>(response: &Response<T>) -> String {
+    response
+        .metadata()
+        .get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn attach_adapter<S>(service: &AdapterControlServiceImpl<S>) -> String
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(adapter_registration()),
+            attachment_evidence: b"adapter-test-secret".to_vec(),
+        }))
+        .await
+        .unwrap();
+    attachment_token(&response)
+}
+
+async fn report_session<S>(
+    service: &AdapterControlServiceImpl<S>,
+    token: &str,
+    generation: u64,
+    spawn_origin: Option<TypedCorrelation>,
+) where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    patchbay_contracts::patchbay::SessionReport {
+                        adapter_id: Some(AdapterId {
+                            value: "pi".to_owned(),
+                        }),
+                        deployment_scope: "machine-a".to_owned(),
+                        runtime_session_id: Some(RuntimeSessionId {
+                            value: "spawned-session".to_owned(),
+                        }),
+                        session_generation: Some(Generation { value: generation }),
+                        connectivity: SessionConnectivityState::Live as i32,
+                        activity: SessionActivityState::Idle as i32,
+                        project: "patchbay".to_owned(),
+                        cwd: "/work/patchbay".to_owned(),
+                        name: "spawned".to_owned(),
+                        model: "provider/model".to_owned(),
+                        spawn_origin,
+                    },
+                )),
+            },
+            token,
+        ))
+        .await
+        .unwrap();
+}
+
+async fn seed_adapter_scoped_spawn<S: Storage>(storage: &S) {
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(Operation {
+                        command_id: Some(command_id()),
+                        authority_domain_id: Some(domain()),
+                        sender: Some(ActorEndpointRef {
+                            actor_id: Some(actor()),
+                            endpoint_id: Some(endpoint()),
+                            device_id: Some(device()),
+                            ..ActorEndpointRef::default()
+                        }),
+                        kind: OperationKind::Spawn as i32,
+                        target_scope: Some(adapter_scope()),
+                        idempotency_key: "spawn-1-key".to_owned(),
+                        ..Operation::default()
+                    }),
+                    authorizing_grant_id: Some(parent_grant_id()),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id()),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Delivered as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+async fn report_successful_spawn<S>(service: &AdapterControlServiceImpl<S>, token: &str)
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain()),
+                    sender: Some(ActorEndpointRef {
+                        actor_id: Some(ActorId {
+                            value: "spoofed-payload-actor".to_owned(),
+                        }),
+                        ..ActorEndpointRef::default()
+                    }),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![correlation()],
+                    target_scope: Some(adapter_scope()),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                })),
+            },
+            token,
+        ))
+        .await
+        .unwrap();
 }
 
 fn production_audit<S>(storage: S) -> Arc<dyn AuditSink>
@@ -435,6 +661,180 @@ impl Storage for BlockingTransitionStorage {
         audit: AuditRecordDraft,
     ) -> Result<EventId, StorageError> {
         self.inner.append_audit(authority_domain_id, audit).await
+    }
+}
+
+async fn run_live_adapter_case(
+    generation_bump: bool,
+) -> (AuditedStorage<RusqliteStorage>, AuthorityRegistry) {
+    let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    seed_parent_grant(&storage).await;
+    let gate = CoreDecisionGate::default();
+    let driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        gate.clone(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .unwrap();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new("adapter-test-secret").unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&service).await;
+    let driver_task = tokio::spawn(driver.run());
+
+    if generation_bump {
+        report_session(&service, &token, 6, None).await;
+    }
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(&storage).await;
+    }
+    report_successful_spawn(&service, &token).await;
+    report_session(&service, &token, 7, Some(correlation())).await;
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if completion_counts(&all_events(&storage).await) == (1, 1, 1) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("continuous driver completes committed spawn facts");
+    driver_task.abort();
+
+    let restarted = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .unwrap();
+    drop(restarted);
+    assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
+    let authority = rebuild_from_log(&storage, &domain()).await.unwrap();
+    (storage, authority)
+}
+
+#[tokio::test]
+async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_lever_revocation() {
+    for generation_bump in [false, true] {
+        let (storage, mut authority) = run_live_adapter_case(generation_bump).await;
+        let descendant_id = GrantId {
+            value: "desc:authority-main:spawn-1".to_owned(),
+        };
+        let descendant = authority
+            .get_grant(&descendant_id)
+            .expect("live completion projects descendant grant")
+            .clone();
+        assert_eq!(descendant.subject_actor_id, actor());
+        assert_eq!(descendant.subject_endpoint_id, Some(endpoint()));
+        let issuer_actor = actor();
+        let issuer_endpoint = endpoint();
+        let issuer_domain = domain();
+        let issuer = IssuerRef {
+            actor: &issuer_actor,
+            endpoint: Some(&issuer_endpoint),
+            authority_domain_id: &issuer_domain,
+        };
+        assert!(grant_authorizes(
+            &descendant,
+            &issuer,
+            OperationKind::Instruct,
+            &session_scope(),
+        ));
+
+        let events = all_events(&storage).await;
+        let completion_audit_id = events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::AuditRecord as i32)
+            .filter_map(|event| AuditRecord::decode(event.payload.payload.as_slice()).ok())
+            .find(|audit| audit.reason_code == "spawn_completion")
+            .and_then(|audit| audit.audit_event_id)
+            .unwrap();
+        let durable_grant = events
+            .iter()
+            .find(|event| event.payload.kind == StoredEventKind::DescendantGrant as i32)
+            .map(|event| DescendantGrant::decode(event.payload.payload.as_slice()).unwrap())
+            .unwrap();
+        assert_eq!(durable_grant.audit_id, Some(completion_audit_id));
+        assert_eq!(durable_grant.subject_actor_id, Some(actor()));
+
+        ingest_revocation(
+            &storage,
+            &mut authority,
+            &domain(),
+            Revocation {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(parent_grant_id()),
+                revoked_by: Some(ActorEndpointRef {
+                    actor_id: Some(actor()),
+                    endpoint_id: Some(endpoint()),
+                    device_id: Some(device()),
+                    ..ActorEndpointRef::default()
+                }),
+                revoked_at: Some(Timestamp {
+                    seconds: 2_000,
+                    nanos: 0,
+                }),
+                revocation_generation: Some(Generation { value: 1 }),
+                accepted_operation_policy: GrantRevocationPolicy::Continue as i32,
+                reason: "parent_revoked".to_owned(),
+                ..Revocation::default()
+            },
+        )
+        .await
+        .unwrap();
+        let descendant = authority.get_grant(&descendant_id).unwrap();
+        assert!(grant_authorizes(
+            descendant,
+            &issuer,
+            OperationKind::Instruct,
+            &session_scope(),
+        ));
+
+        ingest_revocation(
+            &storage,
+            &mut authority,
+            &domain(),
+            Revocation {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(descendant_id.clone()),
+                revoked_by: Some(ActorEndpointRef {
+                    actor_id: Some(actor()),
+                    endpoint_id: Some(endpoint()),
+                    device_id: Some(device()),
+                    ..ActorEndpointRef::default()
+                }),
+                revoked_at: Some(Timestamp {
+                    seconds: 2_001,
+                    nanos: 0,
+                }),
+                revocation_generation: Some(Generation { value: 1 }),
+                accepted_operation_policy: GrantRevocationPolicy::Continue as i32,
+                reason: "descendant_revoked".to_owned(),
+                ..Revocation::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!grant_authorizes(
+            authority.get_grant(&descendant_id).unwrap(),
+            &issuer,
+            OperationKind::Instruct,
+            &session_scope(),
+        ));
     }
 }
 

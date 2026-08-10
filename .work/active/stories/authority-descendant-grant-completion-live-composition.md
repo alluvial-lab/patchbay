@@ -1,7 +1,7 @@
 ---
 id: authority-descendant-grant-completion-live-composition
 kind: story
-stage: implementing
+stage: done
 tags: [security]
 parent: authority-descendant-grant-completion
 depends_on: [authority-descendant-grant-completion-crash-safe-writer]
@@ -41,3 +41,12 @@ npm --prefix contracts/ts run check:models
 npm --prefix contracts/ts run check:vectors
 cargo fmt --all -- --check
 ```
+
+## Implementation notes
+- Execution capability: Sol xhigh (explicit autopilot caller selection for security/provenance and fail-fast live composition); direct one-owner execution with no nested agents or peers.
+- Review weight: thorough (explicit caller selection; parent feature stops at review for fresh review).
+- Files changed: production `server/src/main.rs` composition; adapter `CompletionDeferred` mapping; live/crash integration tests in `server/tests/spawn_completion.rs`; rolling `ARCHITECTURE`, `PROTOCOL`, `SECURITY`, and `VERIFICATION` assertions.
+- Tests added/updated: continuous post-bootstrap consumption through the real authenticated adapter service, registration and generation-bump completion, exact audit-id linkage, verified actor/endpoint preservation against spoofed Observation sender, descendant authorization, independent parent/child revocation, restart no-op, fail-closed audit, and shared-gate intermediate-prefix exclusion.
+- Simplification: startup repair, continuous catch-up, and final exposure remain one `SpawnCompletionDriver`; main joins it as a load-bearing peer rather than adding RPC hooks or service-local reactors.
+- Discrepancies from design: the real adapter/server E2E uses an explicit adapter-scoped spawn target. Current pre-existing delivery routing selects adapters only from `TargetScope.adapter_id`, so a fleet-scoped spawn Operation has no deterministic adapter delivery target and its result would fail the adapter target check. Broadcasting would be unsafe and no selector is settled; this feature does not invent one. The completion owner itself remains fleet-compatible for already-committed facts, as covered by the core fold/crash tests.
+- Adjacent issues parked: none; the fleet-spawn delivery-selector gap is recorded here for fresh review because this endpoint forbids backlog/excluded-item edits.

@@ -229,6 +229,8 @@ Future architecture planes remain valid direction, but v0.1.0 implementation sho
 - Generated contracts or central schemas define wire shapes and derive Operation/session/failure variants from the canonical protocol registry.
 - Formal models define product semantics for delivery, authority, identity, snapshots, and leases using the canonical protocol variables.
 
+The production core also composes one fail-closed descendant-completion log consumer. It rebuilds and repairs the authority-domain prefix under the same `CoreDecisionGate` used by control and adapter decisions before service projections are constructed or listeners bind, then runs continuous catch-up as a peer of both serving futures. The consumer is storage-port based: it folds committed result/session/audit/grant/terminal facts, writes the spawn-completion audit and descendant grant before the final terminal transition, and process-fails on malformed history or loss of durable audit rather than serving without descendant authority.
+
 ## Reference adapter paths
 
 ### Pi-first session migration

@@ -1,7 +1,11 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::AuthorityDomainId;
-use patchbay_core::storage::{AuditedStorage, RusqliteStorage};
+use patchbay_core::{
+    acceptance::SystemClock,
+    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
+    storage::{AuditedStorage, RusqliteStorage},
+};
 use patchbay_core_server::{
     adapter_service::{AdapterControlServiceImpl, AdapterEvidenceVerifier},
     admin_service::{AdminServiceImpl, SetupSecret},
@@ -13,6 +17,7 @@ use patchbay_core_server::{
         admin_service_server::AdminServiceServer, control_service_server::ControlServiceServer,
     },
     service::{ControlServiceImpl, CoreSecretInterceptor},
+    spawn_completion::SpawnCompletionDriver,
 };
 use tonic::transport::Server;
 
@@ -54,6 +59,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage = AuditedStorage::new(RusqliteStorage::open(&database_path)?);
     let decision_gate = CoreDecisionGate::default();
+    let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
+        Arc::new(DurableAuditSink::new(
+            storage.clone(),
+            authority_domain_id.clone(),
+        )),
+        vec![Arc::new(StderrAuditSink)],
+    ));
+    // Repair every replayable completion prefix before any service projection
+    // is constructed or either listener can bind.
+    let completion = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        authority_domain_id.clone(),
+        decision_gate.clone(),
+        audit,
+        Arc::new(SystemClock),
+    )
+    .await?;
     let control_service = ControlServiceImpl::new_with_security_and_decision_gate(
         storage.clone(),
         authority_domain_id.clone(),
@@ -92,7 +114,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_admin = Server::builder()
         .add_service(AdminServiceServer::new(admin_service))
         .serve(admin_address);
-    tokio::try_join!(network, local_admin)?;
+    let completion = async move {
+        completion
+            .run()
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+    };
+    let network = async move {
+        network
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+    };
+    let local_admin = async move {
+        local_admin
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+    };
+    tokio::try_join!(completion, network, local_admin)?;
     Ok(())
 }
 
