@@ -290,3 +290,24 @@ Fallback if enriching the active context proves unexpectedly invasive: keep the 
 - Projection-drop mutation check: temporarily replacing projected responder carriage with `None` made `fold_lag_invariant_exposes_contract_only_after_storage_catch_up` fail; restoring production code made it pass.
 - `cargo fmt --all -- --check` — repository baseline remains non-green because of pre-existing repo-wide rustfmt drift beginning in untouched files such as `core/src/acceptance/elicitation.rs` and `core/src/acceptance/index.rs`; no unrelated formatting was applied. Changed code compiles cleanly and passes Clippy with warnings denied.
 - Acceptance criteria walk-through: exact non-empty verified actor equality is required for both response kinds; mismatched/missing/empty responder evidence returns generic pre-acceptance `authorization_denied` with zero grant/target/append work; matching actors still require and traverse the ordinary grant/target/dedup path; unknown Elicitations remain `validation_failed`; responder denial precedes known-slot payload diagnostics; only the expected actor reaches exact-terminal dedup; and the production projection preserves present and absent responder evidence across live catch-up and restart.
+
+## Review (2026-08-10) — thorough pass 1
+
+**Verdict**: Request changes — receiver-accepted blocker fixed; feature remains at `stage: review` for the required thorough convergence pass.
+
+**Blockers**:
+- **Fixed — terminal retry compared untrusted sender with normalized winner**: `validate_response_payload` compared the caller-supplied `Operation.sender` byte-for-byte with the production-normalized winning response before storage deduplication. An exact retry of an accepted response whose original sender claim was forged therefore failed as already terminal even though the verified actor was the expected responder. The pre-dedup terminal comparison now clears only `sender` on cloned Operations; all other fields remain under exact equality, and the original logical Operation bytes still reach storage unchanged for dedup/conflict protection.
+
+**Important**: none.
+
+**Nits**: none.
+
+**Rejected**: none.
+
+**Notes**:
+- Effective review weight: `thorough`, source: explicit operator selection. This is the receiver fix for pass 1, not closure; the corrected snapshot remains in review for the next independent pass.
+- Regression first failed against the uncorrected code: the production-shaped `ApprovalResponse` case returned `Rejected` instead of reaching deduplication.
+- Production-shaped regression now covers both committed response kinds. It submits an original Operation with a forged sender, decodes the durably recorded normalized winning response, proves an exact original retry from the expected verified actor deduplicates with one Operation event, and proves a different verified actor is denied before grant/target/dedup with no second Operation.
+- Focused verification: `cargo test -p patchbay-core --lib elicitation_response` (7 passed), `cargo test -p patchbay-core --test acceptance_pipeline` (23 passed), and `cargo test -p patchbay-core --test authority_proptest` (14 passed).
+- Integrated verification: `cargo test --workspace` passed; `cargo clippy --workspace --all-targets -- -D warnings` passed; `node contracts/scripts/check-vectors.mjs` passed (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses killed); `git diff --check` passed.
+- Repository-wide `cargo fmt --all -- --check` retains the pre-existing baseline drift already recorded above, beginning in untouched acceptance files; no unrelated formatting was bundled.

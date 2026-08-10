@@ -1186,80 +1186,127 @@ async fn retry_returns_existing_state_not_hardcoded_accepted() {
 }
 
 #[tokio::test]
-async fn terminal_response_retry_returns_existing_command_record() {
-    let storage = RusqliteStorage::open_in_memory().unwrap();
-    let grant = TestGrantCheck::new(true);
-    let resolver = TestTargetResolver::new(true);
-    let submitted = response_operation();
+async fn terminal_response_retry_ignores_forged_sender_against_normalized_winner() {
+    for kind in [
+        OperationKind::ApprovalResponse,
+        OperationKind::ElicitationResponse,
+    ] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let grant = TestGrantCheck::new(true);
+        let resolver = TestTargetResolver::new(true);
+        let (mut submitted, active) = response_fixture(kind);
+        submitted.sender = Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "forged-actor".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "forged-endpoint".to_owned(),
+            }),
+            device_id: Some(DeviceId {
+                value: "forged-device".to_owned(),
+            }),
+            endpoint_generation: Some(Generation { value: 999 }),
+        });
+        let test_issuer = issuer();
 
-    let first = submit(
-        &storage,
-        &grant,
-        &resolver,
-        &AlwaysAccepted,
-        &TerminalRetryLookup {
-            active: active_question(),
-        },
-        &issuer(),
-        submitted.clone(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(outcome(&first), SubmissionOutcome::Accepted);
-
-    let retry = submit(
-        &storage,
-        &grant,
-        &resolver,
-        &AlwaysAccepted,
-        &TerminalRetryLookup {
-            active: ActiveElicitation {
-                is_terminal: true,
-                winning_response: Some(submitted.clone()),
-                ..active_question()
+        let first = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &TerminalRetryLookup {
+                active: active.clone(),
             },
-        },
-        &issuer(),
-        submitted.clone(),
-    )
-    .await
-    .unwrap();
+            &test_issuer,
+            submitted.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome(&first), SubmissionOutcome::Accepted, "{kind:?}");
 
-    assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
-    assert!(retry.deduplicated);
-    assert_eq!(state(&retry), OperationState::Accepted);
-    assert_eq!(durable_events(&storage).await.len(), 1);
+        let events = durable_events(&storage).await;
+        assert_eq!(events.len(), 1, "{kind:?}");
+        let winning_response = AcceptedOperation::decode(events[0].payload.payload.as_slice())
+            .unwrap()
+            .operation
+            .unwrap();
+        assert_eq!(
+            winning_response.sender,
+            Some(verified_sender(&test_issuer)),
+            "the production winner must carry normalized sender identity for {kind:?}"
+        );
+        assert_ne!(winning_response.sender, submitted.sender, "{kind:?}");
 
-    let mut wrong_issuer = issuer();
-    wrong_issuer.actor.value = "different-operator".to_owned();
-    let wrong_actor_retry = submit(
-        &storage,
-        &grant,
-        &resolver,
-        &AlwaysAccepted,
-        &TerminalRetryLookup {
-            active: ActiveElicitation {
-                is_terminal: true,
-                winning_response: Some(submitted.clone()),
-                ..active_question()
+        let retry = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &TerminalRetryLookup {
+                active: ActiveElicitation {
+                    is_terminal: true,
+                    winning_response: Some(winning_response.clone()),
+                    ..active.clone()
+                },
             },
-        },
-        &wrong_issuer,
-        submitted,
-    )
-    .await
-    .unwrap();
+            &test_issuer,
+            submitted.clone(),
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(outcome(&wrong_actor_retry), SubmissionOutcome::Rejected);
-    assert_eq!(
-        failure(&wrong_actor_retry),
-        FailureCode::AuthorizationDenied
-    );
-    assert_eq!(wrong_actor_retry.reason_code, "authorization_denied");
-    assert!(!wrong_actor_retry.deduplicated);
-    assert_eq!(grant.calls.load(Ordering::Relaxed), 2);
-    assert_eq!(resolver.calls.load(Ordering::Relaxed), 2);
-    assert_eq!(durable_events(&storage).await.len(), 1);
+        assert_eq!(outcome(&retry), SubmissionOutcome::Accepted, "{kind:?}");
+        assert!(retry.deduplicated, "{kind:?}");
+        assert_eq!(state(&retry), OperationState::Accepted, "{kind:?}");
+        assert_eq!(durable_events(&storage).await.len(), 1, "{kind:?}");
+
+        let mut wrong_issuer = issuer();
+        wrong_issuer.actor.value = "different-operator".to_owned();
+        let wrong_actor_retry = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &TerminalRetryLookup {
+                active: ActiveElicitation {
+                    is_terminal: true,
+                    winning_response: Some(winning_response),
+                    ..active
+                },
+            },
+            &wrong_issuer,
+            submitted,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome(&wrong_actor_retry),
+            SubmissionOutcome::Rejected,
+            "{kind:?}"
+        );
+        assert_eq!(
+            failure(&wrong_actor_retry),
+            FailureCode::AuthorizationDenied,
+            "{kind:?}"
+        );
+        assert_eq!(
+            wrong_actor_retry.reason_code, "authorization_denied",
+            "{kind:?}"
+        );
+        assert!(!wrong_actor_retry.deduplicated, "{kind:?}");
+        assert_eq!(
+            grant.calls.load(Ordering::Relaxed),
+            2,
+            "wrong actor must be denied before grant evaluation for {kind:?}"
+        );
+        assert_eq!(
+            resolver.calls.load(Ordering::Relaxed),
+            2,
+            "wrong actor must be denied before target/dedup work for {kind:?}"
+        );
+        assert_eq!(durable_events(&storage).await.len(), 1, "{kind:?}");
+    }
 }
 
 #[tokio::test]

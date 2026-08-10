@@ -60,7 +60,12 @@ pub fn validate_response_payload(
         format!("no active elicitation for {elicitation_id:?} (unknown or wrong domain)")
     })?;
 
-    if active.is_terminal && active.winning_response.as_ref() != Some(operation) {
+    if active.is_terminal
+        && !active
+            .winning_response
+            .as_ref()
+            .is_some_and(|winning| terminal_retry_equivalent(operation, winning))
+    {
         return Err(format!(
             "elicitation {elicitation_id:?} is already terminal"
         ));
@@ -153,6 +158,20 @@ pub fn validate_response_payload(
     Ok(())
 }
 
+/// Compare a terminal retry with the production-normalized winning response.
+///
+/// Sender is derived from verified ingress identity before durable append, so
+/// the stored winner must not be compared with the caller's untrusted sender
+/// claim at this pre-dedup gate. Every other Operation field remains part of
+/// equality; the storage boundary separately checks the original logical bytes.
+fn terminal_retry_equivalent(candidate: &Operation, winning: &Operation) -> bool {
+    let mut candidate = candidate.clone();
+    let mut winning = winning.clone();
+    candidate.sender = None;
+    winning.sender = None;
+    candidate == winning
+}
+
 fn decode_approval_payload(operation: &Operation) -> Result<ApprovalResponsePayload, String> {
     let envelope = operation
         .payload
@@ -187,9 +206,9 @@ fn decode_response_payload(operation: &Operation) -> Result<ElicitationResponseP
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        response_contract, typed_correlation, ActorId, AuthorityDomainId, DeviceId, ElicitationId,
-        EndpointId, Generation, InvalidResponsePolicy, PayloadContentType, PayloadEnvelope,
-        QuestionContract, ResponseContract, ResponseOption, TypedCorrelation,
+        response_contract, typed_correlation, ActorEndpointRef, ActorId, AuthorityDomainId,
+        DeviceId, ElicitationId, EndpointId, Generation, InvalidResponsePolicy, PayloadContentType,
+        PayloadEnvelope, QuestionContract, ResponseContract, ResponseOption, TypedCorrelation,
     };
 
     fn correlation() -> TypedCorrelation {
@@ -620,21 +639,40 @@ mod tests {
     }
 
     #[test]
-    fn exact_terminal_retry_passes_validation_for_storage_deduplication() {
-        let operation = operation(
+    fn terminal_retry_equality_ignores_only_sender_before_storage_deduplication() {
+        let mut operation = operation(
             OperationKind::ElicitationResponse,
             ElicitationResponsePayload {
                 selected_option_id: "yes".to_owned(),
                 ..ElicitationResponsePayload::default()
             },
         );
+        operation.sender = Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "forged-actor".to_owned(),
+            }),
+            ..ActorEndpointRef::default()
+        });
+        let mut winning_response = operation.clone();
+        winning_response.sender = Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "verified-endpoint".to_owned(),
+            }),
+            ..ActorEndpointRef::default()
+        });
         let active = ActiveElicitation {
             is_terminal: true,
-            winning_response: Some(operation.clone()),
+            winning_response: Some(winning_response),
             ..active_question(false)
         };
 
         assert!(validate_response_payload(&operation, Some(&active)).is_ok());
+
+        operation.idempotency_key = "different-key".to_owned();
+        assert!(validate_response_payload(&operation, Some(&active)).is_err());
     }
 
     #[test]
