@@ -210,7 +210,9 @@ impl OperatorSessionRegistry {
             )
         })?;
         if kind == StoredEventKind::Unspecified {
-            return Err("corrupt replay log: operator-session event kind is unspecified".to_owned());
+            return Err(
+                "corrupt replay log: operator-session event kind is unspecified".to_owned(),
+            );
         }
         let (actor, generation) = if kind == StoredEventKind::OperatorSessionRevocation {
             let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())

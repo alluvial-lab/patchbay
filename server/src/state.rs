@@ -113,12 +113,9 @@ impl ProjectionState {
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
         let mut last_applied_lsn = 0;
         for event in &events {
-            let validated = validate_next_replay_event(
-                authority_domain_id,
-                last_applied_lsn,
-                event,
-            )
-            .map_err(|error| error.to_string())?;
+            let validated =
+                validate_next_replay_event(authority_domain_id, last_applied_lsn, event)
+                    .map_err(|error| error.to_string())?;
             authority
                 .observe(event)
                 .map_err(|error| error.to_string())?;
@@ -214,12 +211,8 @@ impl ProjectionState {
         let mut projection = DiagnosticsProjection::new();
         let mut previous_lsn = 0;
         for event in events {
-            let validated = validate_next_replay_event(
-                authority_domain_id,
-                previous_lsn,
-                &event,
-            )
-            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             projection
                 .observe(&event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
@@ -1409,10 +1402,7 @@ mod tests {
         }
     }
 
-    fn harmless_observation(
-        authority_domain_id: &AuthorityDomainId,
-        lsn: u64,
-    ) -> RecordedEvent {
+    fn harmless_observation(authority_domain_id: &AuthorityDomainId, lsn: u64) -> RecordedEvent {
         replay_event(
             authority_domain_id,
             lsn,
@@ -1421,10 +1411,7 @@ mod tests {
         )
     }
 
-    fn valid_elicitation(
-        authority_domain_id: &AuthorityDomainId,
-        lsn: u64,
-    ) -> RecordedEvent {
+    fn valid_elicitation(authority_domain_id: &AuthorityDomainId, lsn: u64) -> RecordedEvent {
         replay_event(
             authority_domain_id,
             lsn,
@@ -1455,13 +1442,11 @@ mod tests {
                 Vec::new(),
             )],
         ] {
-            let error = ProjectionState::rebuild(
-                &ScriptedReplayStorage::new(events),
-                &authority_domain_id,
-            )
-            .await
-            .err()
-            .expect("corrupt aggregate replay must fail before construction");
+            let error =
+                ProjectionState::rebuild(&ScriptedReplayStorage::new(events), &authority_domain_id)
+                    .await
+                    .err()
+                    .expect("corrupt aggregate replay must fail before construction");
             assert!(error.contains("corrupt replay"));
         }
     }
@@ -1507,7 +1492,10 @@ mod tests {
         storage
             .replace(vec![first, valid_elicitation(&authority_domain_id, 2)])
             .await;
-        state.catch_up(&storage, &authority_domain_id).await.unwrap();
+        state
+            .catch_up(&storage, &authority_domain_id)
+            .await
+            .unwrap();
         assert_eq!(state.current_lsn().await, 2);
     }
 

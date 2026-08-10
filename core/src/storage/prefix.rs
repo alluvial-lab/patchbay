@@ -57,15 +57,9 @@ pub fn validate_next_replay_event(
         ));
     }
 
-    let event_domain = event
-        .event_id
-        .authority_domain_id
-        .as_ref()
-        .ok_or_else(|| {
-            ReplayIntegrityError::CorruptRecord(
-                "replay event has no authority domain".to_owned(),
-            )
-        })?;
+    let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
+        ReplayIntegrityError::CorruptRecord("replay event has no authority domain".to_owned())
+    })?;
     if event_domain.value.is_empty() {
         return Err(ReplayIntegrityError::CorruptRecord(
             "replay event has an empty authority domain".to_owned(),
@@ -82,9 +76,7 @@ pub fn validate_next_replay_event(
         .event_id
         .lsn
         .as_ref()
-        .ok_or_else(|| {
-            ReplayIntegrityError::CorruptRecord("replay event has no LSN".to_owned())
-        })?
+        .ok_or_else(|| ReplayIntegrityError::CorruptRecord("replay event has no LSN".to_owned()))?
         .value;
 
     let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
@@ -100,9 +92,7 @@ pub fn validate_next_replay_event(
     }
 
     let expected_lsn = previous_lsn.checked_add(1).ok_or_else(|| {
-        ReplayIntegrityError::CorruptLog(format!(
-            "replay cannot advance beyond LSN {previous_lsn}"
-        ))
+        ReplayIntegrityError::CorruptLog(format!("replay cannot advance beyond LSN {previous_lsn}"))
     })?;
     if event_lsn != expected_lsn {
         return Err(ReplayIntegrityError::CorruptLog(format!(

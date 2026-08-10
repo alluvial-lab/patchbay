@@ -273,10 +273,7 @@ async fn every_exported_complete_projection_rebuild_rejects_gap_and_unspecified(
         Err(ResourceError::CorruptLog(_))
     ));
 
-    let unspecified = ScriptedReplayStorage::new(vec![event(
-        1,
-        StoredEventKind::Unspecified,
-    )]);
+    let unspecified = ScriptedReplayStorage::new(vec![event(1, StoredEventKind::Unspecified)]);
     assert!(matches!(
         rebuild_commands(&unspecified, &authority_domain).await,
         Err(AcceptanceError::CorruptLog(_))

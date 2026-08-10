@@ -1,14 +1,14 @@
 ---
 id: replay-integrity-prefix-discipline
 kind: feature
-stage: implementing
+stage: review
 tags: [verification, protocol, foundation]
 parent: null
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Replay integrity: gap-free LSN + reject Unspecified (cross-projection)
@@ -235,3 +235,32 @@ node contracts/scripts/check-vectors.mjs
 - Parked: formal/conformance promotion remains with a separately scoped verification ceremony; resource prefix-covered redelivery remains in `resource-reconciliation-followups`.
 - Rejected: storage-only enforcement and a shared stateful cursor, because they respectively miss corrupt reads and conflate strict replay with redelivery semantics.
 - Skipped/degraded: the delegated endpoint explicitly forbids nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking by policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection).
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, xhigh; explicit autopilot caller selection for normative cross-projection replay work. One feature owner carried both dependent checkpoints; no nested or peer dispatch occurred.
+- Review weight: `thorough` (explicit caller selection), unchanged for the upcoming feature review. This endpoint stops at the review boundary.
+- Child checkpoints: `replay-integrity-prefix-discipline-shared-replay-boundary` and `replay-integrity-prefix-discipline-cross-projection-evidence` both verified and advanced directly to `done` in their own commits.
+- Files changed: one canonical validator in `core/src/storage/prefix.rs`; storage contract/recovery integration; complete replay and direct dispatch paths across core acceptance, adapter, authority/operator/spawn, diagnostics, resource, security, and session modules; aggregate/delivery/spawn replay paths under `server/src`; independent evidence in `core/tests/replay_integrity.rs`, `core/tests/recovery.rs`, and the `server/src/state.rs` test module.
+- Tests added/removed: 12 replay-integrity/recovery/server regressions plus two proptest properties and a cross-projection direct-dispatch matrix; no tests removed or weakened.
+- Simplification: one complete-log domain/kind/exact-successor validator replaces local sequence checks. Projection payload/state validation remains domain-owned; resource covered-prefix redelivery remains intact; filtered subscription/audit output never receives a contiguity requirement.
+- Foundation docs: no assertion required rolling forward. `docs/PROTOCOL.md` already defines per-domain gap-free LSNs, `docs/ARCHITECTURE.md` already names the shared validator for the spawn completion consumer, and `docs/VERIFICATION.md` already classifies the related assurance as implementation-checked/stated-normative rather than promoted.
+- Discrepancies from design: current `main` had gained a narrow exact-LSN helper through overlapping descendant-completion work after design. It was a compatible partial implementation, not a design-invalidating overlap; this feature moved it to the canonical boundary, added kind/error semantics, and completed the call-site inventory. The fake-storage matrix uses a harmless concrete sibling kind per consumer rather than manufacturing valid payloads for every domain.
+- Adjacent issues parked: none; no backlog, exclusion, other-item, protocol-vector, or formal-model scope was opened.
+
+## Integrated verification
+
+Passed:
+
+- `cargo test -p patchbay-core --test replay_integrity` — 6 passed.
+- `cargo test -p patchbay-core --test recovery` — 12 passed.
+- `cargo test -p patchbay-core-server state::tests::replay_integrity` — 4 passed.
+- Focused existing acceptance/Elicitation/adapter/authority/diagnostics/resource/session/server-state suites.
+- `cargo test --workspace` — all Rust unit, integration, conformance, and doc tests passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`.
+- `node contracts/scripts/check-models.mjs`.
+- `node contracts/scripts/check-vectors.mjs` after building the local TypeScript contract/operator packages — 21 implementation checks and 37 registered mutation witnesses passed.
+- `rustfmt --edition 2021 --check core/src/storage/prefix.rs core/tests/replay_integrity.rs core/tests/recovery.rs`.
+- `git diff --check`.
+
+Repository discrepancy (non-feature baseline): `cargo fmt --check` remains red on broad existing workspace formatting drift (hundreds of rustfmt hunks across untouched core/server files). The new standalone validator/evidence/recovery files pass direct rustfmt checks, and this feature does not absorb repository-wide formatting churn.

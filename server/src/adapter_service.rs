@@ -343,8 +343,8 @@ fn command_projection_from_events(
     let mut index = CommandIndex::new();
     let mut cursor = 0;
     for event in events {
-        let validated = validate_next_replay_event(authority_domain_id, cursor, event)
-            .map_err(|error| {
+        let validated =
+            validate_next_replay_event(authority_domain_id, cursor, event).map_err(|error| {
                 error.map(
                     acceptance::AcceptanceError::CorruptRecord,
                     acceptance::AcceptanceError::CorruptLog,
@@ -370,17 +370,13 @@ async fn catch_up_command_projection<S: Storage>(
         )
         .await?;
     for event in &events {
-        let validated = validate_next_replay_event(
-            authority_domain_id,
-            projection.cursor,
-            event,
-        )
-        .map_err(|error| {
-            error.map(
-                acceptance::AcceptanceError::CorruptRecord,
-                acceptance::AcceptanceError::CorruptLog,
-            )
-        })?;
+        let validated = validate_next_replay_event(authority_domain_id, projection.cursor, event)
+            .map_err(|error| {
+                error.map(
+                    acceptance::AcceptanceError::CorruptRecord,
+                    acceptance::AcceptanceError::CorruptLog,
+                )
+            })?;
         projection.index.apply(event)?;
         projection.cursor = validated.lsn;
     }
@@ -498,17 +494,14 @@ where
             {
                 Ok(events) => {
                     let applied = events.iter().try_for_each(|event| {
-                        let validated = validate_next_replay_event(
-                            &authority_domain_id,
-                            scan_cursor,
-                            event,
-                        )
-                        .map_err(|error| {
-                            error.map(
-                                acceptance::AcceptanceError::CorruptRecord,
-                                acceptance::AcceptanceError::CorruptLog,
-                            )
-                        })?;
+                        let validated =
+                            validate_next_replay_event(&authority_domain_id, scan_cursor, event)
+                                .map_err(|error| {
+                                    error.map(
+                                        acceptance::AcceptanceError::CorruptRecord,
+                                        acceptance::AcceptanceError::CorruptLog,
+                                    )
+                                })?;
                         subscription_commands.apply(event)?;
                         scan_cursor = validated.lsn;
                         Ok::<(), acceptance::AcceptanceError>(())

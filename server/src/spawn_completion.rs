@@ -155,12 +155,8 @@ where
     }
 
     fn fold_event(&mut self, event: &RecordedEvent) -> Result<(), SpawnCompletionError> {
-        let validated = validate_next_replay_event(
-            &self.authority_domain_id,
-            self.cursor,
-            event,
-        )
-        .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(&self.authority_domain_id, self.cursor, event)
+            .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?;
 
         self.tail.observe(event)?;
         self.authority.observe(event)?;
