@@ -7,8 +7,8 @@ use patchbay_contracts::patchbay::{
     ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode, Generation, GrantId, Lsn,
     Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, StoredEventKind, SubmissionOutcome,
-    TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, StoredEventKind,
+    SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     submit, submit_with_clock, AcceptanceError, ActiveElicitation, Authorized, Clock,
@@ -387,24 +387,27 @@ async fn durable_events_in(
         .expect("test storage remains readable")
 }
 
-fn live_session_report(authority_domain_id: AuthorityDomainId) -> SessionReport {
+fn live_session_report() -> SessionReport {
     SessionReport {
-        authority_domain_id,
-        adapter_id: AdapterId {
+        adapter_id: Some(AdapterId {
             value: "pi".to_owned(),
-        },
+        }),
         deployment_scope: "local".to_owned(),
-        runtime_session_id: RuntimeSessionId {
+        runtime_session_id: Some(RuntimeSessionId {
             value: "session-1".to_owned(),
-        },
-        session_generation: Generation { value: 7 },
-        connectivity: SessionConnectivityState::Live,
-        activity: SessionActivityState::Idle,
+        }),
+        session_generation: Some(Generation { value: 7 }),
+        connectivity: SessionConnectivityState::Live as i32,
+        activity: SessionActivityState::Idle as i32,
         project: "patchbay".to_owned(),
         cwd: "/work/patchbay".to_owned(),
         name: "main".to_owned(),
         model: "provider/model".to_owned(),
         spawn_origin: None,
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        }),
     }
 }
 
@@ -415,7 +418,8 @@ async fn real_session_registry_resolves_same_domain_acceptance() {
     ingest_session_report(
         &storage,
         &mut sessions,
-        live_session_report(authority_domain()),
+        &authority_domain(),
+        live_session_report(),
     )
     .await
     .unwrap();
@@ -453,7 +457,8 @@ async fn real_session_registry_domain_mismatch_rejects_without_command_append() 
     ingest_session_report(
         &storage,
         &mut sessions,
-        live_session_report(authority_domain()),
+        &authority_domain(),
+        live_session_report(),
     )
     .await
     .unwrap();

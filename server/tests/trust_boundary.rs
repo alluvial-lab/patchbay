@@ -643,6 +643,7 @@ async fn seeded_storage() -> RusqliteStorage {
                     name: "trust-boundary-test".to_owned(),
                     model: "provider/model".to_owned(),
                     spawn_origin: None,
+                    source_cursor: None,
                 },
             )),
         )

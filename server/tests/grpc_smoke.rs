@@ -2432,6 +2432,7 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
             name: "smoke".to_owned(),
             model: "provider/model".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     storage

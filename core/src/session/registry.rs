@@ -8,19 +8,19 @@ use std::collections::{BTreeMap, HashMap};
 
 use patchbay_contracts::patchbay::{
     security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
-    RuntimeSessionId,
-    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
-    SessionRelabeled,
-    SecurityLockdownEvent, SessionState, StoredEventKind, StoredEventPayload,
+    RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged, SessionActivityState,
+    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
+    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReportApplied,
+    SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
 use crate::storage::RecordedEvent;
 
 use super::{
-    allowed_activity_transition, allowed_connectivity_transition, SessionError, SessionIdentity,
-    SessionStateEvent,
+    allowed_activity_transition, allowed_connectivity_transition,
+    ingest::{source_cursor_strictly_after, validate_report, validate_source_cursor},
+    SessionError, SessionIdentity, SessionStateEvent,
 };
 
 /// The current in-memory state of one live session generation.
@@ -32,6 +32,7 @@ pub struct SessionRecord {
     pub cwd: String,
     pub name: String,
     pub model: String,
+    pub last_source_cursor: Option<SessionReportSourceCursor>,
     pub last_authoritative_lsn: Option<u64>,
     pub tombstoned: bool,
     pub superseded_at_lsn: Option<u64>,
@@ -204,6 +205,9 @@ impl SessionRegistry {
                 session_state_event::Mutation::ModelChanged(mutation) => {
                     self.observe_model_changed(mutation, event_lsn)?;
                 }
+                session_state_event::Mutation::ReportApplied(mutation) => {
+                    self.observe_report_applied(mutation, event_lsn)?;
+                }
             }
         }
 
@@ -244,11 +248,16 @@ impl SessionRegistry {
 
     fn observe_security_lockdown(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
         let (event_domain, event_lsn) = event_identity(event)?;
-        let source = SecurityLockdownEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
-            SessionError::CorruptRecord(format!("cannot decode security event at LSN {event_lsn}: {error}"))
-        })?;
+        let source =
+            SecurityLockdownEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                SessionError::CorruptRecord(format!(
+                    "cannot decode security event at LSN {event_lsn}: {error}"
+                ))
+            })?;
         let source_domain = source.authority_domain_id.as_ref().ok_or_else(|| {
-            SessionError::CorruptRecord(format!("security event at LSN {event_lsn} has no authority domain"))
+            SessionError::CorruptRecord(format!(
+                "security event at LSN {event_lsn} has no authority domain"
+            ))
         })?;
         if source_domain.value.is_empty() {
             return Err(SessionError::CorruptRecord(format!(
@@ -262,7 +271,9 @@ impl SessionRegistry {
             )));
         }
         match source.transition.ok_or_else(|| {
-            SessionError::CorruptRecord(format!("security event at LSN {event_lsn} has no transition"))
+            SessionError::CorruptRecord(format!(
+                "security event at LSN {event_lsn} has no transition"
+            ))
         })? {
             security_lockdown_event::Transition::Entered(entered) => {
                 let expected = entered.affected_runtime_session_count as usize;
@@ -375,7 +386,12 @@ impl SessionRegistry {
             ))
         })?;
         validate_state(&initial_state, "session registration", event_lsn)?;
-        if self.lockdown_active && initial_state.connectivity == SessionConnectivityState::Live as i32 {
+        if let Some(source_cursor) = mutation.source_cursor.as_ref() {
+            validate_source_cursor(source_cursor, "session registration")?;
+        }
+        if self.lockdown_active
+            && initial_state.connectivity == SessionConnectivityState::Live as i32
+        {
             return Err(SessionError::CorruptLog(format!(
                 "session registration at LSN {event_lsn} would restore live connectivity during lockdown"
             )));
@@ -397,6 +413,7 @@ impl SessionRegistry {
                 cwd: mutation.cwd.clone(),
                 name: mutation.name.clone(),
                 model: mutation.model.clone(),
+                last_source_cursor: mutation.source_cursor,
                 last_authoritative_lsn: Some(event_lsn),
                 tombstoned: false,
                 superseded_at_lsn: None,
@@ -435,7 +452,12 @@ impl SessionRegistry {
             ))
         })?;
         validate_state(&initial_state, "session generation bump", event_lsn)?;
-        if self.lockdown_active && initial_state.connectivity == SessionConnectivityState::Live as i32 {
+        if let Some(source_cursor) = mutation.source_cursor.as_ref() {
+            validate_source_cursor(source_cursor, "session generation bump")?;
+        }
+        if self.lockdown_active
+            && initial_state.connectivity == SessionConnectivityState::Live as i32
+        {
             return Err(SessionError::CorruptLog(format!(
                 "session generation bump at LSN {event_lsn} would restore live connectivity during lockdown"
             )));
@@ -485,6 +507,7 @@ impl SessionRegistry {
         next.cwd.clone_from(&mutation.cwd);
         next.name.clone_from(&mutation.name);
         next.model.clone_from(&mutation.model);
+        next.last_source_cursor = mutation.source_cursor;
         next.last_authoritative_lsn = Some(event_lsn);
         next.tombstoned = false;
         next.superseded_at_lsn = None;
@@ -498,6 +521,88 @@ impl SessionRegistry {
             },
             tombstone,
         );
+        self.sessions.insert(key, next);
+        Ok(())
+    }
+
+    fn observe_report_applied(
+        &mut self,
+        mutation: &SessionReportApplied,
+        event_lsn: u64,
+    ) -> Result<(), SessionError> {
+        let report = mutation.report.as_ref().ok_or_else(|| {
+            SessionError::CorruptRecord(format!(
+                "session report application at LSN {event_lsn} is missing report"
+            ))
+        })?;
+        let validated = validate_report(report)?;
+        let key = live_key(&validated.identity);
+        let current = self.sessions.get(&key).ok_or_else(|| {
+            SessionError::CorruptLog(format!(
+                "session report application at LSN {event_lsn} references an unknown live session {:?}",
+                validated.identity.runtime_session_id
+            ))
+        })?;
+        if current.identity != validated.identity {
+            return Err(SessionError::CorruptLog(format!(
+                "session report application at LSN {event_lsn} targets generation {}, but live generation is {}",
+                validated.identity.session_generation.value,
+                current.identity.session_generation.value
+            )));
+        }
+        if current.last_source_cursor != mutation.previous_source_cursor {
+            return Err(SessionError::CorruptLog(format!(
+                "session report application at LSN {event_lsn} has previous source cursor {:?}, but projected cursor is {:?}",
+                mutation.previous_source_cursor, current.last_source_cursor
+            )));
+        }
+        if let Some(previous) = current.last_source_cursor {
+            if !source_cursor_strictly_after(&validated.source_cursor, &previous) {
+                return Err(SessionError::CorruptLog(format!(
+                    "session report application at LSN {event_lsn} does not strictly advance source cursor: {:?} -> {:?}",
+                    previous, validated.source_cursor
+                )));
+            }
+        }
+        if self.lockdown_active && validated.connectivity == SessionConnectivityState::Live {
+            return Err(SessionError::CorruptLog(format!(
+                "session report application at LSN {event_lsn} would restore live connectivity during lockdown"
+            )));
+        }
+        let current_connectivity =
+            connectivity_state(current.state.connectivity, "projected", event_lsn)?;
+        if validated.connectivity != current_connectivity
+            && !allowed_connectivity_transition(current_connectivity, validated.connectivity)
+        {
+            return Err(SessionError::CorruptLog(format!(
+                "disallowed connectivity transition {current_connectivity:?} -> {:?} at LSN {event_lsn}",
+                validated.connectivity
+            )));
+        }
+        let current_activity = activity_state(current.state.activity, "projected", event_lsn)?;
+        if validated.activity != current_activity
+            && !allowed_activity_transition(current_activity, validated.activity)
+        {
+            return Err(SessionError::CorruptLog(format!(
+                "disallowed activity transition {current_activity:?} -> {:?} at LSN {event_lsn}",
+                validated.activity
+            )));
+        }
+
+        // Validate the complete pre-state before installing any field. A failed
+        // event therefore remains exactly non-mutating and does not claim its
+        // replay identity in `applied_events`.
+        let mut next = current.clone();
+        next.state = SessionState {
+            connectivity: validated.connectivity as i32,
+            activity: validated.activity as i32,
+        };
+        next.project.clone_from(&report.project);
+        next.cwd.clone_from(&report.cwd);
+        next.name.clone_from(&report.name);
+        next.model.clone_from(&report.model);
+        next.last_source_cursor = Some(validated.source_cursor);
+        next.last_authoritative_lsn = Some(event_lsn);
         self.sessions.insert(key, next);
         Ok(())
     }

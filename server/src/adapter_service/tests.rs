@@ -15,7 +15,8 @@ use patchbay_contracts::patchbay::{
     ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
     ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
     RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
-    SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    SessionConnectivityState, SessionReportSourceCursor, StoredEventKind, StoredEventPayload,
+    TargetScope, TargetScopeKind,
     TypedCorrelation,
 };
 use patchbay_core::{
@@ -130,6 +131,14 @@ impl Storage for BlockingReadStorage {
         self.inner
             .load_latest_snapshot(authority_domain_id, at_or_before)
             .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
     }
 }
 
@@ -1647,12 +1656,14 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
 
     // The report is still live adapter evidence, but the catch-up fold must
     // make the stale clamp visible before ingest derives its transition.
+    let mut post_lockdown_report = session_report(SessionConnectivityState::Live);
+    post_lockdown_report.source_cursor.as_mut().unwrap().revision = 2;
     service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
                 authority_domain_id: Some(domain.clone()),
                 observation: Some(observation_request::Observation::SessionReport(
-                    session_report(SessionConnectivityState::Live),
+                    post_lockdown_report,
                 )),
             },
             &attachment_token,
@@ -1670,7 +1681,7 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
 }
 
 #[tokio::test]
-async fn concurrent_conflicting_model_reports_leave_a_replayable_log() {
+async fn concurrent_increasing_model_reports_leave_a_replayable_log() {
     let storage = BlockingReadStorage::new();
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
@@ -1703,6 +1714,7 @@ async fn concurrent_conflicting_model_reports_leave_a_replayable_log() {
     let first_token = attachment_token.clone();
     let first = tokio::spawn(async move {
         let mut report = session_report(SessionConnectivityState::Live);
+        report.source_cursor.as_mut().unwrap().revision = 2;
         report.model = "provider/model-b".into();
         first_service
             .ingest_observation(authenticated_with_attachment_token(
@@ -1721,6 +1733,7 @@ async fn concurrent_conflicting_model_reports_leave_a_replayable_log() {
     let second_token = attachment_token.clone();
     let second = tokio::spawn(async move {
         let mut report = session_report(SessionConnectivityState::Live);
+        report.source_cursor.as_mut().unwrap().revision = 3;
         report.model = "provider/model-c".into();
         second_service
             .ingest_observation(authenticated_with_attachment_token(
@@ -1754,6 +1767,105 @@ async fn concurrent_conflicting_model_reports_leave_a_replayable_log() {
             .model,
         "provider/model-c"
     );
+}
+
+#[tokio::test]
+async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors_with_audit() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+
+    for (revision, model) in [(1, "provider/model-a"), (3, "provider/model-b")] {
+        let mut report = session_report(SessionConnectivityState::Live);
+        report.source_cursor.as_mut().unwrap().revision = revision;
+        report.model = model.into();
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::SessionReport(report)),
+                },
+                &attachment_token,
+            ))
+            .await
+            .expect("increasing source cursor succeeds");
+    }
+
+    let session_events_before = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
+        .count();
+    assert_eq!(session_events_before, 2);
+
+    let mut delayed = session_report(SessionConnectivityState::Live);
+    delayed.source_cursor.as_mut().unwrap().revision = 2;
+    delayed.model = "provider/rollback".into();
+    let mut old_generation = session_report(SessionConnectivityState::Live);
+    old_generation
+        .source_cursor
+        .as_mut()
+        .unwrap()
+        .adapter_generation = Some(Generation { value: 0 });
+    for stale in [delayed, old_generation] {
+        let status = service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::SessionReport(stale)),
+                },
+                &attachment_token,
+            ))
+            .await
+            .expect_err("stale source cursor must reject");
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
+
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
+            .count(),
+        session_events_before,
+        "stale reports cannot append session-state mutations"
+    );
+    let stale_audits = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::AuditRecord as i32)
+        .filter_map(|event| {
+            patchbay_contracts::patchbay::AuditRecord::decode(event.payload.payload.as_slice()).ok()
+        })
+        .filter(|audit| audit.reason_code == "session_report_source_cursor_stale")
+        .collect::<Vec<_>>();
+    assert_eq!(stale_audits.len(), 2);
+    assert!(stale_audits.iter().all(|audit| {
+        audit.kind == AuditEventKind::StaleEventIgnored as i32
+            && audit.failure_code == FailureCode::StaleEvent as i32
+    }));
+
+    let replayed = session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("stale attempts leave replay valid");
+    let live = replayed
+        .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+        .unwrap();
+    assert_eq!(live.model, "provider/model-b");
+    assert_eq!(live.last_source_cursor.as_ref().unwrap().revision, 3);
 }
 
 #[tokio::test]
@@ -2055,6 +2167,7 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
         &service,
         domain.clone(),
         SessionConnectivityState::Live,
+        1,
         &attachment_token,
     )
     .await;
@@ -2087,6 +2200,7 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
         &service,
         domain.clone(),
         SessionConnectivityState::Live,
+        2,
         &attachment_token,
     )
     .await;
@@ -2151,6 +2265,7 @@ async fn obsolete_stream_drop_is_inert_but_current_stream_drop_marks_stale() {
         &service,
         domain.clone(),
         SessionConnectivityState::Live,
+        1,
         &attachment_token,
     )
     .await;
@@ -2392,15 +2507,18 @@ async fn report_session(
     service: &AdapterControlServiceImpl<RusqliteStorage>,
     domain: AuthorityDomainId,
     connectivity: SessionConnectivityState,
+    revision: u64,
     attachment_token: &str,
 ) {
     service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
                 authority_domain_id: Some(domain),
-                observation: Some(observation_request::Observation::SessionReport(
-                    session_report(connectivity),
-                )),
+                observation: Some(observation_request::Observation::SessionReport({
+                    let mut report = session_report(connectivity);
+                    report.source_cursor.as_mut().unwrap().revision = revision;
+                    report
+                })),
             },
             attachment_token,
         ))
@@ -2423,6 +2541,10 @@ fn session_report(
         name: "test".into(),
         model: "provider/model".into(),
         spawn_origin: None,
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        }),
     }
 }
 

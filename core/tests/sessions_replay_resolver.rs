@@ -10,11 +10,13 @@
 
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, Generation, OperationKind, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, TargetScope, TargetScopeKind,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::acceptance::TargetResolver;
 use patchbay_core::session::{
-    ingest_session_report, rebuild_from_log, SessionError, SessionLookup, SessionReport,
+    ingest_session_report as ingest_session_report_in_domain, rebuild_from_log, IngestResult,
+    SessionError, SessionLookup, SessionRegistry, SessionReport,
 };
 use patchbay_core::storage::RusqliteStorage;
 
@@ -43,19 +45,30 @@ fn generation(n: u64) -> Generation {
 /// A live session report at the given generation.
 fn report(gen: u64, connectivity: SessionConnectivityState) -> SessionReport {
     SessionReport {
-        authority_domain_id: domain(),
-        adapter_id: adapter(),
+        adapter_id: Some(adapter()),
         deployment_scope: "local".to_string(),
-        runtime_session_id: runtime_session("s-1"),
-        session_generation: generation(gen),
-        connectivity,
-        activity: SessionActivityState::Idle,
+        runtime_session_id: Some(runtime_session("s-1")),
+        session_generation: Some(generation(gen)),
+        connectivity: connectivity as i32,
+        activity: SessionActivityState::Idle as i32,
         project: "proj".to_string(),
         cwd: "/cwd".to_string(),
         name: "name".to_string(),
         model: "provider/model".to_string(),
         spawn_origin: None,
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(generation(1)),
+            revision: 1,
+        }),
     }
+}
+
+async fn ingest_session_report(
+    storage: &RusqliteStorage,
+    registry: &mut SessionRegistry,
+    report: SessionReport,
+) -> Result<IngestResult, SessionError> {
+    ingest_session_report_in_domain(storage, registry, &domain(), report).await
 }
 
 fn target_scope(gen: Option<u64>) -> TargetScope {

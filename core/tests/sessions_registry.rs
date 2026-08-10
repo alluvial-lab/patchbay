@@ -3,7 +3,8 @@ use patchbay_contracts::patchbay::{
     SecurityLockdownEntered, SecurityLockdownEvent, SecurityLockdownExited, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
     SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionState, StoredEventKind, StoredEventPayload, TargetScope,
+    SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
+    StoredEventPayload, TargetScope,
 };
 use prost::Message;
 
@@ -87,8 +88,33 @@ fn registration() -> SessionStateEvent {
             name: "main".to_owned(),
             model: "provider/model-1".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     )
+}
+
+fn source_cursor(adapter_generation: u64, revision: u64) -> SessionReportSourceCursor {
+    SessionReportSourceCursor {
+        adapter_generation: Some(generation(adapter_generation)),
+        revision,
+    }
+}
+
+fn report(revision: u64, model: &str) -> SessionReport {
+    SessionReport {
+        adapter_id: Some(adapter()),
+        deployment_scope: "machine-a".to_owned(),
+        runtime_session_id: Some(runtime()),
+        session_generation: Some(generation(1)),
+        connectivity: SessionConnectivityState::Live as i32,
+        activity: SessionActivityState::Idle as i32,
+        project: "patchbay".to_owned(),
+        cwd: "/work/patchbay".to_owned(),
+        name: "main".to_owned(),
+        model: model.to_owned(),
+        spawn_origin: None,
+        source_cursor: Some(source_cursor(1, revision)),
+    }
 }
 
 fn identity(generation_value: u64) -> SessionIdentity {
@@ -284,6 +310,84 @@ fn registration_creates_a_live_session() {
     assert!(!record.tombstoned);
 }
 
+#[test]
+fn report_application_validates_the_complete_prestate_before_mutation() {
+    let mut registration = registration();
+    registered_mutation(&mut registration).source_cursor = Some(source_cursor(1, 1));
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&recorded(1, &registration)).unwrap();
+
+    let applied = events::report_applied(
+        domain(),
+        SessionReportApplied {
+            report: Some(report(3, "provider/model-3")),
+            previous_source_cursor: Some(source_cursor(1, 1)),
+        },
+    );
+    registry.observe(&recorded(2, &applied)).unwrap();
+    let baseline = registry.clone();
+
+    let mut stale = report(2, "provider/rollback");
+    let stale_event = events::report_applied(
+        domain(),
+        SessionReportApplied {
+            report: Some(stale.clone()),
+            previous_source_cursor: Some(source_cursor(1, 3)),
+        },
+    );
+    let mut candidate = baseline.clone();
+    assert!(matches!(
+        candidate.observe(&recorded(3, &stale_event)),
+        Err(SessionError::CorruptLog(_))
+    ));
+    assert_eq!(candidate, baseline);
+
+    stale.source_cursor = Some(source_cursor(1, 4));
+    let mismatched_previous = events::report_applied(
+        domain(),
+        SessionReportApplied {
+            report: Some(stale.clone()),
+            previous_source_cursor: Some(source_cursor(1, 1)),
+        },
+    );
+    let mut candidate = baseline.clone();
+    assert!(matches!(
+        candidate.observe(&recorded(3, &mismatched_previous)),
+        Err(SessionError::CorruptLog(_))
+    ));
+    assert_eq!(candidate, baseline);
+
+    stale.connectivity = i32::MAX;
+    let unknown_state = events::report_applied(
+        domain(),
+        SessionReportApplied {
+            report: Some(stale),
+            previous_source_cursor: Some(source_cursor(1, 3)),
+        },
+    );
+    let mut candidate = baseline.clone();
+    assert!(matches!(
+        candidate.observe(&recorded(3, &unknown_state)),
+        Err(SessionError::CorruptRecord(_))
+    ));
+    assert_eq!(candidate, baseline);
+
+    let corrected = events::report_applied(
+        domain(),
+        SessionReportApplied {
+            report: Some(report(4, "provider/model-4")),
+            previous_source_cursor: Some(source_cursor(1, 3)),
+        },
+    );
+    registry
+        .observe(&recorded(3, &corrected))
+        .expect("rejected attempts must not claim their event identity");
+    let live = registry.get_session(&identity(1)).unwrap();
+    assert_eq!(live.model, "provider/model-4");
+    assert_eq!(live.last_source_cursor, Some(source_cursor(1, 4)));
+    assert_eq!(live.last_authoritative_lsn, Some(3));
+}
+
 #[tokio::test]
 async fn folds_axis_changes_relabel_and_generation_bump() {
     let mut registry = SessionRegistry::new(domain()).unwrap();
@@ -346,6 +450,7 @@ async fn folds_axis_changes_relabel_and_generation_bump() {
             name: "replacement".to_owned(),
             model: "provider/model-2".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     registry.observe(&recorded(5, &bump)).unwrap();
@@ -421,6 +526,7 @@ fn generation_bump_without_initial_state_is_corrupt_record() {
             name: "new-name".to_owned(),
             model: "provider/model-2".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
 
@@ -453,6 +559,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             name: "other".to_owned(),
             model: "provider/model-other".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     let bump_a = events::generation_bumped(
@@ -472,6 +579,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
             name: "main".to_owned(),
             model: "provider/model-2".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
 
@@ -556,6 +664,7 @@ fn reobserving_a_committed_prefix_is_idempotent() {
             name: "renamed".to_owned(),
             model: "provider/model-2".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     let activity = events::activity_changed(
@@ -704,6 +813,7 @@ fn unseen_and_duplicate_owned_events_reject_without_mutation() {
             name: "main".to_owned(),
             model: "provider/model-2".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     let mut duplicate_generation = SessionRegistry::new(domain()).unwrap();
@@ -792,6 +902,7 @@ fn rejected_new_lsn_semantic_conflicts_are_non_mutating_and_do_not_claim_their_l
                 name: "main".to_owned(),
                 model: format!("provider/model-{to}"),
                 spawn_origin: None,
+                source_cursor: None,
             },
         )
     };

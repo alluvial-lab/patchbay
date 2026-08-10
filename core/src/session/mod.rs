@@ -5,7 +5,7 @@
 //! functions so recovery cannot acquire different state-machine semantics
 //! from the write path. Mirrors `acceptance::transitions`.
 
-use patchbay_contracts::patchbay::Generation;
+use patchbay_contracts::patchbay::{Generation, SessionReportSourceCursor};
 
 pub mod events;
 pub mod ingest;
@@ -16,9 +16,10 @@ pub mod state;
 
 pub use events::SessionStateEvent;
 pub use ingest::{
-    adapter_stale_events, ingest_session_report, mark_adapter_sessions_stale, IngestResult, SessionLookup,
-    SessionProjection, SessionReport,
+    adapter_stale_events, ingest_session_report, mark_adapter_sessions_stale, IngestResult,
+    SessionLookup, SessionProjection,
 };
+pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
 pub use state::{
@@ -57,6 +58,13 @@ pub enum SessionError {
     StaleGeneration {
         live: Generation,
         reported: Generation,
+    },
+
+    /// An equal-generation report did not advance adapter source order.
+    #[error("stale session-report source cursor: live={live:?}, reported={reported:?}")]
+    StaleSourceCursor {
+        live: SessionReportSourceCursor,
+        reported: SessionReportSourceCursor,
     },
 
     /// The durable storage boundary failed.

@@ -1,7 +1,7 @@
 ---
 id: adapter-report-source-ordering-core-fence
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, storage]
 parent: adapter-report-source-ordering
 depends_on: [adapter-report-source-ordering-contract-foundation]
@@ -51,3 +51,21 @@ conformance checkpoint waits for both producer and consumer.
 - Shared full-log replay already rejects missing/zero/gapped/duplicate/`UNSPECIFIED` records, while the registry intentionally ignores unowned sibling events. The report fold extends this division rather than adding a competing prefix cursor.
 - Server ingress currently rebuilds inside `CoreDecisionGate`, append-then-folds legacy report deltas, then rebuilds. The implementation retains the gate and rebuild boundaries and changes only adapter reports to one append-and-folded full-report event. Legacy deltas and core-authored disconnect/lockdown degradation remain and preserve the source cursor.
 - Aggregate `ProjectionState::catch_up` now stages all projections before publication; snapshot carriage must integrate with that cancellation-safe path rather than publishing a private session registry early.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, maximum reasoning (caller-selected for cross-file durability, replay, snapshot, and authenticated-ingress semantics); direct-read single-owner delivery, no nested agents or peeragent.
+- Review weight: `thorough` (explicit caller override); child checkpoint review is not applicable.
+- Files changed: `core/src/session/{mod,events,ingest,registry}.rs`, focused session/acceptance/conformance tests, `server/src/{adapter_service,state}.rs`, and compatibility fixtures in server integration tests.
+- Tests added/removed: replaced append-then-fold delta tests with atomic full-report, unchanged-watermark, stale-order, malformed-boundary, append-failure, replay, and exact-prestate tests; added authenticated stale-audit and snapshot-cursor tests. Legacy delta replay tests remain.
+- Simplification: removed the handwritten core `SessionReport` DTO and all multi-delta report composition. Equal-generation ingress now performs one comparison, one append, and one fold; core-authored disconnect still uses its legacy delta without manufacturing adapter order.
+- Discrepancies from design: no material semantic deviation. `IngestResult` exposes one `event_id` for generation bumps instead of retaining the obsolete duplicate tombstone/new-generation aliases; server keeps its established optional response helper although every accepted report now has an event id.
+- Adjacent issues parked: none.
+
+## Verification evidence
+
+- `cargo test -p patchbay-core --test sessions_ingest --test sessions_registry --test sessions_replay_resolver --test sessions_proptest` — passed (54 focused tests).
+- `cargo test -p patchbay-core-server --all-features --lib adapter_service::tests` — passed (27 authenticated adapter-ingress tests).
+- `cargo test -p patchbay-core-server --lib state::tests::session_snapshot_publishes_the_last_source_cursor` — passed.
+- `cargo test -p patchbay-core -p patchbay-core-server --all-features` — passed, including full core/server unit, integration, conformance-vector, property, replay-prefix, gRPC, spawn-completion, and trust-boundary suites.
+- `git diff --check` — passed after scoped formatting; global rustfmt baseline remains excluded by item constraint.

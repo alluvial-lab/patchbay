@@ -6,8 +6,8 @@
 
 use patchbay_contracts::patchbay::{
     session_state_event, AuthorityDomainId, SessionActivityChanged, SessionConnectivityChanged,
-    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled, StoredEventKind,
-    StoredEventPayload,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
+    SessionReportApplied, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -34,6 +34,18 @@ pub fn generation_bumped(
     event(
         authority_domain_id,
         session_state_event::Mutation::GenerationBumped(mutation),
+    )
+}
+
+/// Construct one atomic equal-generation full-report mutation.
+#[must_use]
+pub fn report_applied(
+    authority_domain_id: AuthorityDomainId,
+    mutation: SessionReportApplied,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::ReportApplied(mutation),
     )
 }
 

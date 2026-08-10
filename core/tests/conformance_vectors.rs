@@ -441,6 +441,7 @@ fn session_registry(
             name: "session-vector".to_owned(),
             model: "provider/model".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     let mut sessions = SessionRegistry::new(authority_domain_id.clone())

@@ -519,6 +519,12 @@ async fn report_session<S>(
                         name: "spawned".to_owned(),
                         model: "provider/model".to_owned(),
                         spawn_origin,
+                        source_cursor: Some(
+                            patchbay_contracts::patchbay::SessionReportSourceCursor {
+                                adapter_generation: Some(Generation { value: 1 }),
+                                revision: 1,
+                            },
+                        ),
                     },
                 )),
             },

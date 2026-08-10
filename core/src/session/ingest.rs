@@ -1,15 +1,14 @@
 //! Adapter-to-core session report ingestion.
 //!
 //! A report describes the adapter's current view of one session. The durable
-//! event log remains authoritative: this writer compares the report with the
-//! hot session projection, validates the implied mutations, and appends every
-//! schema-owned session delta needed to represent the report.
+//! event log remains authoritative: this writer validates the generated report,
+//! fences it by adapter source order, and appends one schema-owned session event.
 
 use patchbay_contracts::patchbay::{
     typed_correlation, AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId,
-    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
-    SessionRelabeled, SessionState, TypedCorrelation,
+    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
+    SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
+    SessionReportSourceCursor, SessionState, TypedCorrelation,
 };
 
 use crate::{
@@ -19,75 +18,29 @@ use crate::{
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition, events, SessionError,
-    SessionRecord, SessionRegistry,
+    SessionIdentity, SessionRecord, SessionRegistry,
 };
-
-/// An adapter-reported session observation.
-///
-/// The adapter reports the current identity tuple, state axes, and metadata.
-/// The core derives the durable delta, including generation supersession.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionReport {
-    pub authority_domain_id: AuthorityDomainId,
-    pub adapter_id: AdapterId,
-    pub deployment_scope: String,
-    pub runtime_session_id: RuntimeSessionId,
-    pub session_generation: Generation,
-    pub connectivity: SessionConnectivityState,
-    pub activity: SessionActivityState,
-    pub project: String,
-    pub cwd: String,
-    pub name: String,
-    pub model: String,
-    pub spawn_origin: Option<TypedCorrelation>,
-}
 
 /// The durable outcome of ingesting one session report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngestResult {
     /// The session slot was not previously known and was registered.
     Registered { event_id: EventId },
-    /// A newer generation superseded the prior live generation.
-    ///
-    /// One durable event performs both actions, so both event identifiers are
-    /// intentionally the same canonical event id.
+    /// A newer runtime-session generation superseded the prior live generation.
     GenerationBumped {
-        tombstone_event_id: EventId,
-        new_generation_event_id: EventId,
+        event_id: EventId,
         from_generation: Generation,
         to_generation: Generation,
     },
-    /// The connectivity axis changed.
-    ConnectivityChanged {
-        event_id: EventId,
-        from: SessionConnectivityState,
-        to: SessionConnectivityState,
-    },
-    /// The activity axis changed.
-    ActivityChanged {
-        event_id: EventId,
-        from: SessionActivityState,
-        to: SessionActivityState,
-    },
-    /// Session metadata changed without changing session identity.
-    Relabeled { event_id: EventId },
-    /// Current adapter-reported model changed without changing session identity.
-    ModelChanged {
-        event_id: EventId,
-        from: String,
-        to: String,
-    },
-    /// More than one equal-generation delta was durably appended.
-    DeltasApplied { event_ids: Vec<EventId> },
-    /// The report exactly matched the current projection.
-    NoChange,
+    /// One equal-generation full report was durably applied.
+    ReportApplied { event_id: EventId },
 }
 
 /// Read access to the live session projection used by ingestion.
 ///
 /// The durable event log remains authoritative. This port exposes the hot-path
-/// state needed to derive the next delta and uses static dispatch, matching
-/// acceptance's `CommandStateLookup`.
+/// state needed to derive the next atomic event and uses static dispatch,
+/// matching acceptance's `CommandStateLookup`.
 pub trait SessionLookup: Send + Sync {
     fn current_session(
         &self,
@@ -98,16 +51,13 @@ pub trait SessionLookup: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Option<SessionRecord>, SessionError>> + Send;
 }
 
-/// A session projection that can fold a committed event before the next delta
-/// is derived.
+/// A session projection that can fold a committed event.
 ///
-/// Multi-delta ingestion requires this write-side capability: a durable prefix
-/// must be reflected in the hot projection even when a later append fails.
+/// The writer performs one append and one fold for every accepted report. A
+/// security projection may additionally clamp incoming adapter evidence.
 pub trait SessionProjection: SessionLookup {
     fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError>;
 
-    /// A security projection may clamp incoming adapter evidence without
-    /// widening this port for unrelated server concerns.
     fn lockdown_active(&self) -> bool {
         false
     }
@@ -138,360 +88,195 @@ impl SessionProjection for SessionRegistry {
     }
 }
 
-/// Ingest an adapter-reported session observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValidatedSessionReport {
+    pub identity: SessionIdentity,
+    pub connectivity: SessionConnectivityState,
+    pub activity: SessionActivityState,
+    pub source_cursor: SessionReportSourceCursor,
+}
+
+/// Ingest one generated adapter session report.
 ///
-/// The ordering is protocol-significant: validate the boundary, read the live
-/// projection, validate the implied transition, then durably append the delta.
-/// For a multi-delta equal-generation report, every committed delta is folded
-/// into the hot projection before the next delta is derived. This writer never
-/// mutates the projection before durability is established.
-///
-/// Equal-generation deltas are validated together, then appended in
-/// connectivity, activity, metadata order. Storage has no atomic batch port,
-/// so every committed prefix of a multi-delta report is immediately folded
-/// into the projection. If a later append fails, a retry derives only the
-/// remaining deltas. If folding a committed event fails, that event remains
-/// durable and the projection must be rebuilt from the log before reuse. Every
-/// successful append is reflected in the supplied projection before the writer
-/// returns.
+/// Validation happens before projection lookup. Runtime-session generation is
+/// compared before source order; for an equal generation, source order is
+/// compared before any field transition is derived. Every accepted report is
+/// represented by exactly one durable event and folded only after append.
 pub async fn ingest_session_report<S, L>(
     storage: &S,
     session_lookup: &mut L,
-    report: SessionReport,
+    authority_domain_id: &AuthorityDomainId,
+    mut report: SessionReport,
 ) -> Result<IngestResult, SessionError>
 where
     S: Storage,
     L: SessionProjection,
 {
-    validate_report(&report)?;
-    let mut report = report;
-    let authority_domain_id = report.authority_domain_id.clone();
+    if authority_domain_id.value.is_empty() {
+        return Err(SessionError::CorruptRecord(
+            "session report authority_domain_id is empty".to_owned(),
+        ));
+    }
+    let mut validated = validate_report(&report)?;
     let live = session_lookup
         .current_session(
-            &authority_domain_id,
-            &report.adapter_id,
-            &report.deployment_scope,
-            &report.runtime_session_id,
+            authority_domain_id,
+            &validated.identity.adapter_id,
+            &validated.identity.deployment_scope,
+            &validated.identity.runtime_session_id,
         )
         .await?;
-    if session_lookup.lockdown_active() {
-        // Lockdown is an event-folded stale clamp. Adapter evidence remains
-        // ingestible for reconciliation, but cannot manufacture liveness.
-        report.connectivity = SessionConnectivityState::Stale;
-    }
 
     let Some(current) = live else {
+        clamp_report_for_lockdown(session_lookup, &mut report, &mut validated);
         let event = events::registered(
             authority_domain_id.clone(),
             SessionRegistered {
-                adapter_id: Some(report.adapter_id),
+                adapter_id: report.adapter_id,
                 deployment_scope: report.deployment_scope,
-                runtime_session_id: Some(report.runtime_session_id),
-                session_generation: Some(report.session_generation),
+                runtime_session_id: report.runtime_session_id,
+                session_generation: report.session_generation,
                 initial_state: Some(SessionState {
-                    connectivity: report.connectivity as i32,
-                    activity: report.activity as i32,
+                    connectivity: validated.connectivity as i32,
+                    activity: validated.activity as i32,
                 }),
                 project: report.project,
                 cwd: report.cwd,
                 name: report.name,
-                model: report.model,
                 spawn_origin: report.spawn_origin,
+                model: report.model,
+                source_cursor: report.source_cursor,
             },
         );
         let event_id =
-            append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
+            append_and_apply(storage, session_lookup, authority_domain_id, event).await?;
         return Ok(IngestResult::Registered { event_id });
     };
 
     let live_generation = current.identity.session_generation;
-    match report.session_generation.value.cmp(&live_generation.value) {
+    match validated
+        .identity
+        .session_generation
+        .value
+        .cmp(&live_generation.value)
+    {
         std::cmp::Ordering::Greater => {
+            clamp_report_for_lockdown(session_lookup, &mut report, &mut validated);
+            let to_generation = validated.identity.session_generation;
             let event = events::generation_bumped(
                 authority_domain_id.clone(),
                 SessionGenerationBumped {
-                    adapter_id: Some(report.adapter_id),
+                    adapter_id: report.adapter_id,
                     deployment_scope: report.deployment_scope,
-                    runtime_session_id: Some(report.runtime_session_id),
+                    runtime_session_id: report.runtime_session_id,
                     from_generation: Some(live_generation),
-                    to_generation: Some(report.session_generation),
+                    to_generation: report.session_generation,
                     initial_state: Some(SessionState {
-                        connectivity: report.connectivity as i32,
-                        activity: report.activity as i32,
+                        connectivity: validated.connectivity as i32,
+                        activity: validated.activity as i32,
                     }),
                     project: report.project,
                     cwd: report.cwd,
                     name: report.name,
                     model: report.model,
                     spawn_origin: report.spawn_origin,
+                    source_cursor: report.source_cursor,
                 },
             );
             let event_id =
-                append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
-
+                append_and_apply(storage, session_lookup, authority_domain_id, event).await?;
             Ok(IngestResult::GenerationBumped {
-                tombstone_event_id: event_id.clone(),
-                new_generation_event_id: event_id,
+                event_id,
                 from_generation: live_generation,
-                to_generation: report.session_generation,
+                to_generation,
             })
         }
         std::cmp::Ordering::Equal => {
+            if let Some(live_cursor) = current.last_source_cursor {
+                if !source_cursor_strictly_after(&validated.source_cursor, &live_cursor) {
+                    return Err(SessionError::StaleSourceCursor {
+                        live: live_cursor,
+                        reported: validated.source_cursor,
+                    });
+                }
+            }
+
+            clamp_report_for_lockdown(session_lookup, &mut report, &mut validated);
             let current_connectivity = current.state.connectivity();
-            let connectivity_changed = report.connectivity != current_connectivity;
-            if connectivity_changed
-                && !allowed_connectivity_transition(current_connectivity, report.connectivity)
+            if validated.connectivity != current_connectivity
+                && !allowed_connectivity_transition(current_connectivity, validated.connectivity)
             {
                 return Err(invalid_transition(
                     current_connectivity,
-                    report.connectivity,
+                    validated.connectivity,
                 ));
             }
-
             let current_activity = current.state.activity();
-            let activity_changed = report.activity != current_activity;
-            if activity_changed && !allowed_activity_transition(current_activity, report.activity) {
-                return Err(invalid_transition(current_activity, report.activity));
+            if validated.activity != current_activity
+                && !allowed_activity_transition(current_activity, validated.activity)
+            {
+                return Err(invalid_transition(current_activity, validated.activity));
             }
 
-            let model_changed = current.model != report.model;
-            let relabeled = metadata_changed(&current, &report);
-            let change_count = usize::from(connectivity_changed)
-                + usize::from(activity_changed)
-                + usize::from(model_changed)
-                + usize::from(relabeled);
-            if change_count == 0 {
-                return Ok(IngestResult::NoChange);
-            }
-
-            if change_count > 1 {
-                let mut event_ids = Vec::with_capacity(change_count);
-                let mut current = current;
-
-                if report.connectivity != current.state.connectivity() {
-                    let event = events::connectivity_changed(
-                        authority_domain_id.clone(),
-                        SessionConnectivityChanged {
-                            adapter_id: Some(report.adapter_id.clone()),
-                            deployment_scope: report.deployment_scope.clone(),
-                            runtime_session_id: Some(report.runtime_session_id.clone()),
-                            session_generation: Some(report.session_generation),
-                            from: current.state.connectivity,
-                            to: report.connectivity as i32,
-                        },
-                    );
-                    event_ids.push(
-                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
-                            .await?,
-                    );
-                    current = refreshed_current(session_lookup, &report).await?;
-                }
-
-                if report.activity != current.state.activity() {
-                    let event = events::activity_changed(
-                        authority_domain_id.clone(),
-                        SessionActivityChanged {
-                            adapter_id: Some(report.adapter_id.clone()),
-                            deployment_scope: report.deployment_scope.clone(),
-                            runtime_session_id: Some(report.runtime_session_id.clone()),
-                            session_generation: Some(report.session_generation),
-                            from: current.state.activity,
-                            to: report.activity as i32,
-                        },
-                    );
-                    event_ids.push(
-                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
-                            .await?,
-                    );
-                    current = refreshed_current(session_lookup, &report).await?;
-                }
-
-                if current.model != report.model {
-                    let event = events::model_changed(
-                        authority_domain_id.clone(),
-                        SessionModelChanged {
-                            adapter_id: Some(report.adapter_id.clone()),
-                            deployment_scope: report.deployment_scope.clone(),
-                            runtime_session_id: Some(report.runtime_session_id.clone()),
-                            session_generation: Some(report.session_generation),
-                            from: current.model.clone(),
-                            to: report.model.clone(),
-                        },
-                    );
-                    event_ids.push(
-                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
-                            .await?,
-                    );
-                    current = refreshed_current(session_lookup, &report).await?;
-                }
-
-                if metadata_changed(&current, &report) {
-                    let event = events::relabeled(
-                        authority_domain_id.clone(),
-                        SessionRelabeled {
-                            adapter_id: Some(report.adapter_id),
-                            deployment_scope: report.deployment_scope,
-                            runtime_session_id: Some(report.runtime_session_id),
-                            session_generation: Some(report.session_generation),
-                            project: report.project,
-                            cwd: report.cwd,
-                            name: report.name,
-                        },
-                    );
-                    event_ids.push(
-                        append_and_apply(storage, session_lookup, &authority_domain_id, event)
-                            .await?,
-                    );
-                }
-
-                return Ok(IngestResult::DeltasApplied { event_ids });
-            }
-
-            if connectivity_changed {
-                let event = events::connectivity_changed(
-                    authority_domain_id.clone(),
-                    SessionConnectivityChanged {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
-                        session_generation: Some(report.session_generation),
-                        from: current_connectivity as i32,
-                        to: report.connectivity as i32,
-                    },
-                );
-                let event_id =
-                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
-                return Ok(IngestResult::ConnectivityChanged {
-                    event_id,
-                    from: current_connectivity,
-                    to: report.connectivity,
-                });
-            }
-
-            if activity_changed {
-                let event = events::activity_changed(
-                    authority_domain_id.clone(),
-                    SessionActivityChanged {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
-                        session_generation: Some(report.session_generation),
-                        from: current_activity as i32,
-                        to: report.activity as i32,
-                    },
-                );
-                let event_id =
-                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
-                return Ok(IngestResult::ActivityChanged {
-                    event_id,
-                    from: current_activity,
-                    to: report.activity,
-                });
-            }
-
-            if model_changed {
-                let from = current.model;
-                let to = report.model;
-                let event = events::model_changed(
-                    authority_domain_id.clone(),
-                    SessionModelChanged {
-                        adapter_id: Some(report.adapter_id),
-                        deployment_scope: report.deployment_scope,
-                        runtime_session_id: Some(report.runtime_session_id),
-                        session_generation: Some(report.session_generation),
-                        from: from.clone(),
-                        to: to.clone(),
-                    },
-                );
-                let event_id =
-                    append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
-                return Ok(IngestResult::ModelChanged { event_id, from, to });
-            }
-
-            let event = events::relabeled(
+            let event = events::report_applied(
                 authority_domain_id.clone(),
-                SessionRelabeled {
-                    adapter_id: Some(report.adapter_id),
-                    deployment_scope: report.deployment_scope,
-                    runtime_session_id: Some(report.runtime_session_id),
-                    session_generation: Some(report.session_generation),
-                    project: report.project,
-                    cwd: report.cwd,
-                    name: report.name,
+                SessionReportApplied {
+                    report: Some(report),
+                    previous_source_cursor: current.last_source_cursor,
                 },
             );
             let event_id =
-                append_and_apply(storage, session_lookup, &authority_domain_id, event).await?;
-            Ok(IngestResult::Relabeled { event_id })
+                append_and_apply(storage, session_lookup, authority_domain_id, event).await?;
+            Ok(IngestResult::ReportApplied { event_id })
         }
         std::cmp::Ordering::Less => Err(SessionError::StaleGeneration {
             live: live_generation,
-            reported: report.session_generation,
+            reported: validated.identity.session_generation,
         }),
+    }
+}
+
+fn clamp_report_for_lockdown<L: SessionProjection>(
+    session_lookup: &L,
+    report: &mut SessionReport,
+    validated: &mut ValidatedSessionReport,
+) {
+    if session_lookup.lockdown_active() {
+        report.connectivity = SessionConnectivityState::Stale as i32;
+        validated.connectivity = SessionConnectivityState::Stale;
     }
 }
 
 /// Durably degrade every live session owned by an abnormally disconnected adapter.
 ///
-/// The degradation is expressed as ordinary adapter-style session reports, so
-/// disconnect handling and live adapter observations share the canonical
-/// connectivity transition writer. A single rebuilt projection is installed
-/// after the append batch; if a partial append fails, that committed prefix is
-/// still rebuilt before the error is returned.
+/// Disconnect is core-authored evidence. It retains the legacy connectivity
+/// delta because it must not consume or manufacture adapter source order.
 pub fn adapter_stale_events(
     registry: &SessionRegistry,
     authority_domain_id: &AuthorityDomainId,
     adapter_id: &AdapterId,
 ) -> Result<Vec<patchbay_contracts::patchbay::StoredEventPayload>, SessionError> {
     registry.require_authority_domain(authority_domain_id)?;
-    let reports: Vec<_> = registry
+    Ok(registry
         .sessions()
         .filter(|record| {
             record.identity.adapter_id == *adapter_id
                 && record.state.connectivity() != SessionConnectivityState::Stale
         })
-        .map(|record| SessionReport {
-            authority_domain_id: authority_domain_id.clone(),
-            adapter_id: record.identity.adapter_id.clone(),
-            deployment_scope: record.identity.deployment_scope.clone(),
-            runtime_session_id: record.identity.runtime_session_id.clone(),
-            session_generation: record.identity.session_generation,
-            connectivity: SessionConnectivityState::Stale,
-            activity: record.state.activity(),
-            project: record.project.clone(),
-            cwd: record.cwd.clone(),
-            name: record.name.clone(),
-            model: record.model.clone(),
-            spawn_origin: None,
+        .map(|record| {
+            events::encode(&events::connectivity_changed(
+                authority_domain_id.clone(),
+                SessionConnectivityChanged {
+                    adapter_id: Some(record.identity.adapter_id.clone()),
+                    deployment_scope: record.identity.deployment_scope.clone(),
+                    runtime_session_id: Some(record.identity.runtime_session_id.clone()),
+                    session_generation: Some(record.identity.session_generation),
+                    from: record.state.connectivity,
+                    to: SessionConnectivityState::Stale as i32,
+                },
+            ))
         })
-        .collect();
-
-    let mut sources = Vec::with_capacity(reports.len());
-    for report in &reports {
-        let current = registry
-            .get_live_session(
-                &report.adapter_id,
-                &report.deployment_scope,
-                &report.runtime_session_id,
-            )
-            .ok_or_else(|| {
-                SessionError::CorruptLog(
-                    "session disappeared during detach reconciliation".to_owned(),
-                )
-            })?;
-        sources.push(events::encode(&events::connectivity_changed(
-            authority_domain_id.clone(),
-            SessionConnectivityChanged {
-                adapter_id: Some(report.adapter_id.clone()),
-                deployment_scope: report.deployment_scope.clone(),
-                runtime_session_id: Some(report.runtime_session_id.clone()),
-                session_generation: Some(report.session_generation),
-                from: current.state.connectivity,
-                to: SessionConnectivityState::Stale as i32,
-            },
-        )));
-    }
-    Ok(sources)
+        .collect())
 }
 
 /// Compatibility composition for session-only callers. Production adapter
@@ -549,70 +334,124 @@ where
     Ok(event_id)
 }
 
-async fn refreshed_current<L: SessionLookup>(
-    session_lookup: &L,
+pub(crate) fn validate_report(
     report: &SessionReport,
-) -> Result<SessionRecord, SessionError> {
-    session_lookup
-        .current_session(
-            &report.authority_domain_id,
-            &report.adapter_id,
-            &report.deployment_scope,
-            &report.runtime_session_id,
-        )
-        .await?
-        .ok_or_else(|| {
-            SessionError::CorruptLog(
-                "session projection lost the live record after folding a committed delta"
-                    .to_owned(),
-            )
-        })
+) -> Result<ValidatedSessionReport, SessionError> {
+    let adapter_id = report.adapter_id.clone().ok_or_else(|| {
+        SessionError::CorruptRecord("session report is missing adapter_id".to_owned())
+    })?;
+    if adapter_id.value.is_empty() {
+        return Err(SessionError::CorruptRecord(
+            "session report adapter_id is empty".to_owned(),
+        ));
+    }
+    if report.deployment_scope.is_empty() {
+        return Err(SessionError::CorruptRecord(
+            "session report deployment_scope is empty".to_owned(),
+        ));
+    }
+    let runtime_session_id = report.runtime_session_id.clone().ok_or_else(|| {
+        SessionError::CorruptRecord("session report is missing runtime_session_id".to_owned())
+    })?;
+    if runtime_session_id.value.is_empty() {
+        return Err(SessionError::CorruptRecord(
+            "session report runtime_session_id is empty".to_owned(),
+        ));
+    }
+    let session_generation = report.session_generation.ok_or_else(|| {
+        SessionError::CorruptRecord("session report is missing session_generation".to_owned())
+    })?;
+    let connectivity = SessionConnectivityState::try_from(report.connectivity).map_err(|_| {
+        SessionError::CorruptRecord(format!(
+            "session report has unknown connectivity state {}",
+            report.connectivity
+        ))
+    })?;
+    if connectivity == SessionConnectivityState::Unspecified {
+        return Err(SessionError::CorruptRecord(
+            "session report connectivity is unspecified".to_owned(),
+        ));
+    }
+    let activity = SessionActivityState::try_from(report.activity).map_err(|_| {
+        SessionError::CorruptRecord(format!(
+            "session report has unknown activity state {}",
+            report.activity
+        ))
+    })?;
+    if activity == SessionActivityState::Unspecified {
+        return Err(SessionError::CorruptRecord(
+            "session report activity is unspecified".to_owned(),
+        ));
+    }
+    let source_cursor = report.source_cursor.ok_or_else(|| {
+        SessionError::CorruptRecord("session report is missing source_cursor".to_owned())
+    })?;
+    validate_source_cursor(&source_cursor, "session report")?;
+    validate_spawn_origin(report.spawn_origin.as_ref())?;
+
+    Ok(ValidatedSessionReport {
+        identity: SessionIdentity {
+            adapter_id,
+            deployment_scope: report.deployment_scope.clone(),
+            runtime_session_id,
+            session_generation,
+        },
+        connectivity,
+        activity,
+        source_cursor,
+    })
 }
 
-fn validate_report(report: &SessionReport) -> Result<(), SessionError> {
-    let empty_field = if report.authority_domain_id.value.is_empty() {
-        Some("authority_domain_id")
-    } else if report.adapter_id.value.is_empty() {
-        Some("adapter_id")
-    } else if report.deployment_scope.is_empty() {
-        Some("deployment_scope")
-    } else if report.runtime_session_id.value.is_empty() {
-        Some("runtime_session_id")
-    } else {
-        None
-    };
-
-    if let Some(field) = empty_field {
+pub(crate) fn validate_source_cursor(
+    cursor: &SessionReportSourceCursor,
+    context: &str,
+) -> Result<(), SessionError> {
+    cursor.adapter_generation.ok_or_else(|| {
+        SessionError::CorruptRecord(format!(
+            "{context} source_cursor is missing adapter_generation"
+        ))
+    })?;
+    if cursor.revision == 0 {
         return Err(SessionError::CorruptRecord(format!(
-            "session report {field} is empty"
+            "{context} source_cursor revision is zero"
         )));
-    }
-    if let Some(origin) = &report.spawn_origin {
-        match origin.r#ref.as_ref() {
-            Some(typed_correlation::Ref::CommandId(command_id)) if !command_id.value.is_empty() => {
-            }
-            Some(typed_correlation::Ref::CommandId(_)) => {
-                return Err(SessionError::CorruptRecord(
-                    "session report spawn_origin command_id is empty".to_owned(),
-                ));
-            }
-            Some(_) => {
-                return Err(SessionError::CorruptRecord(
-                    "session report spawn_origin is not a command correlation".to_owned(),
-                ));
-            }
-            None => {
-                return Err(SessionError::CorruptRecord(
-                    "session report spawn_origin has no typed reference".to_owned(),
-                ));
-            }
-        }
     }
     Ok(())
 }
 
-fn metadata_changed(current: &SessionRecord, report: &SessionReport) -> bool {
-    current.project != report.project || current.cwd != report.cwd || current.name != report.name
+#[must_use]
+pub(crate) fn source_cursor_strictly_after(
+    reported: &SessionReportSourceCursor,
+    live: &SessionReportSourceCursor,
+) -> bool {
+    let reported_generation = reported
+        .adapter_generation
+        .expect("validated reported source cursor");
+    let live_generation = live
+        .adapter_generation
+        .expect("validated live source cursor");
+    reported_generation.value > live_generation.value
+        || (reported_generation == live_generation && reported.revision > live.revision)
+}
+
+fn validate_spawn_origin(origin: Option<&TypedCorrelation>) -> Result<(), SessionError> {
+    let Some(origin) = origin else {
+        return Ok(());
+    };
+    match origin.r#ref.as_ref() {
+        Some(typed_correlation::Ref::CommandId(command_id)) if !command_id.value.is_empty() => {
+            Ok(())
+        }
+        Some(typed_correlation::Ref::CommandId(_)) => Err(SessionError::CorruptRecord(
+            "session report spawn_origin command_id is empty".to_owned(),
+        )),
+        Some(_) => Err(SessionError::CorruptRecord(
+            "session report spawn_origin is not a command correlation".to_owned(),
+        )),
+        None => Err(SessionError::CorruptRecord(
+            "session report spawn_origin has no typed reference".to_owned(),
+        )),
+    }
 }
 
 fn invalid_transition<T: std::fmt::Debug>(from: T, to: T) -> SessionError {

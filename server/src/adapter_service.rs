@@ -9,9 +9,8 @@ use std::{
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
     AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport,
-    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
-    ObservationRequest, ObservationResult, OperationState, ReceiveRequest, SessionActivityState,
-    SessionConnectivityState, StoredEventKind,
+    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, ObservationRequest,
+    ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
@@ -22,7 +21,7 @@ use patchbay_core::{
     resource::{
         self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
     },
-    session::{self, SessionRegistry, SessionReport},
+    session::{self, SessionRegistry},
     storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage},
     target::target_adapter_id,
 };
@@ -782,30 +781,50 @@ where
         // Submit/RevokeGrant. This keeps revocation's catch-up/effect plan
         // adjacent to the append that establishes its LSN boundary.
         let event_id = match request.observation {
-            Some(observation_request::Observation::SessionReport(report)) => {
+            Some(observation_request::Observation::SessionReport(mut report)) => {
                 require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
-                let report = SessionReport {
-                    authority_domain_id: domain.clone(),
-                    adapter_id: report.adapter_id.ok_or_else(|| {
-                        Status::invalid_argument("session report is missing adapter_id")
-                    })?,
-                    deployment_scope: report.deployment_scope,
-                    runtime_session_id: report.runtime_session_id.ok_or_else(|| {
-                        Status::invalid_argument("session report is missing runtime_session_id")
-                    })?,
-                    session_generation: report
-                        .session_generation
-                        .unwrap_or(Generation { value: 0 }),
-                    connectivity: SessionConnectivityState::try_from(report.connectivity)
-                        .map_err(|_| Status::invalid_argument("unknown connectivity state"))?,
-                    activity: SessionActivityState::try_from(report.activity)
-                        .map_err(|_| Status::invalid_argument("unknown activity state"))?,
-                    project: report.project,
-                    cwd: report.cwd,
-                    name: report.name,
-                    model: report.model,
-                    spawn_origin: report.spawn_origin,
+                let source_cursor = report.source_cursor.as_mut().ok_or_else(|| {
+                    Status::invalid_argument("session report is missing source_cursor")
+                })?;
+                if source_cursor.revision == 0 {
+                    return Err(Status::invalid_argument(
+                        "session report source_cursor revision is zero",
+                    ));
+                }
+                let reported_adapter_generation =
+                    source_cursor.adapter_generation.ok_or_else(|| {
+                        Status::invalid_argument(
+                            "session report source_cursor is missing adapter_generation",
+                        )
+                    })?;
+                let current_adapter_generation = {
+                    let adapters = self.adapters.lock().await;
+                    adapters
+                        .get(&authenticated_adapter)
+                        .and_then(|record| record.registration.adapter_generation)
+                        .ok_or_else(|| {
+                            Status::unauthenticated(
+                                "adapter attachment is not current; reattach required",
+                            )
+                        })?
                 };
+                if reported_adapter_generation != current_adapter_generation {
+                    record_adapter_audit(
+                        self.audit.as_ref(),
+                        patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+                        &authenticated_adapter,
+                        Some(FailureCode::StaleEvent),
+                        "session_report_source_cursor_stale",
+                    )
+                    .await?;
+                    return Err(Status::failed_precondition(
+                        "session report adapter generation is stale",
+                    ));
+                }
+                // Replace producer identity with facts from the authenticated
+                // attachment before the generated report reaches core logic.
+                report.adapter_id = Some(authenticated_adapter.clone());
+                source_cursor.adapter_generation = Some(current_adapter_generation);
                 // The adapter owns an independent session projection. Rebuild
                 // it at the gate boundary before deriving the next report
                 // delta; otherwise a lockdown (or any core-side append) can
@@ -819,24 +838,36 @@ where
                 let result = match session::ingest_session_report(
                     &self.storage,
                     &mut *sessions,
+                    &domain,
                     report,
                 )
                 .await
                 {
                     Ok(result) => result,
                     Err(error) => {
-                        let kind = if matches!(error, session::SessionError::StaleGeneration { .. })
-                        {
-                            patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch
-                        } else {
-                            patchbay_contracts::patchbay::AuditEventKind::AdapterFailed
+                        let (kind, failure_code, reason) = match &error {
+                            session::SessionError::StaleSourceCursor { .. } => (
+                                patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+                                Some(FailureCode::StaleEvent),
+                                "session_report_source_cursor_stale",
+                            ),
+                            session::SessionError::StaleGeneration { .. } => (
+                                patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch,
+                                Some(FailureCode::StaleEvent),
+                                "session_report_generation_stale",
+                            ),
+                            _ => (
+                                patchbay_contracts::patchbay::AuditEventKind::AdapterFailed,
+                                None,
+                                "session_report_rejected",
+                            ),
                         };
                         record_adapter_audit(
                             self.audit.as_ref(),
                             kind,
                             &authenticated_adapter,
-                            None,
-                            "session_report_rejected",
+                            failure_code,
+                            reason,
                         )
                         .await?;
                         return Err(map_session_error(error));
@@ -1302,19 +1333,12 @@ fn require_same_adapter(actual: Option<&AdapterId>, expected: &AdapterId) -> Res
 fn session_result_event_id(
     result: session::IngestResult,
 ) -> Option<patchbay_contracts::patchbay::EventId> {
-    match result {
+    let event_id = match result {
         session::IngestResult::Registered { event_id }
-        | session::IngestResult::ConnectivityChanged { event_id, .. }
-        | session::IngestResult::ActivityChanged { event_id, .. }
-        | session::IngestResult::Relabeled { event_id }
-        | session::IngestResult::ModelChanged { event_id, .. } => Some(event_id),
-        session::IngestResult::GenerationBumped {
-            new_generation_event_id,
-            ..
-        } => Some(new_generation_event_id),
-        session::IngestResult::DeltasApplied { event_ids } => event_ids.last().cloned(),
-        session::IngestResult::NoChange => None,
-    }
+        | session::IngestResult::ReportApplied { event_id }
+        | session::IngestResult::GenerationBumped { event_id, .. } => event_id,
+    };
+    Some(event_id)
 }
 
 async fn record_adapter_audit(
@@ -1370,7 +1394,8 @@ fn map_resource_error(error: resource::ResourceError) -> Status {
 fn map_session_error(error: session::SessionError) -> Status {
     match error {
         session::SessionError::InvalidTransition { .. }
-        | session::SessionError::StaleGeneration { .. } => {
+        | session::SessionError::StaleGeneration { .. }
+        | session::SessionError::StaleSourceCursor { .. } => {
             Status::failed_precondition(error.to_string())
         }
         error @ (session::SessionError::EmptyAuthorityDomain

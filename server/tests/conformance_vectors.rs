@@ -454,6 +454,7 @@ async fn seed_operation_target(
                 name: "session-vector".to_owned(),
                 model: "provider/model".to_owned(),
                 spawn_origin: None,
+                source_cursor: None,
             },
         );
         storage
@@ -1038,6 +1039,7 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
             name: "snapshot-vector".to_owned(),
             model: "provider/model".to_owned(),
             spawn_origin: None,
+            source_cursor: None,
         },
     );
     let registration_event = storage

@@ -330,6 +330,7 @@ impl ProjectionState {
                 tombstoned: record.tombstoned,
                 superseded_at_lsn: record.superseded_at_lsn.map(|value| Lsn { value }),
                 model: record.model,
+                last_source_cursor: record.last_source_cursor,
             })
             .collect();
         let view_revisions = sessions
@@ -1071,6 +1072,54 @@ mod tests {
         assert_eq!(session.core_generation.as_ref(), Some(state.core_generation()));
         assert_eq!(resource.core_generation, session.core_generation);
         assert!(resource.core_generation.is_some_and(|generation| generation.value > 0));
+    }
+
+    #[tokio::test]
+    async fn session_snapshot_publishes_the_last_source_cursor() {
+        use patchbay_contracts::patchbay::{
+            AdapterId, Generation, RuntimeSessionId, SessionActivityState,
+            SessionConnectivityState, SessionRegistered, SessionReportSourceCursor, SessionState,
+        };
+
+        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let cursor = SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 2 }),
+            revision: 3,
+        };
+        let registration = patchbay_core::session::events::registered(
+            domain.clone(),
+            SessionRegistered {
+                adapter_id: Some(AdapterId { value: "pi".into() }),
+                deployment_scope: "machine-a".into(),
+                runtime_session_id: Some(RuntimeSessionId { value: "runtime-1".into() }),
+                session_generation: Some(Generation { value: 1 }),
+                initial_state: Some(SessionState {
+                    connectivity: SessionConnectivityState::Live as i32,
+                    activity: SessionActivityState::Idle as i32,
+                }),
+                project: "patchbay".into(),
+                cwd: "/work/patchbay".into(),
+                name: "main".into(),
+                model: "provider/model".into(),
+                spawn_origin: None,
+                source_cursor: Some(cursor),
+            },
+        );
+        storage
+            .append(&domain, patchbay_core::session::events::encode(&registration))
+            .await
+            .unwrap();
+
+        let state = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        let snapshot = state
+            .materialize_session_snapshot(
+                domain,
+                prost_types::Timestamp { seconds: 1, nanos: 0 },
+            )
+            .await;
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].last_source_cursor, Some(cursor));
     }
 
     #[tokio::test]

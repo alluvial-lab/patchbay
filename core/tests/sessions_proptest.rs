@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, Generation, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState,
+    SessionConnectivityState, SessionReportSourceCursor,
 };
 use patchbay_core::session::{
     ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRecord,
@@ -47,7 +47,6 @@ fn any_generation() -> impl Strategy<Value = Generation> {
 
 fn any_connectivity_state() -> impl Strategy<Value = SessionConnectivityState> {
     prop_oneof![
-        Just(SessionConnectivityState::Unspecified),
         Just(SessionConnectivityState::Live),
         Just(SessionConnectivityState::Stale),
         Just(SessionConnectivityState::Offline),
@@ -58,7 +57,6 @@ fn any_connectivity_state() -> impl Strategy<Value = SessionConnectivityState> {
 
 fn any_activity_state() -> impl Strategy<Value = SessionActivityState> {
     prop_oneof![
-        Just(SessionActivityState::Unspecified),
         Just(SessionActivityState::Idle),
         Just(SessionActivityState::Working),
         Just(SessionActivityState::Unknown),
@@ -79,19 +77,24 @@ fn any_session_report(
         "[a-z]{1,8}/[a-z]{1,8}",
     )
         .prop_map(
-            move |(session_generation, connectivity, activity, project, cwd, name, model)| SessionReport {
-                authority_domain_id: domain(),
-                adapter_id: adapter_id.clone(),
-                deployment_scope: "local".to_owned(),
-                runtime_session_id: runtime_session_id.clone(),
-                session_generation,
-                connectivity,
-                activity,
-                project,
-                cwd,
-                name,
-                model,
-                spawn_origin: None,
+            move |(session_generation, connectivity, activity, project, cwd, name, model)| {
+                SessionReport {
+                    adapter_id: Some(adapter_id.clone()),
+                    deployment_scope: "local".to_owned(),
+                    runtime_session_id: Some(runtime_session_id.clone()),
+                    session_generation: Some(session_generation),
+                    connectivity: connectivity as i32,
+                    activity: activity as i32,
+                    project,
+                    cwd,
+                    name,
+                    model,
+                    spawn_origin: None,
+                    source_cursor: Some(SessionReportSourceCursor {
+                        adapter_generation: Some(Generation { value: 1 }),
+                        revision: 1,
+                    }),
+                }
             },
         )
 }
@@ -150,22 +153,25 @@ fn any_multi_identity_sequence() -> impl Strategy<Value = Vec<(usize, u64)>> {
 
 fn report_for_key(key: &OracleSessionKey, generation: u64) -> SessionReport {
     SessionReport {
-        authority_domain_id: domain(),
-        adapter_id: AdapterId {
+        adapter_id: Some(AdapterId {
             value: key.adapter.clone(),
-        },
+        }),
         deployment_scope: key.deployment_scope.clone(),
-        runtime_session_id: RuntimeSessionId {
+        runtime_session_id: Some(RuntimeSessionId {
             value: key.runtime_session.clone(),
-        },
-        session_generation: Generation { value: generation },
-        connectivity: SessionConnectivityState::Live,
-        activity: SessionActivityState::Idle,
+        }),
+        session_generation: Some(Generation { value: generation }),
+        connectivity: SessionConnectivityState::Live as i32,
+        activity: SessionActivityState::Idle as i32,
         project: format!("project-{}", key.deployment_scope),
         cwd: format!("/work/{}", key.deployment_scope),
         name: format!("{}-{}", key.adapter, key.runtime_session),
         model: "provider/model".to_owned(),
         spawn_origin: None,
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        }),
     }
 }
 
@@ -195,7 +201,7 @@ async fn ingest_hot(
     registry: &mut SessionRegistry,
     report: SessionReport,
 ) -> Result<IngestResult, SessionError> {
-    ingest_session_report(storage, registry, report).await
+    ingest_session_report(storage, registry, &domain(), report).await
 }
 
 fn report_at(
@@ -204,18 +210,21 @@ fn report_at(
     activity: SessionActivityState,
 ) -> SessionReport {
     SessionReport {
-        authority_domain_id: domain(),
-        adapter_id: adapter(),
+        adapter_id: Some(adapter()),
         deployment_scope: "local".to_owned(),
-        runtime_session_id: runtime_session("session-1"),
-        session_generation: Generation { value: generation },
-        connectivity,
-        activity,
+        runtime_session_id: Some(runtime_session("session-1")),
+        session_generation: Some(Generation { value: generation }),
+        connectivity: connectivity as i32,
+        activity: activity as i32,
         project: "project-a".to_owned(),
         cwd: "/work/a".to_owned(),
         name: "session-a".to_owned(),
         model: "provider/model-a".to_owned(),
         spawn_origin: None,
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        }),
     }
 }
 
@@ -247,7 +256,7 @@ async fn run_generation_monotonic_check(reports: &[SessionReport]) -> Result<(),
     let mut expected_live_generation = 0;
 
     for report in reports.iter().cloned() {
-        let reported_generation = report.session_generation.value;
+        let reported_generation = report.session_generation.unwrap().value;
         let result = ingest_hot(&storage, &mut registry, report).await;
         match result {
             Ok(IngestResult::GenerationBumped { to_generation, .. }) => {
@@ -263,7 +272,7 @@ async fn run_generation_monotonic_check(reports: &[SessionReport]) -> Result<(),
                 check_non_decreasing(&mut expected_live_generation, reported_generation)?;
             }
             Ok(_) => {}
-            Err(SessionError::StaleGeneration { .. }) => {}
+            Err(SessionError::StaleGeneration { .. } | SessionError::StaleSourceCursor { .. }) => {}
             Err(error) => {
                 // Random state-axis reports may be invalid transitions. They
                 // are rejected before append and therefore cannot alter the
@@ -308,7 +317,7 @@ async fn run_multi_identity_check(actions: &[(usize, u64)]) -> Result<(), String
         let before_registry = registry.clone();
         let before = projection_by_oracle_key(&registry)?;
         let previous = oracle.get(&addressed).cloned();
-        let result = ingest_session_report(
+        let result = ingest_hot(
             &storage,
             &mut registry,
             report_for_key(&addressed, reported_generation),
@@ -351,9 +360,9 @@ async fn run_multi_identity_check(actions: &[(usize, u64)]) -> Result<(), String
                 oracle.insert(addressed.clone(), expected);
             }
             Some(expected) if reported_generation == expected.live_generation => {
-                if !matches!(&result, Ok(IngestResult::NoChange)) {
+                if !matches!(&result, Err(SessionError::StaleSourceCursor { .. })) {
                     return Err(format!(
-                        "equal report for {addressed:?} was not inert: {result:?}"
+                        "equal report for {addressed:?} was not source-stale: {result:?}"
                     ));
                 }
                 if registry != before_registry {
@@ -475,9 +484,9 @@ proptest! {
         })?;
     }
 
-    /// Strict supersession: an identical equal-generation report is a no-op;
-    /// a lower-generation report is rejected and leaves the live generation
-    /// unchanged.
+    /// Strict supersession: an identical equal-generation source cursor is
+    /// rejected; a lower runtime generation is also rejected, and neither can
+    /// alter the live generation.
     #[test]
     fn equal_generation_is_noop_lower_is_rejected(
         generation in 1u64..=4,
@@ -493,12 +502,15 @@ proptest! {
             prop_assert!(matches!(registered, IngestResult::Registered { .. }), "first report must register");
             let before_equal = live_generation(&registry);
 
-            let equal = ingest_hot(&storage, &mut registry, original.clone()).await.unwrap();
-            prop_assert!(matches!(equal, IngestResult::NoChange));
+            let equal = ingest_hot(&storage, &mut registry, original.clone()).await;
+            prop_assert!(
+                matches!(equal, Err(SessionError::StaleSourceCursor { .. })),
+                "equal source cursor must be rejected"
+            );
             prop_assert_eq!(live_generation(&registry), before_equal);
 
             let mut lower = original;
-            lower.session_generation = Generation { value: generation - 1 };
+            lower.session_generation = Some(Generation { value: generation - 1 });
             let rejected = ingest_hot(&storage, &mut registry, lower).await;
             prop_assert!(matches!(
                 rejected,
@@ -567,11 +579,12 @@ proptest! {
                 .clone();
 
             let mut relabeled = original;
+            relabeled.source_cursor.as_mut().unwrap().revision = 2;
             relabeled.project = "project-b".to_owned();
             relabeled.cwd = "/work/b".to_owned();
             relabeled.name = "session-b".to_owned();
             let result = ingest_hot(&storage, &mut registry, relabeled).await.unwrap();
-            prop_assert!(matches!(result, IngestResult::Relabeled { .. }), "metadata-only report must relabel");
+            prop_assert!(matches!(result, IngestResult::ReportApplied { .. }), "metadata-only report must apply atomically");
             let record = registry
                 .get_live_session(&adapter(), "local", &runtime_session("session-1"))
                 .unwrap();
@@ -638,7 +651,10 @@ proptest! {
             let mut live = SessionRegistry::new(domain()).unwrap();
             for report in reports {
                 match ingest_hot(&storage, &mut live, report).await {
-                    Ok(_) | Err(SessionError::StaleGeneration { .. }) | Err(SessionError::InvalidTransition { .. }) => {},
+                    Ok(_)
+                    | Err(SessionError::StaleGeneration { .. })
+                    | Err(SessionError::StaleSourceCursor { .. })
+                    | Err(SessionError::InvalidTransition { .. }) => {},
                     Err(error) => return Err(TestCaseError::fail(format!("unexpected report rejection: {error}"))),
                 }
             }
@@ -728,8 +744,9 @@ struct DecreasingGenerationRegistry {
 
 impl DecreasingGenerationRegistry {
     fn ingest(&mut self, report: &SessionReport) -> Generation {
-        self.live_generation = Some(report.session_generation);
-        report.session_generation
+        let generation = report.session_generation.unwrap();
+        self.live_generation = Some(generation);
+        generation
     }
 }
 
