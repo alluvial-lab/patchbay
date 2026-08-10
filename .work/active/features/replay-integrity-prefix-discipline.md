@@ -1,7 +1,7 @@
 ---
 id: replay-integrity-prefix-discipline
 kind: feature
-stage: review
+stage: done
 tags: [verification, protocol, foundation]
 parent: null
 depends_on: []
@@ -296,6 +296,13 @@ Pass-1 verification:
 
 ## Status (wrapped 2026-08-10)
 Pass-1 blockers were fixed in `cb7f898`; the feature stays at `review` because the operator wrap interrupted the required clean follow-up pass.
+
+## Thorough review closure (2026-08-10)
+
+- Same-harness fresh-context Sol reviewers completed three post-wrap passes. Pass 2 found cancellation-unsafe aggregate publication and two unvalidated complete-log diagnostics searches; fixed in `8798052`. Pass 3 found diagnostics provenance ambiguity, non-atomic authority prefix warming, and stale exact-successor pattern wording; fixed in `ea83593`.
+- The final pass proposed append-result readback hardening for authority revocation warming and diagnostics result publication. Receiver adjudication rejected these as adjacent append-port fault-model expansion rather than blockers in this feature's complete-log replay contract: both paths consume successful atomic append results and neither is a full-prefix read/replay boundary. The feature's required defenses remain validate-before-fold for events returned by complete-log reads, all-or-nothing publication of returned tails, and unchanged cursors on fold failure.
+- Final verification reported green focused replay/recovery/authority/diagnostics/storage/server tests, `cargo test --workspace`, workspace clippy with warnings denied, model checks, vector checks (21 implementation checks and 37 mutation witnesses), and `git diff --check`. Global rustfmt remains the documented unrelated baseline.
+- Review status: approved after thorough multi-pass convergence; no receiver-confirmed material current-cycle blockers remain. Review was same-harness fresh-context (`openai-codex/gpt-5.6-sol`), not cross-model.
 
 ## Review fix — pass 2 (2026-08-10)
 
