@@ -317,9 +317,7 @@ impl ProjectionState {
         SessionSnapshot {
             authority_domain_id: Some(authority_domain_id),
             snapshot_lsn: Some(Lsn { value: *cursor }),
-            // Core-generation persistence is a reserved seam in the current
-            // executable slice; do not fabricate one on this read path.
-            core_generation: None,
+            core_generation: Some(self.core_generation),
             sessions,
             view_revisions,
             materialized_at: Some(materialized_at),
@@ -396,7 +394,7 @@ impl ProjectionState {
         ResourceSnapshot {
             authority_domain_id: Some(authority_domain_id),
             snapshot_lsn: Some(Lsn { value: *cursor }),
-            core_generation: None,
+            core_generation: Some(self.core_generation),
             resources,
             view_revisions,
             materialized_at: Some(materialized_at),
@@ -987,6 +985,29 @@ mod tests {
         StoredEventPayload,
     };
     use prost::Message;
+
+    #[tokio::test]
+    async fn session_and_resource_snapshots_share_the_persisted_anchor() {
+        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let state = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        let materialized_at = prost_types::Timestamp { seconds: 1, nanos: 0 };
+
+        let session = state
+            .materialize_session_snapshot(domain.clone(), materialized_at)
+            .await;
+        let resource = state
+            .materialize_resource_snapshot(domain.clone(), materialized_at)
+            .await;
+
+        assert_eq!(session.authority_domain_id.as_ref(), Some(&domain));
+        assert_eq!(resource.authority_domain_id.as_ref(), Some(&domain));
+        assert_eq!(session.snapshot_lsn, Some(Lsn { value: 0 }));
+        assert_eq!(resource.snapshot_lsn, Some(Lsn { value: 0 }));
+        assert_eq!(session.core_generation.as_ref(), Some(state.core_generation()));
+        assert_eq!(resource.core_generation, session.core_generation);
+        assert!(resource.core_generation.is_some_and(|generation| generation.value > 0));
+    }
 
     #[tokio::test]
     async fn resource_snapshot_is_stable_ordered_and_restart_equivalent() {

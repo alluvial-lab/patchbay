@@ -44,6 +44,7 @@ use patchbay_core_server::{
     admin_service::{AdminServiceImpl, SetupSecret},
     decision_gate::CoreDecisionGate,
     login_security::{LoginLimiter, StderrLoginAuditSink},
+    operator_session::OperatorSessionBinding,
     issuer::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
@@ -1790,6 +1791,129 @@ async fn rpc_rejects_expired_and_not_yet_valid_operations_without_append() {
         operation_count_before,
         "invalid windows must not append or become delivery candidates"
     );
+}
+
+#[tokio::test]
+async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("checkpoint-restart.sqlite3");
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    seed_authority_and_session(&storage).await;
+    let service = ControlServiceImpl::new(storage.clone(), domain()).await.unwrap();
+    let checkpoint = service
+        .projection_state()
+        .materialize_session_snapshot(
+            domain(),
+            Timestamp { seconds: 500, nanos: 0 },
+        )
+        .await;
+    let checkpoint_lsn = checkpoint.snapshot_lsn.unwrap();
+    let persisted_generation = checkpoint.core_generation.unwrap();
+    let checkpoint_payload = checkpoint.encode_to_vec();
+    storage
+        .write_snapshot(&domain(), checkpoint_lsn, checkpoint_payload.clone())
+        .await
+        .unwrap();
+    drop(service);
+    drop(storage);
+    tokio::task::yield_now().await;
+
+    let reopened = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    let restarted = ControlServiceImpl::new(reopened.clone(), domain()).await.unwrap();
+    assert_eq!(
+        restarted.projection_state().core_generation(),
+        &persisted_generation
+    );
+    let operator_session = restarted
+        .projection_state()
+        .issue_operator_session(OperatorSessionBinding {
+            actor_id: ActorId { value: OPERATOR_ACTOR.to_owned() },
+            endpoint_id: EndpointId { value: "patchbay-web-server".to_owned() },
+            device_id: DeviceId { value: "web-host".to_owned() },
+            endpoint_generation: Generation { value: 1 },
+        })
+        .await;
+    let auth = TestAuth {
+        session_id: operator_session.id.value,
+        session_generation: operator_session.session_generation.value,
+        principal_id: PRINCIPAL_ID.to_owned(),
+        principal_secret: PRINCIPAL_SECRET.to_owned(),
+    };
+
+    let compatible = restarted
+        .load_snapshot(authenticated_request(
+            LoadSnapshotRequest {
+                authority_domain_id: Some(domain()),
+                at_or_before: None,
+                view_kind: SnapshotViewKind::Session as i32,
+            },
+            SECRET,
+            &auth,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(compatible.snapshot_payload, checkpoint_payload);
+
+    let mut stale = checkpoint.clone();
+    stale.snapshot_lsn = Some(Lsn { value: 1 });
+    let stale_payload = stale.encode_to_vec();
+    reopened
+        .write_snapshot(&domain(), Lsn { value: 1 }, stale_payload.clone())
+        .await
+        .unwrap();
+    let repaired_stale = restarted
+        .load_snapshot(authenticated_request(
+            LoadSnapshotRequest {
+                authority_domain_id: Some(domain()),
+                at_or_before: Some(Lsn { value: 1 }),
+                view_kind: SnapshotViewKind::Session as i32,
+            },
+            SECRET,
+            &auth,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_ne!(repaired_stale.snapshot_payload, stale_payload);
+    assert_eq!(
+        SessionSnapshot::decode(repaired_stale.snapshot_payload.as_slice())
+            .unwrap()
+            .snapshot_lsn,
+        Some(checkpoint_lsn)
+    );
+
+    for incompatible_generation in [
+        None,
+        Some(Generation {
+            value: if persisted_generation.value == 1 { 2 } else { 1 },
+        }),
+    ] {
+        let mut incompatible = checkpoint.clone();
+        incompatible.core_generation = incompatible_generation;
+        let incompatible_payload = incompatible.encode_to_vec();
+        reopened
+            .write_snapshot(&domain(), checkpoint_lsn, incompatible_payload.clone())
+            .await
+            .unwrap();
+        let repaired = restarted
+            .load_snapshot(authenticated_request(
+                LoadSnapshotRequest {
+                    authority_domain_id: Some(domain()),
+                    at_or_before: None,
+                    view_kind: SnapshotViewKind::Session as i32,
+                },
+                SECRET,
+                &auth,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_ne!(repaired.snapshot_payload, incompatible_payload);
+        let repaired = SessionSnapshot::decode(repaired.snapshot_payload.as_slice()).unwrap();
+        assert_eq!(repaired.core_generation, Some(persisted_generation));
+        assert_eq!(repaired.snapshot_lsn, Some(checkpoint_lsn));
+    }
 }
 
 #[tokio::test]

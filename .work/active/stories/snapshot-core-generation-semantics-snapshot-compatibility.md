@@ -1,7 +1,7 @@
 ---
 id: snapshot-core-generation-semantics-snapshot-compatibility
 kind: story
-stage: implementing
+stage: done
 tags: [protocol]
 parent: snapshot-core-generation-semantics
 depends_on: [snapshot-core-generation-semantics-durable-epoch]
@@ -45,3 +45,14 @@ pub fn decode_compatible_session_checkpoint(
 ## Ordering
 
 Depends on `snapshot-core-generation-semantics-durable-epoch`. Blocks `snapshot-core-generation-semantics-continuity-evidence`, which verifies the real restart and mismatch paths and rolls the foundation forward.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for exact recovery compatibility semantics).
+- Review weight: `thorough` (explicit operator selection); child checkpoint advanced directly to done after verification per delegated endpoint instructions.
+- Files changed: `server/src/{snapshot,lib,state,service}.rs`, `server/tests/grpc_smoke.rs`.
+- Tests added: pure domain/generation/LSN/decode rejection tests, shared session/resource carriage test, and a file-backed restart RPC test covering compatible reuse, stale fallback, and missing/different-generation repair.
+- Simplification: replaced inline ad hoc checkpoint identity checks with one reusable decoder; freshness remains one separate caller comparison and the current session-only namespace remains unchanged.
+- Discrepancies from design: the file-backed restart/mismatch test scheduled in Unit 3 was pulled into this checkpoint so cross-incarnation compatibility was verified before advancing; `SessionCheckpointRejection` implements `Error` directly because the server crate does not depend on `thiserror`, avoiding an out-of-scope manifest change.
+- Adjacent issues parked: none.
+- Verification: `cargo check --workspace`; `cargo test -p patchbay-core-server snapshot::tests --lib`; `cargo test -p patchbay-core-server state::tests --lib`; `cargo test -p patchbay-core-server --test grpc_smoke core_generation`.

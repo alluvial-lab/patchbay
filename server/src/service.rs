@@ -46,6 +46,7 @@ use crate::{
     },
     operator_session::{OperatorSessionBinding, DEFAULT_OPERATOR_SESSION_TTL},
     rpc::control_service_server::ControlService,
+    snapshot::decode_compatible_session_checkpoint,
     state::ProjectionState,
 };
 
@@ -727,18 +728,13 @@ where
                 .map_err(map_storage_error_to_status)?
             {
                 let stored_lsn = stored.event_id.lsn.as_ref().map(|lsn| lsn.value);
-                let decoded = patchbay_contracts::patchbay::SessionSnapshot::decode(
-                    stored.payload.as_slice(),
+                let compatible = decode_compatible_session_checkpoint(
+                    &stored,
+                    &authority_domain_id,
+                    self.state.core_generation(),
                 )
-                .ok();
-                let valid = decoded.as_ref().is_some_and(|snapshot| {
-                    snapshot.authority_domain_id.as_ref() == Some(&authority_domain_id)
-                        && snapshot.snapshot_lsn.as_ref().map(|lsn| lsn.value) == stored_lsn
-                        && stored.event_id.authority_domain_id.as_ref()
-                            == Some(&authority_domain_id)
-                        && stored_lsn.is_some_and(|lsn| lsn >= current_lsn)
-                });
-                if valid {
+                .is_ok();
+                if compatible && stored_lsn.is_some_and(|lsn| lsn >= current_lsn) {
                     return Ok(Response::new(LoadSnapshotResponse {
                         present: true,
                         event_id: Some(stored.event_id),
