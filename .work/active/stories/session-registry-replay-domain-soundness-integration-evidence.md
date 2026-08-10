@@ -97,3 +97,17 @@ mutation witnesses before advancing to `done`.
   - claim the lockdown LSN before validation — `cargo test -p patchbay-core --test sessions_registry malformed_security_event_does_not_poison_corrected_same_lsn -- --exact` failed because the malformed envelope appeared in `applied_events`, exit 101.
 - Focused verification: registry 18/18; ingest 17/17; replay/resolver 9/9; session properties 9/9; acceptance 25/25; named server `CoreDecisionGate` regression passed. `cargo test --workspace`, workspace Clippy with warnings denied, model checks (53 modeled properties), and vector checks (53 vectors, 21 implementation checks, 37 existing vector mutation witnesses) passed.
 - Hygiene/lifecycle: scoped `rustfmt --edition 2021 --check core/tests/sessions_registry.rs`, `git diff --check`, and a production-source zero-diff check passed. No production, model, vector, wire, or foundation artifact changed; assurance remains implementation-checked, and both child and parent intentionally remain at `stage: review` for Phase-2 adversarial convergence.
+
+## Deep-lane Phase-2 follow-up — lockdown envelope and semantic preclaim evidence
+
+- Adjudication: confirmed both findings as evidence gaps, not production defects. Production already compares the complete applied `StoredEventPayload`, checks the lockdown payload's inner authority domain, and records replay identity only after all transition-specific validation succeeds.
+- Applied-lockdown equality evidence now isolates a kind-only/same-bytes candidate and a same-kind valid Protobuf re-encoding with an unknown field discarded on decode. Test-owned payload-only and decoded-semantic predicates accept their respective weak fixtures, while the real registry rejects each as conflicting same-LSN history with exact non-mutation.
+- Actual equality mutant kills (temporary production edits restored):
+  - payload-only `applied.payload == candidate.payload` — `lockdown_exact_envelope_equality_kills_payload_only_and_decoded_semantic_mutants` failed on the kind-only candidate, exit 101;
+  - decoded `SessionStateEvent`/`SecurityLockdownEvent` semantic equality — the same focused test failed on the unknown-field re-encoding, exit 101.
+- A table now covers correct outer/conflicting inner domain, affected-runtime-session-count mismatch, and exit while inactive. Every row proves exact registry non-mutation, then applies a corrected envelope at the identical `(authority_domain_id, LSN)` successfully.
+- Actual validation mutant kills (temporary production edits restored):
+  - removing the inner-domain equality guard — `rejected_lockdown_semantics_are_non_mutating_and_do_not_claim_their_lsn` failed on the conflicting-inner-domain row, exit 101;
+  - claiming `applied_events[event_lsn]` after common domain validation but before transition-specific checks — the same table failed exact non-mutation on the affected-count row, exit 101.
+- Verification: registry 20/20; ingest 17/17; replay/resolver 9/9; session properties 9/9; acceptance 25/25; named server `CoreDecisionGate` regression passed; `cargo test --workspace`, workspace Clippy with warnings denied, model checks (53 modeled properties), and vector checks (53 vectors, 21 implementation checks, 37 existing vector mutation witnesses) passed.
+- Hygiene/lifecycle: scoped rustfmt, `git diff --check`, and production-source zero-diff passed. No production, model, vector, wire, foundation, or unrelated item changed; assurance remains implementation-checked, and child/parent remain at `stage: review` for caller-owned adversarial convergence.

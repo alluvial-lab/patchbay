@@ -1,9 +1,9 @@
 use patchbay_contracts::patchbay::{
     AdapterId, AuthorityDomainId, EventId, Generation, Lsn, OperationKind, RuntimeSessionId,
-    SecurityLockdownEntered, SecurityLockdownExited, SessionActivityChanged, SessionActivityState,
-    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
-    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionState, StoredEventKind,
-    StoredEventPayload, TargetScope,
+    SecurityLockdownEntered, SecurityLockdownEvent, SecurityLockdownExited, SessionActivityChanged,
+    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
+    SessionState, StoredEventKind, StoredEventPayload, TargetScope,
 };
 use prost::Message;
 
@@ -111,13 +111,20 @@ fn decoded_semantic_redelivery_mutant_accepts(
     applied: &StoredEventPayload,
     candidate: &StoredEventPayload,
 ) -> bool {
-    if applied.kind != StoredEventKind::SessionState as i32
-        || candidate.kind != StoredEventKind::SessionState as i32
-    {
+    if applied.kind != candidate.kind {
         return false;
     }
-    SessionStateEvent::decode(applied.payload.as_slice()).unwrap()
-        == SessionStateEvent::decode(candidate.payload.as_slice()).unwrap()
+    match StoredEventKind::try_from(applied.kind) {
+        Ok(StoredEventKind::SessionState) => {
+            SessionStateEvent::decode(applied.payload.as_slice()).unwrap()
+                == SessionStateEvent::decode(candidate.payload.as_slice()).unwrap()
+        }
+        Ok(StoredEventKind::SecurityLockdown) => {
+            SecurityLockdownEvent::decode(applied.payload.as_slice()).unwrap()
+                == SecurityLockdownEvent::decode(candidate.payload.as_slice()).unwrap()
+        }
+        _ => false,
+    }
 }
 
 #[test]
@@ -789,6 +796,95 @@ fn old_security_redeliveries_do_not_cancel_later_lockdown_posture() {
 }
 
 #[test]
+fn lockdown_exact_envelope_equality_kills_payload_only_and_decoded_semantic_mutants() {
+    let mut registry = SessionRegistry::new(domain()).unwrap();
+    registry.observe(&recorded(1, &registration())).unwrap();
+
+    let applied_event = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                reason_code: "exact_envelope_fixture".to_owned(),
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    registry.observe(&applied_event).unwrap();
+    let applied = registry.clone();
+    registry.observe(&applied_event).unwrap();
+    assert_eq!(
+        registry, applied,
+        "the exact lockdown envelope must be inert"
+    );
+
+    let kind_only_change = RecordedEvent {
+        event_id: applied_event.event_id.clone(),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::SessionState as i32,
+            payload: applied_event.payload.payload.clone(),
+        },
+    };
+    assert_ne!(kind_only_change.payload.kind, applied_event.payload.kind);
+    assert_eq!(
+        kind_only_change.payload.payload,
+        applied_event.payload.payload
+    );
+    assert!(
+        payload_only_redelivery_mutant_accepts(&applied_event.payload, &kind_only_change.payload),
+        "the lockdown kind-only fixture must expose a payload-only equality mutant"
+    );
+
+    let mut semantically_equal_reencoding = applied_event.clone();
+    // Unknown field 127 with varint value 1 is valid Protobuf framing. Prost
+    // drops it while decoding, so the decoded SecurityLockdownEvent is equal.
+    semantically_equal_reencoding
+        .payload
+        .payload
+        .extend_from_slice(&[0xf8, 0x07, 0x01]);
+    assert_eq!(
+        semantically_equal_reencoding.payload.kind,
+        applied_event.payload.kind
+    );
+    assert_ne!(
+        semantically_equal_reencoding.payload.payload,
+        applied_event.payload.payload
+    );
+    assert!(
+        decoded_semantic_redelivery_mutant_accepts(
+            &applied_event.payload,
+            &semantically_equal_reencoding.payload,
+        ),
+        "the valid lockdown re-encoding must expose a decoded-semantic equality mutant"
+    );
+
+    for (name, candidate) in [
+        ("kind-only same-bytes change", kind_only_change),
+        (
+            "same-kind decoded-equal unknown-field re-encoding",
+            semantically_equal_reencoding,
+        ),
+    ] {
+        let mut candidate_registry = applied.clone();
+        let before = candidate_registry.clone();
+        assert!(
+            matches!(
+                candidate_registry.observe(&candidate),
+                Err(SessionError::CorruptLog(message))
+                    if message.contains("conflicting durable envelopes")
+            ),
+            "{name} was mistaken for exact lockdown redelivery"
+        );
+        assert_eq!(
+            candidate_registry, before,
+            "{name} mutated the lockdown projection"
+        );
+    }
+}
+
+#[test]
 fn conflicting_same_lsn_security_envelope_rejects_without_mutation() {
     let mut registry = SessionRegistry::new(domain()).unwrap();
     registry.observe(&recorded(1, &registration())).unwrap();
@@ -877,6 +973,99 @@ fn malformed_security_event_does_not_poison_corrected_same_lsn() {
             .last_authoritative_lsn,
         Some(2)
     );
+}
+
+#[test]
+fn rejected_lockdown_semantics_are_non_mutating_and_do_not_claim_their_lsn() {
+    let other_domain = AuthorityDomainId {
+        value: "authority-other".to_owned(),
+    };
+    let inner_domain_conflict = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            other_domain,
+            SecurityLockdownEntered {
+                affected_runtime_session_count: 1,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    let affected_count_mismatch = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::entered(
+            domain(),
+            SecurityLockdownEntered {
+                affected_runtime_session_count: 0,
+                ..SecurityLockdownEntered::default()
+            },
+        )),
+    );
+    let exit_while_inactive = recorded_payload(
+        domain(),
+        2,
+        security_events::encode(&security_events::exited(
+            domain(),
+            SecurityLockdownExited::default(),
+        )),
+    );
+
+    for (name, rejected) in [
+        (
+            "outer domain correct with conflicting inner domain",
+            inner_domain_conflict,
+        ),
+        (
+            "affected runtime-session count mismatch",
+            affected_count_mismatch,
+        ),
+        ("exit while lockdown is inactive", exit_while_inactive),
+    ] {
+        let mut registry = SessionRegistry::new(domain()).unwrap();
+        registry.observe(&recorded(1, &registration())).unwrap();
+        let corrected = recorded_payload(
+            domain(),
+            2,
+            security_events::encode(&security_events::entered(
+                domain(),
+                SecurityLockdownEntered {
+                    affected_runtime_session_count: 1,
+                    ..SecurityLockdownEntered::default()
+                },
+            )),
+        );
+        assert_eq!(
+            rejected.event_id.authority_domain_id.as_ref(),
+            Some(&domain()),
+            "{name} must reach the inner lockdown validator from the correct outer domain"
+        );
+        assert_eq!(rejected.event_id, corrected.event_id, "{name}");
+        assert_ne!(rejected.payload, corrected.payload, "{name}");
+
+        let before = registry.clone();
+        assert!(
+            matches!(
+                registry.observe(&rejected),
+                Err(SessionError::CorruptLog(_))
+            ),
+            "{name} must reject"
+        );
+        assert_eq!(registry, before, "{name} mutated or claimed its LSN");
+
+        registry
+            .observe(&corrected)
+            .unwrap_or_else(|error| panic!("{name} poisoned corrected same-LSN replay: {error}"));
+        assert!(registry.lockdown_active(), "{name}");
+        assert_eq!(
+            registry
+                .get_session(&identity(1))
+                .unwrap()
+                .last_authoritative_lsn,
+            Some(2),
+            "{name}"
+        );
+    }
 }
 
 #[test]
