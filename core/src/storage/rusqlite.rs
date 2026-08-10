@@ -30,7 +30,7 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, EventId, FailureCode,
+    AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, EventId, FailureCode, Generation,
     IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
@@ -39,11 +39,11 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
-    AuditedDecisionAppend, AuditedDedupOutcome, DedupOutcome,
+    AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
-pub const LATEST_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_SCHEMA_VERSION: u32 = 4;
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
@@ -99,6 +99,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_records(authority_domain_id, 
 const MIGRATION_3: &str = r#"
 ALTER TABLE audit_records ADD COLUMN grant_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_grant ON audit_records(authority_domain_id, grant_id);
+"#;
+
+const MIGRATION_4: &str = r#"
+CREATE TABLE authority_domain_metadata (
+    authority_domain_id TEXT PRIMARY KEY,
+    core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+);
 "#;
 
 fn table_exists(db: &Connection, name: &str) -> Result<bool, StorageError> {
@@ -164,6 +171,19 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
             ],
         )?;
     }
+    let metadata_exists = table_exists(db, "authority_domain_metadata")?;
+    if metadata_exists && version < 4 {
+        return Err(StorageError::MalformedSchema(
+            "table authority_domain_metadata exists before schema version 4".to_owned(),
+        ));
+    }
+    if version >= 4 {
+        validate_columns(
+            db,
+            "authority_domain_metadata",
+            &["authority_domain_id", "core_generation"],
+        )?;
+    }
 
     db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
         .map_err(map_write_err)?;
@@ -189,11 +209,23 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         tx.execute_batch("PRAGMA user_version = 3").map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
+    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(map_write_err)?;
+    if version < 4 {
+        let tx = db.transaction().map_err(map_write_err)?;
+        tx.execute_batch(MIGRATION_4).map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 4").map_err(map_write_err)?;
+        tx.commit().map_err(map_write_err)?;
+    }
     Ok(())
 }
 
 /// Commands sent to the writer actor.
 enum WriterCommand {
+    LoadOrCreateCoreGeneration {
+        authority_domain_id: String,
+        candidate: Generation,
+        reply: oneshot::Sender<Result<Generation, StorageError>>,
+    },
     Append {
         authority_domain_id: String,
         payload: StoredEventPayload,
@@ -328,6 +360,18 @@ async fn writer_actor(
 ) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
+            WriterCommand::LoadOrCreateCoreGeneration {
+                authority_domain_id,
+                candidate,
+                reply,
+            } => {
+                let result = do_load_or_create_core_generation(
+                    &mut db,
+                    &authority_domain_id,
+                    candidate,
+                );
+                let _ = reply.send(result);
+            }
             WriterCommand::Append {
                 authority_domain_id,
                 payload,
@@ -426,6 +470,39 @@ fn lsn_to_i64(lsn: u64) -> Result<i64, StorageError> {
         message: format!("LSN {lsn} exceeds i64::MAX"),
         retryable: false,
     })
+}
+
+fn do_load_or_create_core_generation(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    candidate: Generation,
+) -> Result<Generation, StorageError> {
+    if candidate.value == 0 || candidate.value > i64::MAX as u64 {
+        return Err(StorageError::InvalidCoreGeneration(candidate.value));
+    }
+    let candidate_value = candidate.value as i64;
+    let tx = db.transaction().map_err(map_write_err)?;
+    tx.execute(
+        "INSERT INTO authority_domain_metadata (authority_domain_id, core_generation)
+         VALUES (?1, ?2)
+         ON CONFLICT(authority_domain_id) DO NOTHING",
+        rusqlite::params![authority_domain_id, candidate_value],
+    )
+    .map_err(map_write_err)?;
+    let stored: i64 = tx
+        .query_row(
+            "SELECT core_generation FROM authority_domain_metadata WHERE authority_domain_id = ?1",
+            [authority_domain_id],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if stored <= 0 {
+        return Err(StorageError::CorruptRecord(format!(
+            "authority domain {authority_domain_id} has invalid core generation {stored}"
+        )));
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(Generation { value: stored as u64 })
 }
 
 /// Validate the event kind is not unspecified. `try_from` succeeds for
@@ -1042,6 +1119,30 @@ fn validate_audit_index_row(
         return Err(StorageError::CorruptRecord(format!("audit index disagrees with log payload at LSN {lsn}")));
     }
     Ok(())
+}
+
+impl CoreGenerationStore for RusqliteStorage {
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> Result<Generation, StorageError> {
+        if candidate.value == 0 || candidate.value > i64::MAX as u64 {
+            return Err(StorageError::InvalidCoreGeneration(candidate.value));
+        }
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::LoadOrCreateCoreGeneration {
+                authority_domain_id: authority_domain_id.value.clone(),
+                candidate,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
 }
 
 impl Storage for RusqliteStorage {

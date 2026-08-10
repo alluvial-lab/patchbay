@@ -12,9 +12,9 @@
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
+    AuthorityDomainId, Generation, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
-use patchbay_core::storage::{DedupOutcome, Storage, TargetKey};
+use patchbay_core::storage::{CoreGenerationStore, DedupOutcome, Storage, StorageError, TargetKey};
 
 fn test_domain() -> AuthorityDomainId {
     AuthorityDomainId {
@@ -84,6 +84,122 @@ async fn opening_existing_database_tightens_permissive_mode() {
 #[cfg(unix)]
 fn file_mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[tokio::test]
+async fn core_generation_is_insert_once_domain_scoped_and_lsn_free() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain_a = AuthorityDomainId { value: "domain-a".to_owned() };
+    let domain_b = AuthorityDomainId { value: "domain-b".to_owned() };
+
+    let first = storage
+        .load_or_create_core_generation(&domain_a, Generation { value: 17 })
+        .await
+        .unwrap();
+    let repeated = storage
+        .load_or_create_core_generation(&domain_a, Generation { value: 99 })
+        .await
+        .unwrap();
+    let independent = storage
+        .load_or_create_core_generation(&domain_b, Generation { value: 23 })
+        .await
+        .unwrap();
+
+    assert_eq!(first, Generation { value: 17 });
+    assert_eq!(repeated, first);
+    assert_eq!(independent, Generation { value: 23 });
+    assert!(storage.read_after(&domain_a, Lsn { value: 0 }).await.unwrap().is_empty());
+    let event = storage
+        .append(&domain_a, test_payload(StoredEventKind::Operation))
+        .await
+        .unwrap();
+    assert_eq!(event.lsn, Some(Lsn { value: 1 }));
+}
+
+#[tokio::test]
+async fn concurrent_core_generation_initializers_converge_on_stored_winner() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("generation-race.sqlite3");
+    let storages = [
+        patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap(),
+        patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap(),
+    ];
+    let domain = test_domain();
+    let candidates = 1_u64..=16;
+    let tasks = candidates
+        .clone()
+        .enumerate()
+        .map(|(index, value)| {
+            let storage = storages[index % storages.len()].clone();
+            let domain = domain.clone();
+            tokio::spawn(async move {
+                storage
+                    .load_or_create_core_generation(&domain, Generation { value })
+                    .await
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut returned = Vec::new();
+    for task in tasks {
+        returned.push(task.await.unwrap());
+    }
+
+    assert!(returned.iter().all(|value| value == &returned[0]));
+    assert!(candidates.contains(&returned[0].value));
+    let persisted: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT core_generation FROM authority_domain_metadata WHERE authority_domain_id = ?1",
+            [&domain.value],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(returned[0].value, persisted as u64);
+}
+
+#[tokio::test]
+async fn core_generation_rejects_invalid_candidates_without_mutation() {
+    let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+    let domain = test_domain();
+    for value in [0, i64::MAX as u64 + 1] {
+        assert!(matches!(
+            storage.load_or_create_core_generation(&domain, Generation { value }).await,
+            Err(StorageError::InvalidCoreGeneration(actual)) if actual == value
+        ));
+    }
+    assert_eq!(
+        storage
+            .load_or_create_core_generation(&domain, Generation { value: 31 })
+            .await
+            .unwrap(),
+        Generation { value: 31 }
+    );
+}
+
+#[tokio::test]
+async fn core_generation_survives_file_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("generation-reopen.sqlite3");
+    let domain = test_domain();
+    {
+        let storage = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            storage
+                .load_or_create_core_generation(&domain, Generation { value: 41 })
+                .await
+                .unwrap(),
+            Generation { value: 41 }
+        );
+    }
+    let reopened = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .load_or_create_core_generation(&domain, Generation { value: 42 })
+            .await
+            .unwrap(),
+        Generation { value: 41 }
+    );
 }
 
 #[tokio::test]

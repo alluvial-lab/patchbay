@@ -24,13 +24,14 @@ use patchbay_core::{
     security::SecurityPostureProjection,
     resource::ResourceRegistry,
     session::SessionRegistry,
-    storage::{RecordedEvent, Storage, StorageError},
+    storage::{CoreGenerationStore, RecordedEvent, Storage, StorageError},
     target::{TargetRegistry, TargetRegistryError},
 };
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::{
     decision_gate::CoreDecisionGate,
+    identity::random_core_generation,
     operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL},
 };
 
@@ -54,12 +55,13 @@ pub struct ProjectionState {
     security_posture: LockedSecurityPosture,
     operators: Arc<Mutex<OperatorRegistry>>,
     pub(crate) operator_sessions: OperatorSessionRegistry,
+    core_generation: Generation,
     last_applied_lsn: Arc<Mutex<u64>>,
     decision_gate: CoreDecisionGate,
 }
 
 impl ProjectionState {
-    pub async fn rebuild<S: Storage>(
+    pub async fn rebuild<S: Storage + CoreGenerationStore>(
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
     ) -> Result<Self, String> {
@@ -67,7 +69,7 @@ impl ProjectionState {
             .await
     }
 
-    pub async fn rebuild_with_session_ttl<S: Storage>(
+    pub async fn rebuild_with_session_ttl<S: Storage + CoreGenerationStore>(
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
         operator_session_ttl: Duration,
@@ -81,12 +83,16 @@ impl ProjectionState {
         .await
     }
 
-    pub async fn rebuild_with_session_ttl_and_gate<S: Storage>(
+    pub async fn rebuild_with_session_ttl_and_gate<S: Storage + CoreGenerationStore>(
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
         operator_session_ttl: Duration,
         decision_gate: CoreDecisionGate,
     ) -> Result<Self, String> {
+        let core_generation = storage
+            .load_or_create_core_generation(authority_domain_id, random_core_generation())
+            .await
+            .map_err(|error| error.to_string())?;
         let events = storage
             .read_after(authority_domain_id, Lsn { value: 0 })
             .await
@@ -138,6 +144,7 @@ impl ProjectionState {
             security_posture: LockedSecurityPosture::new(security_posture),
             operators: Arc::new(Mutex::new(operators)),
             operator_sessions,
+            core_generation,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             decision_gate,
         })
@@ -225,6 +232,11 @@ impl ProjectionState {
         as_of: u64,
     ) -> Result<patchbay_contracts::patchbay::AdapterStatusPage, patchbay_core::diagnostics::DiagnosticsError> {
         self.diagnostics.lock().await.adapter_page(query, as_of)
+    }
+
+    #[must_use]
+    pub fn core_generation(&self) -> &Generation {
+        &self.core_generation
     }
 
     pub async fn current_lsn(&self) -> u64 {

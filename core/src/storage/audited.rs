@@ -15,8 +15,8 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use super::{
-    AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome, DedupOutcome,
-    RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+    AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
+    CoreGenerationStore, DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -267,6 +267,21 @@ fn operation_kind_reason(kind: i32) -> String {
         .ok()
         .map(|kind| format!("operation_{:?}", kind).to_ascii_lowercase())
         .unwrap_or_else(|| "operation".to_owned())
+}
+
+impl<S> CoreGenerationStore for AuditedStorage<S>
+where
+    S: CoreGenerationStore,
+{
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: patchbay_contracts::patchbay::Generation,
+    ) -> Result<patchbay_contracts::patchbay::Generation, StorageError> {
+        self.inner
+            .load_or_create_core_generation(authority_domain_id, candidate)
+            .await
+    }
 }
 
 impl<S> Storage for AuditedStorage<S>

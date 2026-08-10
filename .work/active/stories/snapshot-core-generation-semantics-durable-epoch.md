@@ -1,7 +1,7 @@
 ---
 id: snapshot-core-generation-semantics-durable-epoch
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, foundation]
 parent: snapshot-core-generation-semantics
 depends_on: []
@@ -48,3 +48,14 @@ pub trait CoreGenerationStore: Send + Sync {
 ## Ordering
 
 No sibling prerequisite. This checkpoint blocks `snapshot-core-generation-semantics-snapshot-compatibility`, which must never populate or validate a process-local, unstored candidate.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for the contract-bearing durable recovery epoch).
+- Review weight: `thorough` (explicit operator selection); child checkpoint advanced directly to done after verification per delegated endpoint instructions.
+- Files changed: `core/src/storage/{port,mod,rusqlite,audited}.rs`, `server/src/{identity,state,service,admin_service}.rs`, `core/tests/{rusqlite_storage,audit_records}.rs`, `server/tests/grpc_smoke.rs`.
+- Tests added: insert-once/domain isolation/no-LSN, independent-writer concurrency, invalid-bound, file-reopen, v3→v4 preservation, and malformed-v4-metadata tests protect the new durability contract and migration boundary.
+- Simplification: kept generation metadata out of the event/audit log and delegated one narrow port through the production decorator; no restart counter or compatibility window was added.
+- Discrepancies from design: storage/migration tests scheduled in Unit 3 were landed with this checkpoint so its persistence and migration acceptance evidence was green before the dependent snapshot work began; no semantic discrepancy.
+- Adjacent issues parked: none.
+- Verification: `cargo check --workspace`; `cargo test -p patchbay-core --test rusqlite_storage`; `cargo test -p patchbay-core --test audit_records`; `cargo test -p patchbay-core-server state::tests --lib`.

@@ -10,7 +10,7 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::{
     acceptance::COMMITTED_OPERATION_KINDS,
     authority::{validate_operator_record, AuthorityError},
-    storage::Storage,
+    storage::{CoreGenerationStore, Storage},
     security,
 };
 use tokio::sync::Mutex;
@@ -71,7 +71,7 @@ impl<S> AdminServiceImpl<S> {
 #[tonic::async_trait]
 impl<S> AdminService for AdminServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     async fn bootstrap_operator(
         &self,

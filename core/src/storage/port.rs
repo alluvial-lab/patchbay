@@ -22,7 +22,8 @@
 
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
-    EndpointId, EventId, FailureCode, IdempotencyKey, Lsn, StoredEventPayload, TargetScope,
+    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, StoredEventPayload,
+    TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -334,6 +335,9 @@ pub enum StorageError {
     #[error("malformed database schema: {0}")]
     MalformedSchema(String),
 
+    #[error("core generation must be in 1..=i64::MAX, got {0}")]
+    InvalidCoreGeneration(u64),
+
     #[error("storage operation is unsupported by this backend")]
     UnsupportedOperation,
 }
@@ -351,6 +355,20 @@ pub enum DedupOutcome {
     /// The key was already applied to a command to this target with an
     /// identical payload. Returns the existing event's id; no new event written.
     Duplicate(EventId),
+}
+
+/// Durable authority-domain metadata needed to fence derived checkpoints.
+///
+/// The caller supplies a nonzero candidate, while the backend atomically
+/// persists the first candidate for the authority domain or returns the
+/// existing value. This is intentionally separate from [`Storage`]: metadata
+/// initialization does not append an event or consume an LSN.
+pub trait CoreGenerationStore: Send + Sync {
+    fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> impl std::future::Future<Output = Result<Generation, StorageError>> + Send;
 }
 
 /// The storage port. Domain logic depends on this trait, not on rusqlite.

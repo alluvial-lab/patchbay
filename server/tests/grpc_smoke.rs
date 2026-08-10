@@ -31,8 +31,9 @@ use patchbay_core::{
     session::events as session_events,
     time::{Clock, TestClock},
     storage::{
-        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, DedupOutcome,
-        RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
+        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome,
+        CoreGenerationStore, DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError,
+        StoredSnapshot, TargetKey,
     },
 };
 use patchbay_core_server::{
@@ -108,6 +109,18 @@ impl FailPostAppendReadOnceStorage {
             fail_next_query_audit: Arc::new(AtomicBool::new(false)),
             fail_next_decision: Arc::new(AtomicBool::new(true)),
         }
+    }
+}
+
+impl CoreGenerationStore for FailPostAppendReadOnceStorage {
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> Result<Generation, StorageError> {
+        self.inner
+            .load_or_create_core_generation(authority_domain_id, candidate)
+            .await
     }
 }
 
@@ -2004,7 +2017,7 @@ async fn start_server() -> TestServer {
 
 async fn serve<S>(storage: S) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     serve_with_clock(storage, Arc::new(patchbay_core::time::SystemClock)).await
 }
@@ -2014,7 +2027,7 @@ async fn serve_with_gate<S>(
     decision_gate: CoreDecisionGate,
 ) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     let service = ControlServiceImpl::new_with_security_and_decision_gate(
         storage,
@@ -2084,7 +2097,7 @@ async fn serve_with_clock<S>(
     clock: Arc<dyn Clock>,
 ) -> (ControlServiceClient<Channel>, JoinHandle<()>, TestAuth)
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     let service = ControlServiceImpl::new_with_clock(storage, domain(), clock)
         .await

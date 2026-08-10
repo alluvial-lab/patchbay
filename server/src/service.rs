@@ -29,7 +29,7 @@ use patchbay_core::{
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
-    storage::{AuditPageSpec, AuditRecordDraft, RecordedEvent, Storage, StorageError},
+    storage::{AuditPageSpec, AuditRecordDraft, CoreGenerationStore, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
 use tokio_stream::{self as stream, Stream};
@@ -110,7 +110,7 @@ pub struct ControlServiceImpl<S> {
 
 impl<S> ControlServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     pub async fn new(storage: S, authority_domain_id: AuthorityDomainId) -> Result<Self, String> {
         Self::new_with_clock_security_and_gate(
@@ -235,7 +235,7 @@ type SubscribeStream = Pin<Box<dyn Stream<Item = Result<SubscribeEvent, Status>>
 #[tonic::async_trait]
 impl<S> ControlService for ControlServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     async fn submit(
         &self,
@@ -1657,7 +1657,7 @@ where
 
 impl<S> ControlServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     async fn issuer_from_request<T>(
         &self,
@@ -2320,6 +2320,9 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
             Status::failed_precondition(format!("database schema version {version} is unsupported"))
         }
         StorageError::MalformedSchema(message) => Status::internal(message),
+        StorageError::InvalidCoreGeneration(value) => {
+            Status::internal(format!("invalid core generation {value}"))
+        }
         StorageError::UnsupportedOperation => Status::unimplemented("storage operation is unsupported"),
     }
 }

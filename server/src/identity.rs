@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, ControlSurfacePrincipalRecord, PrincipalCredential,
+    ActorId, AuthorityDomainId, ControlSurfacePrincipalRecord, Generation, PrincipalCredential,
     PrincipalEnrollment,
 };
 use patchbay_core::authority::hash_principal_credential;
@@ -52,6 +52,16 @@ pub fn issue_principal(
         endpoint_generation: Some(endpoint_generation),
     };
     Ok((record, credential))
+}
+
+#[must_use]
+pub fn random_core_generation() -> Generation {
+    loop {
+        let value = OsRng.next_u64() & (i64::MAX as u64);
+        if value != 0 {
+            return Generation { value };
+        }
+    }
 }
 
 pub fn now_timestamp() -> Result<Timestamp, Status> {

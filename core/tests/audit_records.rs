@@ -4,8 +4,8 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 use patchbay_core::storage::{
-    AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, RusqliteStorage, Storage, StorageError,
-    TargetKey,
+    AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, CoreGenerationStore, RusqliteStorage,
+    Storage, StorageError, TargetKey,
 };
 use prost_types::Timestamp;
 use tempfile::TempDir;
@@ -211,6 +211,119 @@ async fn legacy_data_survives_versioned_migration() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload, payload);
+}
+
+#[tokio::test]
+async fn v3_to_v4_migration_preserves_all_durable_rows_without_allocating_lsn() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("v3.sqlite3");
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE events (
+                lsn INTEGER PRIMARY KEY,
+                authority_domain_id TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE idempotency_keys (
+                authority_domain_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                target TEXT NOT NULL,
+                lsn INTEGER NOT NULL,
+                payload_bytes BLOB NOT NULL,
+                PRIMARY KEY (authority_domain_id, key, target)
+            );
+            CREATE TABLE snapshots (
+                authority_domain_id TEXT NOT NULL,
+                snapshot_lsn INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                PRIMARY KEY (authority_domain_id, snapshot_lsn)
+            );
+            CREATE TABLE audit_records (
+                authority_domain_id TEXT NOT NULL,
+                audit_lsn INTEGER NOT NULL,
+                occurred_at_seconds INTEGER NOT NULL,
+                occurred_at_nanos INTEGER NOT NULL,
+                kind INTEGER NOT NULL,
+                actor_id TEXT,
+                endpoint_id TEXT,
+                command_id TEXT,
+                target_key TEXT,
+                failure_code INTEGER,
+                reason_code TEXT NOT NULL,
+                source_lsn INTEGER,
+                grant_id TEXT,
+                PRIMARY KEY (authority_domain_id, audit_lsn)
+            );
+            INSERT INTO events VALUES (1, 'main', 1, X'0102');
+            INSERT INTO idempotency_keys VALUES ('main', 'key-1', 'target-1', 1, X'0304');
+            INSERT INTO snapshots VALUES ('main', 1, X'0506');
+            INSERT INTO audit_records (
+                authority_domain_id, audit_lsn, occurred_at_seconds, occurred_at_nanos,
+                kind, reason_code, source_lsn, grant_id
+            ) VALUES ('main', 1, 10, 0, 1, 'preserved', 1, 'grant-1');
+            PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    }
+
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        storage
+            .load_or_create_core_generation(
+                &domain("main"),
+                patchbay_contracts::patchbay::Generation { value: 73 },
+            )
+            .await
+            .unwrap()
+            .value,
+        73
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    assert_eq!(version, 4);
+    for table in ["events", "idempotency_keys", "snapshots", "audit_records"] {
+        let count: u64 = db
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "migration changed {table}");
+    }
+    let max_lsn: u64 = db.query_row("SELECT MAX(lsn) FROM events", [], |row| row.get(0)).unwrap();
+    assert_eq!(max_lsn, 1, "metadata initialization must not allocate an event LSN");
+}
+
+#[tokio::test]
+async fn malformed_v4_metadata_schema_is_rejected_without_repair_or_version_change() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("malformed-v4.sqlite3");
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    drop(storage);
+    tokio::task::yield_now().await;
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "DROP TABLE authority_domain_metadata;
+             CREATE TABLE authority_domain_metadata (authority_domain_id TEXT PRIMARY KEY);",
+        )
+        .unwrap();
+    }
+
+    assert!(matches!(
+        RusqliteStorage::open(path.to_str().unwrap()),
+        Err(StorageError::MalformedSchema(_))
+    ));
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    assert_eq!(version, 4);
+    let columns = db
+        .prepare("PRAGMA table_info(authority_domain_metadata)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(columns, vec!["authority_domain_id"]);
 }
 
 #[test]
