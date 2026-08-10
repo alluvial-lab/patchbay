@@ -293,3 +293,6 @@ Pass-1 verification:
 - `node contracts/scripts/check-vectors.mjs` — passed after local TypeScript dependency/build preparation; 21 implementation checks and 37 mutation witnesses passed.
 - `git diff --check` — passed.
 - `cargo fmt --check` — still reports the pre-existing broad workspace formatting baseline outside this pass-1 ownership; no unrelated formatting churn was applied.
+
+## Status (wrapped 2026-08-10)
+Pass-1 blockers were fixed in `cb7f898`; the feature stays at `review` because the operator wrap interrupted the required clean follow-up pass.
