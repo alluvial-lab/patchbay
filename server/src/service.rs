@@ -29,7 +29,10 @@ use patchbay_core::{
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
-    storage::{AuditPageSpec, AuditRecordDraft, CoreGenerationStore, RecordedEvent, Storage, StorageError},
+    storage::{
+        validate_next_replay_event, AuditPageSpec, AuditRecordDraft, CoreGenerationStore,
+        RecordedEvent, Storage, StorageError,
+    },
 };
 use prost::Message;
 use tokio_stream::{self as stream, Stream};
@@ -2049,32 +2052,54 @@ fn rejected_query_submission(
     }
 }
 
+async fn read_validated_replay_prefix<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+) -> Result<Vec<RecordedEvent>, Status> {
+    let events = storage
+        .read_after(authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(map_storage_error_to_status)?;
+    let mut previous_lsn = 0;
+    for event in &events {
+        previous_lsn = validate_next_replay_event(authority_domain_id, previous_lsn, event)
+            .map_err(|error| Status::internal(error.to_string()))?
+            .lsn;
+    }
+    Ok(events)
+}
+
 async fn find_delivered_checkpoint<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
     command_id: &patchbay_contracts::patchbay::CommandId,
 ) -> Result<Option<EventId>, Status> {
-    let events = storage
-        .read_after(authority_domain_id, Lsn { value: 0 })
-        .await
-        .map_err(map_storage_error_to_status)?;
+    let events = read_validated_replay_prefix(storage, authority_domain_id).await?;
     let mut transition_checkpoint = None;
     let mut audit_checkpoint = None;
     for event in events {
         match StoredEventKind::try_from(event.payload.kind).ok() {
             Some(StoredEventKind::CommandTransition) => {
                 let transition = CommandTransition::decode(event.payload.payload.as_slice())
-                    .map_err(|error| Status::internal(format!("cannot decode query transition: {error}")))?;
+                    .map_err(|error| {
+                        Status::internal(format!("cannot decode query transition: {error}"))
+                    })?;
                 if transition.command_id.as_ref() == Some(command_id)
-                    && OperationState::try_from(transition.to_state).ok() == Some(OperationState::Delivered)
+                    && OperationState::try_from(transition.to_state).ok()
+                        == Some(OperationState::Delivered)
                 {
                     transition_checkpoint = Some(event.event_id);
                 }
             }
             Some(StoredEventKind::AuditRecord) => {
-                let record = AuditRecord::decode(event.payload.payload.as_slice())
-                    .map_err(|error| Status::internal(format!("cannot decode query audit: {error}")))?;
-                if record.source_event_id == transition_checkpoint {
+                let record =
+                    AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
+                        Status::internal(format!("cannot decode query audit: {error}"))
+                    })?;
+                if transition_checkpoint
+                    .as_ref()
+                    .is_some_and(|checkpoint| record.source_event_id.as_ref() == Some(checkpoint))
+                {
                     audit_checkpoint = Some(event.event_id);
                 }
             }
@@ -2096,12 +2121,10 @@ async fn find_diagnostics_result<S: Storage>(
     )>,
     Status,
 > {
-    let events = storage
-        .read_after(authority_domain_id, Lsn { value: 0 })
-        .await
-        .map_err(map_storage_error_to_status)?;
+    let events = read_validated_replay_prefix(storage, authority_domain_id).await?;
     for event in events {
-        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation) {
+        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation)
+        {
             continue;
         }
         let observation = Observation::decode(event.payload.payload.as_slice())
@@ -2120,8 +2143,9 @@ async fn find_diagnostics_result<S: Storage>(
             continue;
         }
         let payload = observation.payload.expect("checked above");
-        let result = DiagnosticsResult::decode(payload.payload.as_slice())
-            .map_err(|error| Status::internal(format!("cannot decode diagnostics result: {error}")))?;
+        let result = DiagnosticsResult::decode(payload.payload.as_slice()).map_err(|error| {
+            Status::internal(format!("cannot decode diagnostics result: {error}"))
+        })?;
         let response_result = match result
             .result
             .clone()
@@ -2339,15 +2363,19 @@ fn retryable_unavailable(message: String) -> Status {
 
 #[cfg(test)]
 mod tests {
-    use super::revocation_effects;
+    use super::{find_delivered_checkpoint, find_diagnostics_result, revocation_effects};
     use patchbay_contracts::patchbay::{
-        ActorId, AuthorityDomainId, CommandId, GrantId, GrantRevocationPolicy, Operation,
-        OperationKind, OperationState, TargetScope,
+        diagnostics_result, typed_correlation, ActorId, AuditRecord, AuthorityDomainId, CommandId,
+        CommandTransition, DiagnosticsResult, EventId, GrantId, GrantRevocationPolicy, Lsn,
+        Observation, ObservationKind, Operation, OperationKind, OperationState, PayloadContentType,
+        PayloadEnvelope, StoredEventKind, StoredEventPayload, TargetScope, TypedCorrelation,
     };
     use patchbay_core::{
         acceptance::CommandRecord,
         authority::{GrantProvenanceKind, GrantRecord},
+        storage::{DedupOutcome, RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey},
     };
+    use prost::Message;
 
     fn grant(policy: GrantRevocationPolicy) -> GrantRecord {
         GrantRecord {
@@ -2387,6 +2415,233 @@ mod tests {
         .expect("test command has an id");
         record.state = state;
         record
+    }
+
+    #[derive(Clone)]
+    struct ScriptedReplayStorage {
+        events: Vec<RecordedEvent>,
+    }
+
+    impl Storage for ScriptedReplayStorage {
+        async fn append(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _payload: StoredEventPayload,
+        ) -> Result<EventId, StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn append_dedup(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _key: &patchbay_contracts::patchbay::IdempotencyKey,
+            _target: &TargetKey,
+            _payload: StoredEventPayload,
+        ) -> Result<DedupOutcome, StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn read_after(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _cursor: Lsn,
+        ) -> Result<Vec<RecordedEvent>, StorageError> {
+            Ok(self.events.clone())
+        }
+
+        async fn write_snapshot(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _snapshot_lsn: Lsn,
+            _snapshot_payload: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            Err(StorageError::UnsupportedOperation)
+        }
+
+        async fn load_latest_snapshot(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _at_or_before: Option<Lsn>,
+        ) -> Result<Option<StoredSnapshot>, StorageError> {
+            Ok(None)
+        }
+    }
+
+    fn stored_event(
+        authority_domain_id: &AuthorityDomainId,
+        lsn: u64,
+        kind: StoredEventKind,
+        payload: Vec<u8>,
+    ) -> RecordedEvent {
+        RecordedEvent {
+            event_id: EventId {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                lsn: Some(Lsn { value: lsn }),
+            },
+            payload: StoredEventPayload {
+                kind: kind as i32,
+                payload,
+            },
+        }
+    }
+
+    fn delivered_transition(
+        authority_domain_id: &AuthorityDomainId,
+        command_id: &CommandId,
+    ) -> RecordedEvent {
+        stored_event(
+            authority_domain_id,
+            1,
+            StoredEventKind::CommandTransition,
+            CommandTransition {
+                command_id: Some(command_id.clone()),
+                to_state: OperationState::Delivered as i32,
+                ..CommandTransition::default()
+            }
+            .encode_to_vec(),
+        )
+    }
+
+    fn diagnostics_result(
+        authority_domain_id: &AuthorityDomainId,
+        command_id: &CommandId,
+    ) -> RecordedEvent {
+        let result = DiagnosticsResult {
+            as_of_lsn: Some(Lsn { value: 1 }),
+            result: Some(diagnostics_result::Result::Audit(Default::default())),
+        };
+        stored_event(
+            authority_domain_id,
+            1,
+            StoredEventKind::Observation,
+            Observation {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                kind: ObservationKind::Result as i32,
+                correlations: vec![TypedCorrelation {
+                    r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+                }],
+                payload: Some(PayloadEnvelope {
+                    payload: result.encode_to_vec(),
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: "patchbay.DiagnosticsResult".to_owned(),
+                }),
+                ..Observation::default()
+            }
+            .encode_to_vec(),
+        )
+    }
+
+    fn corrupt_tails(authority_domain_id: &AuthorityDomainId) -> [RecordedEvent; 2] {
+        [
+            stored_event(
+                authority_domain_id,
+                3,
+                StoredEventKind::Observation,
+                Observation::default().encode_to_vec(),
+            ),
+            stored_event(
+                authority_domain_id,
+                2,
+                StoredEventKind::Unspecified,
+                Vec::new(),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn delivered_checkpoint_search_validates_the_complete_replay_prefix() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+
+        for corrupt_tail in corrupt_tails(&authority_domain_id) {
+            let storage = ScriptedReplayStorage {
+                events: vec![
+                    delivered_transition(&authority_domain_id, &command_id),
+                    corrupt_tail,
+                ],
+            };
+            let error = find_delivered_checkpoint(&storage, &authority_domain_id, &command_id)
+                .await
+                .expect_err("a gap or unspecified kind must reject before checkpoint search");
+            assert_eq!(error.code(), tonic::Code::Internal);
+            assert!(error.message().contains("corrupt replay"));
+        }
+    }
+
+    #[tokio::test]
+    async fn diagnostics_result_search_validates_the_complete_replay_prefix() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+
+        for corrupt_tail in corrupt_tails(&authority_domain_id) {
+            let storage = ScriptedReplayStorage {
+                events: vec![
+                    diagnostics_result(&authority_domain_id, &command_id),
+                    corrupt_tail,
+                ],
+            };
+            let error = find_diagnostics_result(&storage, &authority_domain_id, &command_id)
+                .await
+                .expect_err("a gap or unspecified kind must reject before result search");
+            assert_eq!(error.code(), tonic::Code::Internal);
+            assert!(error.message().contains("corrupt replay"));
+        }
+    }
+
+    #[tokio::test]
+    async fn delivered_checkpoint_requires_an_exact_present_audit_source() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+        let source_less_audit = stored_event(
+            &authority_domain_id,
+            1,
+            StoredEventKind::AuditRecord,
+            AuditRecord::default().encode_to_vec(),
+        );
+        let source_less = ScriptedReplayStorage {
+            events: vec![source_less_audit],
+        };
+        assert_eq!(
+            find_delivered_checkpoint(&source_less, &authority_domain_id, &command_id)
+                .await
+                .unwrap(),
+            None,
+            "None == None must not turn a source-less audit into a checkpoint"
+        );
+
+        let transition = delivered_transition(&authority_domain_id, &command_id);
+        let matching_audit = stored_event(
+            &authority_domain_id,
+            2,
+            StoredEventKind::AuditRecord,
+            AuditRecord {
+                source_event_id: Some(transition.event_id.clone()),
+                ..AuditRecord::default()
+            }
+            .encode_to_vec(),
+        );
+        let expected = matching_audit.event_id.clone();
+        let exact_match = ScriptedReplayStorage {
+            events: vec![transition, matching_audit],
+        };
+        assert_eq!(
+            find_delivered_checkpoint(&exact_match, &authority_domain_id, &command_id)
+                .await
+                .unwrap(),
+            Some(expected)
+        );
     }
 
     #[test]

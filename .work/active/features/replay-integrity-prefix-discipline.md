@@ -296,3 +296,13 @@ Pass-1 verification:
 
 ## Status (wrapped 2026-08-10)
 Pass-1 blockers were fixed in `cb7f898`; the feature stays at `review` because the operator wrap interrupted the required clean follow-up pass.
+
+## Review fix — pass 2 (2026-08-10)
+
+**Status**: all three follow-up proposals were confirmed and fixed; the feature remains at `stage: review` for the required next clean `thorough` pass.
+
+- **Cancellation-safe aggregate publication.** Catch-up now prepares operator-session values, acquires every live aggregate/operator-session guard before its first assignment in a deadlock-compatible order, and publishes all projections plus the cursor with no later await. A staged-tail barrier test holds the later target guard, aborts catch-up under contention, and proves exact aggregate and process-local operator-session equality with the old cursor.
+- **Replay-valid checkpoint/result search.** `find_delivered_checkpoint` and `find_diagnostics_result` share one full-prefix read validator and validate the complete `read_after(0)` vector before filtering or early return. Regressions put a valid match before a trailing gap or `Unspecified` record so monotonic-only, ignore-kind, and early-return mutations fail.
+- **Source-less audit discipline.** Delivered-checkpoint lookup now requires a present transition checkpoint and exact `Some(EventId)` source equality. Negative `None == None` and positive exact-source regressions cover both sides.
+- **Verification.** Four new focused regressions passed; all 55 server library tests passed; `cargo test --workspace`, workspace clippy with warnings denied, model checks, vector checks (21 implementation checks / 37 mutation witnesses), and `git diff --check` passed. Scoped rustfmt check was run on the three touched Rust files and still reports the known pre-existing formatting baseline; no unrelated formatting churn was applied.
+- **Policy.** Execution remained direct Sol/xhigh with no nested delegation. Review weight remains explicit `thorough`; this pass does not claim approval.

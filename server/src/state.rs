@@ -40,14 +40,15 @@ use crate::{
 
 /// Server-owned concurrency boundary around core projections.
 ///
-/// The canonical acquisition order is storage -> grant check -> target
-/// resolver -> command-state lookup, matching the parameter order at the
-/// acceptance boundary. Projection locks are short-lived and never nested in
-/// this implementation: each port releases its lock before the next port is
-/// called. `submit_guard` serializes submission plus projection catch-up, and is
-/// backed by the composition-root `CoreDecisionGate` shared with adapter
-/// transitions. This can be replaced by a server-local actor without changing
-/// the core library or the wire contract.
+/// Ordinary port calls keep projection locks short-lived. Aggregate catch-up is
+/// the deliberate exception: after staging, publication holds the cursor and
+/// acquires operators -> authority -> targets -> security -> commands ->
+/// Elicitations -> diagnostics before its first live mutation. Those relative
+/// orders preserve the existing operators -> authority and cursor -> targets ->
+/// security reader paths. `submit_guard` serializes submission plus projection
+/// catch-up, and is backed by the composition-root `CoreDecisionGate` shared
+/// with adapter transitions. This can be replaced by a server-local actor
+/// without changing the core library or the wire contract.
 #[derive(Clone)]
 pub struct ProjectionState {
     grant_check: LockedGrantCheck,
@@ -488,6 +489,20 @@ impl ProjectionState {
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
     ) -> Result<(), StorageError> {
+        self.catch_up_with_before_publish(
+            storage,
+            authority_domain_id,
+            std::future::ready(()),
+        )
+        .await
+    }
+
+    async fn catch_up_with_before_publish<S: Storage, F: std::future::Future<Output = ()>>(
+        &self,
+        storage: &S,
+        authority_domain_id: &AuthorityDomainId,
+        before_publish: F,
+    ) -> Result<(), StorageError> {
         let mut cursor = self.last_applied_lsn.lock().await;
         let events = storage
             .read_after(authority_domain_id, Lsn { value: *cursor })
@@ -569,17 +584,30 @@ impl ProjectionState {
                 .map_err(StorageError::CorruptRecord)?;
             staged_cursor = validated.lsn;
         }
+        let prepared_operator_sessions = staged_operator_sessions.prepare_install_unlocked().await;
 
-        *self.grant_check.inner.lock().await = staged_authority;
-        *self.target_resolver.inner.lock().await = staged_targets;
-        *self.state_lookup.inner.lock().await = staged_commands;
-        *self.elicitation_slots.inner.lock().await = staged_elicitations;
-        *self.diagnostics.lock().await = staged_diagnostics;
-        *self.security_posture.inner.lock().await = staged_security;
-        *self.operators.lock().await = staged_operators;
-        self.operator_sessions
-            .install_from_unlocked(&staged_operator_sessions)
-            .await;
+        before_publish.await;
+
+        // Acquire every live publication guard before the first assignment.
+        // Cancellation while any lock is contended therefore drops only staged
+        // values. Once assignment begins, this function has no suspension point.
+        let mut live_operators = self.operators.lock().await;
+        let mut live_authority = self.grant_check.inner.lock().await;
+        let mut live_targets = self.target_resolver.inner.lock().await;
+        let mut live_security = self.security_posture.inner.lock().await;
+        let mut live_commands = self.state_lookup.inner.lock().await;
+        let mut live_elicitations = self.elicitation_slots.inner.lock().await;
+        let mut live_diagnostics = self.diagnostics.lock().await;
+        let mut live_operator_sessions = self.operator_sessions.install_guards_unlocked().await;
+
+        live_operator_sessions.install(prepared_operator_sessions);
+        *live_operators = staged_operators;
+        *live_authority = staged_authority;
+        *live_targets = staged_targets;
+        *live_security = staged_security;
+        *live_commands = staged_commands;
+        *live_elicitations = staged_elicitations;
+        *live_diagnostics = staged_diagnostics;
         *cursor = staged_cursor;
         Ok(())
     }
@@ -1491,6 +1519,103 @@ mod tests {
             .catch_up(&storage, &authority_domain_id)
             .await
             .expect_err("a later invalid effect rejects the aggregate event");
+        assert_eq!(aggregate_projection_snapshot(&state).await, before);
+        assert!(state
+            .operator_sessions
+            .equivalent_to(&operator_sessions_before)
+            .await);
+    }
+
+    #[tokio::test]
+    async fn catch_up_abort_under_publication_contention_preserves_the_aggregate() {
+        use patchbay_contracts::patchbay::{GrantProvenance, GrantRevocationPolicy};
+        use tokio::sync::oneshot;
+
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+        let before = aggregate_projection_snapshot(&state).await;
+        let operator_sessions_before = state.operator_sessions.staged_clone().await;
+
+        storage
+            .append(
+                &authority_domain_id,
+                patchbay_core::authority::events::grant(
+                    authority_domain_id.clone(),
+                    Grant {
+                        grant_id: Some(GrantId {
+                            value: "grant-cancellation-safe".to_owned(),
+                        }),
+                        subject_actor_id: Some(ActorId {
+                            value: "operator".to_owned(),
+                        }),
+                        target_scope: Some(TargetScope {
+                            kind: TargetScopeKind::AuthorityDomain as i32,
+                            ..TargetScope::default()
+                        }),
+                        allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+                        provenance: Some(GrantProvenance {
+                            reason: "cancellation-safe publication fixture".to_owned(),
+                            ..GrantProvenance::default()
+                        }),
+                        revocation_policy: GrantRevocationPolicy::Continue as i32,
+                        ..Grant::default()
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+
+        let (staged_tx, staged_rx) = oneshot::channel();
+        let (publish_tx, publish_rx) = oneshot::channel();
+        let task_state = state.clone();
+        let task_storage = storage.clone();
+        let task_domain = authority_domain_id.clone();
+        let catch_up = tokio::spawn(async move {
+            task_state
+                .catch_up_with_before_publish(&task_storage, &task_domain, async move {
+                    staged_tx.send(()).expect("test waits for staged catch-up");
+                    publish_rx.await.expect("test releases publication");
+                })
+                .await
+        });
+        staged_rx.await.expect("catch-up reaches publication");
+
+        // The target lock is later than authority in the publication order.
+        // The old per-assignment locking published the staged grant and then
+        // suspended here; abort left that grant visible while the cursor stayed
+        // at zero. The corrected path holds authority without mutating it.
+        let blocked_target = state.target_resolver.inner.lock().await;
+        publish_tx.send(()).expect("catch-up still waits to publish");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match state.grant_check.inner.try_lock() {
+                    Ok(authority) => {
+                        let already_published = *authority != before.authority;
+                        drop(authority);
+                        if already_published {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("catch-up reaches the contended publication boundary");
+
+        catch_up.abort();
+        let cancellation = catch_up
+            .await
+            .expect_err("catch-up must be cancelled while publication is blocked");
+        assert!(cancellation.is_cancelled());
+        drop(blocked_target);
+
         assert_eq!(aggregate_projection_snapshot(&state).await, before);
         assert!(state
             .operator_sessions

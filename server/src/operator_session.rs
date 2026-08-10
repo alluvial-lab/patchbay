@@ -40,6 +40,26 @@ struct OperatorSessionRecord {
     revoked_at: Option<Instant>,
 }
 
+pub(crate) struct PreparedOperatorSessionInstall {
+    sessions: HashMap<String, OperatorSessionRecord>,
+    next_generation: HashMap<String, u64>,
+    invalidated_through_generation: HashMap<String, u64>,
+}
+
+pub(crate) struct OperatorSessionInstallGuards<'a> {
+    sessions: MutexGuard<'a, HashMap<String, OperatorSessionRecord>>,
+    next_generation: MutexGuard<'a, HashMap<String, u64>>,
+    invalidated_through_generation: MutexGuard<'a, HashMap<String, u64>>,
+}
+
+impl OperatorSessionInstallGuards<'_> {
+    pub(crate) fn install(&mut self, prepared: PreparedOperatorSessionInstall) {
+        *self.sessions = prepared.sessions;
+        *self.next_generation = prepared.next_generation;
+        *self.invalidated_through_generation = prepared.invalidated_through_generation;
+    }
+}
+
 /// Core-owned operator sessions. Opaque session ids remain process-local and
 /// are invalid after restart; only the durable generation fence is replayed.
 #[derive(Debug, Clone)]
@@ -95,21 +115,30 @@ impl OperatorSessionRegistry {
         }
     }
 
-    /// Install a fully validated staged replay state while the caller holds
-    /// `replay_guard`. All cloning happens before live maps are acquired, so
-    /// installation itself is infallible.
-    pub(crate) async fn install_from_unlocked(&self, staged: &Self) {
-        let staged_sessions = staged.sessions.lock().await.clone();
-        let staged_next_generation = staged.next_generation.lock().await.clone();
-        let staged_invalidated = staged.invalidated_through_generation.lock().await.clone();
+    /// Copy a fully validated staged replay state before live publication
+    /// guards are acquired.
+    pub(crate) async fn prepare_install_unlocked(&self) -> PreparedOperatorSessionInstall {
+        PreparedOperatorSessionInstall {
+            sessions: self.sessions.lock().await.clone(),
+            next_generation: self.next_generation.lock().await.clone(),
+            invalidated_through_generation: self
+                .invalidated_through_generation
+                .lock()
+                .await
+                .clone(),
+        }
+    }
 
-        let mut sessions = self.sessions.lock().await;
-        let mut next_generation = self.next_generation.lock().await;
-        let mut invalidated_through_generation =
-            self.invalidated_through_generation.lock().await;
-        *sessions = staged_sessions;
-        *next_generation = staged_next_generation;
-        *invalidated_through_generation = staged_invalidated;
+    /// Acquire every live operator-session map while the caller holds
+    /// `replay_guard`. Calling `install` on the returned guards is synchronous,
+    /// so aggregate publication has no cancellation point after its first
+    /// assignment.
+    pub(crate) async fn install_guards_unlocked(&self) -> OperatorSessionInstallGuards<'_> {
+        OperatorSessionInstallGuards {
+            sessions: self.sessions.lock().await,
+            next_generation: self.next_generation.lock().await,
+            invalidated_through_generation: self.invalidated_through_generation.lock().await,
+        }
     }
 
     #[cfg(test)]
