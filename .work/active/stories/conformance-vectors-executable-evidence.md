@@ -4,7 +4,7 @@ kind: story
 stage: drafting
 tags: [verification, v1]
 parent: epic-public-product-contract-executable-release-assurance
-depends_on: []
+depends_on: [research-handoff-spawn, research-handoff-pi-adapter-capability]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn

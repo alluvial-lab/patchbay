@@ -28,6 +28,15 @@ panics before `TempDir`/`NamedTempFile` drop runs).
 - Add a `cargo test` wrapper or xtask that cleans stale test-temp before runs.
 - Investigate whether any production code path creates `NamedTempFile`s in the
   system tempdir (it should not — persistence lives under PATCHBAY_DB_PATH).
+- **Production-code tempfile (2026-08-09 review — answers the bullet above):**
+  `core/src/storage/rusqlite.rs:300` `open_in_memory()` uses
+  `NamedTempFile::new()` (→ system tempdir) and is a `pub fn` **not
+  `#[cfg(test)]`-gated** — its own doc comment admits it leaks one file per
+  call ("acceptable for the test suite, not for production paths").
+  `core/src/adapter/mod.rs:720` is `#[cfg(test)]`-gated (fine). The fix
+  must additionally `#[cfg(test)]`-gate or relocate `open_in_memory()` so
+  it cannot leak from a production call path; the `TMPDIR` /
+  `target/test-tmp` redirect then covers its test-driven use.
 - Consider a `.gitignore`d `tmp/` location convention for all test scratch.
 
 ## Why not fixed inline
