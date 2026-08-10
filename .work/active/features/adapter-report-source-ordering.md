@@ -386,3 +386,6 @@ npm --prefix contracts/ts run check:drift
 - Parked: multi-producer/vector-clock and per-field merge policies wait for demonstrated adapter pressure; richer model descriptors remain the existing reserved seam.
 - Rejected: in-memory watermarking, fragmented delta cursors, and arrival-order authority because each fails restart or partial-append safety.
 - Skipped/degraded: the delegated endpoint explicitly forbids nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking by policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection).
+
+## Status (wrapped 2026-08-10)
+Design is committed at `implementing`; the wire/core/Pi/conformance implementation was not started before the operator wrap and must reconcile the now-landed session tag/replay changes on resume.
