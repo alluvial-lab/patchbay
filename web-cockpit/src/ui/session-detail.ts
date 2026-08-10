@@ -61,6 +61,8 @@ export interface SessionDetailOptions {
   actions?: SessionDetailActions;
   elicitation?: ElicitationRenderOptions;
   submission?: SubmissionFeedback;
+  /** Presentation-only preference; the folded observation model is unchanged. */
+  showToolCalls?: boolean;
   onBack?(): void;
   lockdownActive?: boolean;
   onOpenResource?(identity: ResourceIdentityView): void;
@@ -176,6 +178,7 @@ function renderTimeline(
   const diagnostics = diagnosticsForSession(model.adapters.get(session.identity.adapterId), session.identity);
   const associatedCommands = new Set<string>();
   const entries: TimelineEntry[] = [];
+  let hiddenToolCalls = 0;
 
   for (const diagnostic of diagnostics) {
     entries.push({ lsn: diagnostic.lsn, type: "diagnostic", diagnostic });
@@ -214,7 +217,13 @@ function renderTimeline(
   entries.sort((left, right) => left.lsn < right.lsn ? -1 : left.lsn > right.lsn ? 1 : 0);
 
   if (entries.length === 0) {
-    timeline.append(emptyState(document, "No messages yet", "Send an instruction to start this session timeline."));
+    timeline.append(emptyState(
+      document,
+      hiddenToolCalls > 0 ? "Tool calls hidden" : "No messages yet",
+      hiddenToolCalls > 0
+        ? "Tool calls are hidden by this cockpit preference. Open Cockpit settings to show them."
+        : "Send an instruction to start this session timeline.",
+    ));
     if (rendersLive(session) && session.activity === SessionActivityState.WORKING) {
       timeline.append(renderTimelineActivity(document, session));
     }
@@ -225,7 +234,9 @@ function renderTimeline(
     if (entry.type === "diagnostic") {
       timeline.append(renderDiagnostic(document, entry.diagnostic));
     } else if (entry.type === "observation") {
-      timeline.append(renderObservation(document, entry.observation, entry.command, options));
+      const rendered = renderObservation(document, entry.observation, entry.command, options);
+      if (rendered) timeline.append(rendered);
+      else if (entry.observation.role === "tool") hiddenToolCalls += 1;
     } else if (entry.type === "command") {
       timeline.append(renderCommandMessage(document, entry.command, options.actions, options.lockdownActive));
     } else if (entry.type === "elicitation") {
@@ -245,6 +256,14 @@ function renderTimeline(
       if (!stableTarget(session) || options.lockdownActive) disableSubmission(card, document, options.lockdownActive);
       timeline.append(card);
     }
+  }
+
+  if (timeline.childElementCount === 0 && hiddenToolCalls > 0) {
+    timeline.append(emptyState(
+      document,
+      "Tool calls hidden",
+      "Tool calls are hidden by this cockpit preference. Open Cockpit settings to show them.",
+    ));
   }
 
   // In-chat activity affordance: the session list and header show state, but
@@ -293,9 +312,15 @@ function renderObservation(
   observation: ObservationView,
   command: CommandView | undefined,
   options: SessionDetailOptions,
-): HTMLElement {
+): HTMLElement | undefined {
+  if (observation.role === "tool" && options.showToolCalls === false) return undefined;
   const message = document.createElement("article");
-  message.className = `msg msg--${observation.role === "operator" ? "operator" : "agent"}`;
+  const roleClass = observation.role === "operator"
+    ? "operator"
+    : observation.role === "tool"
+      ? "tool"
+      : "agent";
+  message.className = `msg msg--${roleClass}`;
   message.dataset.observationId = observation.id;
   const body = document.createElement("div");
   body.className = "msg__body";

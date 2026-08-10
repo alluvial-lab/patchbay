@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish-settings
 kind: story
-stage: implementing
+stage: done
 parent: cockpit-ux-polish
 depends_on: [cockpit-ux-polish-visual-contract]
 release_binding: null
@@ -23,7 +23,16 @@ Add the first settings surface to the existing cockpit shell. The initial prefer
 
 ## Acceptance evidence
 
-- [ ] Settings is reachable from the existing shell navigation without creating a parallel destination model.
-- [ ] Preference persistence is scoped to the existing authority-domain key and safely falls back to the default.
-- [ ] Toggling visibility does not alter the folded model, command delivery states, observation ordering, or reconnect behavior.
-- [ ] Keyboard and screen-reader users can identify the setting, its scope, and its current value.
+- [x] Settings is reachable from the existing shell navigation without creating a parallel destination model.
+- [x] Preference persistence is scoped to the existing authority-domain key and safely falls back to the default.
+- [x] Toggling visibility does not alter the folded model, command delivery states, observation ordering, or reconnect behavior.
+- [x] Keyboard and screen-reader users can identify the setting, its scope, and its current value.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-luna` high, direct implementation; settings is a bounded shell/detail presentation change.
+- Review weight: thorough (caller override), feature review remains pending after integrated implementation.
+- Files changed: `web-cockpit/src/ui/settings-view.ts`, `web-cockpit/src/ui/shell.ts`, `web-cockpit/src/ui/session-detail.ts`, `web-cockpit/src/ui/shell.css`, `web-cockpit/tests/shell.test.ts`.
+- Tests added/removed: shell coverage for domain-scoped persistence, malformed/default-safe visibility, dialog semantics, toggle round-trip, and unchanged folded observations; `npm --prefix web-cockpit run build:types` and shell tests pass.
+- Simplification: settings is an overlay over the existing destination shell; no new destination registry, protocol field, transcript model, or command state was introduced.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

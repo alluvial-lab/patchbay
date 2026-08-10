@@ -26,11 +26,13 @@ import {
 import { renderSecurityView, type SecurityViewActions } from "./security-view.js";
 import type { ElicitationRenderOptions } from "./elicitation.js";
 import type { MarkdownRenderer } from "./markdown.js";
+import { renderSettingsView } from "./settings-view.js";
 
 export type CockpitDestination = "sessions" | "resources" | "security" | "diagnostics" | "files" | "git" | "settings";
 
 export interface CockpitShellPreferences {
   sessionsPanelCollapsed: boolean;
+  showToolCalls: boolean;
 }
 
 export interface CockpitShellPreferenceStore {
@@ -82,10 +84,13 @@ export function createCockpitShell(
   let mobileResourceDetailOpen = false;
   let filter = "";
   let destination: CockpitDestination = "sessions";
+  let settingsOpen = false;
   const authorityDomainId = options.authorityDomainId
     ?? create(AuthorityDomainIdSchema, { value: model.authorityDomainId ?? "default" });
   const preferenceStore = options.preferenceStore ?? browserPreferenceStore(document);
-  let panelCollapsed = preferenceStore.load(authorityDomainId.value).sessionsPanelCollapsed;
+  let preferences = normalizePreferences(preferenceStore.load(authorityDomainId.value));
+  let panelCollapsed = preferences.sessionsPanelCollapsed;
+  let showToolCalls = preferences.showToolCalls;
   let detail!: SessionDetailComponent;
   let resourceDestination!: ResourceDestinationComponent;
   let observedSelectedKey: string | undefined;
@@ -112,7 +117,7 @@ export function createCockpitShell(
     root.replaceChildren();
     const content = document.createElement("div");
     content.className = "cockpit__content";
-    const rail = renderRail(document, destination, (next) => selectDestination(next));
+    const rail = renderRail(document, destination, settingsOpen, (next) => selectDestination(next));
     const sidebar = renderSidebar(document, model, selectedKey, filter, {
       select(session) {
         selectedKey = sessionKey(session.identity);
@@ -131,6 +136,7 @@ export function createCockpitShell(
       actions: options.actions,
       elicitation: options.elicitation,
       submission: options.submission?.(),
+      showToolCalls,
       lockdownActive: model.lockdown.active || Boolean(model.lockdown.submitting),
       onBack() {
         mobileDetailOpen = false;
@@ -164,7 +170,25 @@ export function createCockpitShell(
     if (degraded) root.append(degraded);
     if (model.lockdown.active) root.append(renderLockdownBanner(document, model));
     root.append(content, renderBottomTabs(document, destination, (next) => selectDestination(next)));
-    root.append(renderOverflowMenu(document, destination, (next) => selectDestination(next)));
+    root.append(renderOverflowMenu(document, destination, settingsOpen, (next) => selectDestination(next)));
+    if (settingsOpen) {
+      const settings = renderSettingsView(document, {
+        showToolCalls,
+        authorityDomainId: authorityDomainId.value,
+        onShowToolCallsChange(next) {
+          showToolCalls = next;
+          preferences = { ...preferences, showToolCalls: next };
+          preferenceStore.save(authorityDomainId.value, preferences);
+          render();
+        },
+        onClose() {
+          settingsOpen = false;
+          render();
+        },
+      });
+      root.append(settings.backdrop, settings.dialog);
+      queueMicrotask(() => settings.toggle.focus());
+    }
     if (options.elicitation?.mobileSheet) {
       root.append(options.elicitation.mobileSheet.backdrop, options.elicitation.mobileSheet.element);
     }
@@ -212,10 +236,17 @@ export function createCockpitShell(
   }
 
   function selectDestination(next: CockpitDestination): void {
+    if (next === "settings") {
+      settingsOpen = true;
+      render();
+      return;
+    }
+    settingsOpen = false;
     const mobile = isMobile();
     if (next === "sessions" && destination === "sessions" && !mobile) {
       panelCollapsed = !panelCollapsed;
-      preferenceStore.save(authorityDomainId.value, { sessionsPanelCollapsed: panelCollapsed });
+      preferences = { ...preferences, sessionsPanelCollapsed: panelCollapsed };
+      preferenceStore.save(authorityDomainId.value, preferences);
     } else {
       destination = next;
       if (next === "sessions" && !mobile) panelCollapsed = false;
@@ -295,6 +326,7 @@ const DESTINATION_ICONS: Record<CockpitDestination, IconName> = {
 function renderRail(
   document: Document,
   selected: CockpitDestination,
+  settingsOpen: boolean,
   onSelect: (destination: CockpitDestination) => void,
 ): HTMLElement {
   const rail = document.createElement("aside");
@@ -309,7 +341,8 @@ function renderRail(
     button.dataset.destination = destination;
     button.setAttribute("aria-label", capitalize(destination));
     button.dataset.tip = capitalize(destination);
-    if (selected === destination) button.setAttribute("aria-current", "page");
+    if (selected === destination && !settingsOpen) button.setAttribute("aria-current", "page");
+    if (destination === "settings") button.setAttribute("aria-expanded", String(settingsOpen));
     button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "destination__label", capitalize(destination)));
     button.addEventListener("click", () => onSelect(destination));
     nav.append(button);
@@ -350,6 +383,7 @@ function renderBottomTabs(
 function renderOverflowMenu(
   document: Document,
   selected: CockpitDestination,
+  settingsOpen: boolean,
   onSelect: (destination: CockpitDestination) => void,
 ): HTMLElement {
   const menu = document.createElement("nav");
@@ -360,7 +394,8 @@ function renderOverflowMenu(
     button.type = "button";
     button.className = "btn btn-ghost destination";
     button.dataset.destination = destination;
-    button.setAttribute("aria-current", selected === destination ? "page" : "false");
+    button.setAttribute("aria-current", selected === destination && !settingsOpen ? "page" : "false");
+    if (destination === "settings") button.setAttribute("aria-expanded", String(settingsOpen));
     button.textContent = capitalize(destination);
     button.addEventListener("click", () => onSelect(destination));
     menu.append(button);
@@ -399,15 +434,22 @@ function isPlannedDestination(destination: CockpitDestination): boolean {
   return destination !== "sessions" && destination !== "resources" && destination !== "security";
 }
 
+function normalizePreferences(value: Partial<CockpitShellPreferences> | null | undefined): CockpitShellPreferences {
+  return {
+    sessionsPanelCollapsed: value?.sessionsPanelCollapsed === true,
+    showToolCalls: value?.showToolCalls !== false,
+  };
+}
+
 function browserPreferenceStore(document: Document): CockpitShellPreferenceStore {
   const key = (domain: string) => `patchbay.cockpit.${domain}.shell`;
   return {
     load(domain) {
       try {
         const value = document.defaultView?.localStorage.getItem(key(domain));
-        return value ? JSON.parse(value) as CockpitShellPreferences : { sessionsPanelCollapsed: false };
+        return value ? normalizePreferences(JSON.parse(value) as Partial<CockpitShellPreferences>) : normalizePreferences(undefined);
       } catch {
-        return { sessionsPanelCollapsed: false };
+        return normalizePreferences(undefined);
       }
     },
     save(domain, value) {

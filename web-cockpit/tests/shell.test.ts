@@ -153,7 +153,7 @@ test("destination rail uses the signed-off punch-out shell and persists panel co
     markdown: createMarkdownRenderer(dom.window as unknown as Window),
     isMobile: () => false,
     preferenceStore: {
-      load: () => ({ sessionsPanelCollapsed: false }),
+      load: () => ({ sessionsPanelCollapsed: false, showToolCalls: true }),
       save: (_domain, value) => { saved = value.sessionsPanelCollapsed; },
     },
   });
@@ -172,6 +172,64 @@ test("destination rail uses the signed-off punch-out shell and persists panel co
   assert.equal(saved, true);
   assert.equal(shell.element.classList.contains("cockpit--panel-collapsed"), true);
 });
+
+test("settings preference is domain-scoped, keyboard-labeled, and presentation-only", () => {
+  const dom = new JSDOM("<!doctype html><body></body>", { url: "https://patchbay.test" });
+  const view = session("session-1");
+  const model = withSessions(view);
+  model.observations.push({
+    id: "tool-1",
+    session: view.identity,
+    role: "tool",
+    kind: "tool_requested",
+    markdown: "Running **bash**",
+    detail: "pwd",
+    lsn: 2n,
+  });
+  const saved = new Map<string, { sessionsPanelCollapsed: boolean; showToolCalls: boolean }>();
+  const store = {
+    load(domain: string) {
+      return saved.get(domain) ?? { sessionsPanelCollapsed: false, showToolCalls: true };
+    },
+    save(domain: string, value: { sessionsPanelCollapsed: boolean; showToolCalls: boolean }) {
+      saved.set(domain, value);
+    },
+  };
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+    preferenceStore: store,
+  });
+  dom.window.document.body.append(shell.element);
+  shell.selectDestination("settings");
+  const dialog = shell.element.querySelector<HTMLElement>(".settings-dialog")!;
+  assert.equal(dialog.getAttribute("aria-labelledby"), "cockpit-settings-title");
+  assert.match(dialog.textContent!, /Authority domain: operator-domain/);
+  const toggle = dialog.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+  assert.equal(toggle.checked, true);
+  toggle.click();
+  assert.equal(saved.get("operator-domain")?.showToolCalls, false);
+  assert.equal(shell.element.querySelector(".msg--tool"), null);
+  assert.equal(model.observations.length, 1);
+  assert.ok(notNull(shell.element.querySelector(".settings-dialog")));
+  shell.selectDestination("settings");
+  shell.element.querySelector<HTMLInputElement>("input[type=checkbox]")!.click();
+  assert.equal(shell.element.querySelector(".msg--tool") !== null, true);
+
+  const otherDom = new JSDOM("<!doctype html><body></body>", { url: "https://patchbay.test" });
+  const other = createCockpitShell(otherDom.window.document, { ...withSessions(session("other")), authorityDomainId: "other-domain" }, {
+    markdown: createMarkdownRenderer(otherDom.window as unknown as Window),
+    isMobile: () => false,
+    preferenceStore: store,
+  });
+  other.selectDestination("settings");
+  assert.equal(other.element.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked, true);
+});
+
+function notNull<T>(value: T | null): T {
+  assert.notEqual(value, null);
+  return value as T;
+}
 
 test("mobile uses equal-width bottom tabs and More destinations", () => {
   const dom = new JSDOM();
