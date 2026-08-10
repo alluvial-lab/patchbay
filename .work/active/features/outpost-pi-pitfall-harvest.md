@@ -7,8 +7,13 @@ parent: null
 depends_on: []
 release_binding: null
 gate_origin: null
+research_dials:
+  scope_authority: in-engagement-judgment
+  verification_rigor: standard
+  intent: pitfall-seam-gap-harvest
+  output_kind: campaign
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-09
 ---
 
 Sequencing directive: run this research engagement FIRST in a fresh session; thread its findings (via research-handoff) into the engineering clusters before draining them.
@@ -58,3 +63,11 @@ restart/lifecycle races, and durability/ordering pitfalls. Produce a grounded
 findings set that feeds Patchbay design (esp. spawn, restart, project model,
 mobile surface, transcript/state durability, identity) — pitfalls to avoid,
 seams to pre-decide, gaps to close proactively. Route as a `[research]` item.
+
+## Engagement record (2026-08-09)
+
+- **Dials (set at kickoff, operator-confirmed):** scope_authority = in-engagement-judgment; verification_rigor = standard; intent = pitfall-seam-gap-harvest; output_kind = campaign.
+- **Decision relevance (yield hypothesis):** findings change Patchbay's spawn-lifecycle/restart-fencing, project/cwd-seam, mobile-control, durability/ordering/provenance, and identity/authority design decisions (pitfalls to avoid, seams to pre-decide).
+- **Substrate check:** the prior `v1-control-plane-and-spawn` campaign attested herdr's *model* (`[herdr-concepts]`, `[herdr-state]`) as a spawn-lifecycle peer comparison; it did NOT harvest outpost_pi's bug-swatting history. Minimal overlap; this harvest is distinct.
+- **Decomposition (5 facets, one specialist each):** restart-hot-reload-lifecycle; herdr-multi-cwd-project; mobile-control-fragility; durable-transcript-ordering-provenance; identity-keyring-durability.
+- **Status:** in-flight — specialists dispatched. Campaign output at `.research/analysis/campaigns/outpost-pi-pitfall-harvest/`.
