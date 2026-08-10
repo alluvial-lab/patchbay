@@ -1,6 +1,6 @@
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuditEventKind, AuthorityDomainId, Grant, GrantId,
-    GrantRevocationPolicy, IdempotencyKey, OperationKind, ResourceId, ResourceIdentity,
+    ActorId, AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, EventId, Grant, GrantId,
+    GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, ResourceId, ResourceIdentity,
     ResourceKind, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use prost::Message;
@@ -352,6 +352,148 @@ async fn legacy_data_survives_versioned_migration() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload, payload);
+}
+
+#[tokio::test]
+async fn v2_audit_schema_migrates_through_v3_to_v5_without_losing_rows() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("v2.sqlite3");
+    let source_payload = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: vec![9, 8, 7],
+    };
+    let source_id = EventId {
+        authority_domain_id: Some(domain("main")),
+        lsn: Some(Lsn { value: 1 }),
+    };
+    let audit_id = EventId {
+        authority_domain_id: Some(domain("main")),
+        lsn: Some(Lsn { value: 2 }),
+    };
+    let audit = AuditRecord {
+        audit_event_id: Some(audit_id.clone()),
+        occurred_at: Some(Timestamp {
+            seconds: 10,
+            nanos: 0,
+        }),
+        kind: AuditEventKind::GrantCreated as i32,
+        actor_id: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
+        reason_code: "v2_preserved".to_owned(),
+        source_event_id: Some(source_id),
+        ..AuditRecord::default()
+    };
+    let audit_payload = StoredEventPayload {
+        kind: StoredEventKind::AuditRecord as i32,
+        payload: audit.encode_to_vec(),
+    };
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "PRAGMA foreign_keys = ON;
+            CREATE TABLE events (
+                lsn INTEGER PRIMARY KEY,
+                authority_domain_id TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE INDEX idx_events_domain_lsn ON events(authority_domain_id, lsn);
+            CREATE TABLE idempotency_keys (
+                authority_domain_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                target TEXT NOT NULL,
+                lsn INTEGER NOT NULL,
+                payload_bytes BLOB NOT NULL,
+                PRIMARY KEY (authority_domain_id, key, target)
+            );
+            CREATE TABLE snapshots (
+                authority_domain_id TEXT NOT NULL,
+                snapshot_lsn INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                PRIMARY KEY (authority_domain_id, snapshot_lsn)
+            );
+            CREATE TABLE audit_records (
+                authority_domain_id TEXT NOT NULL,
+                audit_lsn INTEGER NOT NULL,
+                occurred_at_seconds INTEGER NOT NULL,
+                occurred_at_nanos INTEGER NOT NULL,
+                kind INTEGER NOT NULL,
+                actor_id TEXT,
+                endpoint_id TEXT,
+                command_id TEXT,
+                target_key TEXT,
+                failure_code INTEGER,
+                reason_code TEXT NOT NULL,
+                source_lsn INTEGER,
+                PRIMARY KEY (authority_domain_id, audit_lsn),
+                FOREIGN KEY (audit_lsn) REFERENCES events(lsn),
+                FOREIGN KEY (source_lsn) REFERENCES events(lsn)
+            );
+            CREATE INDEX idx_audit_domain_lsn ON audit_records(authority_domain_id, audit_lsn DESC);
+            CREATE INDEX idx_audit_occurred_at ON audit_records(authority_domain_id, occurred_at_seconds, occurred_at_nanos);
+            CREATE INDEX idx_audit_actor ON audit_records(authority_domain_id, actor_id);
+            CREATE INDEX idx_audit_command ON audit_records(authority_domain_id, command_id);
+            CREATE INDEX idx_audit_target ON audit_records(authority_domain_id, target_key);
+            CREATE INDEX idx_audit_kind ON audit_records(authority_domain_id, kind);
+            PRAGMA user_version = 2;",
+        )
+        .unwrap();
+        for (lsn, payload) in [(1_i64, &source_payload), (2_i64, &audit_payload)] {
+            db.execute(
+                "INSERT INTO events (lsn, authority_domain_id, kind, payload)
+                 VALUES (?1, 'main', ?2, ?3)",
+                rusqlite::params![lsn, payload.kind, payload.encode_to_vec()],
+            )
+            .unwrap();
+        }
+        db.execute(
+            "INSERT INTO audit_records (
+                authority_domain_id, audit_lsn, occurred_at_seconds, occurred_at_nanos,
+                kind, actor_id, reason_code, source_lsn
+             ) VALUES ('main', 2, 10, 0, ?1, 'operator', 'v2_preserved', 1)",
+            [AuditEventKind::GrantCreated as i32],
+        )
+        .unwrap();
+    }
+
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+    let events = storage
+        .read_after(&domain("main"), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload, source_payload);
+    assert_eq!(events[1].payload, audit_payload);
+    let mut spec = page(10);
+    spec.reason_codes = vec!["v2_preserved".to_owned()];
+    assert_eq!(
+        storage.query_audit(&domain("main"), spec).await.unwrap().records,
+        [audit]
+    );
+    drop(storage);
+    tokio::task::yield_now().await;
+
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    let event_count: u64 = db
+        .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+        .unwrap();
+    let audit_count: u64 = db
+        .query_row("SELECT COUNT(*) FROM audit_records", [], |row| row.get(0))
+        .unwrap();
+    let migrated_grant_id: Option<String> = db
+        .query_row(
+            "SELECT grant_id FROM audit_records WHERE authority_domain_id = 'main' AND audit_lsn = 2",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 5);
+    assert_eq!((event_count, audit_count), (2, 1));
+    assert_eq!(migrated_grant_id, None);
 }
 
 #[tokio::test]

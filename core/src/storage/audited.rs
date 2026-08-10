@@ -33,10 +33,6 @@ impl<S> AuditedStorage<S> {
         Self { inner }
     }
 
-    #[must_use]
-    pub fn inner(&self) -> &S {
-        &self.inner
-    }
 }
 
 /// Construct the allowlisted audit draft for a source event.

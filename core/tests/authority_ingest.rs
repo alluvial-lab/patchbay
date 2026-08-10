@@ -431,6 +431,65 @@ async fn normal_grant_retry_returns_original_id_without_source_or_audit_duplicat
 }
 
 #[tokio::test]
+async fn normal_grant_retry_after_revocation_catches_a_fresh_projection_up_to_replay() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let candidate = grant("retry-after-revocation");
+    let mut warm = AuthorityRegistry::new();
+    let earliest_id = ingest_grant(
+        &storage,
+        &mut warm,
+        &domain(),
+        candidate.clone(),
+    )
+    .await
+    .unwrap();
+    ingest_revocation(
+        &storage,
+        &mut warm,
+        &domain(),
+        revocation("retry-after-revocation"),
+    )
+    .await
+    .unwrap();
+    let prefix = events(&storage).await;
+
+    let mut fresh = AuthorityRegistry::new();
+    let retry_id = ingest_grant(&storage, &mut fresh, &domain(), candidate)
+        .await
+        .unwrap();
+    assert_eq!(retry_id, earliest_id);
+    assert_eq!(events(&storage).await, prefix);
+    assert_eq!(fresh, rebuild_from_log(&storage, &domain()).await.unwrap());
+    assert!(fresh
+        .get_grant(&grant_id("retry-after-revocation"))
+        .expect("the retried grant remains projected")
+        .is_revoked());
+
+    let audits = storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantCreated],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(grant_id("retry-after-revocation")),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["grant_created".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.records.len(), 1);
+    assert_eq!(audits.records[0].source_event_id, Some(earliest_id));
+}
+
+#[tokio::test]
 async fn committed_but_unacknowledged_normal_and_descendant_grants_retry_to_original_ids() {
     let normal_inner = RusqliteStorage::open_in_memory().unwrap();
     let normal_storage = LoseFirstGrantAppendAcknowledgement::new(normal_inner.clone());

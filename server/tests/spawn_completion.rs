@@ -250,7 +250,34 @@ async fn append_completion_audit<S: Storage>(storage: &S, source: EventId) -> Ev
     storage.append_audit(&domain(), audit).await.unwrap()
 }
 
-async fn append_descendant<S>(storage: &S, audit_id: EventId)
+fn descendant_candidate(audit_id: EventId) -> DescendantGrant {
+    DescendantGrant {
+        grant_id: Some(GrantId {
+            value: "desc:authority-main:spawn-1".to_owned(),
+        }),
+        authority_domain_id: Some(domain()),
+        subject_actor_id: Some(actor()),
+        subject_endpoint_id: Some(endpoint()),
+        target_scope: Some(session_scope()),
+        allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
+            .iter()
+            .map(|kind| *kind as i32)
+            .collect(),
+        provenance: Some(DescendantGrantProvenance {
+            spawn_operation_id: Some(command_id()),
+            spawning_grant_id: Some(parent_grant_id()),
+        }),
+        created_at: Some(Timestamp {
+            seconds: 1_000,
+            nanos: 0,
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        audit_id: Some(audit_id),
+        ..DescendantGrant::default()
+    }
+}
+
+async fn append_descendant<S>(storage: &S, audit_id: EventId) -> EventId
 where
     S: Storage,
 {
@@ -259,33 +286,10 @@ where
         storage,
         &mut authority,
         &domain(),
-        DescendantGrant {
-            grant_id: Some(GrantId {
-                value: "desc:authority-main:spawn-1".to_owned(),
-            }),
-            authority_domain_id: Some(domain()),
-            subject_actor_id: Some(actor()),
-            subject_endpoint_id: Some(endpoint()),
-            target_scope: Some(session_scope()),
-            allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
-                .iter()
-                .map(|kind| *kind as i32)
-                .collect(),
-            provenance: Some(DescendantGrantProvenance {
-                spawn_operation_id: Some(command_id()),
-                spawning_grant_id: Some(parent_grant_id()),
-            }),
-            created_at: Some(Timestamp {
-                seconds: 1_000,
-                nanos: 0,
-            }),
-            revocation_policy: GrantRevocationPolicy::Continue as i32,
-            audit_id: Some(audit_id),
-            ..DescendantGrant::default()
-        },
+        descendant_candidate(audit_id),
     )
     .await
-    .unwrap();
+    .unwrap()
 }
 
 async fn seed_parent_grant<S: Storage>(storage: &S) {
@@ -842,6 +846,122 @@ async fn committed_descendant_with_lost_ack_repairs_without_duplicate_grant_or_c
         .unwrap();
     assert_eq!(audits.records.len(), 1);
     assert_eq!(audits.records[0].source_event_id, Some(descendant_source_id));
+}
+
+#[tokio::test]
+async fn migrated_v4_complete_prefix_with_duplicate_descendant_bootstraps_and_retries_earliest() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v4-duplicate-descendant.sqlite3");
+    let storage = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    let source = seed_evidence(&storage).await;
+    let audit_id = append_completion_audit(&storage, source).await;
+    let candidate = descendant_candidate(audit_id);
+    let mut authority = AuthorityRegistry::new();
+    let earliest_id = ingest_descendant_grant(
+        &storage,
+        &mut authority,
+        &domain(),
+        candidate.clone(),
+    )
+    .await
+    .unwrap();
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id()),
+                    from_state: OperationState::Delivered as i32,
+                    to_state: OperationState::Completed as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    let complete_prefix = all_events(&storage).await;
+    let earliest_source = complete_prefix
+        .iter()
+        .find(|event| event.event_id == earliest_id)
+        .unwrap()
+        .payload
+        .clone();
+    drop(storage);
+    tokio::task::yield_now().await;
+
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute(
+            "INSERT INTO events (lsn, authority_domain_id, kind, payload)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                complete_prefix.len() as i64 + 1,
+                domain().value,
+                earliest_source.kind,
+                earliest_source.encode_to_vec()
+            ],
+        )
+        .unwrap();
+        db.execute_batch("DROP TABLE grant_identities; PRAGMA user_version = 4;")
+            .unwrap();
+    }
+
+    let migrated = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    let migrated_prefix = all_events(&migrated).await;
+    assert_eq!(completion_counts(&migrated_prefix), (1, 2, 1));
+
+    let driver = SpawnCompletionDriver::bootstrap(
+        migrated.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(migrated.clone()),
+        clock(),
+    )
+    .await
+    .expect("the complete migrated prefix must bootstrap as quiescent");
+    drop(driver);
+    assert_eq!(all_events(&migrated).await, migrated_prefix);
+
+    let mut fresh = AuthorityRegistry::new();
+    let retry_id = ingest_descendant_grant(
+        &migrated,
+        &mut fresh,
+        &domain(),
+        candidate,
+    )
+    .await
+    .expect("the legacy duplicate must retry through the earliest identity");
+    assert_eq!(retry_id, earliest_id);
+    assert_eq!(all_events(&migrated).await, migrated_prefix);
+    assert_eq!(fresh, rebuild_from_log(&migrated, &domain()).await.unwrap());
+
+    let audits = migrated
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantCreated],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(GrantId {
+                    value: "desc:authority-main:spawn-1".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["descendant_grant_created".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.records.len(), 1);
+    assert_eq!(audits.records[0].source_event_id, Some(earliest_id));
 }
 
 #[tokio::test]

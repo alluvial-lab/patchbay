@@ -371,6 +371,53 @@ fn relevant_fact_lsn_orders_converge_and_durable_progress_survives_redelivery() 
 }
 
 #[test]
+fn byte_identical_legacy_descendant_redelivery_is_inert_but_changed_bytes_corrupt() {
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
+            audit_event(6, event_id(4)),
+        ],
+    );
+    let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) =
+        tail.next_action().unwrap()
+    else {
+        panic!("expected grant action");
+    };
+    let source = recorded(
+        7,
+        StoredEventKind::DescendantGrant,
+        &descendant_from(&issuance),
+    );
+    tail.observe(&source).unwrap();
+
+    let mut exact_legacy_redelivery = source.clone();
+    exact_legacy_redelivery.event_id = event_id(8);
+    tail.observe(&exact_legacy_redelivery)
+        .expect("a byte-identical later source is legacy redelivery");
+    assert!(matches!(
+        tail.next_action().unwrap(),
+        Some(SpawnCompletionAction::CommitCompleted(_))
+    ));
+
+    let mut changed_bytes = source;
+    changed_bytes.event_id = event_id(9);
+    // Append a valid unknown protobuf field. The decoded grant is unchanged,
+    // so this catches implementations that compare only semantic fields rather
+    // than the canonical stored source envelope.
+    changed_bytes.payload.payload.extend_from_slice(&[0xf8, 0x07, 0x01]);
+    assert!(matches!(
+        tail.observe(&changed_bytes),
+        Err(AuthorityError::CorruptLog(_))
+    ));
+}
+
+#[test]
 fn failed_or_competing_terminal_spawn_never_requests_authority() {
     for terminal in [
         OperationState::Rejected,

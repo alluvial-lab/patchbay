@@ -296,3 +296,29 @@ If repository-wide formatting still reports pre-existing untouched drift, verify
 
 ## Review handoff
 The integrated feature is at `review` by explicit stop boundary. Effective review weight remains `thorough`; fresh review should focus on transaction/index corruption handling, ambiguous-commit identity preservation, descendant retry provenance, generic bypass closure, and audit idempotency. Findings remain proposals for receiver adjudication.
+
+## Review (2026-08-10) — pass 1 fix verification
+
+**Verdict**: Request changes resolved; keep at `review` for the next thorough convergence pass.
+
+**Effective weight**: `thorough` (explicit caller selection)
+
+**Independent passes completed**: 1
+
+**Closure state**: pass-1 receiver-accepted blockers are fixed and verified; a clean later pass is still required before `done`.
+
+**Blockers accepted and fixed**:
+1. Migrated byte-identical duplicate descendant sources now classify as legacy redelivery in `SpawnDescendantTail`: source-envelope bytes, not the later LSN-bearing fact, decide equality; the earliest fact remains retained and differing bytes fail closed. A file-backed complete v4 prefix now migrates, bootstraps quiescently, retries to the earliest `EventId`, and writes no event or audit.
+2. Exact normal-grant retry now validates and folds the complete durable authority-domain prefix before returning. A fresh projection after a later revocation equals canonical replay, retains the earliest source id, and leaves source/audit cardinality unchanged.
+3. The unused production `AuditedStorage::inner` raw-backend accessor was removed. The dedicated atomic grant writer remains the only production wrapper path for grant creation.
+4. Schema preflight now validates the audit table against its declared version: v2 does not require the v3 `grant_id` column. A preservation fixture proves valid v2 events and audit rows migrate through v3, v4, and v5 without allocating an LSN or losing indexed audit content.
+
+**Verification**:
+- Focused authority/storage/server suite passed: 11 audit, 15 authority-ingest, 14 authority-property, 6 authority-replay, 11 spawn-tail, 29 SQLite-storage, and 7 spawn-completion tests.
+- `cargo test --workspace` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `npm --prefix contracts/ts run check:models` passed.
+- `npm --prefix contracts/ts run check:vectors` passed with 21 implementation checks and 37 killed mutation witnesses after restoring lockfile-declared local TypeScript dependencies/build artifacts.
+- `git diff --check` passed.
+
+**Disposition notes**: no lower-risk finding was parked, no unrelated item or foundation document was changed, and no nested agent, peer mechanism, or push was used. Per the caller's explicit boundary, this pass records fix verification only and retains `stage: review`; no follow-on independent pass is claimed in this commit.

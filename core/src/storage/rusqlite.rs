@@ -521,16 +521,26 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     }
     let audit_exists = table_exists(db, "audit_records")?;
     if version >= 2 || audit_exists {
-        validate_columns(
-            db,
-            "audit_records",
-            &[
-                "authority_domain_id", "audit_lsn", "occurred_at_seconds",
-                "occurred_at_nanos", "kind", "actor_id", "endpoint_id",
-                "command_id", "target_key", "failure_code", "reason_code",
-                "source_lsn", "grant_id",
-            ],
-        )?;
+        let mut required_audit_columns = vec![
+            "authority_domain_id",
+            "audit_lsn",
+            "occurred_at_seconds",
+            "occurred_at_nanos",
+            "kind",
+            "actor_id",
+            "endpoint_id",
+            "command_id",
+            "target_key",
+            "failure_code",
+            "reason_code",
+            "source_lsn",
+        ];
+        // `grant_id` is introduced by migration 3. A valid v2 database must
+        // pass preflight in its own schema shape before that migration runs.
+        if version >= 3 {
+            required_audit_columns.push("grant_id");
+        }
+        validate_columns(db, "audit_records", &required_audit_columns)?;
     }
     let metadata_exists = table_exists(db, "authority_domain_metadata")?;
     if metadata_exists && version < 4 {

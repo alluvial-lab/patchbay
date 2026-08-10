@@ -13,7 +13,8 @@ use patchbay_contracts::patchbay::{
     AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DeviceId,
     EndpointId, EventId, FailureCode, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
     OperationKind, OperationState, Revocation, SessionGenerationBumped, SessionRegistered,
-    SessionStateEvent, StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
+    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -71,6 +72,7 @@ struct TerminalFact {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DescendantGrantFact {
     event_lsn: u64,
+    source: StoredEventPayload,
     grant: DescendantGrant,
 }
 
@@ -838,7 +840,11 @@ impl SpawnDescendantTail {
                 "descendant grant at LSN {event_lsn} has no eligible lifecycle"
             )));
         }
-        let fact = DescendantGrantFact { event_lsn, grant };
+        let fact = DescendantGrantFact {
+            event_lsn,
+            source: event.payload.clone(),
+            grant,
+        };
         validate_observed_descendant_grant(
             &fact,
             event_domain,
@@ -847,10 +853,9 @@ impl SpawnDescendantTail {
             session,
             audit,
         )?;
-        insert_consistent_option(
+        insert_descendant_grant_fact(
             &mut progress.descendant_grant,
             fact,
-            "descendant grant",
             &key,
             event_lsn,
         )
@@ -1106,6 +1111,29 @@ fn spawn_scope_contains_session(spawn_scope: &TargetScope, session: &TargetScope
                 if !spawn_adapter.value.is_empty() && spawn_adapter == session_adapter
         ),
         _ => false,
+    }
+}
+
+fn insert_descendant_grant_fact(
+    slot: &mut Option<DescendantGrantFact>,
+    incoming: DescendantGrantFact,
+    key: &SpawnKey,
+    event_lsn: u64,
+) -> Result<(), AuthorityError> {
+    match slot {
+        Some(existing) if existing.source == incoming.source => {
+            // v4 migration deliberately preserves byte-identical historical
+            // duplicates. Treat a later source as legacy redelivery and keep
+            // the earliest LSN-bearing fact as completion provenance.
+            Ok(())
+        }
+        Some(_) => Err(AuthorityError::CorruptLog(format!(
+            "descendant grant has conflicting source content for key {key:?} at LSN {event_lsn}"
+        ))),
+        None => {
+            *slot = Some(incoming);
+            Ok(())
+        }
     }
 }
 

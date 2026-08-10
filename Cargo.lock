@@ -678,6 +678,7 @@ dependencies = [
  "prost-types",
  "protoc-bin-vendored",
  "rand 0.8.7",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
