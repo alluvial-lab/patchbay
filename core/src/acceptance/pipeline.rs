@@ -16,7 +16,8 @@ use crate::{
 };
 
 use super::{
-    validate_response_payload, AcceptanceError, AllowOperations, Clock, CommandStateLookup,
+    elicitation::correlation_to_elicitation, validate_response_payload,
+    validate_response_responder, AcceptanceError, AllowOperations, Clock, CommandStateLookup,
     ElicitationContractLookup, GrantCheck, OperationPosture, OperationPostureDenied, SystemClock,
     TargetResolver,
 };
@@ -241,19 +242,23 @@ where
         validated.operation_kind,
         OperationKind::ElicitationResponse | OperationKind::ApprovalResponse
     ) {
-        let elicitation_id =
-            operation.correlations.iter().find_map(|correlation| {
-                match correlation.r#ref.as_ref() {
-                    Some(patchbay_contracts::patchbay::typed_correlation::Ref::ElicitationId(
-                        id,
-                    )) => Some(id),
-                    _ => None,
-                }
-            });
-        let active = match elicitation_id {
-            Some(elicitation_id) => contract_lookup.active_contract(elicitation_id).await,
+        let active = match correlation_to_elicitation(&operation.correlations) {
+            Some(elicitation_id) => contract_lookup.active_contract(&elicitation_id).await,
             None => None,
         };
+
+        if let Some(active) = active.as_ref() {
+            if let Err(diagnostic) = validate_response_responder(active, issuer) {
+                return Ok(rejected_result(
+                    Some(validated.command_id.clone()),
+                    FailureCode::AuthorizationDenied,
+                    "authorization_denied".to_owned(),
+                    None,
+                    diagnostic,
+                ));
+            }
+        }
+
         if let Err(diagnostic) = validate_response_payload(&operation, active.as_ref()) {
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),

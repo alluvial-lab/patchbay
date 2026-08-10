@@ -6,7 +6,35 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 
+use crate::authority::IssuerContext;
+
 use super::ActiveElicitation;
+
+const RESPONDER_AUTHORITY_DENIED: &str =
+    "verified issuer is not authorized to answer this elicitation";
+
+/// Validate that verified ingress identity owns the active response slot.
+///
+/// This check is deliberately distinct from grant authorization: a valid
+/// target/kind grant does not authorize one actor to answer another actor's
+/// Elicitation. Diagnostics never disclose either actor identifier.
+pub fn validate_response_responder(
+    active: &ActiveElicitation,
+    issuer: &dyn IssuerContext,
+) -> Result<(), String> {
+    let expected = active
+        .expected_responder_actor
+        .as_ref()
+        .filter(|actor| !actor.value.is_empty());
+    let verified = issuer
+        .verified_actor()
+        .filter(|actor| !actor.value.is_empty());
+
+    match (expected, verified) {
+        (Some(expected), Some(verified)) if expected == verified => Ok(()),
+        _ => Err(RESPONDER_AUTHORITY_DENIED.to_owned()),
+    }
+}
 
 /// Validate an elicitation or approval response against its active contract.
 ///
@@ -159,9 +187,9 @@ fn decode_response_payload(operation: &Operation) -> Result<ElicitationResponseP
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        response_contract, typed_correlation, ElicitationId, InvalidResponsePolicy,
-        PayloadContentType, PayloadEnvelope, QuestionContract, ResponseContract, ResponseOption,
-        TypedCorrelation,
+        response_contract, typed_correlation, ActorId, AuthorityDomainId, DeviceId, ElicitationId,
+        EndpointId, Generation, InvalidResponsePolicy, PayloadContentType, PayloadEnvelope,
+        QuestionContract, ResponseContract, ResponseOption, TypedCorrelation,
     };
 
     fn correlation() -> TypedCorrelation {
@@ -216,6 +244,9 @@ mod tests {
                 )),
                 ..ResponseContract::default()
             },
+            expected_responder_actor: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
             is_terminal: false,
             winning_response: None,
         }
@@ -227,8 +258,100 @@ mod tests {
                 contract_kind: ResponseContractKind::Approval as i32,
                 ..ResponseContract::default()
             },
+            expected_responder_actor: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
             is_terminal: false,
             winning_response: None,
+        }
+    }
+
+    struct ResponderIssuer {
+        actor: Option<ActorId>,
+        domain: AuthorityDomainId,
+    }
+
+    impl ResponderIssuer {
+        fn with_actor(value: Option<&str>) -> Self {
+            Self {
+                actor: value.map(|value| ActorId {
+                    value: value.to_owned(),
+                }),
+                domain: AuthorityDomainId {
+                    value: "authority-main".to_owned(),
+                },
+            }
+        }
+    }
+
+    impl IssuerContext for ResponderIssuer {
+        fn verified_actor(&self) -> Option<&ActorId> {
+            self.actor.as_ref()
+        }
+
+        fn verified_endpoint(&self) -> Option<&EndpointId> {
+            panic!("responder validation must not consult endpoint identity")
+        }
+
+        fn verified_device(&self) -> Option<&DeviceId> {
+            panic!("responder validation must not consult device identity")
+        }
+
+        fn endpoint_generation(&self) -> Option<Generation> {
+            panic!("responder validation must not consult endpoint generation")
+        }
+
+        fn authority_domain_id(&self) -> &AuthorityDomainId {
+            &self.domain
+        }
+    }
+
+    #[test]
+    fn responder_validation_requires_exact_non_empty_verified_actor_equality() {
+        let active = active_question(false);
+        assert!(validate_response_responder(
+            &active,
+            &ResponderIssuer::with_actor(Some("operator"))
+        )
+        .is_ok());
+
+        let cases = [
+            (
+                Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                Some("different-operator"),
+            ),
+            (None, Some("operator")),
+            (
+                Some(ActorId {
+                    value: String::new(),
+                }),
+                Some("operator"),
+            ),
+            (
+                Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                None,
+            ),
+            (
+                Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                Some(""),
+            ),
+        ];
+
+        for (expected_responder_actor, verified_actor) in cases {
+            let active = ActiveElicitation {
+                expected_responder_actor,
+                ..active_question(false)
+            };
+            assert_eq!(
+                validate_response_responder(&active, &ResponderIssuer::with_actor(verified_actor)),
+                Err(RESPONDER_AUTHORITY_DENIED.to_owned())
+            );
         }
     }
 
@@ -350,6 +473,9 @@ mod tests {
                         contract_kind: ResponseContractKind::Question as i32,
                         ..ResponseContract::default()
                     },
+                    expected_responder_actor: Some(ActorId {
+                        value: "operator".to_owned(),
+                    }),
                     is_terminal: false,
                     winning_response: None,
                 }),

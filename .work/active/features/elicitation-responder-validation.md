@@ -1,7 +1,7 @@
 ---
 id: elicitation-responder-validation
 kind: feature
-stage: implementing
+stage: review
 tags: [security, protocol]
 parent: null
 depends_on: []
@@ -268,3 +268,25 @@ Fallback if enriching the active context proves unexpectedly invasive: keep the 
 - **Fixed/active blockers**: none found during direct evidence review.
 - **Parked**: none.
 - **Rejected**: shared-grant folding and a second lookup, for the reasons in Architectural choice.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol` — explicit autopilot caller selection for a security-critical acceptance authority boundary.
+- Review weight: `thorough`, source: explicit operator selection; implementation stops at `stage: review` for the required separate fresh review.
+- Files changed: `core/src/acceptance/ports.rs`, `core/src/acceptance/elicitation_response.rs`, `core/src/acceptance/mod.rs`, `core/src/acceptance/pipeline.rs`, `core/tests/acceptance_pipeline.rs`, `core/tests/authority_proptest.rs`, `server/src/state.rs`, and this feature item.
+- Tests added/removed: added pure fail-closed responder-equality cases; real acceptance-path coverage for both response kinds, grant-only wrong-actor mutation witnesses, failure ordering, unknown/malformed behavior, and expected/wrong-actor terminal retries; added generated-actor equality property evidence; extended production projection catch-up/restart and absent-evidence carriage coverage. Removed none.
+- Simplification: reused the existing `correlation_to_elicitation` helper and the single `ElicitationContractLookup` snapshot; no second port, lookup, lock, storage read, grant primitive, or wire type was introduced.
+- Discrepancies from design: none. The implementation kept responder authority acceptance-owned, verified-issuer-only, pre-grant, and distinct from payload and grant validation.
+- Adjacent issues parked: none.
+
+## Integrated verification
+- `cargo test -p patchbay-core --lib elicitation_response` — pass (7 tests).
+- `cargo test -p patchbay-core --test acceptance_pipeline` — pass (23 tests).
+- `cargo test -p patchbay-core --test authority_proptest` — pass (14 tests).
+- `cargo test -p patchbay-core-server state::tests::fold_lag_invariant_exposes_contract_only_after_storage_catch_up` — pass.
+- `cargo test --workspace` — pass.
+- `cargo clippy --workspace --all-targets -- -D warnings` — pass.
+- `node contracts/scripts/check-vectors.mjs` — pass after installing/building the repository's declared TypeScript dependencies; 52 vectors read, 15 promoted vectors, 20 implementation checks, and 37 mutation witnesses killed. Dependency installation changed no tracked files.
+- Grant-only mutation check: temporarily deleting the distinct responder-validation block made `responder_mismatch_or_missing_expected_actor_denies_before_grant_target_and_append` fail; restoring production code made it pass.
+- Projection-drop mutation check: temporarily replacing projected responder carriage with `None` made `fold_lag_invariant_exposes_contract_only_after_storage_catch_up` fail; restoring production code made it pass.
+- `cargo fmt --all -- --check` — repository baseline remains non-green because of pre-existing repo-wide rustfmt drift beginning in untouched files such as `core/src/acceptance/elicitation.rs` and `core/src/acceptance/index.rs`; no unrelated formatting was applied. Changed code compiles cleanly and passes Clippy with warnings denied.
+- Acceptance criteria walk-through: exact non-empty verified actor equality is required for both response kinds; mismatched/missing/empty responder evidence returns generic pre-acceptance `authorization_denied` with zero grant/target/append work; matching actors still require and traverse the ordinary grant/target/dedup path; unknown Elicitations remain `validation_failed`; responder denial precedes known-slot payload diagnostics; only the expected actor reaches exact-terminal dedup; and the production projection preserves present and absent responder evidence across live catch-up and restart.

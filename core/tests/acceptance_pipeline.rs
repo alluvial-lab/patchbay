@@ -2,9 +2,10 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    response_contract, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId,
-    CommandId, DeviceId, ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode,
-    Generation, GrantId, Lsn, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    response_contract, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
+    ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId, CommandId, DeviceId,
+    ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode, Generation, GrantId, Lsn,
+    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
     StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
@@ -292,6 +293,21 @@ fn response_operation() -> Operation {
     operation
 }
 
+fn approval_response_operation() -> Operation {
+    let mut operation = response_operation();
+    operation.kind = OperationKind::ApprovalResponse as i32;
+    operation.idempotency_key = "idempotency-approval-response-1".to_owned();
+    operation.payload = Some(PayloadEnvelope {
+        payload: ApprovalResponsePayload {
+            decision: ApprovalDecision::Approved as i32,
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        ..PayloadEnvelope::default()
+    });
+    operation
+}
+
 fn active_question() -> ActiveElicitation {
     ActiveElicitation {
         contract: ResponseContract {
@@ -307,8 +323,33 @@ fn active_question() -> ActiveElicitation {
             )),
             ..ResponseContract::default()
         },
+        expected_responder_actor: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
         is_terminal: false,
         winning_response: None,
+    }
+}
+
+fn active_approval() -> ActiveElicitation {
+    ActiveElicitation {
+        contract: ResponseContract {
+            contract_kind: ResponseContractKind::Approval as i32,
+            ..ResponseContract::default()
+        },
+        expected_responder_actor: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
+        is_terminal: false,
+        winning_response: None,
+    }
+}
+
+fn response_fixture(kind: OperationKind) -> (Operation, ActiveElicitation) {
+    match kind {
+        OperationKind::ElicitationResponse => (response_operation(), active_question()),
+        OperationKind::ApprovalResponse => (approval_response_operation(), active_approval()),
+        _ => panic!("response fixture requires a response OperationKind"),
     }
 }
 
@@ -448,6 +489,191 @@ async fn malformed_response_rejects_before_grant_without_durable_state() {
     assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
     assert_eq!(resolver.calls.load(Ordering::Relaxed), 0);
     assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn matching_verified_responder_reaches_grant_target_and_append_for_both_response_kinds() {
+    for kind in [
+        OperationKind::ApprovalResponse,
+        OperationKind::ElicitationResponse,
+    ] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let grant = TestGrantCheck::new(true);
+        let resolver = TestTargetResolver::new(true);
+        let (mut submitted, active) = response_fixture(kind);
+        submitted.sender.as_mut().unwrap().actor_id = Some(ActorId {
+            value: "forged-payload-actor".to_owned(),
+        });
+
+        let result = submit(
+            &storage,
+            &grant,
+            &resolver,
+            &AlwaysAccepted,
+            &TerminalRetryLookup { active },
+            &issuer(),
+            submitted,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome(&result), SubmissionOutcome::Accepted, "{kind:?}");
+        assert_eq!(failure(&result), FailureCode::Unspecified, "{kind:?}");
+        assert_eq!(grant.calls.load(Ordering::Relaxed), 1, "{kind:?}");
+        assert_eq!(resolver.calls.load(Ordering::Relaxed), 1, "{kind:?}");
+        assert_eq!(durable_events(&storage).await.len(), 1, "{kind:?}");
+    }
+}
+
+#[tokio::test]
+async fn responder_mismatch_or_missing_expected_actor_denies_before_grant_target_and_append() {
+    for kind in [
+        OperationKind::ApprovalResponse,
+        OperationKind::ElicitationResponse,
+    ] {
+        for responder_evidence in ["mismatch", "missing", "empty"] {
+            let storage = RusqliteStorage::open_in_memory().unwrap();
+            let grant = TestGrantCheck::new(true);
+            let resolver = TestTargetResolver::new(true);
+            let (submitted, mut active) = response_fixture(kind);
+            let mut test_issuer = issuer();
+            match responder_evidence {
+                "mismatch" => test_issuer.actor.value = "different-operator".to_owned(),
+                "missing" => active.expected_responder_actor = None,
+                "empty" => active.expected_responder_actor = Some(ActorId::default()),
+                _ => unreachable!(),
+            }
+
+            let result = submit(
+                &storage,
+                &grant,
+                &resolver,
+                &AlwaysAccepted,
+                &TerminalRetryLookup { active },
+                &test_issuer,
+                submitted,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                outcome(&result),
+                SubmissionOutcome::Rejected,
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                failure(&result),
+                FailureCode::AuthorizationDenied,
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                result.reason_code, "authorization_denied",
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                state(&result),
+                OperationState::Unspecified,
+                "{kind:?} {responder_evidence}"
+            );
+            assert!(
+                result.decision_grant_id.is_none(),
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                result.diagnostic_message,
+                "verified issuer is not authorized to answer this elicitation",
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                grant.calls.load(Ordering::Relaxed),
+                0,
+                "{kind:?} {responder_evidence}"
+            );
+            assert_eq!(
+                resolver.calls.load(Ordering::Relaxed),
+                0,
+                "{kind:?} {responder_evidence}"
+            );
+            assert!(
+                durable_events(&storage).await.is_empty(),
+                "{kind:?} {responder_evidence}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn responder_authority_precedes_payload_diagnostics_for_known_elicitation() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let grant = TestGrantCheck::new(true);
+    let resolver = TestTargetResolver::new(true);
+    let (mut submitted, active) = response_fixture(OperationKind::ElicitationResponse);
+    submitted.payload = None;
+    let mut wrong_issuer = issuer();
+    wrong_issuer.actor.value = "different-operator".to_owned();
+
+    let result = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &TerminalRetryLookup { active },
+        &wrong_issuer,
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(failure(&result), FailureCode::AuthorizationDenied);
+    assert_eq!(result.reason_code, "authorization_denied");
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn unknown_elicitation_and_matching_responder_malformed_payload_remain_validation_failed() {
+    let unknown_storage = RusqliteStorage::open_in_memory().unwrap();
+    let unknown_grant = TestGrantCheck::new(true);
+    let unknown_resolver = TestTargetResolver::new(true);
+    let unknown = submit(
+        &unknown_storage,
+        &unknown_grant,
+        &unknown_resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        response_operation(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(failure(&unknown), FailureCode::ValidationFailed);
+    assert_eq!(unknown.reason_code, "validation_failed");
+    assert_eq!(unknown_grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(unknown_resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&unknown_storage).await.is_empty());
+
+    let malformed_storage = RusqliteStorage::open_in_memory().unwrap();
+    let malformed_grant = TestGrantCheck::new(true);
+    let malformed_resolver = TestTargetResolver::new(true);
+    let (mut malformed_operation, active) = response_fixture(OperationKind::ElicitationResponse);
+    malformed_operation.payload = None;
+    let malformed = submit(
+        &malformed_storage,
+        &malformed_grant,
+        &malformed_resolver,
+        &AlwaysAccepted,
+        &TerminalRetryLookup { active },
+        &issuer(),
+        malformed_operation,
+    )
+    .await
+    .unwrap();
+    assert_eq!(failure(&malformed), FailureCode::ValidationFailed);
+    assert_eq!(malformed.reason_code, "validation_failed");
+    assert_eq!(malformed_grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(malformed_resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&malformed_storage).await.is_empty());
 }
 
 #[tokio::test]
@@ -994,7 +1220,7 @@ async fn terminal_response_retry_returns_existing_command_record() {
             },
         },
         &issuer(),
-        submitted,
+        submitted.clone(),
     )
     .await
     .unwrap();
@@ -1002,6 +1228,37 @@ async fn terminal_response_retry_returns_existing_command_record() {
     assert_eq!(outcome(&retry), SubmissionOutcome::Accepted);
     assert!(retry.deduplicated);
     assert_eq!(state(&retry), OperationState::Accepted);
+    assert_eq!(durable_events(&storage).await.len(), 1);
+
+    let mut wrong_issuer = issuer();
+    wrong_issuer.actor.value = "different-operator".to_owned();
+    let wrong_actor_retry = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &TerminalRetryLookup {
+            active: ActiveElicitation {
+                is_terminal: true,
+                winning_response: Some(submitted.clone()),
+                ..active_question()
+            },
+        },
+        &wrong_issuer,
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&wrong_actor_retry), SubmissionOutcome::Rejected);
+    assert_eq!(
+        failure(&wrong_actor_retry),
+        FailureCode::AuthorizationDenied
+    );
+    assert_eq!(wrong_actor_retry.reason_code, "authorization_denied");
+    assert!(!wrong_actor_retry.deduplicated);
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 2);
+    assert_eq!(resolver.calls.load(Ordering::Relaxed), 2);
     assert_eq!(durable_events(&storage).await.len(), 1);
 }
 

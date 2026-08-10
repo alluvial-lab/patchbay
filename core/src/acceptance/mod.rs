@@ -16,7 +16,7 @@ pub mod state;
 pub mod transitions;
 
 pub use elicitation::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlotLayer};
-pub use elicitation_response::validate_response_payload;
+pub use elicitation_response::{validate_response_payload, validate_response_responder};
 pub use index::CommandIndex;
 pub use observation::{
     ingest_observation, CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,

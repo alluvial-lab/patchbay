@@ -937,6 +937,7 @@ impl ElicitationContractLookup for LockedElicitationContractLookup {
         let record = layer.get_slot(elicitation_id)?;
         Some(ActiveElicitation {
             contract: record.contract.clone()?,
+            expected_responder_actor: record.expected_responder_actor.clone(),
             is_terminal: patchbay_core::acceptance::elicitation::is_terminal_state(record.state),
             winning_response: record.winning_response.clone(),
         })
@@ -980,8 +981,8 @@ impl CommandStateLookup for LockedCommandStateLookup {
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        response_contract, AuthorityDomainId, Elicitation, ElicitationState, QuestionContract,
-        ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
+        response_contract, ActorId, AuthorityDomainId, Elicitation, ElicitationState,
+        QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
         StoredEventPayload,
     };
     use prost::Message;
@@ -1197,6 +1198,12 @@ mod tests {
         let elicitation_id = ElicitationId {
             value: "elicitation-fold-lag".to_owned(),
         };
+        let missing_responder_id = ElicitationId {
+            value: "elicitation-missing-responder".to_owned(),
+        };
+        let expected_responder_actor = ActorId {
+            value: "operator-primary".to_owned(),
+        };
         let contract = ResponseContract {
             contract_kind: ResponseContractKind::Question as i32,
             contract_body: Some(response_contract::ContractBody::Question(
@@ -1215,29 +1222,40 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(state
-            .elicitation_contract_lookup()
-            .active_contract(&elicitation_id)
-            .await
-            .is_none());
+        for id in [&elicitation_id, &missing_responder_id] {
+            assert!(state
+                .elicitation_contract_lookup()
+                .active_contract(id)
+                .await
+                .is_none());
+        }
 
-        storage
-            .append(
-                &authority_domain_id,
-                StoredEventPayload {
-                    kind: StoredEventKind::Elicitation as i32,
-                    payload: Elicitation {
-                        elicitation_id: Some(elicitation_id.clone()),
-                        authority_domain_id: Some(authority_domain_id.clone()),
-                        response_contract: Some(contract.clone()),
-                        state: ElicitationState::Opened as i32,
-                        ..Elicitation::default()
-                    }
-                    .encode_to_vec(),
-                },
-            )
-            .await
-            .unwrap();
+        for (id, expected_actor) in [
+            (
+                elicitation_id.clone(),
+                Some(expected_responder_actor.clone()),
+            ),
+            (missing_responder_id.clone(), None),
+        ] {
+            storage
+                .append(
+                    &authority_domain_id,
+                    StoredEventPayload {
+                        kind: StoredEventKind::Elicitation as i32,
+                        payload: Elicitation {
+                            elicitation_id: Some(id),
+                            authority_domain_id: Some(authority_domain_id.clone()),
+                            expected_responder_actor: expected_actor,
+                            response_contract: Some(contract.clone()),
+                            state: ElicitationState::Opened as i32,
+                            ..Elicitation::default()
+                        }
+                        .encode_to_vec(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
 
         // A future Elicitation-opening producer (the pi adapter) must share
         // the CoreDecisionGate so an append-after-read race cannot bypass catch_up.
@@ -1252,6 +1270,41 @@ mod tests {
             .await
             .expect("storage-backed catch_up exposes the active contract");
         assert_eq!(active.contract, contract);
+        assert_eq!(
+            active.expected_responder_actor,
+            Some(expected_responder_actor.clone())
+        );
         assert!(!active.is_terminal);
+        assert_eq!(
+            state
+                .elicitation_contract_lookup()
+                .active_contract(&missing_responder_id)
+                .await
+                .expect("missing responder remains explicit in active context")
+                .expected_responder_actor,
+            None
+        );
+
+        let restarted = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            restarted
+                .elicitation_contract_lookup()
+                .active_contract(&elicitation_id)
+                .await
+                .expect("restart rebuild restores active responder context")
+                .expected_responder_actor,
+            Some(expected_responder_actor)
+        );
+        assert_eq!(
+            restarted
+                .elicitation_contract_lookup()
+                .active_contract(&missing_responder_id)
+                .await
+                .expect("restart rebuild preserves absent responder evidence")
+                .expected_responder_actor,
+            None
+        );
     }
 }

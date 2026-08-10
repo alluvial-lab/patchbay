@@ -5,7 +5,7 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, ElicitationId, EventId, Generation, GrantId, Operation,
+    ActorId, AdapterId, AuthorityDomainId, ElicitationId, EventId, Generation, GrantId, Operation,
     OperationKind, ResponseContract, RuntimeSessionId, TargetScope,
 };
 use prost_types::Timestamp;
@@ -95,10 +95,11 @@ pub trait TargetResolver: Send + Sync {
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
 }
 
-/// The elicitation-contract seam used to validate a response Operation's
-/// payload against the active contract before durable acceptance.
+/// The active-Elicitation seam used to validate a response Operation's
+/// payload, lifecycle/dedup context, and responder authority before durable
+/// acceptance.
 ///
-/// Implementations perform a side-effect-free read against an in-memory
+/// Implementations perform one side-effect-free read against an in-memory
 /// projection reconciled under the submit gate.
 pub trait ElicitationContractLookup: Send + Sync {
     fn active_contract(
@@ -111,6 +112,9 @@ pub trait ElicitationContractLookup: Send + Sync {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveElicitation {
     pub contract: ResponseContract,
+    /// The actor authorized to consume this response slot. Missing or empty
+    /// projected evidence fails closed at the acceptance boundary.
+    pub expected_responder_actor: Option<ActorId>,
     pub is_terminal: bool,
     /// The winning response Operation, when this terminal slot was answered.
     /// An exact retry is allowed through validation so storage deduplication

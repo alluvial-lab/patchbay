@@ -1,8 +1,9 @@
 //! Property tests for the stated-normative authority obligations.
 //!
-//! Seven authority properties have executable implementation oracles here. The
-//! eighth, `ElicitationResponderAuthority`, remains an explicit coverage gap
-//! because authority does not yet receive the Elicitation responder evidence.
+//! All eight stated-normative authority obligations have executable
+//! implementation oracles here. `ElicitationResponderAuthority` exercises the
+//! acceptance-owned validator; this is implementation evidence, not formal or
+//! checked-normative promotion.
 //!
 //! The mutation tests are load-bearing non-vacuity evidence: the compound-
 //! issuer oracle rejects a checker that trusts the payload actor, and the
@@ -15,15 +16,15 @@ use patchbay_contracts::patchbay::{
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, Lsn, Operation, OperationKind, OperationState, ResourceId,
-    ResourceIdentity, ResourceKind, Revocation, RuntimeSessionId, SessionRegistered,
-    SessionStateEvent, StoredEventKind, StoredEventPayload,
+    ResourceIdentity, ResourceKind, ResponseContract, Revocation, RuntimeSessionId,
+    SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload,
     SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{
-        submit, ActiveElicitation, Authorized, CommandSnapshot, CommandStateLookup,
-        ElicitationContractLookup, GrantCheck, GrantDenied, TargetBinding, TargetNotFound,
-        TargetResolver,
+        submit, validate_response_responder, ActiveElicitation, Authorized, CommandSnapshot,
+        CommandStateLookup, ElicitationContractLookup, GrantCheck, GrantDenied, TargetBinding,
+        TargetNotFound, TargetResolver,
     },
     authority::{
         ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log,
@@ -93,6 +94,13 @@ fn any_adapter() -> impl Strategy<Value = String> {
 
 fn any_distinct_actors() -> impl Strategy<Value = (String, String)> {
     (any_actor(), any_actor()).prop_filter("actors must differ", |(left, right)| left != right)
+}
+
+fn any_actor_equality_case() -> impl Strategy<Value = (String, String, bool)> {
+    prop_oneof![
+        any_actor().prop_map(|actor| (actor.clone(), actor, true)),
+        any_distinct_actors().prop_map(|(expected, verified)| (expected, verified, false)),
+    ]
 }
 
 fn any_distinct_adapters() -> impl Strategy<Value = (String, String)> {
@@ -1340,6 +1348,34 @@ proptest! {
         })?;
     }
 
+    /// 8. ElicitationResponderAuthority: only exact verified-actor equality passes.
+    ///
+    /// This is mutation-sensitive implementation evidence over the production
+    /// validator. It does not promote the draft formal property or a vector.
+    #[test]
+    fn elicitation_responder_authority(
+        domain_value in any_domain(),
+        (expected_actor, verified_actor, should_match) in any_actor_equality_case(),
+    ) {
+        let active = ActiveElicitation {
+            contract: ResponseContract::default(),
+            expected_responder_actor: Some(actor(&expected_actor)),
+            is_terminal: false,
+            winning_response: None,
+        };
+        let issuer = TestIssuerContext::verified(
+            actor(&verified_actor),
+            domain(&domain_value),
+        );
+        let result = validate_response_responder(&active, &issuer);
+
+        prop_assert_eq!(result.is_ok(), should_match);
+        if let Err(diagnostic) = result {
+            prop_assert!(!diagnostic.contains(&expected_actor));
+            prop_assert!(!diagnostic.contains(&verified_actor));
+        }
+    }
+
     /// Supplementary IdempotentLogReplay: replay and the warm projection agree exactly.
     #[test]
     fn replay_matches_live(
@@ -1355,13 +1391,6 @@ proptest! {
         })?;
     }
 }
-
-// 8. ElicitationResponderAuthority: NOT TESTED HERE.
-// Authority does not receive an Elicitation's expected_responder_actor and
-// therefore cannot enforce response-Operation responder matching. This is the
-// documented rev3 R6 gap, owned by the future acceptance responder-validation
-// feature tracked in `.work/backlog/backlog-elicitation-responder-authority.md`.
-// There is deliberately no vacuous stand-in assertion.
 
 // ===== Mutation discipline =====
 
