@@ -42,7 +42,8 @@ pub struct ResourceIngestResult {
 }
 
 /// Normalize one authenticated report, append exactly one durable source
-/// event, then fold only the committed event into the hot projection.
+/// event, then atomically fold the stored suffix through that committed event
+/// into the hot projection.
 pub async fn ingest_resource_report<S: Storage>(
     storage: &S,
     registry: &mut ResourceRegistry,
@@ -66,9 +67,16 @@ pub async fn ingest_resource_report<S: Storage>(
         event_id: event_id.clone(),
         payload,
     };
-    if let Err(error) = registry.observe(&recorded) {
+    if let Err(error) = replay::catch_up_through_event(
+        storage,
+        &authority_domain_id,
+        registry,
+        &recorded,
+    )
+    .await
+    {
         // The append is already authoritative. Never continue with a hot
-        // projection that rejected a committed prefix.
+        // projection that could not validate its complete committed suffix.
         *registry = replay::rebuild_from_log(storage, &authority_domain_id).await?;
         return Err(error);
     }

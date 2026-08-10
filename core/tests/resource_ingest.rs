@@ -1,15 +1,21 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use patchbay_contracts::patchbay::{
-    resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, Generation,
-    PayloadContentType, PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceIdentity,
-    ResourceKind, ResourceReportMutation, ResourceStateTombstone, ResourceStateUnknown,
-    ResourceStateUpsert, ResourceViewReport, StoredEventKind, StoredEventPayload,
+    resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuditEventKind,
+    AuthorityDomainId, EventId, Generation, IdempotencyKey, Lsn, PayloadContentType,
+    PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
+    ResourceReportMutation, ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert,
+    ResourceViewReport, StoredEventKind, StoredEventPayload,
 };
 use patchbay_core::{
     resource::{
         adapter_stale_event, ingest_resource_report, rebuild_from_log, ResourceRegistry,
         ResourceReportMode, ValidatedResourceReport,
     },
-    storage::{RusqliteStorage, Storage},
+    storage::{
+        AuditRecordDraft, DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError,
+        StoredSnapshot, TargetKey,
+    },
 };
 use prost_types::Timestamp;
 
@@ -271,6 +277,159 @@ async fn newer_adapter_generation_stales_prior_unreported_state_and_old_generati
     .unwrap_err();
     assert!(error.to_string().contains("stale adapter generation"));
     assert!(!registry.contains(&domain_identity("late")));
+}
+
+struct InterleavingAuditStorage {
+    inner: RusqliteStorage,
+    injected: AtomicBool,
+    omit_committed_suffix_once: AtomicBool,
+    resource_append_attempts: AtomicUsize,
+}
+
+impl InterleavingAuditStorage {
+    fn new() -> Self {
+        Self::with_omitted_committed_suffix(false)
+    }
+
+    fn with_omitted_committed_suffix(omit_once: bool) -> Self {
+        Self {
+            inner: RusqliteStorage::open_in_memory().unwrap(),
+            injected: AtomicBool::new(false),
+            omit_committed_suffix_once: AtomicBool::new(omit_once),
+            resource_append_attempts: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Storage for InterleavingAuditStorage {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        if payload.kind == StoredEventKind::ResourceState as i32 {
+            self.resource_append_attempts.fetch_add(1, Ordering::SeqCst);
+            if !self.injected.swap(true, Ordering::SeqCst) {
+                let mut audit = AuditRecordDraft::new(
+                    Timestamp {
+                        seconds: 99,
+                        nanos: 0,
+                    },
+                    AuditEventKind::AdapterDiagnosticReported,
+                );
+                audit.reason_code = "interleaved_audit".into();
+                self.inner
+                    .append_audit(authority_domain_id, audit)
+                    .await?;
+            }
+        }
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner.append_dedup(authority_domain_id, key, target, payload).await
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn read_through(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+        as_of_lsn: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        if self.omit_committed_suffix_once.swap(false, Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        self.inner.read_through(authority_domain_id, cursor, as_of_lsn).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner.write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload).await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner.load_latest_snapshot(authority_domain_id, at_or_before).await
+    }
+}
+
+#[tokio::test]
+async fn report_ingest_folds_an_interleaved_ungated_audit_and_returns_committed_success() {
+    let storage = InterleavingAuditStorage::new();
+    let mut registry = ResourceRegistry::new();
+
+    let result = ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![upsert("one")],
+        ),
+    )
+    .await
+    .expect("a committed report must not become Internal/retry-ambiguous because an audit interleaved");
+
+    assert_eq!(result.event_id.lsn.as_ref().map(|lsn| lsn.value), Some(2));
+    assert_eq!(
+        storage.resource_append_attempts.load(Ordering::SeqCst),
+        1,
+        "success must not require a duplicate report retry",
+    );
+    let events = storage.read_after(&domain(), Lsn { value: 0 }).await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload.kind, StoredEventKind::AuditRecord as i32);
+    assert_eq!(events[1].event_id, result.event_id);
+    assert_eq!(events[1].payload.kind, StoredEventKind::ResourceState as i32);
+    assert_eq!(registry.get(&domain_identity("one")).unwrap().revision_lsn, 2);
+    assert_eq!(registry, rebuild_from_log(&storage, &domain()).await.unwrap());
+}
+
+#[tokio::test]
+async fn report_ingest_fails_closed_when_the_committed_suffix_is_missing() {
+    let storage = InterleavingAuditStorage::with_omitted_committed_suffix(true);
+    let mut registry = ResourceRegistry::new();
+
+    let error = ingest_resource_report(
+        &storage,
+        &mut registry,
+        report(
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![upsert("one")],
+        ),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("does not end with the exact committed report"));
+    assert_eq!(storage.resource_append_attempts.load(Ordering::SeqCst), 1);
+    let replayed = rebuild_from_log(&storage, &domain()).await.unwrap();
+    assert_eq!(registry, replayed, "failure recovery must reinstall durable authority");
+    assert_eq!(registry.get(&domain_identity("one")).unwrap().revision_lsn, 2);
 }
 
 #[tokio::test]

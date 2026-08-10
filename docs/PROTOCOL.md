@@ -523,8 +523,14 @@ and remain exactly gap-free, so duplicate, decreasing, or gapped rows are
 corruption rather than benign redelivery. Report ingress catches the resource
 projection up through the durable tail before deriving generation and
 `from_revision_lsn` mutations; the composition-root decision gate serializes
-that catch-up with append, and a committed fold failure rebuilds from the
-authoritative log rather than continuing with a false cursor.
+competing resource decisions, but correctness does not assume every sibling
+durable-log writer shares that gate. After the report append returns its LSN,
+ingress reads the exact stored suffix from the prior applied cursor through that
+LSN, folds every interleaved known sibling event in order, requires the suffix
+to end with the exact committed report, and installs the complete projection
+atomically. A valid authoritative committed report returns success after that
+install. A missing, reordered, corrupt, or substituted suffix fails closed and
+rebuilds from the authoritative log rather than continuing with a false cursor.
 
 An authenticated adapter id and current adapter generation fence report
 source. A newer adapter attachment generation fences prior cached records before its
