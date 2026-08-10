@@ -28,7 +28,9 @@ module snapshot_recovery {
   pure val COMMAND_STATES = Set("unknown", "accepted", "running", "terminal", "stale")
   pure val EVENT_STATES = Set("accepted", "running", "terminal")
   pure val DOMAINS = Set("control-plane", "edge")
-  pure val GENERATIONS = Set(0, 1, 2, 3, 4)
+  // Nonzero durable storage-continuity epochs; ordinary process restart keeps
+  // the same value rather than allocating a process-incarnation counter.
+  pure val GENERATIONS = Set(1, 2, 3, 4)
   pure val SNAPSHOT_LSNS = Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
   pure val MAX_PREFIX_LSN = 12
   pure val SNAPSHOT_PREFIX_EVENTS = Map(
@@ -53,7 +55,7 @@ module snapshot_recovery {
   var Cursor: int                       // current authoritative revision the core is viewing
   var SnapshotRevision: int              // revision represented by current in-memory snapshot
   var AuthorityDomain: str              // current core authority domain
-  var CoreGeneration: int               // current core authority generation
+  var CoreGeneration: int               // durable authority-domain storage-continuity epoch
   var CommittedPrefixLSN: int           // durable committed log prefix length
   var CheckpointSnapshotLSN: int         // latest snapshot loaded before tail replay
   var RecoveredCommandState: str -> str   // reconstructed command state map
@@ -75,14 +77,14 @@ module snapshot_recovery {
     Cursor' = 0,
     SnapshotRevision' = 0,
     AuthorityDomain' = "control-plane",
-    CoreGeneration' = 0,
+    CoreGeneration' = 1,
     CommittedPrefixLSN' = 0,
     CheckpointSnapshotLSN' = 0,
     RecoveryPhase' = "live",
     RecoveredCommandState' = COMMAND_IDS.mapBy(_ => "accepted"),
     PreCrashRecoveredState' = COMMAND_IDS.mapBy(_ => "accepted"),
     SnapshotAuthorityDomain' = "control-plane",
-    SnapshotCoreGeneration' = 0,
+    SnapshotCoreGeneration' = 1,
     SnapshotMaterializedLSN' = 0,
     SnapshotMaterializedEvents' = Set(),
     DurableEventLSNs' = Set(),
@@ -236,7 +238,7 @@ module snapshot_recovery {
   }
 
   // Unclean shutdown resets the volatile reconstructed state and records a checkpoint
-  // boundary for tail replay after restart.
+  // boundary for tail replay after restart. The durable continuity epoch is unchanged.
   action crash = all {
     LSN' = LSN,
     Cursor' = 0,
@@ -256,7 +258,8 @@ module snapshot_recovery {
     LateEventAudit' = LateEventAudit,
   }
 
-  // Startup recovery bootstrap: begin tail replay from the checkpoint snapshot LSN.
+  // Startup recovery bootstrap: begin tail replay from the checkpoint snapshot LSN
+  // under the same durable continuity epoch.
   action restart = all {
     RecoveryPhase == "initial",
     LSN' = LSN,

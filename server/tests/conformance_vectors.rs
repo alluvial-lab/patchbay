@@ -19,7 +19,7 @@ use patchbay_core::{
     authority::events as authority_events,
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
     session::events as session_events,
-    storage::{RusqliteStorage, Storage},
+    storage::{CoreGenerationStore, RusqliteStorage, Storage},
     time::TestClock,
 };
 use patchbay_core_server::{
@@ -880,6 +880,27 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         .pointer("/session_case/current_authoritative_view/current_revision_lsn/value")
         .and_then(Value::as_u64)
         .ok_or("missing current session revision")?;
+    let cached_core_generation = vector
+        .input
+        .pointer("/session_case/cached_snapshot/core_generation/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing cached session core generation")?;
+    let current_core_generation = vector
+        .input
+        .pointer("/session_case/current_authoritative_view/core_generation/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing current session core generation")?;
+    let expected_core_generation = vector
+        .expected_outcome
+        .pointer("/session_case/replacement_core_generation/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing expected session core generation")?;
+    if current_core_generation == 0
+        || cached_core_generation != current_core_generation
+        || expected_core_generation != current_core_generation
+    {
+        return Err("session vector core-generation anchors disagree".to_owned());
+    }
     let replacement_lsn = vector
         .expected_outcome
         .pointer("/session_case/snapshot_decision/replacement_required_from_lsn/value")
@@ -961,6 +982,15 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
     };
 
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    storage
+        .load_or_create_core_generation(
+            &authority_domain_id,
+            Generation {
+                value: current_core_generation,
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     seed_operator(&storage, &authority_domain_id, &actor_id).await?;
     for index in 0..(current_revision.saturating_sub(2)) {
         let filler = Grant {
@@ -1093,6 +1123,10 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         || current_lsn < current_revision
         || current_lsn <= cached_lsn
         || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
+        || snapshot.core_generation
+            != Some(Generation {
+                value: expected_core_generation,
+            })
         || session.is_none()
     {
         return Err(
@@ -1114,6 +1148,11 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
         return Err("resource snapshot request/response discriminator disagrees".to_owned());
     }
     let cached_lsn = vector.input.pointer("/resource_case/cached_snapshot/snapshot_lsn/value").and_then(Value::as_u64).ok_or("missing cached snapshot LSN")?;
+    let cached_core_generation = vector.input.pointer("/resource_case/cached_snapshot/core_generation/value").and_then(Value::as_u64).ok_or("missing cached resource core generation")?;
+    let expected_core_generation = vector.expected_outcome.pointer("/resource_case/replacement/core_generation/value").and_then(Value::as_u64).ok_or("missing expected resource core generation")?;
+    if cached_core_generation == 0 || cached_core_generation != expected_core_generation {
+        return Err("resource vector core-generation anchors disagree".to_owned());
+    }
     let report = vector.input.pointer("/resource_case/current_report").ok_or("missing current resource report")?;
     let identity = tuple(report, "/identity")?;
     let authority_domain_id = AuthorityDomainId {
@@ -1136,6 +1175,15 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
         string(report, "/projection_payload")?,
     ).map_err(|error| error.to_string())?;
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    storage
+        .load_or_create_core_generation(
+            &authority_domain_id,
+            Generation {
+                value: cached_core_generation,
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     storage.append(
         &authority_domain_id,
         StoredEventPayload {
@@ -1253,6 +1301,10 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
         || vector.expected_outcome.pointer("/resource_case/replacement/record_revision_equals_snapshot_lsn").and_then(Value::as_bool) != Some(resource.revision_lsn.as_ref().is_some_and(|revision| revision.value == current_lsn))
         || string(&vector.expected_outcome, "/resource_case/replacement/authority_domain_id")? != authority_domain_id.value
         || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
+        || snapshot.core_generation
+            != Some(Generation {
+                value: expected_core_generation,
+            })
     {
         return Err("load_snapshot RPC did not return the vector's current resource replacement".to_owned());
     }

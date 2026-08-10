@@ -217,12 +217,14 @@ Properties:
 - Stale cached live/working state is corrected by a newer authoritative snapshot.
 - Event streams are not required for correctness when snapshots exist.
 - A snapshot with a log sequence number strictly less than the core's current revision for that view is rejected as an authority source and replaced by the current view.
-- A snapshot from a different authority domain or core generation is rejected outright.
+- A snapshot from a different authority domain or durable core-generation epoch is rejected outright. Stored session checkpoints require exact equality between the current authority domain/epoch, the embedded authority domain/nonzero epoch, and the storage-row/embedded snapshot LSN anchors; compatibility is evaluated before the separate LSN freshness rule.
 - A late event whose log sequence number is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
 - Terminal outcomes are deterministic after durable append: replay, snapshots, conformance traces, and UI reconciliation expose the terminal state chosen by committed log order.
 - Snapshot materialization reads a consistent log prefix: it reflects every event with `LSN <= snapshot_LSN` and no event with `LSN > snapshot_LSN`.
 
-Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration` (the core's own incarnation, core-assigned on restart), `SessionGeneration`, `AdapterGeneration`, and the view variables (`CommandId`, `MessageId`, `ReplyId`, `CorrelationRef`, `SessionId`, `ActorId`) the snapshot reconciles.
+Normative model variables should include at least `LSN`, `Cursor`, `SnapshotRevision`, `AuthorityDomain`, `CoreGeneration` (the core-assigned nonzero durable storage-continuity epoch, stable across ordinary process restart), `SessionGeneration`, `AdapterGeneration`, and the view variables (`CommandId`, `MessageId`, `ReplyId`, `CorrelationRef`, `SessionId`, `ActorId`) the snapshot reconciles.
+
+The implementation persists `CoreGeneration` per authority domain, carries it in session/resource materialization, accepts an exact compatible stored session checkpoint after file-backed restart, and repairs missing/different-generation checkpoints from current log materialization. The promoted `snapshot-reconciliation` executable example constrains field carriage for both view kinds. This is implementation evidence only: `SnapshotCrossDomainRejected` remains stated-normative, and neither the field-carriage extension nor the draft model is a checked-model or checked-normative promotion.
 
 ### Crash recovery
 
@@ -231,7 +233,7 @@ Properties:
 - After an ungraceful core restart, replay of the durable log reconstructs in-memory state up to the last committed `LSN`.
 - Accepted commands are restored as `accepted` (or a later committed state) and continue through their lifecycle; no accepted command disappears silently.
 - Log replay is idempotent: replaying the same committed prefix produces identical state.
-- Snapshot checkpointing bounds recovery replay cost without becoming an alternate ordering authority.
+- Snapshot checkpointing bounds recovery replay cost without becoming an alternate ordering authority. Ordinary restart preserves the authority domain's durable `CoreGeneration`, so a prior process's exact compatible checkpoint may seed tail replay; an incompatible checkpoint falls back to the log.
 
 Normative model variables should include at least `CommittedPrefixLSN` (the last durably committed log prefix), `CheckpointSnapshotLSN` (the latest snapshot loaded before tail replay), `RecoveredCommandState` (the command-id to `CommandState` map reconstructed from the log), `RecoveredInbox` (delivery/inbox queue state reconstructed from the log), `RecoveredSessionView` (session connectivity/activity axes reconstructed from the log), and `RecoveryPhase` (initial load vs tail-replay vs live). `Crash` and `Restart` are the transition triggers.
 
@@ -616,7 +618,7 @@ Summary: 53 vector(s), 16 promoted vector(s), 0 checked-normative properties req
 | `SessionIdentityTuple` | stated-normative | — | — |
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
-| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn |
+| `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.core_generation<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn<br>patchbay.SessionSnapshot.core_generation |
 | `SpawnCreatesDescendantGrant` | stated-normative | — | — |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |

@@ -26,7 +26,7 @@ A human-facing interface such as web, CLI, future mobile app, desktop app, notif
 
 ## Core generation
 
-A marker of the coordination core's current incarnation, intended to reject snapshots or events from a prior incarnation outright during reconciliation. The field is wire-present but currently unset — core-generation persistence and validation are a reserved seam. See Generation for the unified entry covering all generation scopes.
+A core-assigned, nonzero, opaque storage-continuity epoch persisted per authority domain. It is created when that storage lineage is first opened and remains stable across ordinary process restarts. Snapshots carry it so reconciliation can reject derived state from another storage history; equality is a compatibility fence, not an ordering, authority, or bearer-secret mechanism. A history-discontinuity rollover and a distinct process-incarnation/fencing identity for HA remain reserved seams. See Generation for the unified entry covering all generation scopes.
 
 ## Cursor
 
@@ -41,7 +41,7 @@ inert, and is neither a wire field nor a persisted checkpoint.
 
 A new lifetime of an entity that retains its identity. Patchbay uses generation at four scopes, each with a different assigner — the assigner is the structurally important fact and what the verification properties check:
 
-- **Core generation** — the coordination core's own incarnation, **core-assigned on restart**. Wire-present but currently unset; cross-incarnation rejection is a reserved seam until persistence and validation exist.
+- **Core generation** — a nonzero storage-continuity epoch, **core-assigned and durably persisted when an authority-domain storage lineage is first opened**. Ordinary process restarts reuse it. A destructive restore, divergent fork, authoritative-store replacement, or future multi-core promotion must explicitly roll the epoch before serving derived snapshots/cursors; process-incarnation fencing for HA is a distinct future concept.
 - **Runtime-session generation** — an incarnation of one runtime session, **adapter-reported on replacement**. Used to tombstone a superseded session so late events/replies binding to it are `stale_event` audit records and cannot mutate the live generation.
 - **Operator-session generation** — a core-assigned, monotonic incarnation of one authenticated browser or CLI operator session. All-session revocation persists an invalidated-through floor; restart replay preserves the floor while opaque session ids remain process-local.
 - **Adapter generation** — an incarnation of the adapter process, **adapter-reported on re-attach**. Used to reject stale events from a prior adapter attachment.

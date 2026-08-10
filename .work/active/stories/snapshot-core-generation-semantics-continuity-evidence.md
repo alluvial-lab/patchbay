@@ -1,7 +1,7 @@
 ---
 id: snapshot-core-generation-semantics-continuity-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [verification, protocol, foundation]
 parent: snapshot-core-generation-semantics
 depends_on: [snapshot-core-generation-semantics-snapshot-compatibility]
@@ -36,3 +36,14 @@ Prove the persisted epoch survives a real process/storage reopen, prove mismatch
 ## Review and ordering
 
 Depends on `snapshot-core-generation-semantics-snapshot-compatibility`. Because this story is tagged `[verification]`, it uses the project deep story-review lane and attacks the two load-bearing mutations before advancing to `done`. The integrated parent still requires the caller-selected `thorough` feature review.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for contract-bearing recovery/model alignment).
+- Review weight: `thorough` (explicit operator selection); delegated endpoint instructions override the usual independent story review and advance this verified child directly to done before fresh feature review.
+- Files changed: `contracts/vectors/snapshot-reconciliation.json`, `server/tests/conformance_vectors.rs`, `specs/seed/snapshot_recovery.qnt`, `docs/{PROTOCOL,GLOSSARY,VERIFICATION,ARCHITECTURE}.md`; storage/restart evidence lives in the two prerequisite checkpoint commits.
+- Tests added/strengthened: deterministic generation seeding and session/resource field assertions in the existing promoted snapshot runner; persisted-epoch overwrite and embedded-generation mismatch regressions were already landed with the prerequisite checkpoints.
+- Simplification: kept the model's draft property set and promotion metadata unchanged; only the durable nonzero epoch initialization/comments changed, and vector evidence remains field-carriage/implementation evidence.
+- Discrepancies from design: the storage and real-restart tests were intentionally pulled into the prerequisite commits so each dependency was independently green. `cargo fmt --all -- --check` remains red on pre-existing workspace-wide rustfmt drift beginning in untouched `core/src/acceptance/elicitation.rs`; the new `server/src/snapshot.rs` passes standalone rustfmt checking, and unrelated formatting was not rewritten.
+- Adjacent issues parked: none.
+- Verification: `scripts/test-rust` (full Rust workspace) passed; `cargo clippy --workspace --all-targets -- -D warnings` passed; targeted storage/audit/state/gRPC tests and the registered conformance-vector runner passed; `PATH="$HOME/.npm-global/bin:$PATH" quint compile specs/seed/snapshot_recovery.qnt` passed; `node contracts/scripts/check-models.mjs` and `node contracts/scripts/check-vectors.mjs` passed after installing/building locked local TypeScript dependencies.
