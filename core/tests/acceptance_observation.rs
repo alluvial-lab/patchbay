@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::future::ready;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Lsn,
-    Observation, ObservationKind, OperationState, ResourceId, ResourceIdentity, ResourceKind,
-    StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
+    typed_correlation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode,
+    Lsn, Observation, ObservationKind, OperationKind, OperationState, ResourceId, ResourceIdentity,
+    ResourceKind, StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     ingest_observation, AcceptanceError, CommandSnapshot, CommandStateLookup, IngestResult,
@@ -14,13 +14,17 @@ use prost::Message;
 
 #[derive(Default)]
 struct TestCommandStates {
-    states: HashMap<CommandId, OperationState>,
+    states: HashMap<CommandId, (OperationState, OperationKind)>,
 }
 
 impl TestCommandStates {
     fn with(command_id: CommandId, state: OperationState) -> Self {
+        Self::with_kind(command_id, state, OperationKind::Instruct)
+    }
+
+    fn with_kind(command_id: CommandId, state: OperationState, kind: OperationKind) -> Self {
         Self {
-            states: HashMap::from([(command_id, state)]),
+            states: HashMap::from([(command_id, (state, kind))]),
         }
     }
 }
@@ -30,12 +34,17 @@ impl CommandStateLookup for TestCommandStates {
         &self,
         command_id: &CommandId,
     ) -> impl std::future::Future<Output = Option<CommandSnapshot>> + Send {
-        ready(self.states.get(command_id).map(|state| CommandSnapshot {
-            state: *state,
-            target_scope: None,
-            correlations: vec![],
-            terminal_lsn: None,
-        }))
+        ready(
+            self.states
+                .get(command_id)
+                .map(|(state, kind)| CommandSnapshot {
+                    state: *state,
+                    operation_kind: *kind,
+                    target_scope: None,
+                    correlations: vec![],
+                    terminal_lsn: None,
+                }),
+        )
     }
 }
 
@@ -78,9 +87,15 @@ fn resource_scope(kind: &str, id: &str) -> TargetScope {
     TargetScope {
         kind: TargetScopeKind::Resource as i32,
         resource: Some(ResourceIdentity {
-            adapter_id: Some(AdapterId { value: "adapter-a".to_owned() }),
-            resource_id: Some(ResourceId { value: id.to_owned() }),
-            resource_kind: Some(ResourceKind { value: kind.to_owned() }),
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".to_owned(),
+            }),
+            resource_id: Some(ResourceId {
+                value: id.to_owned(),
+            }),
+            resource_kind: Some(ResourceKind {
+                value: kind.to_owned(),
+            }),
         }),
         ..TargetScope::default()
     }
@@ -108,6 +123,7 @@ async fn status_and_result_observations_require_the_exact_command_target_before_
         async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
             Some(CommandSnapshot {
                 state: OperationState::Delivered,
+                operation_kind: OperationKind::Instruct,
                 target_scope: Some(resource_scope("pool", "expected")),
                 correlations: vec![],
                 terminal_lsn: None,
@@ -205,20 +221,19 @@ async fn resource_status_rejects_every_mixed_target_shape_before_append() {
     let mut mixed_scopes = Vec::new();
 
     let mut with_runtime_session = resource_scope("token-commune.provider-pool", "pool-zai");
-    with_runtime_session.runtime_session_id = Some(patchbay_contracts::patchbay::RuntimeSessionId {
-        value: "session-1".to_owned(),
-    });
+    with_runtime_session.runtime_session_id =
+        Some(patchbay_contracts::patchbay::RuntimeSessionId {
+            value: "session-1".to_owned(),
+        });
     mixed_scopes.push(with_runtime_session);
 
-    let mut with_top_level_adapter =
-        resource_scope("token-commune.provider-pool", "pool-zai");
+    let mut with_top_level_adapter = resource_scope("token-commune.provider-pool", "pool-zai");
     with_top_level_adapter.adapter_id = Some(AdapterId {
         value: "adapter-a".to_owned(),
     });
     mixed_scopes.push(with_top_level_adapter);
 
-    let mut with_legacy_audit_resource =
-        resource_scope("token-commune.provider-pool", "pool-zai");
+    let mut with_legacy_audit_resource = resource_scope("token-commune.provider-pool", "pool-zai");
     with_legacy_audit_resource.legacy_audit_resource_id = "legacy-resource".to_owned();
     mixed_scopes.push(with_legacy_audit_resource);
 
@@ -233,7 +248,10 @@ async fn resource_status_rejects_every_mixed_target_shape_before_append() {
             .expect_err("mixed resource/session scope must reject");
 
         assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
-        assert!(events(&storage).await.is_empty(), "rejection must precede append");
+        assert!(
+            events(&storage).await.is_empty(),
+            "rejection must precede append"
+        );
     }
 }
 
@@ -267,6 +285,30 @@ async fn result_without_failure_emits_completed_transition() {
 }
 
 #[tokio::test]
+async fn successful_spawn_result_records_evidence_without_terminal_transition() {
+    for state in [OperationState::Delivered, OperationState::Running] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let states = TestCommandStates::with_kind(command_id(), state, OperationKind::Spawn);
+
+        let result = ingest_observation(
+            &storage,
+            &states,
+            observation(ObservationKind::Result, FailureCode::Unspecified),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(result, IngestResult::CompletionDeferred { .. }));
+        let recorded = events(&storage).await;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
+            StoredEventKind::Observation
+        );
+    }
+}
+
+#[tokio::test]
 async fn unsupported_result_emits_rejected_transition_and_audit() {
     let inner = RusqliteStorage::open_in_memory().unwrap();
     let storage = AuditedStorage::new(inner.clone());
@@ -292,28 +334,40 @@ async fn unsupported_result_emits_rejected_transition_and_audit() {
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Rejected as i32);
-    assert_eq!(transition.failure_code, FailureCode::UnsupportedCommand as i32);
+    assert_eq!(
+        transition.failure_code,
+        FailureCode::UnsupportedCommand as i32
+    );
 
     let audits = inner
-        .query_audit(&authority_domain(), patchbay_core::storage::AuditPageSpec {
-            kinds: vec![],
-            actor_id: None,
-            endpoint_id: None,
-            command_id: None,
-            grant_id: None,
-            target: None,
-            failure_codes: vec![],
-            reason_codes: vec![],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 10,
-        })
+        .query_audit(
+            &authority_domain(),
+            patchbay_core::storage::AuditPageSpec {
+                kinds: vec![],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec![],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(audits.records.len(), 1);
-    assert_eq!(audits.records[0].kind, patchbay_contracts::patchbay::AuditEventKind::CommandRejected as i32);
-    assert_eq!(audits.records[0].failure_code, FailureCode::UnsupportedCommand as i32);
+    assert_eq!(
+        audits.records[0].kind,
+        patchbay_contracts::patchbay::AuditEventKind::CommandRejected as i32
+    );
+    assert_eq!(
+        audits.records[0].failure_code,
+        FailureCode::UnsupportedCommand as i32
+    );
 }
 
 #[tokio::test]
@@ -341,7 +395,10 @@ async fn delivery_rejected_result_emits_rejected_transition() {
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Rejected as i32);
-    assert_eq!(transition.failure_code, FailureCode::DeliveryRejected as i32);
+    assert_eq!(
+        transition.failure_code,
+        FailureCode::DeliveryRejected as i32
+    );
 }
 
 #[tokio::test]
@@ -557,6 +614,7 @@ async fn transition_carries_command_elicitation_correlation() {
         async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
             Some(CommandSnapshot {
                 state: OperationState::Delivered,
+                operation_kind: OperationKind::Instruct,
                 target_scope: None,
                 correlations: vec![TypedCorrelation {
                     r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {

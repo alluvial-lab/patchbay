@@ -960,6 +960,9 @@ where
                     .map_err(map_acceptance_error_to_status)?
                     {
                         acceptance::IngestResult::Recorded { event_id }
+                        | acceptance::IngestResult::CompletionDeferred {
+                            observation_event_id: event_id,
+                        }
                         | acceptance::IngestResult::StaleCandidate {
                             observation_event_id: event_id,
                         }

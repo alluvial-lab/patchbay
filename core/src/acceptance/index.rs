@@ -7,14 +7,16 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, Revocation,
-    StoredEventKind,
+    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, OperationKind,
+    Revocation, StoredEventKind,
 };
 use prost::Message;
 
 use crate::storage::{RecordedEvent, TargetKey};
 
-use super::{apply_grant_revocation_effect, apply_transition, target_key_for, AcceptanceError, CommandRecord};
+use super::{
+    apply_grant_revocation_effect, apply_transition, target_key_for, AcceptanceError, CommandRecord,
+};
 
 type DedupKey = (String, String, String);
 
@@ -148,11 +150,12 @@ impl CommandIndex {
 
     fn apply_operation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (event_domain, event_lsn) = event_identity(event)?;
-        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
-            AcceptanceError::CorruptRecord(format!(
-                "cannot decode accepted operation at LSN {event_lsn}: {error}"
-            ))
-        })?;
+        let accepted =
+            AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode accepted operation at LSN {event_lsn}: {error}"
+                ))
+            })?;
         let grant_id = accepted.authorizing_grant_id.ok_or_else(|| {
             AcceptanceError::CorruptRecord(format!(
                 "accepted operation at LSN {event_lsn} is missing authorizing_grant_id"
@@ -188,17 +191,26 @@ impl CommandIndex {
     fn apply_revocation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
         let revocation = Revocation::decode(event.payload.payload.as_slice()).map_err(|error| {
-            AcceptanceError::CorruptRecord(format!("cannot decode revocation at LSN {event_lsn}: {error}"))
+            AcceptanceError::CorruptRecord(format!(
+                "cannot decode revocation at LSN {event_lsn}: {error}"
+            ))
         })?;
         let grant_id = revocation.grant_id.ok_or_else(|| {
-            AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} is missing grant_id"))
+            AcceptanceError::CorruptLog(format!(
+                "revocation at LSN {event_lsn} is missing grant_id"
+            ))
         })?;
         for effect in revocation.command_effects {
             let command_id = effect.command_id.as_ref().ok_or_else(|| {
-                AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} has effect without command_id"))
+                AcceptanceError::CorruptLog(format!(
+                    "revocation at LSN {event_lsn} has effect without command_id"
+                ))
             })?;
             let record = self.commands.get_mut(command_id).ok_or_else(|| {
-                AcceptanceError::CorruptLog(format!("revocation at LSN {event_lsn} references unknown command {:?}", command_id))
+                AcceptanceError::CorruptLog(format!(
+                    "revocation at LSN {event_lsn} references unknown command {:?}",
+                    command_id
+                ))
             })?;
             if record.grant_id.as_ref() != Some(&grant_id) {
                 return Err(AcceptanceError::CorruptLog(format!(
@@ -311,13 +323,14 @@ impl crate::acceptance::CommandStateLookup for CommandIndex {
         &self,
         command_id: &CommandId,
     ) -> Option<crate::acceptance::CommandSnapshot> {
-        self.commands
-            .get(command_id)
-            .map(|record| crate::acceptance::CommandSnapshot {
-                state: record.state,
-                target_scope: record.operation.target_scope.clone(),
-                correlations: record.operation.correlations.clone(),
-                terminal_lsn: record.terminal_lsn,
-            })
+        let record = self.commands.get(command_id)?;
+        let operation_kind = OperationKind::try_from(record.operation.kind).ok()?;
+        Some(crate::acceptance::CommandSnapshot {
+            state: record.state,
+            operation_kind,
+            target_scope: record.operation.target_scope.clone(),
+            correlations: record.operation.correlations.clone(),
+            terminal_lsn: record.terminal_lsn,
+        })
     }
 }

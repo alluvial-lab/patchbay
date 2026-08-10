@@ -7,6 +7,7 @@ pub mod login_security;
 pub mod operator_session;
 pub mod service;
 pub mod snapshot;
+pub mod spawn_completion;
 pub mod state;
 
 pub mod rpc {

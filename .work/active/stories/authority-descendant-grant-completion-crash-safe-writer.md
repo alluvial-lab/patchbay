@@ -1,7 +1,7 @@
 ---
 id: authority-descendant-grant-completion-crash-safe-writer
 kind: story
-stage: implementing
+stage: done
 tags: [security]
 parent: authority-descendant-grant-completion
 depends_on: [authority-descendant-grant-completion-contract-fold]
@@ -38,3 +38,12 @@ cargo test -p patchbay-core --test acceptance_observation
 cargo test -p patchbay-core-server --test spawn_completion
 cargo test -p patchbay-core --test authority_spawn_tail --test authority_ingest
 ```
+
+## Implementation notes
+- Execution capability: Sol xhigh (explicit autopilot caller selection for security/provenance, lifecycle exposure, and restart repair); one direct owner, no nested agents or peers.
+- Review weight: thorough (explicit caller selection; parent feature stops at review for fresh review).
+- Files changed: command snapshot/observation ingestion and fixtures; `server/src/spawn_completion.rs`; server exports and adapter result mapping; `server/tests/spawn_completion.rs`; the durable fold's completed-restart source selection.
+- Tests added/updated: successful-spawn `CompletionDeferred` versus unchanged non-spawn completion, evidence-only/audit-only/audit+grant/full crash-prefix convergence, diagnostic-only audit rejection, restart idempotence, and a barrier-controlled proof that the shared `CoreDecisionGate` hides an audit+grant intermediate prefix.
+- Simplification: one driver reuses `Storage`, `AuditSink`, `AuthorityRegistry`, `SpawnDescendantTail`, and `ingest_descendant_grant`; no spawn-specific storage transaction, callback mesh, or optimistic fold mutation was added.
+- Discrepancies from design: none. `SpawnCompletionError` is implemented without adding a server dependency; production `AuditedStorage` supplies the ordinary grant-created audit, while the final raw completion transition intentionally does not emit a second completion audit.
+- Adjacent issues parked: none (generic concurrent descendant-writer conflict/no-op behavior remains in the excluded `authority-writer-correctness` scope).

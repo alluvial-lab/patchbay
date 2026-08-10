@@ -7,8 +7,8 @@
 
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, EventId, FailureCode,
-    Observation, ObservationKind, OperationState, StoredEventKind, StoredEventPayload, TargetScope,
-    TypedCorrelation,
+    Observation, ObservationKind, OperationKind, OperationState, StoredEventKind,
+    StoredEventPayload, TargetScope, TypedCorrelation,
 };
 use prost::Message;
 
@@ -31,6 +31,8 @@ use super::{allowed_transition, AcceptanceError, OperationStateExt};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSnapshot {
     pub state: OperationState,
+    /// Generated kind carried by the accepted Operation.
+    pub operation_kind: OperationKind,
     /// Exact target carried by the accepted Operation. Status/result evidence
     /// must bind to this target before it can append or derive a transition.
     pub target_scope: Option<TargetScope>,
@@ -72,6 +74,9 @@ pub enum IngestResult {
         transition_event_id: EventId,
         to_state: OperationState,
     },
+    /// A successful spawn result was recorded as durable evidence, while the
+    /// descendant-completion driver retains terminalization authority.
+    CompletionDeferred { observation_event_id: EventId },
     /// The observation was recorded, but its command was already terminal.
     StaleCandidate { observation_event_id: EventId },
 }
@@ -128,7 +133,9 @@ where
         Some(snapshot) => snapshot,
         None => {
             // Preserve the evidence before reporting a corrupt correlation.
-            storage.append(authority_domain_id, observation_payload).await?;
+            storage
+                .append(authority_domain_id, observation_payload)
+                .await?;
             return Err(AcceptanceError::CorruptRecord(format!(
                 "observation references unknown command {:?}",
                 candidate.command_id
@@ -157,8 +164,23 @@ where
         });
     }
 
-    let observation_event_id = storage.append(authority_domain_id, observation_payload).await?;
+    let observation_event_id = storage
+        .append(authority_domain_id, observation_payload)
+        .await?;
     validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
+
+    if snapshot.operation_kind == OperationKind::Spawn
+        && candidate.to_state == OperationState::Completed
+        && candidate.failure_code == FailureCode::Unspecified
+        && matches!(
+            snapshot.state,
+            OperationState::Delivered | OperationState::Running
+        )
+    {
+        return Ok(IngestResult::CompletionDeferred {
+            observation_event_id,
+        });
+    }
 
     // Repeated status reports are useful evidence but do not represent a new
     // lifecycle transition.
@@ -204,14 +226,20 @@ where
         OperationState::Failed => patchbay_contracts::patchbay::AuditEventKind::CommandFailed,
         OperationState::Expired => patchbay_contracts::patchbay::AuditEventKind::CommandExpired,
         OperationState::Cancelled => patchbay_contracts::patchbay::AuditEventKind::CommandCancelled,
-        OperationState::Superseded => patchbay_contracts::patchbay::AuditEventKind::CommandSuperseded,
+        OperationState::Superseded => {
+            patchbay_contracts::patchbay::AuditEventKind::CommandSuperseded
+        }
         OperationState::Accepted | OperationState::Unspecified => {
-            return Err(AcceptanceError::CorruptRecord("observation selected a non-transition state".to_owned()));
+            return Err(AcceptanceError::CorruptRecord(
+                "observation selected a non-transition state".to_owned(),
+            ));
         }
     };
-    let mut audit = crate::storage::AuditRecordDraft::new(crate::acceptance::SystemClock.now(), audit_kind);
+    let mut audit =
+        crate::storage::AuditRecordDraft::new(crate::acceptance::SystemClock.now(), audit_kind);
     audit.command_id = Some(candidate.command_id.clone());
-    audit.failure_code = (candidate.failure_code != FailureCode::Unspecified).then_some(candidate.failure_code);
+    audit.failure_code =
+        (candidate.failure_code != FailureCode::Unspecified).then_some(candidate.failure_code);
     audit.reason_code = "command_state_transition".to_owned();
     let transition_event_id = storage
         .append_decision(authority_domain_id, transition_payload, audit)
@@ -235,8 +263,12 @@ fn is_resource_status_fact(observation: &Observation) -> bool {
     {
         return false;
     }
-    let Some(target) = observation.target_scope.as_ref() else { return false; };
-    let Ok(identity) = ResourceIdentity::try_from_scope(target) else { return false; };
+    let Some(target) = observation.target_scope.as_ref() else {
+        return false;
+    };
+    let Ok(identity) = ResourceIdentity::try_from_scope(target) else {
+        return false;
+    };
     !identity.adapter_id().value.trim().is_empty()
         && !identity.resource_kind().value.trim().is_empty()
         && !identity.resource_id().value.trim().is_empty()

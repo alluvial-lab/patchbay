@@ -15,11 +15,11 @@
 use std::future::ready;
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, CommandTransition,
-    DeviceId, EndpointId, EventId, FailureCode, Generation, GrantId, IdempotencyKey, Lsn, Operation,
-    OperationKind, OperationState, PayloadContentType, PayloadEnvelope, RuntimeSessionId,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome, TargetScope, TargetScopeKind,
-    TimeWindow,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId,
+    CommandTransition, DeviceId, EndpointId, EventId, FailureCode, Generation, GrantId,
+    IdempotencyKey, Lsn, Operation, OperationKind, OperationState, PayloadContentType,
+    PayloadEnvelope, RuntimeSessionId, StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    TargetScope, TargetScopeKind, TimeWindow,
 };
 use patchbay_core::acceptance::{
     apply_transition, is_terminal, rebuild_from_log, submit, AcceptanceError, ActiveElicitation,
@@ -189,8 +189,11 @@ async fn append_operation<S: Storage>(storage: &S, operation: &Operation) -> u64
                 kind: StoredEventKind::Operation as i32,
                 payload: AcceptedOperation {
                     operation: Some(operation.clone()),
-                    authorizing_grant_id: Some(GrantId { value: "test-grant".to_owned() }),
-                }.encode_to_vec(),
+                    authorizing_grant_id: Some(GrantId {
+                        value: "test-grant".to_owned(),
+                    }),
+                }
+                .encode_to_vec(),
             },
         )
         .await
@@ -271,7 +274,11 @@ impl GrantCheck for AlwaysAuthorized {
         _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
-        ready(Ok(Authorized { grant_id: Some(GrantId { value: "test-grant".to_owned() }) }))
+        ready(Ok(Authorized {
+            grant_id: Some(GrantId {
+                value: "test-grant".to_owned(),
+            }),
+        }))
     }
 }
 
@@ -311,6 +318,7 @@ impl CommandStateLookup for AlwaysAccepted {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Accepted,
+            operation_kind: OperationKind::Instruct,
             target_scope: None,
             correlations: vec![],
             terminal_lsn: None,
@@ -405,7 +413,9 @@ async fn run_boundary_dedup_check<S: Storage>(
     }
     let accepted = AcceptedOperation::decode(events[0].payload.payload.as_slice())
         .map_err(|error| format!("cannot decode acceptance event: {error}"))?;
-    let recorded = accepted.operation.ok_or_else(|| "accepted operation has no operation".to_owned())?;
+    let recorded = accepted
+        .operation
+        .ok_or_else(|| "accepted operation has no operation".to_owned())?;
     let mut expected = submitted;
     // Sender is the one durable field intentionally normalized rather than
     // retained from caller input.

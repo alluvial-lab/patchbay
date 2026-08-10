@@ -196,7 +196,18 @@ impl SpawnDescendantTail {
                 }
             }
 
-            let source_event_id = if let Some((_, terminal)) = &progress.terminal {
+            let source_event_id = if let Some(audit) = progress.audit.as_ref() {
+                // Once the durable audit exists it fixes its immutable source.
+                // A fully completed new spawn therefore keeps the successful
+                // result link on restart, while a legacy repair keeps the
+                // completed-transition link it was created with.
+                audit.record.source_event_id.clone().ok_or_else(|| {
+                    AuthorityError::CorruptRecord(format!(
+                        "spawn-completion audit for {:?} has no source_event_id",
+                        command_id
+                    ))
+                })?
+            } else if let Some((_, terminal)) = &progress.terminal {
                 // A historical completed transition is the repair source. New
                 // completions have no terminal fact until the final step.
                 terminal.event_id.clone()

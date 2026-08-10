@@ -45,7 +45,11 @@ impl GrantCheck for TestGrantCheck {
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
         self.calls.fetch_add(1, Ordering::Relaxed);
         ready(if self.authorized {
-            Ok(Authorized { grant_id: Some(GrantId { value: "test-grant".to_owned() }) })
+            Ok(Authorized {
+                grant_id: Some(GrantId {
+                    value: "test-grant".to_owned(),
+                }),
+            })
         } else {
             Err(GrantDenied::NoGrant {
                 actor: "operator".to_owned(),
@@ -117,6 +121,7 @@ impl CommandStateLookup for AlwaysAccepted {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Accepted,
+            operation_kind: OperationKind::Instruct,
             target_scope: None,
             correlations: vec![],
             terminal_lsn: None,
@@ -998,7 +1003,10 @@ async fn new_command_is_durably_recorded_before_acceptance_returns() {
         StoredEventKind::try_from(events[0].payload.kind).unwrap(),
         StoredEventKind::Operation
     );
-    let recorded = AcceptedOperation::decode(events[0].payload.payload.as_slice()).unwrap().operation.unwrap();
+    let recorded = AcceptedOperation::decode(events[0].payload.payload.as_slice())
+        .unwrap()
+        .operation
+        .unwrap();
     // Durable sender attribution is normalized from authenticated issuer
     // evidence; it is not an assertion that caller-supplied sender data persists.
     let mut expected = submitted;
@@ -1040,7 +1048,10 @@ async fn mismatched_sender_claim_is_overwritten_by_verified_issuer() {
     assert_eq!(outcome(&result), SubmissionOutcome::Accepted);
 
     let events = durable_events(&storage).await;
-    let recorded = AcceptedOperation::decode(events[0].payload.payload.as_slice()).unwrap().operation.unwrap();
+    let recorded = AcceptedOperation::decode(events[0].payload.payload.as_slice())
+        .unwrap()
+        .operation
+        .unwrap();
     assert_eq!(recorded.sender, Some(verified_sender(&test_issuer)));
 }
 
@@ -1131,6 +1142,7 @@ impl CommandStateLookup for CompletedLookup {
     async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
         Some(CommandSnapshot {
             state: OperationState::Completed,
+            operation_kind: OperationKind::Instruct,
             target_scope: None,
             correlations: vec![],
             terminal_lsn: Some(5),
