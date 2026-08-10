@@ -1630,7 +1630,7 @@ impl GrantCheck for PayloadTrustingGrantCheck {
 
 /// Mutant: revoking a parent adds every provenance-linked descendant to an
 /// implicit cascade set, causing future checks for those grants to deny.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct CascadingRegistry {
     inner: AuthorityRegistry,
     cascaded_grants: HashSet<GrantId>,

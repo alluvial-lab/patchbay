@@ -104,13 +104,14 @@ where
     // delivered/running lifecycle, successful result (or valid historical
     // completion), contained session registration/bump, and matching audit.
     let durable_prefix = read_validated_authority_prefix(storage, authority_domain_id).await?;
+    // Validate the caller's projection against the whole prefix in isolation.
+    // Publishing here would expose a partial warm if either this fold or the
+    // completion-specific fold rejected a later record. The post-append fold
+    // below performs the single live publication.
+    let _ = fold_projection_prefix(projection, &durable_prefix)?;
     let mut tail = SpawnDescendantTail::new();
     for event in &durable_prefix {
         tail.observe(event)?;
-        // Keep the caller's projection on the same authoritative prefix. This
-        // is idempotent for an already-warm registry and ensures the append can
-        // fold through its exact durable prerequisites.
-        projection.observe(event)?;
     }
     let issuance = tail
         .descendant_issuance_for(authority_domain_id, &spawn_operation_id)?
@@ -267,6 +268,20 @@ where
     Ok(events)
 }
 
+fn fold_projection_prefix<L>(
+    projection: &L,
+    events: &[RecordedEvent],
+) -> Result<L, AuthorityError>
+where
+    L: GrantProjection,
+{
+    let mut staged = projection.clone();
+    for event in events {
+        staged.observe(event)?;
+    }
+    Ok(staged)
+}
+
 async fn append_and_warm_grant<S, L>(
     storage: &S,
     projection: &mut L,
@@ -316,17 +331,20 @@ where
             }
             found_source = true;
         }
-        // Storage identity and audit commit precedes projection mutation.
-        // Fold the complete validated authority prefix so a fresh retry also
-        // observes later revocation and sibling authority facts; never warm
-        // from a synthetic event made from request bytes.
-        projection.observe(committed)?;
     }
     if !found_source {
         return Err(AuthorityError::CorruptLog(format!(
             "grant {grant_id:?} source LSN {source_lsn} is missing during read-back"
         )));
     }
+
+    // Storage identity and audit commit precede projection mutation. Fold the
+    // complete validated authority prefix into an isolated clone so a later
+    // semantic failure cannot leak earlier grants into the live registry.
+    // A fresh retry still observes later revocation and sibling authority
+    // facts, and the live projection is published exactly once on success.
+    let staged = fold_projection_prefix(projection, &durable_prefix)?;
+    *projection = staged;
     Ok(event_id)
 }
 
@@ -345,10 +363,12 @@ where
         .append_decision_audited_many(authority_domain_id, payload.clone(), audits)
         .await?;
     validate_event_id(&result.source_event_id, authority_domain_id)?;
-    projection.observe(&RecordedEvent {
+    let committed = RecordedEvent {
         event_id: result.source_event_id.clone(),
         payload,
-    })?;
+    };
+    let staged = fold_projection_prefix(projection, std::slice::from_ref(&committed))?;
+    *projection = staged;
     Ok(result.source_event_id)
 }
 

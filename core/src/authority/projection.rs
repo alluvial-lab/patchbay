@@ -16,9 +16,10 @@ pub trait GrantLookup: Send + Sync {
 
 /// A grant projection that can fold a committed authority event.
 ///
-/// Ingestion appends before observing, so storage remains authoritative and a
-/// fold failure forces callers to rebuild this hot projection from the log.
-pub trait GrantProjection: GrantLookup {
+/// Ingestion appends before observing, so storage remains authoritative. The
+/// clone bound lets ingestion stage a complete fold and publish it only after
+/// every committed event succeeds.
+pub trait GrantProjection: GrantLookup + Clone {
     fn observe(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError>;
 }
 

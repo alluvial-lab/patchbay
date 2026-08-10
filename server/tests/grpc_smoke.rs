@@ -33,7 +33,7 @@ use patchbay_core::{
     session::events as session_events,
     time::{Clock, TestClock},
     storage::{
-        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome,
+        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, AuditedStorage,
         CoreGenerationStore, DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError,
         StoredSnapshot, TargetKey,
     },
@@ -973,7 +973,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
 
 #[tokio::test]
 async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
-    let mut server = start_server().await;
+    let mut server = start_audited_server().await;
     let query = DiagnosticsQuery {
         query: Some(diagnostics_query::Query::Audit(AuditQuery {
             limit: Some(1),
@@ -1174,7 +1174,7 @@ async fn lockdown_and_submit_race_is_ordered_by_the_shared_decision_gate() {
 
 #[tokio::test]
 async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_validation() {
-    let mut server = start_server().await;
+    let mut server = start_audited_server().await;
     let exact_query = QueryDiagnosticsRequest {
         operation: Some(diagnostic_query_operation(
             "lockdown-query-retry",
@@ -2142,6 +2142,23 @@ async fn start_server() -> TestServer {
         .expect("test storage must open");
     seed_authority_and_session(&storage).await;
     let (client, task, operator_session) = serve(storage.clone()).await;
+
+    TestServer {
+        client,
+        storage,
+        task,
+        operator_session,
+        _directory: directory,
+    }
+}
+
+async fn start_audited_server() -> TestServer {
+    let directory = tempfile::tempdir().expect("test directory must be created");
+    let database_path = directory.path().join("patchbay.sqlite3");
+    let storage = RusqliteStorage::open(database_path.to_str().expect("UTF-8 test path"))
+        .expect("test storage must open");
+    seed_authority_and_session(&storage).await;
+    let (client, task, operator_session) = serve(AuditedStorage::new(storage.clone())).await;
 
     TestServer {
         client,

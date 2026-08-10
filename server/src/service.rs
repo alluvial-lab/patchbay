@@ -1435,6 +1435,7 @@ where
                 }));
             }
         };
+        let expected_result_kind = DiagnosticsResultKind::from(&validated);
 
         let submission = match acceptance::submit_with_clock_and_posture(
             &self.storage,
@@ -1483,8 +1484,8 @@ where
         // Every checkpoint is reconciled under the submit gate. A retry that
         // arrives after any durable prefix resumes the missing suffix instead
         // of returning UNAVAILABLE merely because the first handler stopped.
-        let delivered_event_id = if current.state == OperationState::Accepted {
-            let event_id = append_query_transition(
+        if current.state == OperationState::Accepted {
+            append_query_transition(
                 &self.storage,
                 &authority_domain_id,
                 &command_id,
@@ -1503,42 +1504,48 @@ where
                 .current_state(&command_id)
                 .await
                 .ok_or_else(|| Status::internal("delivered query is missing from the command projection"))?;
-            Some(event_id)
-        } else {
-            None
-        };
-        if !matches!(current.state, OperationState::Delivered) {
+        }
+        if current.state != OperationState::Delivered {
             if current.state == OperationState::Completed {
-                if let Some((result_event_id, result, response_result)) =
-                    find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
-                {
-                    let mut completed = submission;
-                    completed.operation_state = OperationState::Completed as i32;
-                    return Ok(Response::new(QueryDiagnosticsResponse {
-                        submission: Some(completed),
-                        result_event_id: Some(result_event_id),
-                        as_of_lsn: result.as_of_lsn,
-                        result: Some(response_result),
-                    }));
-                }
-            }
-            if current.state != OperationState::Delivered {
-                let mut terminal = submission;
-                terminal.operation_state = current.state as i32;
-                terminal.failure_code = if current.state == OperationState::Failed {
-                    FailureCode::ExecutionFailed as i32
-                } else {
-                    FailureCode::Unspecified as i32
-                };
+                let (result_event_id, result, response_result) = find_diagnostics_result(
+                    &self.storage,
+                    &authority_domain_id,
+                    &command_id,
+                    expected_result_kind,
+                )
+                .await?
+                .ok_or_else(|| {
+                    Status::internal("completed diagnostics query has no canonical result")
+                })?;
+                let mut completed = submission;
+                completed.operation_state = OperationState::Completed as i32;
                 return Ok(Response::new(QueryDiagnosticsResponse {
-                    submission: Some(terminal),
-                    ..QueryDiagnosticsResponse::default()
+                    submission: Some(completed),
+                    result_event_id: Some(result_event_id),
+                    as_of_lsn: result.as_of_lsn,
+                    result: Some(response_result),
                 }));
             }
+            let mut terminal = submission;
+            terminal.operation_state = current.state as i32;
+            terminal.failure_code = if current.state == OperationState::Failed {
+                FailureCode::ExecutionFailed as i32
+            } else {
+                FailureCode::Unspecified as i32
+            };
+            return Ok(Response::new(QueryDiagnosticsResponse {
+                submission: Some(terminal),
+                ..QueryDiagnosticsResponse::default()
+            }));
         }
 
-        if let Some((result_event_id, result, response_result)) =
-            find_diagnostics_result(&self.storage, &authority_domain_id, &command_id).await?
+        if let Some((result_event_id, result, response_result)) = find_diagnostics_result(
+            &self.storage,
+            &authority_domain_id,
+            &command_id,
+            expected_result_kind,
+        )
+        .await?
         {
             // The result Observation is durable but the completion checkpoint
             // may not be. Reconcile that checkpoint without rematerializing.
@@ -1569,8 +1576,7 @@ where
 
         let as_of_lsn = find_delivered_checkpoint(&self.storage, &authority_domain_id, &command_id)
             .await?
-            .or(delivered_event_id)
-            .ok_or_else(|| Status::internal("delivered query has no durable checkpoint"))?;
+            .ok_or_else(|| Status::internal("delivered query has no canonical audited checkpoint"))?;
         let as_of_lsn = as_of_lsn
             .lsn
             .ok_or_else(|| Status::internal("delivered query has no LSN"))?;
@@ -2069,50 +2075,254 @@ async fn read_validated_replay_prefix<S: Storage>(
     Ok(events)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiagnosticsResultKind {
+    Audit,
+    Command,
+    Adapters,
+}
+
+impl From<&ValidatedDiagnosticsQuery> for DiagnosticsResultKind {
+    fn from(query: &ValidatedDiagnosticsQuery) -> Self {
+        match query {
+            ValidatedDiagnosticsQuery::Audit(_) => Self::Audit,
+            ValidatedDiagnosticsQuery::Command(_) => Self::Command,
+            ValidatedDiagnosticsQuery::Adapters(_) => Self::Adapters,
+        }
+    }
+}
+
+fn canonical_delivered_checkpoint(
+    events: &[RecordedEvent],
+    command_id: &patchbay_contracts::patchbay::CommandId,
+) -> Result<Option<EventId>, Status> {
+    let mut transition_checkpoint = None;
+    for event in events {
+        if StoredEventKind::try_from(event.payload.kind).ok()
+            != Some(StoredEventKind::CommandTransition)
+        {
+            continue;
+        }
+        let transition = CommandTransition::decode(event.payload.payload.as_slice()).map_err(
+            |error| Status::internal(format!("cannot decode query transition: {error}")),
+        )?;
+        if transition.command_id.as_ref() != Some(command_id)
+            || OperationState::try_from(transition.to_state).ok()
+                != Some(OperationState::Delivered)
+        {
+            continue;
+        }
+        if OperationState::try_from(transition.from_state).ok()
+            != Some(OperationState::Accepted)
+            || FailureCode::try_from(transition.failure_code).ok()
+                != Some(FailureCode::Unspecified)
+        {
+            return Err(Status::internal(
+                "delivered query transition has non-canonical lifecycle fields",
+            ));
+        }
+        if transition_checkpoint.replace(event.event_id.clone()).is_some() {
+            return Err(Status::internal(
+                "query has multiple delivered transition checkpoints",
+            ));
+        }
+    }
+
+    let Some(transition_checkpoint) = transition_checkpoint else {
+        return Ok(None);
+    };
+    let transition_lsn = transition_checkpoint
+        .lsn
+        .as_ref()
+        .ok_or_else(|| Status::internal("delivered query transition has no LSN"))?
+        .value;
+    let expected_audit_lsn = transition_lsn
+        .checked_add(1)
+        .ok_or_else(|| Status::internal("delivered query audit LSN overflows"))?;
+    let mut audit_checkpoint = None;
+    for event in events {
+        if StoredEventKind::try_from(event.payload.kind).ok()
+            != Some(StoredEventKind::AuditRecord)
+        {
+            continue;
+        }
+        let record = AuditRecord::decode(event.payload.payload.as_slice())
+            .map_err(|error| Status::internal(format!("cannot decode query audit: {error}")))?;
+        if record.source_event_id.as_ref() != Some(&transition_checkpoint) {
+            continue;
+        }
+        let canonical = AuditEventKind::try_from(record.kind).ok()
+            == Some(AuditEventKind::CommandDelivered)
+            && record.command_id.as_ref() == Some(command_id)
+            && FailureCode::try_from(record.failure_code).ok()
+                == Some(FailureCode::Unspecified)
+            && record.reason_code == "query_state_transition";
+        if !canonical {
+            // A source-correlated audit with another purpose must never become
+            // the query's materialization bound.
+            continue;
+        }
+        if record.audit_event_id.as_ref() != Some(&event.event_id) {
+            return Err(Status::internal(
+                "canonical delivered query audit has inconsistent identity",
+            ));
+        }
+        let audit_lsn = event
+            .event_id
+            .lsn
+            .as_ref()
+            .ok_or_else(|| Status::internal("delivered query audit has no LSN"))?
+            .value;
+        if audit_lsn != expected_audit_lsn {
+            return Err(Status::internal(
+                "canonical delivered query audit is not adjacent to its transition",
+            ));
+        }
+        if audit_checkpoint.replace(event.event_id.clone()).is_some() {
+            return Err(Status::internal(
+                "query has multiple canonical delivered audits",
+            ));
+        }
+    }
+
+    audit_checkpoint.map_or_else(
+        || Err(Status::internal("delivered query transition has no canonical audit")),
+        |checkpoint| Ok(Some(checkpoint)),
+    )
+}
+
 async fn find_delivered_checkpoint<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
     command_id: &patchbay_contracts::patchbay::CommandId,
 ) -> Result<Option<EventId>, Status> {
     let events = read_validated_replay_prefix(storage, authority_domain_id).await?;
-    let mut transition_checkpoint = None;
-    let mut audit_checkpoint = None;
+    canonical_delivered_checkpoint(&events, command_id)
+}
+
+fn diagnostics_result_from_prefix(
+    events: &[RecordedEvent],
+    authority_domain_id: &AuthorityDomainId,
+    command_id: &patchbay_contracts::patchbay::CommandId,
+    expected_kind: DiagnosticsResultKind,
+) -> Result<
+    Option<(
+        EventId,
+        DiagnosticsResult,
+        patchbay_contracts::patchbay::query_diagnostics_response::Result,
+    )>,
+    Status,
+> {
+    let delivered_checkpoint = canonical_delivered_checkpoint(events, command_id)?;
+    let mut found = None;
     for event in events {
-        match StoredEventKind::try_from(event.payload.kind).ok() {
-            Some(StoredEventKind::CommandTransition) => {
-                let transition = CommandTransition::decode(event.payload.payload.as_slice())
-                    .map_err(|error| {
-                        Status::internal(format!("cannot decode query transition: {error}"))
-                    })?;
-                if transition.command_id.as_ref() == Some(command_id)
-                    && OperationState::try_from(transition.to_state).ok()
-                        == Some(OperationState::Delivered)
-                {
-                    transition_checkpoint = Some(event.event_id);
-                }
+        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation)
+        {
+            continue;
+        }
+        let observation = Observation::decode(event.payload.payload.as_slice())
+            .map_err(|error| Status::internal(format!("cannot decode observation: {error}")))?;
+        let Some(payload) = observation
+            .payload
+            .as_ref()
+            .filter(|payload| payload.schema_ref == "patchbay.DiagnosticsResult")
+        else {
+            continue;
+        };
+        let mentions_command = observation.correlations.iter().any(|correlation| {
+            matches!(
+                correlation.r#ref.as_ref(),
+                Some(typed_correlation::Ref::CommandId(id)) if id == command_id
+            )
+        });
+        if acceptance::exact_command_correlation(&observation.correlations).as_ref()
+            != Some(command_id)
+        {
+            if mentions_command {
+                return Err(Status::internal(
+                    "diagnostics result has conflicting command correlations",
+                ));
             }
-            Some(StoredEventKind::AuditRecord) => {
-                let record =
-                    AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
-                        Status::internal(format!("cannot decode query audit: {error}"))
-                    })?;
-                if transition_checkpoint
-                    .as_ref()
-                    .is_some_and(|checkpoint| record.source_event_id.as_ref() == Some(checkpoint))
-                {
-                    audit_checkpoint = Some(event.event_id);
-                }
+            continue;
+        }
+        if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+            || observation.authority_domain_id.as_ref() != Some(authority_domain_id)
+            || FailureCode::try_from(observation.failure_code).ok()
+                != Some(FailureCode::Unspecified)
+            || PayloadContentType::try_from(payload.content_type).ok()
+                != Some(PayloadContentType::Protobuf)
+        {
+            return Err(Status::internal(
+                "diagnostics result observation has non-canonical framing",
+            ));
+        }
+        let checkpoint = delivered_checkpoint.as_ref().ok_or_else(|| {
+            Status::internal("diagnostics result has no canonical delivered checkpoint")
+        })?;
+        let expected_lsn = checkpoint
+            .lsn
+            .as_ref()
+            .ok_or_else(|| Status::internal("delivered query checkpoint has no LSN"))?
+            .value;
+        let result = DiagnosticsResult::decode(payload.payload.as_slice()).map_err(|error| {
+            Status::internal(format!("cannot decode diagnostics result: {error}"))
+        })?;
+        if result.as_of_lsn.as_ref().map(|lsn| lsn.value) != Some(expected_lsn) {
+            return Err(Status::internal(
+                "diagnostics result does not match its delivered checkpoint bound",
+            ));
+        }
+        let result_event_lsn = event
+            .event_id
+            .lsn
+            .as_ref()
+            .ok_or_else(|| Status::internal("diagnostics result event has no LSN"))?
+            .value;
+        if result_event_lsn <= expected_lsn {
+            return Err(Status::internal(
+                "diagnostics result does not follow its materialization bound",
+            ));
+        }
+        let result_value = result
+            .result
+            .clone()
+            .ok_or_else(|| Status::internal("diagnostics result has no result"))?;
+        let response_result = match (expected_kind, result_value) {
+            (
+                DiagnosticsResultKind::Audit,
+                patchbay_contracts::patchbay::diagnostics_result::Result::Audit(page),
+            ) => patchbay_contracts::patchbay::query_diagnostics_response::Result::Audit(page),
+            (
+                DiagnosticsResultKind::Command,
+                patchbay_contracts::patchbay::diagnostics_result::Result::Command(result),
+            ) => patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(result),
+            (
+                DiagnosticsResultKind::Adapters,
+                patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(page),
+            ) => patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page),
+            _ => {
+                return Err(Status::internal(
+                    "diagnostics result family does not match the accepted query",
+                ));
             }
-            _ => {}
+        };
+        if found
+            .replace((event.event_id.clone(), result, response_result))
+            .is_some()
+        {
+            return Err(Status::internal(
+                "query has multiple diagnostics result observations",
+            ));
         }
     }
-    Ok(audit_checkpoint.or(transition_checkpoint))
+    Ok(found)
 }
 
 async fn find_diagnostics_result<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
     command_id: &patchbay_contracts::patchbay::CommandId,
+    expected_kind: DiagnosticsResultKind,
 ) -> Result<
     Option<(
         EventId,
@@ -2122,48 +2332,12 @@ async fn find_diagnostics_result<S: Storage>(
     Status,
 > {
     let events = read_validated_replay_prefix(storage, authority_domain_id).await?;
-    for event in events {
-        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation)
-        {
-            continue;
-        }
-        let observation = Observation::decode(event.payload.payload.as_slice())
-            .map_err(|error| Status::internal(format!("cannot decode observation: {error}")))?;
-        if observation
-            .payload
-            .as_ref()
-            .is_none_or(|payload| payload.schema_ref != "patchbay.DiagnosticsResult")
-            || !observation.correlations.iter().any(|correlation| {
-                matches!(
-                    correlation.r#ref.as_ref(),
-                    Some(typed_correlation::Ref::CommandId(id)) if id == command_id
-                )
-            })
-        {
-            continue;
-        }
-        let payload = observation.payload.expect("checked above");
-        let result = DiagnosticsResult::decode(payload.payload.as_slice()).map_err(|error| {
-            Status::internal(format!("cannot decode diagnostics result: {error}"))
-        })?;
-        let response_result = match result
-            .result
-            .clone()
-            .ok_or_else(|| Status::internal("diagnostics result has no result"))?
-        {
-            patchbay_contracts::patchbay::diagnostics_result::Result::Audit(page) => {
-                patchbay_contracts::patchbay::query_diagnostics_response::Result::Audit(page)
-            }
-            patchbay_contracts::patchbay::diagnostics_result::Result::Command(result) => {
-                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(result)
-            }
-            patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(page) => {
-                patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page)
-            }
-        };
-        return Ok(Some((event.event_id, result, response_result)));
-    }
-    Ok(None)
+    diagnostics_result_from_prefix(
+        &events,
+        authority_domain_id,
+        command_id,
+        expected_kind,
+    )
 }
 
 fn subscription_scope() -> patchbay_contracts::patchbay::TargetScope {
@@ -2363,12 +2537,16 @@ fn retryable_unavailable(message: String) -> Status {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_delivered_checkpoint, find_diagnostics_result, revocation_effects};
+    use super::{
+        find_delivered_checkpoint, find_diagnostics_result, revocation_effects,
+        DiagnosticsResultKind,
+    };
     use patchbay_contracts::patchbay::{
-        diagnostics_result, typed_correlation, ActorId, AuditRecord, AuthorityDomainId, CommandId,
-        CommandTransition, DiagnosticsResult, EventId, GrantId, GrantRevocationPolicy, Lsn,
-        Observation, ObservationKind, Operation, OperationKind, OperationState, PayloadContentType,
-        PayloadEnvelope, StoredEventKind, StoredEventPayload, TargetScope, TypedCorrelation,
+        diagnostics_result, typed_correlation, ActorId, AuditEventKind, AuditRecord,
+        AuthorityDomainId, CommandId, CommandTransition, DiagnosticsResult, EventId, FailureCode,
+        GrantId, GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation,
+        OperationKind, OperationState, PayloadContentType, PayloadEnvelope, StoredEventKind,
+        StoredEventPayload, TargetScope, TypedCorrelation,
     };
     use patchbay_core::{
         acceptance::CommandRecord,
@@ -2495,11 +2673,49 @@ mod tests {
             StoredEventKind::CommandTransition,
             CommandTransition {
                 command_id: Some(command_id.clone()),
+                from_state: OperationState::Accepted as i32,
                 to_state: OperationState::Delivered as i32,
+                failure_code: FailureCode::Unspecified as i32,
                 ..CommandTransition::default()
             }
             .encode_to_vec(),
         )
+    }
+
+    fn delivered_audit(
+        authority_domain_id: &AuthorityDomainId,
+        command_id: &CommandId,
+        transition: &RecordedEvent,
+    ) -> RecordedEvent {
+        let event_id = EventId {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            lsn: Some(Lsn { value: 2 }),
+        };
+        RecordedEvent {
+            event_id: event_id.clone(),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::AuditRecord as i32,
+                payload: AuditRecord {
+                    audit_event_id: Some(event_id),
+                    kind: AuditEventKind::CommandDelivered as i32,
+                    command_id: Some(command_id.clone()),
+                    failure_code: FailureCode::Unspecified as i32,
+                    reason_code: "query_state_transition".to_owned(),
+                    source_event_id: Some(transition.event_id.clone()),
+                    ..AuditRecord::default()
+                }
+                .encode_to_vec(),
+            },
+        }
+    }
+
+    fn canonical_delivery_prefix(
+        authority_domain_id: &AuthorityDomainId,
+        command_id: &CommandId,
+    ) -> Vec<RecordedEvent> {
+        let transition = delivered_transition(authority_domain_id, command_id);
+        let audit = delivered_audit(authority_domain_id, command_id, &transition);
+        vec![transition, audit]
     }
 
     fn diagnostics_result(
@@ -2507,12 +2723,12 @@ mod tests {
         command_id: &CommandId,
     ) -> RecordedEvent {
         let result = DiagnosticsResult {
-            as_of_lsn: Some(Lsn { value: 1 }),
+            as_of_lsn: Some(Lsn { value: 2 }),
             result: Some(diagnostics_result::Result::Audit(Default::default())),
         };
         stored_event(
             authority_domain_id,
-            1,
+            3,
             StoredEventKind::Observation,
             Observation {
                 authority_domain_id: Some(authority_domain_id.clone()),
@@ -2525,23 +2741,37 @@ mod tests {
                     content_type: PayloadContentType::Protobuf as i32,
                     schema_ref: "patchbay.DiagnosticsResult".to_owned(),
                 }),
+                failure_code: FailureCode::Unspecified as i32,
                 ..Observation::default()
             }
             .encode_to_vec(),
         )
     }
 
-    fn corrupt_tails(authority_domain_id: &AuthorityDomainId) -> [RecordedEvent; 2] {
+    fn mutate_observation(
+        mut event: RecordedEvent,
+        mutate: impl FnOnce(&mut Observation),
+    ) -> RecordedEvent {
+        let mut observation = Observation::decode(event.payload.payload.as_slice()).unwrap();
+        mutate(&mut observation);
+        event.payload.payload = observation.encode_to_vec();
+        event
+    }
+
+    fn corrupt_tails(
+        authority_domain_id: &AuthorityDomainId,
+        next_lsn: u64,
+    ) -> [RecordedEvent; 2] {
         [
             stored_event(
                 authority_domain_id,
-                3,
+                next_lsn + 1,
                 StoredEventKind::Observation,
                 Observation::default().encode_to_vec(),
             ),
             stored_event(
                 authority_domain_id,
-                2,
+                next_lsn,
                 StoredEventKind::Unspecified,
                 Vec::new(),
             ),
@@ -2557,13 +2787,10 @@ mod tests {
             value: "query-command".to_owned(),
         };
 
-        for corrupt_tail in corrupt_tails(&authority_domain_id) {
-            let storage = ScriptedReplayStorage {
-                events: vec![
-                    delivered_transition(&authority_domain_id, &command_id),
-                    corrupt_tail,
-                ],
-            };
+        for corrupt_tail in corrupt_tails(&authority_domain_id, 3) {
+            let mut events = canonical_delivery_prefix(&authority_domain_id, &command_id);
+            events.push(corrupt_tail);
+            let storage = ScriptedReplayStorage { events };
             let error = find_delivered_checkpoint(&storage, &authority_domain_id, &command_id)
                 .await
                 .expect_err("a gap or unspecified kind must reject before checkpoint search");
@@ -2581,23 +2808,26 @@ mod tests {
             value: "query-command".to_owned(),
         };
 
-        for corrupt_tail in corrupt_tails(&authority_domain_id) {
-            let storage = ScriptedReplayStorage {
-                events: vec![
-                    diagnostics_result(&authority_domain_id, &command_id),
-                    corrupt_tail,
-                ],
-            };
-            let error = find_diagnostics_result(&storage, &authority_domain_id, &command_id)
-                .await
-                .expect_err("a gap or unspecified kind must reject before result search");
+        for corrupt_tail in corrupt_tails(&authority_domain_id, 4) {
+            let mut events = canonical_delivery_prefix(&authority_domain_id, &command_id);
+            events.push(diagnostics_result(&authority_domain_id, &command_id));
+            events.push(corrupt_tail);
+            let storage = ScriptedReplayStorage { events };
+            let error = find_diagnostics_result(
+                &storage,
+                &authority_domain_id,
+                &command_id,
+                DiagnosticsResultKind::Audit,
+            )
+            .await
+            .expect_err("a gap or unspecified kind must reject before result search");
             assert_eq!(error.code(), tonic::Code::Internal);
             assert!(error.message().contains("corrupt replay"));
         }
     }
 
     #[tokio::test]
-    async fn delivered_checkpoint_requires_an_exact_present_audit_source() {
+    async fn delivered_checkpoint_requires_the_canonical_audit_pair() {
         let authority_domain_id = AuthorityDomainId {
             value: "authority-main".to_owned(),
         };
@@ -2618,30 +2848,173 @@ mod tests {
                 .await
                 .unwrap(),
             None,
-            "None == None must not turn a source-less audit into a checkpoint"
+            "a source-less audit is not a delivery checkpoint"
         );
 
-        let transition = delivered_transition(&authority_domain_id, &command_id);
-        let matching_audit = stored_event(
-            &authority_domain_id,
-            2,
-            StoredEventKind::AuditRecord,
-            AuditRecord {
-                source_event_id: Some(transition.event_id.clone()),
-                ..AuditRecord::default()
-            }
-            .encode_to_vec(),
-        );
-        let expected = matching_audit.event_id.clone();
         let exact_match = ScriptedReplayStorage {
-            events: vec![transition, matching_audit],
+            events: canonical_delivery_prefix(&authority_domain_id, &command_id),
         };
         assert_eq!(
             find_delivered_checkpoint(&exact_match, &authority_domain_id, &command_id)
                 .await
-                .unwrap(),
-            Some(expected)
+                .unwrap()
+                .and_then(|event_id| event_id.lsn),
+            Some(Lsn { value: 2 })
         );
+    }
+
+    #[tokio::test]
+    async fn unrelated_later_audit_cannot_shift_the_materialization_bound() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+        let mut events = canonical_delivery_prefix(&authority_domain_id, &command_id);
+        let unrelated_event_id = EventId {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            lsn: Some(Lsn { value: 3 }),
+        };
+        events.push(RecordedEvent {
+            event_id: unrelated_event_id.clone(),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::AuditRecord as i32,
+                payload: AuditRecord {
+                    audit_event_id: Some(unrelated_event_id),
+                    kind: AuditEventKind::CommandFailed as i32,
+                    command_id: Some(command_id.clone()),
+                    reason_code: "diagnostics_materialization_failed".to_owned(),
+                    source_event_id: Some(events[0].event_id.clone()),
+                    ..AuditRecord::default()
+                }
+                .encode_to_vec(),
+            },
+        });
+        let storage = ScriptedReplayStorage { events };
+
+        assert_eq!(
+            find_delivered_checkpoint(&storage, &authority_domain_id, &command_id)
+                .await
+                .unwrap()
+                .and_then(|event_id| event_id.lsn),
+            Some(Lsn { value: 2 }),
+            "source equality alone would incorrectly select the later audit"
+        );
+    }
+
+    #[tokio::test]
+    async fn diagnostics_result_requires_canonical_provenance_and_expected_family() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+        let canonical = diagnostics_result(&authority_domain_id, &command_id);
+        let mut cases = Vec::new();
+        cases.push((
+            "observation kind",
+            mutate_observation(canonical.clone(), |observation| {
+                observation.kind = ObservationKind::Event as i32;
+            }),
+        ));
+        cases.push((
+            "observation domain",
+            mutate_observation(canonical.clone(), |observation| {
+                observation.authority_domain_id = Some(AuthorityDomainId {
+                    value: "authority-other".to_owned(),
+                });
+            }),
+        ));
+        cases.push((
+            "content type",
+            mutate_observation(canonical.clone(), |observation| {
+                observation.payload.as_mut().unwrap().content_type =
+                    PayloadContentType::Json as i32;
+            }),
+        ));
+        cases.push((
+            "command correlation",
+            mutate_observation(canonical.clone(), |observation| {
+                observation.correlations.push(TypedCorrelation {
+                    r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+                        value: "other-command".to_owned(),
+                    })),
+                });
+            }),
+        ));
+        cases.push((
+            "missing result",
+            mutate_observation(canonical.clone(), |observation| {
+                let payload = observation.payload.as_mut().unwrap();
+                let mut result = DiagnosticsResult::decode(payload.payload.as_slice()).unwrap();
+                result.result = None;
+                payload.payload = result.encode_to_vec();
+            }),
+        ));
+        cases.push((
+            "result family",
+            mutate_observation(canonical.clone(), |observation| {
+                let payload = observation.payload.as_mut().unwrap();
+                let mut result = DiagnosticsResult::decode(payload.payload.as_slice()).unwrap();
+                result.result = Some(diagnostics_result::Result::Command(Default::default()));
+                payload.payload = result.encode_to_vec();
+            }),
+        ));
+        cases.push((
+            "materialization bound",
+            mutate_observation(canonical, |observation| {
+                let payload = observation.payload.as_mut().unwrap();
+                let mut result = DiagnosticsResult::decode(payload.payload.as_slice()).unwrap();
+                result.as_of_lsn = Some(Lsn { value: 1 });
+                payload.payload = result.encode_to_vec();
+            }),
+        ));
+
+        for (case, candidate) in cases {
+            let mut events = canonical_delivery_prefix(&authority_domain_id, &command_id);
+            events.push(candidate);
+            let error = find_diagnostics_result(
+                &ScriptedReplayStorage { events },
+                &authority_domain_id,
+                &command_id,
+                DiagnosticsResultKind::Audit,
+            )
+            .await
+            .expect_err(case);
+            assert_eq!(error.code(), tonic::Code::Internal, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_diagnostics_results_fail_instead_of_selecting_the_first() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: "query-command".to_owned(),
+        };
+        let first = diagnostics_result(&authority_domain_id, &command_id);
+        let second = stored_event(
+            &authority_domain_id,
+            4,
+            StoredEventKind::Observation,
+            first.payload.payload.clone(),
+        );
+        let mut events = canonical_delivery_prefix(&authority_domain_id, &command_id);
+        events.extend([first, second]);
+
+        let error = find_diagnostics_result(
+            &ScriptedReplayStorage { events },
+            &authority_domain_id,
+            &command_id,
+            DiagnosticsResultKind::Audit,
+        )
+        .await
+        .expect_err("multiple durable results are conflicting recovery provenance");
+        assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.message().contains("multiple diagnostics result"));
     }
 
     #[test]

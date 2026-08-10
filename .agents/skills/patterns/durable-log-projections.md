@@ -1,6 +1,6 @@
 # Durable-Log Projection Folds
 
-Rebuild each in-memory domain projection by reading one authority-domain log in increasing LSN order, validating event identity/order, and folding every event through that projection's `apply` or `observe` function.
+Rebuild each in-memory domain projection by reading one authority-domain log in exact-successor, gap-free LSN order, validating event identity/order, and folding every event through that projection's `apply` or `observe` function.
 
 ## Rationale
 
@@ -16,7 +16,7 @@ The durable log is authoritative; command, authority, and session indexes are de
 ```rust
 pub async fn rebuild_from_log<S: Storage>(/* ... */) -> Result<CommandIndex, AcceptanceError> {
     let mut index = CommandIndex::new();
-    // validate domain and strictly increasing LSN for each event
+    // validate domain and require event_lsn == previous_lsn + 1
     for event in events {
         index.apply(&event)?;
         previous_lsn = event_lsn;
@@ -37,7 +37,7 @@ pub async fn rebuild_from_log<S: Storage>(/* ... */) -> Result<AuthorityRegistry
     let mut registry = AuthorityRegistry::new();
     for event in events {
         let (event_domain, event_lsn) = event_identity(&event)?;
-        // reject wrong domain or non-increasing LSN
+        // reject wrong domain or any non-successor LSN (gap/duplicate/reversal)
         registry.observe(&event)?;
     }
     Ok(registry)
@@ -56,7 +56,7 @@ pub async fn rebuild_from_log<S: Storage>(/* ... */) -> Result<SessionRegistry, 
     let mut registry = SessionRegistry::new();
     for event in events {
         let (event_domain, event_lsn) = event_identity(&event)?;
-        // reject wrong domain or non-increasing LSN
+        // reject wrong domain or any non-successor LSN (gap/duplicate/reversal)
         registry.observe(&event)?;
     }
     Ok(registry)
@@ -80,6 +80,6 @@ The shape intentionally mirrors authority replay so each projection can reconstr
 ## Common Violations
 
 - Reconstructing one projection from another projection's private state.
-- Applying events without checking domain identity and monotonic LSN order.
+- Applying events without checking domain identity and exact-successor, gap-free LSN order.
 - Giving a snapshot a scope that hides earlier events required by sibling projections.
 - Reinterpreting observations as command transitions rather than folding the explicit durable transition event.

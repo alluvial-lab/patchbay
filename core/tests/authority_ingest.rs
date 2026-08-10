@@ -245,6 +245,19 @@ async fn events(storage: &RusqliteStorage) -> Vec<RecordedEvent> {
         .expect("the in-memory authority log remains readable")
 }
 
+async fn append_semantically_invalid_grant(storage: &RusqliteStorage) {
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Grant as i32,
+                payload: Grant::default().encode_to_vec(),
+            },
+        )
+        .await
+        .expect("the storage boundary admits a known-kind corruption fixture");
+}
+
 #[derive(Clone)]
 struct LoseFirstGrantAppendAcknowledgement {
     inner: RusqliteStorage,
@@ -360,6 +373,61 @@ async fn ingest_grant_writes_event_and_warms_registry() {
         StoredEventKind::try_from(committed[1].payload.kind).unwrap(),
         StoredEventKind::AuditRecord
     );
+}
+
+#[tokio::test]
+async fn grant_warming_tail_is_atomic_on_late_semantic_failure() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let candidate = grant("atomic-warm");
+    let mut original = AuthorityRegistry::new();
+    ingest_grant(&storage, &mut original, &domain(), candidate.clone())
+        .await
+        .expect("the canonical source must be durable before corruption is injected");
+    append_semantically_invalid_grant(&storage).await;
+    let durable_before = events(&storage).await;
+
+    let mut fresh = AuthorityRegistry::new();
+    let projection_before = fresh.clone();
+    ingest_grant(&storage, &mut fresh, &domain(), candidate)
+        .await
+        .expect_err("a later semantically invalid record must reject the complete warm");
+
+    assert_eq!(
+        fresh, projection_before,
+        "removing isolated staging would leak the valid leading grant"
+    );
+    assert_eq!(events(&storage).await, durable_before);
+}
+
+#[tokio::test]
+async fn descendant_preflight_warm_is_atomic_on_late_semantic_failure() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut fixture_projection = AuthorityRegistry::new();
+    ingest_grant(
+        &storage,
+        &mut fixture_projection,
+        &domain(),
+        grant("atomic-parent"),
+    )
+    .await
+    .unwrap();
+    let (_, candidate) = valid_descendant_candidate(&storage, "atomic-parent")
+        .await
+        .unwrap();
+    append_semantically_invalid_grant(&storage).await;
+    let durable_before = events(&storage).await;
+
+    let mut fresh = AuthorityRegistry::new();
+    let projection_before = fresh.clone();
+    ingest_descendant_grant(&storage, &mut fresh, &domain(), candidate)
+        .await
+        .expect_err("a corrupt later record must reject before descendant append");
+
+    assert_eq!(
+        fresh, projection_before,
+        "removing isolated preflight staging would leak the valid parent grant"
+    );
+    assert_eq!(events(&storage).await, durable_before);
 }
 
 #[tokio::test]
