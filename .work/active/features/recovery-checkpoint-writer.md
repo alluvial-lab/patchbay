@@ -327,3 +327,6 @@ npm --prefix contracts/ts run check:drift
 - **Parked:** whole-core composite/per-projection checkpointing, measured-cost scheduling, and formal promotion; each requires a separate scope/promotion act.
 - **Rejected:** public-snapshot-only writing, whole-core claims, checkpoint-authoritative ordering, and checkpoint failure backpressure.
 - **Skipped/degraded:** the delegated endpoint explicitly prohibits nested agents and peer mechanisms, so no independent design-time pass ran. This is non-blocking by policy. Effective implementation/feature/final review weight remains `thorough` (source: explicit operator selection), and all future findings remain receiver-adjudicated proposals.
+
+## Status (wrapped 2026-08-10)
+Design is committed at `implementing`; implementation remains dependency-blocked on replay clean review plus unfinished session-registry and adapter-source-ordering features.
