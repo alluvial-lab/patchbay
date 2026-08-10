@@ -18,7 +18,7 @@ Consolidate the three dogfooding UX ideas into a mockup-first cockpit polish fea
 
 - `idea-cockpit-settings-section`: add a settings area beginning with a tool-call visibility toggle while preserving transcript fidelity in the core.
 - `idea-session-list-row-redesign`: establish explicit session-row hierarchy and stable, mobile-safe cwd presentation without hiding activity state.
-- `idea-delivery-line-layout-stability`: fold delivery state into instruction cards and reserve stable space for interrupt affordances to prevent layout shifts and separate-box noise.
+- `idea-delivery-line-layout-stability`: fold delivery state into instruction cards and reserve the interrupt action slot across states to remove control-driven reflow pressure and separate-box noise.
 
 This supports the v1 mobile-responsive/switch-quality must.
 
@@ -29,7 +29,7 @@ Reuse the existing shared presentation primitives and state registry; improve hi
 - **Settings entry point**: use a reversible overlay/sheet composed by the existing cockpit shell rather than a new settings navigation model — it keeps the current desktop rail/mobile overflow topology intact and makes the first preference easy to extend.
 - **Tool-call visibility semantics**: make visibility a presentation-only preference with a `true` default; filter/collapse at render time while retaining all observations in the folded model and reconnect path — this preserves transcript fidelity and avoids a second source of truth.
 - **Session-row context**: identity tuple first, human label second, cwd/project third, with one-line truncation and an explicit activity signal — labels remain scan aids and never replace verified target identity.
-- **Delivery composition**: place `CommandState`, race explanation, failure/retry context, and cancel/interrupt affordances inside one instruction card with a reserved action slot — this removes box noise and prevents state-transition layout shifts without changing protocol semantics.
+- **Delivery composition**: place `CommandState`, race explanation, failure/retry context, and cancel/interrupt affordances inside one instruction card with a reserved action slot — this removes box noise and guarantees the action-slot reserve across state transitions without changing protocol semantics. This feature does not claim browser geometry beyond the bounded DOM/CSS structure it tests.
 - **Review posture**: direct source mapping only; no nested advisory agent was used because the delegated task forbids recursion. The prominent surface is risk-reduced through four committed option mocks, existing component reuse, and explicit acceptance evidence in child stories.
 
 ## Architectural choice
@@ -113,7 +113,7 @@ export function renderSessionStatus(
 
 **Acceptance Criteria**:
 - [ ] Desktop and mobile rows show the full identity tuple before intent-bearing labels/actions.
-- [ ] Cwd/project context truncates without horizontal page overflow and remains available as accessible text.
+- [ ] Cwd/project context uses bounded one-line truncation structure and retains its full value as accessible text; no browser page-geometry claim is made.
 - [ ] Selection, needs-you, adapter diagnostics, and canonical status bindings continue to render through the existing primitives.
 
 ### Unit 3: Stable instruction-card delivery composition
@@ -138,13 +138,13 @@ export function renderInstructionCard(
 
 **Implementation Notes**:
 - Refactor the existing operator command/message path to render instruction text, stable target identity, delivery state, terminal-race explanation, failure vocabulary, and contextual actions in one semantic card.
-- Reserve a fixed/minimum-height action slot for cancel/interrupt controls on every card state. Empty slots are intentional; they prevent accepted/delivered/running transitions from moving surrounding transcript content.
+- Reserve a fixed/minimum-height action slot for cancel/interrupt controls on every card state. Empty slots are intentional structural reserve; tests prove the slot and bounded CSS contract remain present, not unmeasured browser geometry.
 - Reuse the canonical `renderOperationDelivery`, failure mapping, retry-safety indicator, and lockdown disabling. Never infer authority or retry safety from visual availability.
 
 **Acceptance Criteria**:
 - [ ] Accepted, delivered, running, completed, failed, cancelled, expired, and superseded command states remain registry-derived and visually distinct from liveness.
 - [ ] The interrupt/cancel affordance appears in the reserved slot when supported and remains keyboard/focus accessible when present.
-- [ ] State changes, failure details, and race explanations do not create a second floating delivery box or cause horizontal/vertical layout shifts at mobile widths.
+- [ ] State changes, failure details, and race explanations stay in one bounded delivery region whose action-slot element and CSS reserve remain present at mobile widths; no browser-geometry claim is made.
 
 ## Implementation Order
 
@@ -165,7 +165,7 @@ The parent feature remains the ownership and review bundle; child stories are ch
 ## Testing
 
 - **Settings/presentation tests**: extend `web-cockpit/tests/shell.test.ts` and `web-cockpit/tests/model.test.ts` to prove default/persisted visibility, authority-domain scoping, and unchanged folded observations/ordering.
-- **Session-row interface tests**: extend `web-cockpit/tests/shell.test.ts` for identity-first DOM order, cwd truncation/no overflow at mobile width, selected/needs-you states, and stale connectivity dominance.
+- **Session-row interface tests**: extend `web-cockpit/tests/shell.test.ts` for identity-first DOM order, bounded cwd truncation structure plus accessible full text, selected/needs-you states, and stale connectivity dominance.
 - **Delivery regression tests**: extend `web-cockpit/tests/shell.test.ts` and delivery-focused UI tests for every representative canonical state, race/failure labels, lockdown disabling, stable reserved action space, and no duplicate delivery box.
 - **Conformance check**: run the existing presentation registry check and the web-cockpit type/test suite; no new protocol vector is needed because this feature changes no protocol semantics.
 
@@ -210,3 +210,22 @@ The parent feature remains the ownership and review bundle; child stories are ch
 - `git diff --check` — passed.
 
 **Notes**: review weight `thorough`, pass 1; direct-read/fix only per caller prohibition on nested reviewers. No protocol, generated contract, foundation assertion, selected mock, or feature scope changed.
+
+## Review (2026-08-10) — thorough pass 2 fixes
+
+**Verdict**: Request changes addressed; retained at `stage: review` for the required thorough convergence pass.
+
+**Accepted findings fixed**:
+- Settings now restores each reusable background element's prior `inert` state after any modal-triggered full render, and focus restoration selects the opener visible in the current responsive layout rather than the layout that opened the modal;
+- a Settings-close → responsive mobile Elicitation regression proves the reusable sheet becomes interactive again and receives focus;
+- cancellation-first and interrupt-first presentation retain a typed pending control-request relation until the original target receives its own durable terminal transition, then render `<terminal> after cancellation/interrupt requested`; terminal-first ordering remains `<terminal> before ... arrived`;
+- the relation is presentation-only: it neither terminalizes the target nor changes core/adapter cancellation authority or semantics;
+- the shell no longer nests a production `main` landmark, and axe runs against the actual `index.html` mount before Settings, during the modal, and with the mobile Elicitation sheet open;
+- layout evidence is explicitly limited to bounded session-context rendering plus one action-slot structure and CSS reserve in every delivery state; no unmeasured browser-geometry/no-layout-shift claim remains.
+
+**Verification**:
+- `npm --prefix web-cockpit test` — passed: build/typecheck/browser bundle plus 128 tests, including the production-mount axe states and both durable cancellation/interrupt arrival orders;
+- `npm --prefix contracts/ts run check:presentation` — passed: 5 registries, contrast, showcase bindings, and axe-core scan;
+- `git diff --check` — passed.
+
+**Notes**: review weight `thorough`, explicit pass 2; execution capability `openai-codex/gpt-5.6-sol` xhigh. Direct implementation only per caller prohibition on nested/peer work. No backend target terminalization, protocol/core/adapter cancellation expansion, backlog item, foundation change, or out-of-scope file was introduced.

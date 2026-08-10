@@ -36,3 +36,5 @@ Add the first settings surface to the existing cockpit shell. The initial prefer
 - Simplification: settings is an overlay over the existing destination shell; no new destination registry, protocol field, transcript model, or command state was introduced.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+- Review pass 2: modal teardown now restores every reusable background element's prior `inert` value across full shell renders; focus restoration resolves against the currently visible responsive opener. The Settings-close → mobile-Elicitation regression proves the reused sheet loses Settings' temporary inertness, opens, and receives focus after a desktop-to-mobile change.
+- Review pass 2 accessibility evidence: axe runs against the actual `index.html` production mount before Settings, during the modal, and with the mobile Elicitation sheet open.

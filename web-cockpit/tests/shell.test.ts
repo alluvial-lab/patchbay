@@ -48,6 +48,7 @@ import {
   type SessionIdentity,
   type SessionView,
 } from "../src/domain/model.js";
+import { createMobileElicitationSheet } from "../src/ui/elicitation.js";
 import { renderIcon, type IconName } from "../src/ui/icons.js";
 import { createMarkdownRenderer } from "../src/ui/markdown.js";
 import {
@@ -143,6 +144,11 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
   assert.match(css, /\.cockpit \.timeline\s*\{[^}]*max-width:\s*860px/s);
   assert.match(css, /\.cockpit \.msg--agent\s*\{[^}]*560px/s);
   assert.match(css, /@media \(max-width:\s*760px\)/);
+  assert.match(css, /\.cockpit \.session-row\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden/s);
+  assert.match(
+    css,
+    /\.cockpit \.session-row__identity,[\s\S]*?\.cockpit \.session-row__context\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/,
+  );
   assert.match(css, /\.cockpit \.instruction-card__delivery\s*\{[^}]*min-height:\s*56px/s);
   assert.match(css, /\.cockpit \.delivery-line__actions\s*\{[^}]*flex:\s*0 0 96px/s);
   assert.match(css, /--mobile-bottom-nav-reserve:\s*calc\(72px \+ env\(safe-area-inset-bottom, 0px\)\)/);
@@ -309,29 +315,84 @@ test("settings preference is domain-scoped, modal, keyboard-contained, and prese
   assert.equal(other.element.querySelector<HTMLButtonElement>(".settings-toggle")!.getAttribute("aria-pressed"), "true");
 });
 
-test("production cockpit shell and settings modal have no axe-core violations", async () => {
-  const dom = new JSDOM("<!doctype html><html lang='en'><head><title>Cockpit</title></head><body></body></html>", {
-    runScripts: "dangerously",
-    url: "https://patchbay.test",
-  });
-  const shell = createCockpitShell(dom.window.document, withSessions(session("session-1")), {
+test("Settings close restores the reusable mobile Elicitation sheet and a currently visible opener", async () => {
+  const dom = new JSDOM("<!doctype html><body></body>", { url: "https://patchbay.test" });
+  let mobile = false;
+  const view = session("session-1");
+  const model = withSessions(view);
+  model.elicitations.set("question-1", question(view.identity));
+  const mobileSheet = createMobileElicitationSheet(dom.window.document, { isMobile: () => mobile });
+  const shell = createCockpitShell(dom.window.document, model, {
     markdown: createMarkdownRenderer(dom.window as unknown as Window),
-    isMobile: () => false,
+    isMobile: () => mobile,
+    elicitation: {
+      mobileSheet,
+      operationContext: () => { throw new Error("not submitted"); },
+      submit: () => undefined,
+    },
   });
   dom.window.document.body.append(shell.element);
   shell.element.querySelector<HTMLButtonElement>('.rail [data-destination="settings"]')!.click();
   await Promise.resolve();
+  assert.equal(mobileSheet.element.hasAttribute("inert"), true);
+
+  mobile = true;
+  shell.refreshLayout();
+  shell.element.querySelector<HTMLButtonElement>('[aria-label="Close cockpit settings"]')!.click();
+  await Promise.resolve();
+
+  const visibleOpener = shell.element.querySelector<HTMLButtonElement>("#cockpit-more-destinations")!;
+  assert.equal(dom.window.document.activeElement, visibleOpener);
+  assert.equal(mobileSheet.element.hasAttribute("inert"), false);
+  assert.equal(mobileSheet.backdrop.hasAttribute("inert"), false);
+
+  shell.select(sessionKey(view.identity));
+  shell.element.querySelector<HTMLElement>(".elicitation-card--inline-teaser")!.click();
+  assert.equal(mobileSheet.isOpen, true);
+  assert.equal(mobileSheet.element.hasAttribute("inert"), false);
+  assert.equal(dom.window.document.activeElement, mobileSheet.element.querySelector(".sheet__close"));
+});
+
+test("actual production mount has no axe-core violations before settings, during modal, or on mobile", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const dom = new JSDOM(html, {
+    runScripts: "dangerously",
+    url: "https://patchbay.test",
+  });
+  let mobile = false;
+  const view = session("session-1");
+  const model = withSessions(view);
+  model.elicitations.set("question-1", question(view.identity));
+  const mobileSheet = createMobileElicitationSheet(dom.window.document, { isMobile: () => mobile });
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => mobile,
+    elicitation: {
+      mobileSheet,
+      operationContext: () => { throw new Error("not submitted"); },
+      submit: () => undefined,
+    },
+  });
+  const mount = dom.window.document.querySelector<HTMLElement>("main[data-patchbay-cockpit]")!;
+  mount.replaceChildren(shell.element);
+  assert.equal(dom.window.document.querySelectorAll("main").length, 1);
+  assert.equal(shell.element.querySelector("main"), null);
 
   dom.window.eval(axe.source);
-  const result = await (dom.window as unknown as { axe: typeof axe }).axe.run(shell.element, {
-    rules: { "color-contrast": { enabled: false } },
-  });
-  const violationIds = Array.from(result.violations, (violation) => violation.id);
-  assert.deepEqual(
-    violationIds,
-    [],
-    Array.from(result.violations, (violation) => `${violation.id}: ${violation.help}`).join("\n"),
-  );
+  await assertAxeClean(dom, "production desktop mount");
+
+  shell.element.querySelector<HTMLButtonElement>('.rail [data-destination="settings"]')!.click();
+  await Promise.resolve();
+  await assertAxeClean(dom, "production Settings modal");
+
+  shell.element.querySelector<HTMLButtonElement>('[aria-label="Close cockpit settings"]')!.click();
+  await Promise.resolve();
+  mobile = true;
+  shell.select(sessionKey(view.identity));
+  shell.refreshLayout();
+  shell.element.querySelector<HTMLElement>(".elicitation-card--inline-teaser")!.click();
+  assert.equal(mobileSheet.isOpen, true);
+  await assertAxeClean(dom, "production mobile Elicitation state");
 });
 
 test("mobile reserves bottom-navigation space and More has a complete expanded-state contract", async () => {
@@ -823,6 +884,17 @@ test("deduplicated submission is visible as already in flight", () => {
   assert.match(indicator.textContent!, /Already in flight/);
   assert.match(indicator.textContent!, /no duplicate submitted/);
 });
+
+async function assertAxeClean(dom: JSDOM, context: string): Promise<void> {
+  const result = await (dom.window as unknown as { axe: typeof axe }).axe.run(dom.window.document, {
+    rules: { "color-contrast": { enabled: false } },
+  });
+  assert.deepEqual(
+    Array.from(result.violations, (violation) => violation.id),
+    [],
+    `${context}\n${Array.from(result.violations, (violation) => `${violation.id}: ${violation.help}`).join("\n")}`,
+  );
+}
 
 function session(
   runtimeSessionId: string,

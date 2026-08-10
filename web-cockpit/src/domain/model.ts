@@ -115,12 +115,20 @@ export type OperationTargetView =
   | { kind: "runtime-session"; identity: SessionIdentity }
   | { kind: "operational-resource"; identity: ResourceIdentityView };
 
+/** Presentation-only correlation to an accepted cancel/interrupt Operation. */
+export interface PendingControlRequest {
+  commandId: string;
+  kind: OperationKind.CANCEL | OperationKind.INTERRUPT;
+  lsn: bigint;
+}
+
 export interface CommandView {
   id: string;
   state: OperationState;
   lsn: bigint;
   failureCode?: FailureCode;
   race?: string;
+  pendingControlRequest?: PendingControlRequest;
   target?: OperationTargetView;
   operation: Operation;
   history: CommandHistoryEntry[];
@@ -650,16 +658,25 @@ function foldOperation(model: PresentationModel, operation: Operation, lsn: bigi
   const targetCommandId = exactCommandCorrelation(operation.correlations);
   if (!targetCommandId) return;
   const targetCommand = model.commands.get(targetCommandId);
-  if (
-    !targetCommand
-    || !isTerminalCommand(targetCommand.state)
-    || targetCommand.race
-    || lsn <= targetCommand.lsn
-  ) return;
-  const action = operation.kind === OperationKind.CANCEL ? "cancellation" : "interrupt";
+  if (!targetCommand || targetCommand.race || lsn <= targetCommand.lsn) return;
+
+  const action = controlRequestLabel(operation.kind);
+  if (isTerminalCommand(targetCommand.state)) {
+    model.commands.set(targetCommandId, {
+      ...targetCommand,
+      race: `${terminalStateLabel(targetCommand.state)} before ${action} arrived`,
+    });
+    return;
+  }
+  if (targetCommand.pendingControlRequest) return;
+
   model.commands.set(targetCommandId, {
     ...targetCommand,
-    race: `${terminalStateLabel(targetCommand.state)} before ${action} arrived`,
+    pendingControlRequest: {
+      commandId: id,
+      kind: operation.kind,
+      lsn,
+    },
   });
 }
 
@@ -679,11 +696,17 @@ function foldCommandTransition(
     throw new Error(`command transition ${id} has unspecified target state`);
   }
 
+  const terminal = isTerminalCommand(transition.toState);
+  const race = terminal && current.pendingControlRequest && !current.race
+    ? `${terminalStateLabel(transition.toState)} after ${controlRequestLabel(current.pendingControlRequest.kind)} requested`
+    : current.race;
   const updated: CommandView = {
     ...current,
     state: transition.toState,
     lsn,
     failureCode: transition.failureCode || undefined,
+    race,
+    pendingControlRequest: terminal ? undefined : current.pendingControlRequest,
     history: [
       ...current.history,
       {
@@ -1589,6 +1612,10 @@ function deriveTerminalRace(
     race = `${terminalStateLabel(command.state)} before later ${terminalStateLabel(candidate).toLocaleLowerCase()}`;
   }
   model.commands.set(commandId, { ...command, race });
+}
+
+function controlRequestLabel(kind: PendingControlRequest["kind"]): "cancellation" | "interrupt" {
+  return kind === OperationKind.CANCEL ? "cancellation" : "interrupt";
 }
 
 function observationTerminalCandidate(failureCode: FailureCode): OperationState | undefined {

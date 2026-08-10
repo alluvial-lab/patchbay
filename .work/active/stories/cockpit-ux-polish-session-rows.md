@@ -24,7 +24,7 @@ Refine the existing session list row so an operator can switch quickly without l
 ## Acceptance evidence
 
 - [x] Existing session-list tests cover identity-first order, selected/needs-you styling, stale dominance, and cwd overflow behavior.
-- [x] A mobile-width DOM/CSS check shows the identity and activity remain readable without horizontal page overflow.
+- [x] DOM/CSS structure checks keep identity/context nodes bounded and preserve full cwd text through accessible labeling; they do not claim measured mobile page geometry.
 - [x] Re-labelling a session does not change its selection key or target identity.
 
 ## Implementation notes
@@ -35,3 +35,4 @@ Refine the existing session list row so an operator can switch quickly without l
 - Simplification: reused the existing identity formatter, status primitive, and row selection key; no new session state or label-derived identity was added.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+- Review pass 2 evidence clarification: session-row coverage proves identity-first DOM order, bounded one-line context styles, accessible full cwd text, and stable selection identity. It does not claim browser-measured overflow or geometry.

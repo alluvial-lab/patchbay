@@ -99,6 +99,7 @@ export function createCockpitShell(
   let observedSelectedKey: string | undefined;
   let observedConnectivity: SessionConnectivityState | undefined;
   const isMobile = options.isMobile ?? (() => document.defaultView?.matchMedia?.("(max-width: 760px)").matches ?? false);
+  const settingsBackgroundInert = new Map<HTMLElement, boolean>();
 
   const resize = () => applyLayout();
   document.defaultView?.addEventListener("resize", resize);
@@ -108,6 +109,7 @@ export function createCockpitShell(
   }
 
   function render(): void {
+    restoreSettingsBackgroundInert();
     // The render is a full DOM rebuild, which would lose the timeline scroll
     // position on every streamed delta. Capture whether the user was already
     // near the bottom before the rebuild; only stick to the bottom if so
@@ -133,7 +135,7 @@ export function createCockpitShell(
         render();
       },
     });
-    const main = document.createElement("main");
+    const main = document.createElement("section");
     main.className = "main";
     detail = renderSessionDetail(document, model, selectedSession(), {
       markdown: options.markdown,
@@ -197,7 +199,10 @@ export function createCockpitShell(
         },
         onClose: closeSettings,
       });
-      for (const background of [...root.children]) background.setAttribute("inert", "");
+      for (const background of [...root.children] as HTMLElement[]) {
+        settingsBackgroundInert.set(background, background.hasAttribute("inert"));
+        background.setAttribute("inert", "");
+      }
       root.append(settings.backdrop, settings.dialog);
       queueMicrotask(() => settings.toggle.focus());
     }
@@ -205,7 +210,7 @@ export function createCockpitShell(
     if (pendingSettingsFocusRestore) {
       const source = pendingSettingsFocusRestore;
       pendingSettingsFocusRestore = undefined;
-      queueMicrotask(() => settingsOpener(root, source)?.focus());
+      queueMicrotask(() => settingsOpener(root, source, isMobile())?.focus());
     }
     const timeline = root.querySelector<HTMLElement>(".timeline");
     if (timeline) {
@@ -253,6 +258,13 @@ export function createCockpitShell(
     pendingSettingsFocusRestore = settingsOpenerSource;
     settingsOpen = false;
     render();
+  }
+
+  function restoreSettingsBackgroundInert(): void {
+    for (const [background, wasInert] of settingsBackgroundInert) {
+      background.toggleAttribute("inert", wasInert);
+    }
+    settingsBackgroundInert.clear();
   }
 
   function selectDestination(next: CockpitDestination, source?: NavigationSource): void {
@@ -327,6 +339,7 @@ export function createCockpitShell(
     refreshLayout: applyLayout,
     destroy() {
       document.defaultView?.removeEventListener("resize", resize);
+      restoreSettingsBackgroundInert();
       options.elicitation?.mobileSheet?.close();
       root.replaceChildren();
     },
@@ -499,13 +512,21 @@ function isOverflowDestination(value: CockpitDestination): boolean {
   return value === "diagnostics" || value === "files" || value === "git" || value === "settings";
 }
 
-function settingsOpener(root: HTMLElement, source: NavigationSource): HTMLButtonElement | null {
-  const selector = source === "rail"
+function settingsOpener(
+  root: HTMLElement,
+  source: NavigationSource,
+  mobile: boolean,
+): HTMLButtonElement | null {
+  const visibleSelector = mobile
+    ? '#cockpit-more-destinations'
+    : '.rail [data-destination="settings"]';
+  const sourceSelector = source === "rail"
     ? '.rail [data-destination="settings"]'
     : source === "overflow"
       ? '#cockpit-more-destinations'
       : '[data-destination="settings"]';
-  return root.querySelector<HTMLButtonElement>(selector);
+  return root.querySelector<HTMLButtonElement>(visibleSelector)
+    ?? root.querySelector<HTMLButtonElement>(sourceSelector);
 }
 
 function capitalize(value: string): string {

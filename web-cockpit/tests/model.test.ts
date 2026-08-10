@@ -385,7 +385,7 @@ test("first durable command terminal remains projected after a late terminal can
   assert.equal(model.commands.get("command-1")!.history.length, 3);
 });
 
-test("terminal race labels derive from correlated durable ordering without rewriting state", () => {
+test("terminal race labels derive from both durable control-request arrival orders without rewriting state", () => {
   let completedFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-1"));
   completedFirst = fold(completedFirst, transitionEvent(2n, "command-1", OperationState.ACCEPTED, OperationState.DELIVERED));
   completedFirst = fold(completedFirst, transitionEvent(3n, "command-1", OperationState.DELIVERED, OperationState.COMPLETED));
@@ -393,16 +393,40 @@ test("terminal race labels derive from correlated durable ordering without rewri
   assert.equal(completedFirst.commands.get("command-1")!.state, OperationState.COMPLETED);
   assert.equal(completedFirst.commands.get("command-1")!.race, "Completed before cancellation arrived");
 
-  let cancelledFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-2"));
-  cancelledFirst = fold(cancelledFirst, transitionEvent(2n, "command-2", OperationState.ACCEPTED, OperationState.DELIVERED));
-  cancelledFirst = fold(cancelledFirst, transitionEvent(3n, "command-2", OperationState.DELIVERED, OperationState.CANCELLED));
-  cancelledFirst = fold(cancelledFirst, resultObservationEvent(4n, "command-2"));
-  assert.equal(cancelledFirst.commands.get("command-2")!.state, OperationState.CANCELLED);
-  assert.equal(cancelledFirst.commands.get("command-2")!.race, "Cancelled before completion arrived");
+  let cancellationFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-2"));
+  cancellationFirst = fold(cancellationFirst, transitionEvent(2n, "command-2", OperationState.ACCEPTED, OperationState.DELIVERED));
+  cancellationFirst = fold(cancellationFirst, correlatedOperationEvent(3n, "cancel-command-2", OperationKind.CANCEL, "command-2"));
+  assert.deepEqual(cancellationFirst.commands.get("command-2")!.pendingControlRequest, {
+    commandId: "cancel-command-2",
+    kind: OperationKind.CANCEL,
+    lsn: 3n,
+  });
+  assert.equal(cancellationFirst.commands.get("command-2")!.state, OperationState.DELIVERED);
+  assert.equal(cancellationFirst.commands.get("command-2")!.race, undefined);
+  cancellationFirst = fold(cancellationFirst, transitionEvent(4n, "command-2", OperationState.DELIVERED, OperationState.COMPLETED));
+  assert.equal(cancellationFirst.commands.get("command-2")!.state, OperationState.COMPLETED);
+  assert.equal(cancellationFirst.commands.get("command-2")!.pendingControlRequest, undefined);
+  assert.equal(cancellationFirst.commands.get("command-2")!.race, "Completed after cancellation requested");
 
-  cancelledFirst = fold(cancelledFirst, resultObservationEvent(5n, "command-2", FailureCode.EXECUTION_FAILED));
+  let interruptFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-3"));
+  interruptFirst = fold(interruptFirst, transitionEvent(2n, "command-3", OperationState.ACCEPTED, OperationState.DELIVERED));
+  interruptFirst = fold(interruptFirst, transitionEvent(3n, "command-3", OperationState.DELIVERED, OperationState.RUNNING));
+  interruptFirst = fold(interruptFirst, correlatedOperationEvent(4n, "interrupt-command", OperationKind.INTERRUPT, "command-3"));
+  assert.equal(interruptFirst.commands.get("command-3")!.pendingControlRequest?.kind, OperationKind.INTERRUPT);
+  interruptFirst = fold(interruptFirst, transitionEvent(5n, "command-3", OperationState.RUNNING, OperationState.FAILED));
+  assert.equal(interruptFirst.commands.get("command-3")!.state, OperationState.FAILED);
+  assert.equal(interruptFirst.commands.get("command-3")!.race, "Failed after interrupt requested");
+
+  let cancelledFirst = fold(emptyPresentationModel(), operationEvent(1n, "command-4"));
+  cancelledFirst = fold(cancelledFirst, transitionEvent(2n, "command-4", OperationState.ACCEPTED, OperationState.DELIVERED));
+  cancelledFirst = fold(cancelledFirst, transitionEvent(3n, "command-4", OperationState.DELIVERED, OperationState.CANCELLED));
+  cancelledFirst = fold(cancelledFirst, resultObservationEvent(4n, "command-4"));
+  assert.equal(cancelledFirst.commands.get("command-4")!.state, OperationState.CANCELLED);
+  assert.equal(cancelledFirst.commands.get("command-4")!.race, "Cancelled before completion arrived");
+
+  cancelledFirst = fold(cancelledFirst, resultObservationEvent(5n, "command-4", FailureCode.EXECUTION_FAILED));
   assert.equal(
-    cancelledFirst.commands.get("command-2")!.race,
+    cancelledFirst.commands.get("command-4")!.race,
     "Cancelled before completion arrived",
     "the first later terminal candidate remains the stable explanation",
   );
