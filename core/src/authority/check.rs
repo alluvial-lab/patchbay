@@ -66,7 +66,8 @@ impl GrantCheck for AuthorityRegistry {
             .filter(|grant| grant_matches_request(grant, &issuer_ref, operation_kind, target_scope))
             .collect();
         // Canonical decision provenance: exact UTF-8 grant-id bytes order candidates
-        // within a liveness class; the searches below preserve live > expired > revoked.
+        // within each class. `liveness_at` classifies revocation before expiry; the
+        // searches below select the resulting classes as live > expired > revoked.
         candidates.sort_unstable_by(|left, right| left.grant_id.value.cmp(&right.grant_id.value));
 
         if let Some(grant) = candidates.iter().copied().find(|grant| {

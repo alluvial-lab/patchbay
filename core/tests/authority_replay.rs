@@ -4,10 +4,10 @@ use patchbay_contracts::patchbay::{
     Revocation, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
-    acceptance::GrantCheck,
+    acceptance::{Authorized, GrantCheck, GrantDenied},
     authority::{
         grant_matches_request, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
-        AuthorityRegistry, IssuerContext, IssuerRef,
+        AuthorityRegistry, GrantLiveness, IssuerContext, IssuerRef,
     },
     storage::{
         DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError, StoredSnapshot,
@@ -66,6 +66,33 @@ fn overlapping_grant(id: &str, target_scope: TargetScope) -> Grant {
     }
 }
 
+fn adapter_target() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        ..TargetScope::default()
+    }
+}
+
+fn timestamp(seconds: i64) -> prost_types::Timestamp {
+    prost_types::Timestamp { seconds, nanos: 0 }
+}
+
+async fn ingest_adapter_grant(
+    storage: &RusqliteStorage,
+    registry: &mut AuthorityRegistry,
+    id: &str,
+    expires_at: Option<prost_types::Timestamp>,
+) {
+    let mut grant = overlapping_grant(id, adapter_target());
+    grant.expires_at = expires_at;
+    ingest_grant(storage, registry, &domain("authority-main"), grant)
+        .await
+        .expect("the matching grant fixture must be ingested");
+}
+
 struct VerifiedIssuer {
     actor: ActorId,
     authority_domain_id: AuthorityDomainId,
@@ -104,22 +131,21 @@ impl IssuerContext for VerifiedIssuer {
     }
 }
 
-async fn selected_grant_id(
+async fn grant_decision_at(
     registry: &AuthorityRegistry,
     issuer: &dyn IssuerContext,
     target: &TargetScope,
-) -> GrantId {
+    evaluated_at: &prost_types::Timestamp,
+) -> Result<Authorized, GrantDenied> {
     registry
-        .check(
+        .check_at(
             &domain("authority-main"),
             issuer,
             OperationKind::Instruct,
             target,
+            evaluated_at,
         )
         .await
-        .expect("one of the overlapping live grants must authorize")
-        .grant_id
-        .expect("authorization must retain grant provenance")
 }
 
 fn revocation(id: &str) -> Revocation {
@@ -130,6 +156,13 @@ fn revocation(id: &str) -> Revocation {
         accepted_operation_policy: GrantRevocationPolicy::Cancel as i32,
         reason: "replay fixture".to_owned(),
         ..Revocation::default()
+    }
+}
+
+fn revocation_at(id: &str, seconds: i64) -> Revocation {
+    Revocation {
+        revoked_at: Some(timestamp(seconds)),
+        ..revocation(id)
     }
 }
 
@@ -246,10 +279,13 @@ async fn overlapping_grants_select_the_same_lowest_id_before_and_after_replay() 
         );
     }
 
-    let expected = grant_id("grant-a-domain");
+    let evaluated_at = timestamp(100);
+    let expected = Ok(Authorized {
+        grant_id: Some(grant_id("grant-a-domain")),
+    });
     assert_eq!(
-        selected_grant_id(&live, &issuer, &request_target).await,
-        expected,
+        grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
+        expected.clone(),
     );
 
     let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
@@ -257,7 +293,150 @@ async fn overlapping_grants_select_the_same_lowest_id_before_and_after_replay() 
         .expect("the committed overlapping grants must replay");
     assert_eq!(rebuilt, live);
     assert_eq!(
-        selected_grant_id(&rebuilt, &issuer, &request_target).await,
+        grant_decision_at(&rebuilt, &issuer, &request_target, &evaluated_at).await,
+        expected,
+    );
+}
+
+#[tokio::test]
+async fn lower_id_expired_and_revoked_grants_cannot_defeat_a_live_grant_after_replay() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut live = AuthorityRegistry::new();
+    let evaluated_at = timestamp(100);
+
+    ingest_adapter_grant(&storage, &mut live, "grant-a-expired", Some(evaluated_at)).await;
+    ingest_adapter_grant(&storage, &mut live, "grant-b-revoked", None).await;
+    ingest_revocation(
+        &storage,
+        &mut live,
+        &domain("authority-main"),
+        revocation_at("grant-b-revoked", 99),
+    )
+    .await
+    .unwrap();
+    ingest_adapter_grant(&storage, &mut live, "grant-z-live", None).await;
+
+    for (id, expected_liveness) in [
+        ("grant-a-expired", GrantLiveness::Expired),
+        ("grant-b-revoked", GrantLiveness::Revoked),
+        ("grant-z-live", GrantLiveness::Live),
+    ] {
+        assert_eq!(
+            live.get_grant(&grant_id(id))
+                .expect("the mixed-class grant must be projected")
+                .liveness_at(&evaluated_at),
+            expected_liveness,
+        );
+    }
+
+    let issuer = VerifiedIssuer::operator();
+    let request_target = adapter_target();
+    let expected = Ok(Authorized {
+        grant_id: Some(grant_id("grant-z-live")),
+    });
+    assert_eq!(
+        grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
+        expected.clone(),
+    );
+
+    let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
+        .await
+        .expect("the mixed-class grants must replay");
+    assert_eq!(rebuilt, live);
+    assert_eq!(
+        grant_decision_at(&rebuilt, &issuer, &request_target, &evaluated_at).await,
+        expected,
+    );
+}
+
+#[tokio::test]
+async fn expired_denial_precedes_revoked_and_revoked_expired_classifies_as_revoked() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut live = AuthorityRegistry::new();
+    let evaluated_at = timestamp(100);
+
+    ingest_adapter_grant(
+        &storage,
+        &mut live,
+        "grant-a-revoked-expired",
+        Some(timestamp(90)),
+    )
+    .await;
+    ingest_revocation(
+        &storage,
+        &mut live,
+        &domain("authority-main"),
+        revocation_at("grant-a-revoked-expired", 95),
+    )
+    .await
+    .unwrap();
+    ingest_adapter_grant(&storage, &mut live, "grant-z-expired", Some(evaluated_at)).await;
+
+    assert_eq!(
+        live.get_grant(&grant_id("grant-a-revoked-expired"))
+            .unwrap()
+            .liveness_at(&evaluated_at),
+        GrantLiveness::Revoked,
+    );
+    assert_eq!(
+        live.get_grant(&grant_id("grant-z-expired"))
+            .unwrap()
+            .liveness_at(&evaluated_at),
+        GrantLiveness::Expired,
+    );
+
+    let issuer = VerifiedIssuer::operator();
+    let request_target = adapter_target();
+    let expected = Err(GrantDenied::NoGrant {
+        actor: "grant_expired:grant-z-expired".to_owned(),
+        kind: OperationKind::Instruct,
+        target: format!("{request_target:?}"),
+    });
+    assert_eq!(
+        grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
+        expected.clone(),
+    );
+
+    let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
+        .await
+        .expect("the denial-provenance grants must replay");
+    assert_eq!(rebuilt, live);
+    assert_eq!(
+        grant_decision_at(&rebuilt, &issuer, &request_target, &evaluated_at).await,
+        expected,
+    );
+}
+
+#[tokio::test]
+async fn grant_id_collation_uses_exact_utf8_bytes_without_normalization() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut live = AuthorityRegistry::new();
+    let evaluated_at = timestamp(100);
+    let decomposed = "grant-e\u{301}";
+    let composed = "grant-\u{e9}";
+    assert!(decomposed.as_bytes() < composed.as_bytes());
+
+    // Reverse insertion pressure: exact UTF-8 ordering must still choose the
+    // decomposed id rather than normalizing the visually equivalent strings.
+    ingest_adapter_grant(&storage, &mut live, composed, None).await;
+    ingest_adapter_grant(&storage, &mut live, decomposed, None).await;
+
+    let issuer = VerifiedIssuer::operator();
+    let request_target = adapter_target();
+    let expected = Ok(Authorized {
+        grant_id: Some(grant_id(decomposed)),
+    });
+    assert_eq!(
+        grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
+        expected.clone(),
+    );
+
+    let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
+        .await
+        .expect("the exact-byte grant ids must replay");
+    assert_eq!(rebuilt, live);
+    assert_eq!(
+        grant_decision_at(&rebuilt, &issuer, &request_target, &evaluated_at).await,
         expected,
     );
 }

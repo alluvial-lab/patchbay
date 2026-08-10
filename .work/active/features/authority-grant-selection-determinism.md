@@ -235,3 +235,31 @@ Fallback if implementation mapping shows the current sort has moved is to preser
 - `git diff --check` — passed.
 
 All acceptance criteria are satisfied. This is implementation-level replay evidence only; no formal-model or conformance-vector promotion is claimed.
+
+## Review findings — pass 1 (2026-08-10)
+
+**Receiver-accepted**:
+
+- Canonical protocol prose must make the mutually exclusive liveness classification explicit: a grant that is both revoked and expired classifies as revoked, while selection still considers the resulting classes live → expired → revoked.
+- Fixed-time regressions must prove lower-id expired/revoked matches cannot defeat a higher-id live match, expired denial provenance outranks revoked provenance, revocation-first classification governs a revoked+expired match, and fresh replay returns each exact decision.
+- Add the cheap exact-byte edge: canonically equivalent composed/decomposed Unicode ids must retain raw UTF-8 ordering without normalization.
+
+**Rejected**: no formal model or conformance vector is added. The property-graded baseline permits this authority obligation to remain stated-normative, and this feature ratifies production behavior rather than promoting assurance tier.
+
+**Out of scope**: lower-risk endpoint-class enforcement remains outside this review fix; no backlog or sibling item was touched.
+
+**Closure policy**: explicit `thorough`; keep the feature at `review` after the fix and verification so the caller can run convergence pass 2.
+
+## Review fix verification — pass 1
+
+- `docs/PROTOCOL.md` now states revocation-first classification before the separate live → expired → revoked selection order; the production `GrantLiveness::liveness_at` behavior was already correct, and its selection-site comment now mirrors the contract.
+- `core/tests/authority_replay.rs` adds fixed-time live/expired/revoked and expired-vs-revoked cases, asserts the revoked+expired class directly, checks exact accepted/denied provenance before and after production-log replay, and covers composed/decomposed UTF-8 ids under reverse insertion pressure.
+- `cargo test -p patchbay-core --test authority_grant_check --test authority_replay` — passed (11/11).
+- `cargo test -p patchbay-core --test authority_proptest` — passed (14/14).
+- `cargo test --workspace` — passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `node contracts/scripts/check-models.mjs` — passed.
+- `node contracts/scripts/check-vectors.mjs` — passed (21 implementation checks; 37 mutation witnesses killed); no model, vector, generated source, or traceability table changed.
+- `rustfmt --edition 2021 --check core/src/authority/check.rs core/tests/authority_replay.rs` and `git diff --check` — passed. Repository-wide `cargo fmt --all -- --check` remains red on 71 pre-existing, out-of-scope Rust files; neither owned Rust file appears in that diff.
+
+The corrected feature remains at `review` for thorough convergence pass 2.
