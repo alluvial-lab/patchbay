@@ -3,10 +3,12 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 use patchbay_contracts::patchbay::{
     resource_report_mutation, resource_state_mutation, AcceptedOperation, ActorEndpointRef,
     ActorId, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Observation,
+    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
+    Observation,
     ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     ResourceId, ResourceFreshnessState, ResourceKind, ResourceReportMutation, ResourceStateEvent,
-    ResourceStateMutation, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
+    ResourceStateMutation, ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert,
+    ResourceViewReport,
     ResourceViewStateUpdate, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
     SessionRegistered, SessionState, StoredEventKind, SubmissionOutcome, TargetScope,
     TargetScopeKind, TimeWindow,
@@ -18,8 +20,8 @@ use patchbay_core::{
     },
     authority::{ingest_grant, target_scope_matches, AuthorityRegistry, IssuerContext},
     resource::{
-        events as resource_events, ingest_resource_report, rebuild_from_log, ResourceIdentity,
-        ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
+        events as resource_events, ingest_resource_report, rebuild_from_log, ResourceError,
+        ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
     },
     session::{events as session_events, SessionRegistry},
     storage::{event_id, RecordedEvent, RusqliteStorage, Storage},
@@ -889,6 +891,327 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
     Ok(())
 }
 
+async fn resource_replay_prefix_idempotent(
+    vector: &ConformanceVector,
+) -> Result<(), String> {
+    let authority_domain_id = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: string(&vector.input, "/adapter_id")?.to_owned(),
+    };
+    let resource_kind = ResourceKind {
+        value: string(&vector.input, "/resource_kind")?.to_owned(),
+    };
+    let old = tuple(&vector.input, "/initial/identity")?;
+    let replacement = tuple(&vector.input, "/replacement/replacement_identity")?;
+    if old != tuple(&vector.input, "/replacement/retired_identity")?
+        || old.adapter_id() != &adapter_id
+        || old.resource_kind() != &resource_kind
+        || replacement.adapter_id() != &adapter_id
+        || replacement.resource_kind() != &resource_kind
+        || vector.input.pointer("/initial/lsn").and_then(Value::as_u64) != Some(1)
+        || vector
+            .input
+            .pointer("/initial/adapter_generation")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || vector
+            .input
+            .pointer("/replacement/lsn")
+            .and_then(Value::as_u64)
+            != Some(2)
+        || vector
+            .input
+            .pointer("/replacement/adapter_generation")
+            .and_then(Value::as_u64)
+            != Some(2)
+    {
+        return Err("resource replay-prefix vector has inconsistent fixture identity/order".into());
+    }
+
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut registry = ResourceRegistry::new();
+    let initial = ingest_resource_report(
+        &storage,
+        &mut registry,
+        validated_report(
+            &authority_domain_id,
+            &adapter_id,
+            &resource_kind,
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![report_mutation(&old, true)],
+        ),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let replacement_result = ingest_resource_report(
+        &storage,
+        &mut registry,
+        validated_report(
+            &authority_domain_id,
+            &adapter_id,
+            &resource_kind,
+            2,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![
+                ResourceReportMutation {
+                    identity: Some(old.to_scope().resource.expect("resource identity")),
+                    mutation: Some(resource_report_mutation::Mutation::Tombstone(
+                        ResourceStateTombstone {
+                            replaced_by: Some(
+                                replacement
+                                    .to_scope()
+                                    .resource
+                                    .expect("replacement identity"),
+                            ),
+                        },
+                    )),
+                },
+                report_mutation(&replacement, true),
+            ],
+        ),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if initial.event_id.lsn.as_ref().map(|lsn| lsn.value) != Some(1)
+        || replacement_result
+            .event_id
+            .lsn
+            .as_ref()
+            .map(|lsn| lsn.value)
+            != Some(2)
+        || replacement_result.touched_resources != 2
+        || registry.contains(&old)
+        || !registry.contains(&replacement)
+        || !registry.get(&old).is_some_and(|record| {
+            record.tombstoned()
+                && record.revision_lsn == 2
+                && record.replaced_by.as_ref() == Some(&replacement)
+        })
+        || registry.get(&replacement).map(|record| record.revision_lsn) != Some(2)
+    {
+        return Err("resource replacement did not commit atomically at LSN 2".into());
+    }
+
+    let events = storage
+        .read_after(&authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    let after_replacement = registry.clone();
+    registry
+        .observe(&events[0])
+        .map_err(|error| format!("covered lower-generation event rejected: {error}"))?;
+    if vector
+        .input
+        .pointer("/covered_refeed/lsn")
+        .and_then(Value::as_u64)
+        != Some(1)
+        || vector
+            .input
+            .pointer("/covered_refeed/adapter_generation")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || registry != after_replacement
+        || string(&vector.expected_outcome, "/covered_refeed_result")? != "success_no_change"
+        || vector
+            .expected_outcome
+            .pointer("/covered_refeed_applied_through_lsn")
+            .and_then(Value::as_u64)
+            != Some(2)
+    {
+        return Err("covered lower-generation resource event was not inert".into());
+    }
+
+    let mut lower_generation_next = events[0].clone();
+    lower_generation_next.event_id = event_id(authority_domain_id.clone(), 3);
+    if vector
+        .input
+        .pointer("/lower_generation_next_candidate/lsn")
+        .and_then(Value::as_u64)
+        != Some(3)
+        || vector
+            .input
+            .pointer("/lower_generation_next_candidate/adapter_generation")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || !matches!(
+            registry.observe(&lower_generation_next),
+            Err(ResourceError::CorruptLog(_))
+        )
+        || registry != after_replacement
+        || string(&vector.expected_outcome, "/lower_generation_next_result")? != "corrupt_log"
+        || vector
+            .expected_outcome
+            .pointer("/rejected_candidate_applied_through_lsn")
+            .and_then(Value::as_u64)
+            != Some(2)
+    {
+        return Err("lower-generation next event was not atomic corruption".into());
+    }
+
+    let old_before_sibling = registry.get(&old).cloned();
+    let replacement_before_sibling = registry.get(&replacement).cloned();
+    let views_before_sibling = registry.views().cloned().collect::<Vec<_>>();
+    let sibling_payload = patchbay_contracts::patchbay::StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: Vec::new(),
+    };
+    let sibling_event_id = storage
+        .append(&authority_domain_id, sibling_payload.clone())
+        .await
+        .map_err(|error| error.to_string())?;
+    let sibling = RecordedEvent {
+        event_id: sibling_event_id.clone(),
+        payload: sibling_payload,
+    };
+    registry
+        .observe(&sibling)
+        .map_err(|error| format!("valid sibling prefix probe rejected: {error}"))?;
+    if sibling_event_id.lsn.as_ref().map(|lsn| lsn.value) != Some(3)
+        || vector
+            .input
+            .pointer("/sibling_prefix_probe/lsn")
+            .and_then(Value::as_u64)
+            != Some(3)
+        || string(
+            &vector.input,
+            "/sibling_prefix_probe/stored_event_kind",
+        )? != "STORED_EVENT_KIND_OBSERVATION"
+        || registry == after_replacement
+        || registry.get(&old).cloned() != old_before_sibling
+        || registry.get(&replacement).cloned() != replacement_before_sibling
+        || registry.views().cloned().collect::<Vec<_>>() != views_before_sibling
+        || !boolean(
+            &vector.expected_outcome,
+            "/sibling_probe_advanced_prefix",
+        )?
+        || !boolean(
+            &vector.expected_outcome,
+            "/sibling_probe_resource_state_unchanged",
+        )?
+        || vector
+            .expected_outcome
+            .pointer("/final_applied_through_lsn")
+            .and_then(Value::as_u64)
+            != Some(3)
+    {
+        return Err("sibling prefix probe did not advance only the applied cursor".into());
+    }
+    let after_sibling = registry.clone();
+    registry
+        .observe(&sibling)
+        .map_err(|error| format!("covered sibling prefix probe rejected: {error}"))?;
+    if registry != after_sibling {
+        return Err("covered sibling prefix probe was not idempotent".into());
+    }
+
+    let mutation_names = vector
+        .input
+        .pointer("/retired_mutation_candidates")
+        .and_then(Value::as_array)
+        .ok_or("missing retired mutation candidates")?;
+    let expected_names = vector
+        .expected_outcome
+        .pointer("/retired_mutations_rejected")
+        .and_then(Value::as_array)
+        .ok_or("missing retired mutation expectations")?;
+    if mutation_names != expected_names {
+        return Err("retired mutation inputs and expectations differ".into());
+    }
+    for mutation in mutation_names {
+        let mutation = match mutation.as_str().ok_or("retired mutation must be a string")? {
+            "upsert" => report_mutation(&old, true),
+            "unknown" => report_mutation(&old, false),
+            "tombstone" => ResourceReportMutation {
+                identity: Some(old.to_scope().resource.expect("resource identity")),
+                mutation: Some(resource_report_mutation::Mutation::Tombstone(
+                    ResourceStateTombstone { replaced_by: None },
+                )),
+            },
+            name => return Err(format!("unknown retired mutation candidate {name}")),
+        };
+        let before_events = storage
+            .read_after(&authority_domain_id, Lsn { value: 0 })
+            .await
+            .map_err(|error| error.to_string())?;
+        if ingest_resource_report(
+            &storage,
+            &mut registry,
+            validated_report(
+                &authority_domain_id,
+                &adapter_id,
+                &resource_kind,
+                2,
+                ResourceReportMode::Delta,
+                AdapterSnapshotSupport::Partial,
+                vec![mutation],
+            ),
+        )
+        .await
+        .is_ok()
+            || registry != after_sibling
+            || storage
+                .read_after(&authority_domain_id, Lsn { value: 0 })
+                .await
+                .map_err(|error| error.to_string())?
+                != before_events
+        {
+            return Err("retired resource mutation changed projection or durable prefix".into());
+        }
+    }
+
+    let final_events = storage
+        .read_after(&authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    let replay_a = rebuild_from_log(&storage, &authority_domain_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let replay_b = rebuild_from_log(&storage, &authority_domain_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut covered_replay = replay_a.clone();
+    for event in &final_events {
+        covered_replay
+            .observe(event)
+            .map_err(|error| error.to_string())?;
+    }
+    if final_events.len() != 3
+        || registry != replay_a
+        || replay_a != replay_b
+        || covered_replay != replay_a
+        || !boolean(&vector.expected_outcome, "/initial_applied")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/replacement_applied_atomically",
+        )?
+        || !boolean(&vector.expected_outcome, "/retired_identity_tombstoned")?
+        || !boolean(&vector.expected_outcome, "/replacement_identity_active")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/projection_unchanged_after_each_rejection",
+        )?
+        || !boolean(&vector.expected_outcome, "/hot_equals_fresh_replay")?
+        || !boolean(&vector.expected_outcome, "/fresh_replays_equal")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/covered_prefix_replay_is_idempotent",
+        )?
+        || vector
+            .expected_outcome
+            .pointer("/durable_event_count")
+            .and_then(Value::as_u64)
+            != Some(3)
+    {
+        return Err("resource replay-prefix convergence expectation failed".into());
+    }
+    Ok(())
+}
+
 fn collision(vector: &ConformanceVector) -> Result<(), String> {
     let grant = tuple(&vector.input, "/grant_identity")?;
     let cases = [
@@ -971,6 +1294,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "operation_durable_acceptance" => operation_scenario(vector, true).await,
         "operation_missing_grant" => operation_scenario(vector, false).await,
         "resource_snapshot_completeness_truth_table" => completeness(vector).await,
+        "resource_replay_prefix_idempotent" => resource_replay_prefix_idempotent(vector).await,
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),

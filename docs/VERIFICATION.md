@@ -308,8 +308,14 @@ session/resource snapshot loading. Rust interface and property-oriented tests
 exercise exact identity dimensions, strict domain/LSN replay, deterministic
 restart, record/view revisions, all three completeness branches, live-delta
 omission, terminal resurrection rejection, atomic replacement, adapter-generation
-fencing, append-before-fold behavior, disconnect degradation, and no-payload
-`unknown` preservation through omission/tombstone/replay/snapshot paths.
+fencing, whole-event covered-prefix idempotence before generation checks,
+gap/duplicate rejection, append-before-fold behavior, disconnect degradation,
+and no-payload `unknown` preservation through omission/tombstone/replay/snapshot
+paths. The bounded 100-case, 1–20-action reconciliation trace combines
+generation changes, same-event replacement, post-terminal candidates, covered
+re-feed, and lower-generation next-event corruption; every accepted prefix is
+compared with two fresh replays plus covered-prefix replay, and every rejection
+preserves the exact durable events and complete cursor-bearing projection.
 Authenticated server and real-process gRPC evidence exercises manifest
 tier/schema admission, authoritative-unknown pre-append rejection, atomic
 same-generation capability redeclaration, newer-generation attachment
@@ -323,8 +329,8 @@ the executable conformance evidence below.
 
 ### Operational-resource conformance evidence (implementation-checked)
 
-The resource-plane corpus promotes eight executable examples through the single
-`contracts/vectors/` registry. The umbrella checker runs eleven exact package
+The resource-plane corpus promotes nine executable examples through the single
+`contracts/vectors/` registry. The umbrella checker runs twelve exact package
 checks across Rust core, Rust server, and web cockpit and rejects any promoted
 example whose expected outcome, runner registration, or reported execution id
 does not match. The shared session-shaped vectors retain their existing property
@@ -337,8 +343,10 @@ classifications while adding resource refinements.
 | `ResourceStaleNeverLive` | `resource-stale-never-live` | real attachment-stream disconnect → durable stale snapshot; generated model+DOM eligibility oracle | omitted disconnect degradation, freshness-only current predicate, and adapter-health override mutants failed | promoted vector + implementation-checked; not model-checked |
 | `ResourceIdentityCollisionFenced` | `resource-identity-collision-fenced`; resource cases in `command-acceptance` and `failure-missing-grant` | exact grant/target acceptance plus generated adapter/kind/local-id containment and target-key checks | adapter-, kind-, and local-id-omitting comparisons failed | promoted vector + implementation-checked; not model-checked |
 | `ResourceCoreStateInjectionRejected` | `resource-core-state-injection-rejected` | generic Observation append plus durable discriminator replay against `ResourceRegistry` | Observation-payload dispatch to `ResourceStateEvent` failed on the forged state witness | promoted vector + implementation-checked; not model-checked |
+| `IdempotentLogReplay` | `resource-replay-prefix-idempotent` | generation-1 upsert, generation-2 atomic replacement, covered generation-1 re-feed, lower-generation next-event rejection, same-LSN sibling prefix probe, and three terminal-mutation candidates against the production fold | moving covered-prefix classification after generation, restoring partial obsolete filtering, splitting replacement, permitting resurrection, or advancing the cursor on rejection violates the exact full-projection/prefix oracle | promoted vector + implementation-checked; formal model remains draft |
 
-`CommandDurability`, `NoCommandWithoutGrant`, and `SnapshotStaleRejected` remain
+`CommandDurability`, `NoCommandWithoutGrant`, `SnapshotStaleRejected`, and
+`IdempotentLogReplay` remain
 stated-normative properties because their formal models are draft; promoted
 resource examples do not make them checked-normative. None of the five new
 resource properties has a promoted formal model. Accordingly this evidence is
@@ -470,7 +478,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 15 properties with promoted vector coverage.
+Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 16 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -498,7 +506,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 | `GenerationMonotonic` | promoted | checked-model | specs/seed/session_generation.qnt | apalache-temporal | — | echo y \| quint verify session_generation.qnt --temporal generation_monotonic --max-steps 10 | the live session generation never decreases (checked). Strict-supersession (equal/lower reports are no-ops) is additionally enforced by the action guard (`if gen > generation`) but is NOT a checked temporal property — it exceeded Apalache's experimental temporal support; see idea-tlc-temporal-workaround. |
 | `GrantAuthorityIsCommandKinds` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | grant checks constrain authority by canonical command kinds, not adapter capability declarations |
 | `GrantAuthorityIsOperationKinds` | reserved-unmodeled | stated-normative | — | — | — | — | — |
-| `IdempotentLogReplay` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | replaying the same committed prefix does not produce additional state divergence |
+| `IdempotentLogReplay` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | resource-replay-prefix-idempotent | <TBD — not yet checked; promote in a follow-on item> | replaying the same committed prefix does not produce additional state divergence |
 | `LabelsCannotOverrideIdentity` | draft | stated-normative | specs/seed/session_generation.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | project/cwd/name labels update independently and cannot override the verified session identity tuple |
 | `LateEventNoRewrite` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view |
 | `LateGenerationInert` | draft | stated-normative | specs/seed/session_generation.qnt | apalache-temporal | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | late replies/events for tombstoned generations are stale_event audit records and do not mutate the live generation |
@@ -552,7 +560,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 52 vector(s), 15 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 53 vector(s), 16 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -580,7 +588,7 @@ Summary: 52 vector(s), 15 promoted vector(s), 0 checked-normative properties req
 | `GenerationMonotonic` | checked-model | — | — |
 | `GrantAuthorityIsCommandKinds` | stated-normative | — | — |
 | `GrantAuthorityIsOperationKinds` | stated-normative | — | — |
-| `IdempotentLogReplay` | stated-normative | — | — |
+| `IdempotentLogReplay` | stated-normative | [resource-replay-prefix-idempotent](../contracts/vectors/resource-replay-prefix-idempotent.json) (promoted) | patchbay.Resource.revision_lsn<br>patchbay.Resource.tombstoned<br>patchbay.ResourceStateEvent.authority_domain_id<br>patchbay.ResourceStateEvent.mutations<br>patchbay.ResourceStateEvent.source_adapter_generation<br>patchbay.ResourceStateMutation.from_revision_lsn<br>patchbay.ResourceStateTombstone.replaced_by<br>patchbay.StoredEventPayload.kind |
 | `LabelsCannotOverrideIdentity` | stated-normative | [session-model-change-preserves-identity](../contracts/vectors/session-model-change-preserves-identity.json) (draft) | patchbay.Session.model<br>patchbay.SessionModelChanged.adapter_id<br>patchbay.SessionModelChanged.deployment_scope<br>patchbay.SessionModelChanged.from<br>patchbay.SessionModelChanged.runtime_session_id<br>patchbay.SessionModelChanged.session_generation<br>patchbay.SessionModelChanged.to |
 | `LateEventNoRewrite` | stated-normative | — | — |
 | `LateGenerationInert` | stated-normative | — | — |

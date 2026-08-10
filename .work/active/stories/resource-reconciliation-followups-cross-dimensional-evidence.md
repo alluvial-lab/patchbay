@@ -1,7 +1,7 @@
 ---
 id: resource-reconciliation-followups-cross-dimensional-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol, testing]
 parent: resource-reconciliation-followups
 depends_on: [resource-reconciliation-followups-applied-prefix-semantics]
@@ -61,3 +61,13 @@ tombstone, or prefix predicates.
 Begins only after
 `resource-reconciliation-followups-applied-prefix-semantics`; it consumes that
 checkpoint's fixed prefix/no-op/corruption contract.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected because generated replay integrity, terminal-state rejection, and full-prefix atomicity are load-bearing.
+- Review weight: `thorough` from the explicit caller selection; feature review is intentionally deferred to a fresh reviewer at `stage: review`.
+- Files changed: `core/tests/resource_reconciliation.rs`, `core/tests/conformance_vectors.rs`, `contracts/vectors/resource-replay-prefix-idempotent.json`, `contracts/scripts/check-vectors.mjs`, `docs/VERIFICATION.md`.
+- Tests added/removed: replaced the prior generic bounded report sampler with one 100-case, 1–20-action cross-dimensional trace; added the exact Rust product runner for the promoted replay-prefix vector; retained the independent completeness truth table and focused resource tests.
+- Simplification: reused the existing reconciliation property and `IdempotentLogReplay` registry instead of adding a second random sampler, property id, model, or replay mechanism.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification evidence: `cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `cargo test -p patchbay-core --test conformance_vectors -- --nocapture`; `cargo clippy -p patchbay-core --test resource_reconciliation --test conformance_vectors -- -D warnings`; `node contracts/scripts/check-vectors.mjs`; `node contracts/scripts/check-models.mjs`; `node contracts/scripts/check-generated-drift.mjs`.

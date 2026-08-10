@@ -208,6 +208,37 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && outcome?.durable_acceptance_record_created === false
       && outcome?.delivered_to_adapter === false,
   ),
+  IdempotentLogReplay: (vector) => expectation(
+    vector.input?.initial?.lsn === 1
+      && vector.input?.initial?.adapter_generation === 1
+      && vector.input?.replacement?.lsn === 2
+      && vector.input?.replacement?.adapter_generation === 2
+      && vector.input?.covered_refeed?.lsn === 1
+      && vector.input?.covered_refeed?.adapter_generation === 1
+      && vector.input?.lower_generation_next_candidate?.lsn === 3
+      && vector.input?.lower_generation_next_candidate?.adapter_generation === 1
+      && vector.input?.sibling_prefix_probe?.lsn === 3
+      && vector.input?.sibling_prefix_probe?.stored_event_kind === 'STORED_EVENT_KIND_OBSERVATION'
+      && JSON.stringify(vector.input?.retired_mutation_candidates) === JSON.stringify(['upsert', 'unknown', 'tombstone'])
+      && vector.expected_outcome?.initial_applied === true
+      && vector.expected_outcome?.replacement_applied_atomically === true
+      && vector.expected_outcome?.retired_identity_tombstoned === true
+      && vector.expected_outcome?.replacement_identity_active === true
+      && vector.expected_outcome?.covered_refeed_result === 'success_no_change'
+      && vector.expected_outcome?.covered_refeed_applied_through_lsn === 2
+      && vector.expected_outcome?.lower_generation_next_result === 'corrupt_log'
+      && vector.expected_outcome?.rejected_candidate_applied_through_lsn === 2
+      && vector.expected_outcome?.sibling_probe_advanced_prefix === true
+      && vector.expected_outcome?.sibling_probe_resource_state_unchanged === true
+      && vector.expected_outcome?.final_applied_through_lsn === 3
+      && JSON.stringify(vector.expected_outcome?.retired_mutations_rejected) === JSON.stringify(['upsert', 'unknown', 'tombstone'])
+      && vector.expected_outcome?.durable_event_count === 3
+      && vector.expected_outcome?.projection_unchanged_after_each_rejection === true
+      && vector.expected_outcome?.hot_equals_fresh_replay === true
+      && vector.expected_outcome?.fresh_replays_equal === true
+      && vector.expected_outcome?.covered_prefix_replay_is_idempotent === true,
+    'covered lower-generation replay must be inert while the next lower-generation candidate and terminal mutations preserve the complete LSN-2 replacement projection',
+  ),
   SnapshotStaleRejected: (vector) => everyExpectedCase(
     vector,
     'an older snapshot must be rejected and replaced by the current view',

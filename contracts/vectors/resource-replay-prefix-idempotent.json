@@ -1,0 +1,68 @@
+{
+  "vector_id": "resource-replay-prefix-idempotent",
+  "property_id": "IdempotentLogReplay",
+  "promotion_status": "promoted",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "resource_replay_prefix_idempotent" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ResourceStateEvent.authority_domain_id",
+    "patchbay.ResourceStateEvent.source_adapter_generation",
+    "patchbay.ResourceStateEvent.mutations",
+    "patchbay.ResourceStateMutation.from_revision_lsn",
+    "patchbay.ResourceStateTombstone.replaced_by",
+    "patchbay.StoredEventPayload.kind",
+    "patchbay.Resource.revision_lsn",
+    "patchbay.Resource.tombstoned"
+  ],
+  "description": "A generation-1 resource event, generation-2 atomic replacement, covered generation-1 re-feed, lower-generation next-event candidate, and same-LSN sibling probe distinguish whole-prefix idempotence from new-event corruption without resurrecting the retired identity or advancing on rejection.",
+  "input": {
+    "authority_domain_id": "auth-main",
+    "adapter_id": "token-commune",
+    "resource_kind": "provider_pool",
+    "initial": {
+      "lsn": 1,
+      "adapter_generation": 1,
+      "identity": ["token-commune", "provider_pool", "old"]
+    },
+    "replacement": {
+      "lsn": 2,
+      "adapter_generation": 2,
+      "retired_identity": ["token-commune", "provider_pool", "old"],
+      "replacement_identity": ["token-commune", "provider_pool", "new"]
+    },
+    "covered_refeed": {
+      "lsn": 1,
+      "adapter_generation": 1
+    },
+    "lower_generation_next_candidate": {
+      "lsn": 3,
+      "adapter_generation": 1
+    },
+    "sibling_prefix_probe": {
+      "lsn": 3,
+      "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION"
+    },
+    "retired_mutation_candidates": ["upsert", "unknown", "tombstone"]
+  },
+  "expected_outcome": {
+    "initial_applied": true,
+    "replacement_applied_atomically": true,
+    "retired_identity_tombstoned": true,
+    "replacement_identity_active": true,
+    "covered_refeed_result": "success_no_change",
+    "covered_refeed_applied_through_lsn": 2,
+    "lower_generation_next_result": "corrupt_log",
+    "rejected_candidate_applied_through_lsn": 2,
+    "sibling_probe_advanced_prefix": true,
+    "sibling_probe_resource_state_unchanged": true,
+    "final_applied_through_lsn": 3,
+    "retired_mutations_rejected": ["upsert", "unknown", "tombstone"],
+    "durable_event_count": 3,
+    "projection_unchanged_after_each_rejection": true,
+    "hot_equals_fresh_replay": true,
+    "fresh_replays_equal": true,
+    "covered_prefix_replay_is_idempotent": true
+  },
+  "invariant_check": "IdempotentLogReplay: a structurally valid event already covered by the resource projection's contiguous authority-domain prefix is a whole-event no-op before generation checks, while the same lower generation at the next LSN is corruption and every rejected candidate preserves the durable prefix and complete projection."
+}
