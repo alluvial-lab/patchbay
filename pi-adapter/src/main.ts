@@ -24,6 +24,11 @@ import {
   SessionRegistry,
   type RuntimeSessionEntry,
 } from "./session_registry.js";
+import {
+  nextSessionReportSequence,
+  type SessionReportOrder,
+  type SessionReportSequence,
+} from "./session_report_sequencer.js";
 
 export interface PreprovisionedSession extends PiSessionOptions {
   runtimeSessionId: string;
@@ -68,6 +73,7 @@ export class AdapterProcess {
   // them). Chaining each report after the previous one preserves order at the
   // cost of one round-trip per delta, which is negligible for streaming.
   readonly #observationTails = new Map<string, Promise<void>>();
+  readonly #sessionReportSequences = new Map<string, SessionReportSequence>();
   #observationError: unknown;
   #cursor = 0n;
   #started = false;
@@ -535,9 +541,17 @@ export class AdapterProcess {
     connectivity = SessionConnectivityState.LIVE,
     model?: string,
   ): Promise<void> {
+    // Capture both payload and order before touching the promise tail. The tail
+    // serializes delivery, but it is not allowed to decide producer order or
+    // observe a later mutable PiSession state.
+    const identity = Object.freeze(this.#identity(entry, model));
+    const sourceOrder = this.#allocateSessionReportOrder(
+      entry.runtimeSessionId,
+      identity.generation,
+    );
     const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
     const next = tail
-      .then(() => this.#core.reportSession(this.#identity(entry, model), activity, connectivity))
+      .then(() => this.#core.reportSession(identity, activity, connectivity, sourceOrder))
       .then(() => {
         this.#record({
           event: "session.activity.reported",
@@ -549,6 +563,22 @@ export class AdapterProcess {
       });
     this.#observationTails.set(entry.runtimeSessionId, next);
     return next;
+  }
+
+  #allocateSessionReportOrder(
+    runtimeSessionId: string,
+    sessionGeneration: number,
+  ): SessionReportOrder {
+    const next = nextSessionReportSequence(
+      this.#sessionReportSequences.get(runtimeSessionId),
+      this.#options.adapterGeneration,
+      sessionGeneration,
+    );
+    this.#sessionReportSequences.set(runtimeSessionId, next);
+    return Object.freeze({
+      adapterGeneration: next.adapterGeneration,
+      revision: next.revision,
+    });
   }
 
   #trackObservation(

@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js";
+import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "../src/delivery.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
@@ -157,6 +158,7 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     model: string;
     activity: SessionActivityState;
     connectivity: SessionConnectivityState;
+    sourceOrder: SessionReportOrder;
   }> = [];
   let blockTranscript = false;
   let transcriptStarted!: () => void;
@@ -166,6 +168,15 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
   let releaseTranscript!: () => void;
   const transcriptRelease = new Promise<void>((resolve) => {
     releaseTranscript = resolve;
+  });
+  let blockReport = false;
+  let reportStarted!: () => void;
+  const reportStart = new Promise<void>((resolve) => {
+    reportStarted = resolve;
+  });
+  let releaseReport!: () => void;
+  const reportRelease = new Promise<void>((resolve) => {
+    releaseReport = resolve;
   });
   const originalAttach = PatchbayCoreClient.prototype.attach;
   const originalIngestTranscript = PatchbayCoreClient.prototype.ingestTranscript;
@@ -181,9 +192,14 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
   PatchbayCoreClient.prototype.reportSession = async (
     identity: SessionIdentity,
     activity: SessionActivityState,
-    connectivity = SessionConnectivityState.LIVE,
+    connectivity: SessionConnectivityState,
+    sourceOrder: SessionReportOrder,
   ) => {
-    reports.push({ model: identity.model, activity, connectivity });
+    reports.push({ model: identity.model, activity, connectivity, sourceOrder });
+    if (blockReport) {
+      reportStarted();
+      await reportRelease;
+    }
     return undefined;
   };
 
@@ -202,9 +218,12 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     const prompt = pi.prompt("switch models while working");
     await Promise.all([transcriptStart, waitUntil(() => pi.getState().streaming)]);
 
+    blockReport = true;
     await pi.setModel(provider, "model-b");
-    await pi.setModel(provider, "model-c");
     releaseTranscript();
+    await reportStart;
+    await pi.setModel(provider, "model-c");
+    releaseReport();
     await prompt;
     await adapter.flushObservations();
 
@@ -226,12 +245,165 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
       [SessionActivityState.IDLE, SessionActivityState.WORKING, SessionActivityState.WORKING],
       "model changes preserve the real in-flight activity state",
     );
+    assert.deepEqual(
+      reports.map(({ sourceOrder }) => sourceOrder),
+      [
+        { adapterGeneration: 1, revision: 1n },
+        { adapterGeneration: 1, revision: 2n },
+        { adapterGeneration: 1, revision: 3n },
+      ],
+      "enqueue-time sequencing and payload snapshots remain immutable while revision 2 is in flight",
+    );
   } finally {
     releaseTranscript();
+    releaseReport();
     await adapter.dispose();
     await pi.dispose();
     PatchbayCoreClient.prototype.attach = originalAttach;
     PatchbayCoreClient.prototype.ingestTranscript = originalIngestTranscript;
+    PatchbayCoreClient.prototype.reportSession = originalReportSession;
+  }
+});
+
+test("AdapterProcess resets report revision only for a new runtime or adapter generation", async () => {
+  const reports: Array<{
+    runtimeSessionId: string;
+    sessionGeneration: number;
+    sourceOrder: SessionReportOrder;
+  }> = [];
+  const originalAttach = PatchbayCoreClient.prototype.attach;
+  const originalReportSession = PatchbayCoreClient.prototype.reportSession;
+  PatchbayCoreClient.prototype.attach = async () => ({}) as EventId;
+  PatchbayCoreClient.prototype.reportSession = async (
+    identity: SessionIdentity,
+    _activity: SessionActivityState,
+    _connectivity: SessionConnectivityState,
+    sourceOrder: SessionReportOrder,
+  ) => {
+    reports.push({
+      runtimeSessionId: identity.runtimeSessionId,
+      sessionGeneration: identity.generation,
+      sourceOrder,
+    });
+    return undefined;
+  };
+
+  const fakeSession = (runtimeSessionId: string, initialGeneration: number) => {
+    let generation = initialGeneration;
+    let observeModel: ((model: string) => void) | undefined;
+    const session = {
+      runtimeSessionId,
+      get generation() {
+        return generation;
+      },
+      getState() {
+        return {
+          idle: true,
+          model: { provider: "provider", id: "model-a" },
+        };
+      },
+      snapshotTranscript() {
+        return [];
+      },
+      onTranscript() {
+        return () => undefined;
+      },
+      onModelChange(listener: (model: string) => void) {
+        observeModel = listener;
+        return () => undefined;
+      },
+      async dispose() {},
+    } as unknown as PiSession;
+    return {
+      session,
+      setGeneration(value: number) {
+        generation = value;
+      },
+      emitModel(model: string) {
+        assert.ok(observeModel);
+        observeModel(model);
+      },
+    };
+  };
+
+  let first: AdapterProcess | undefined;
+  let second: AdapterProcess | undefined;
+  try {
+    const runtime = fakeSession("runtime-sequencer", 4);
+    const configured: PreprovisionedSession = {
+      cwd: process.cwd(),
+      runtimeSessionId: "runtime-sequencer",
+      deploymentScope: "machine-a",
+    };
+    const independent = fakeSession("runtime-independent", 4);
+    const independentConfig: PreprovisionedSession = {
+      ...configured,
+      runtimeSessionId: "runtime-independent",
+    };
+    first = new AdapterProcess({
+      coreAddress: "http://127.0.0.1:1",
+      adapterId: "pi",
+      authorityDomainId: "authority-test",
+      attachmentEvidence: "adapter-test-secret",
+      adapterGeneration: 7,
+      sessions: [configured, independentConfig],
+      createSession: async (options) =>
+        options.runtimeSessionId === configured.runtimeSessionId
+          ? runtime.session
+          : independent.session,
+    });
+    await first.start();
+    runtime.emitModel("provider/model-b");
+    await first.flushObservations();
+    runtime.setGeneration(5);
+    runtime.emitModel("provider/model-c");
+    await first.flushObservations();
+    await first.dispose();
+    first = undefined;
+
+    const replacement = fakeSession("runtime-sequencer", 5);
+    second = new AdapterProcess({
+      coreAddress: "http://127.0.0.1:1",
+      adapterId: "pi",
+      authorityDomainId: "authority-test",
+      attachmentEvidence: "adapter-test-secret",
+      adapterGeneration: 8,
+      sessions: [configured],
+      createSession: async () => replacement.session,
+    });
+    await second.start();
+
+    assert.deepEqual(reports, [
+      {
+        runtimeSessionId: "runtime-sequencer",
+        sessionGeneration: 4,
+        sourceOrder: { adapterGeneration: 7, revision: 1n },
+      },
+      {
+        runtimeSessionId: "runtime-independent",
+        sessionGeneration: 4,
+        sourceOrder: { adapterGeneration: 7, revision: 1n },
+      },
+      {
+        runtimeSessionId: "runtime-sequencer",
+        sessionGeneration: 4,
+        sourceOrder: { adapterGeneration: 7, revision: 2n },
+      },
+      {
+        runtimeSessionId: "runtime-sequencer",
+        sessionGeneration: 5,
+        sourceOrder: { adapterGeneration: 7, revision: 1n },
+      },
+      {
+        runtimeSessionId: "runtime-sequencer",
+        sessionGeneration: 5,
+        sourceOrder: { adapterGeneration: 8, revision: 1n },
+      },
+    ]);
+  } finally {
+    await first?.dispose();
+    await second?.dispose();
+    PatchbayCoreClient.prototype.attach = originalAttach;
     PatchbayCoreClient.prototype.reportSession = originalReportSession;
   }
 });

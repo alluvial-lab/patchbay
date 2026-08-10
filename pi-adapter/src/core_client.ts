@@ -38,6 +38,7 @@ import {
   SessionActivityState,
   SessionConnectivityState,
   SessionReportSchema,
+  SessionReportSourceCursorSchema,
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
@@ -54,6 +55,7 @@ import {
 } from "./adapter_diagnostics.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 import { PI_FORWARDED_DIAGNOSTIC_CODES } from "./core_diagnostics_forwarder.js";
+import type { SessionReportOrder } from "./session_report_sequencer.js";
 
 const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
@@ -68,13 +70,13 @@ export interface CoreClientOptions {
 }
 
 export interface SessionIdentity {
-  runtimeSessionId: string;
-  deploymentScope: string;
-  generation: number;
-  project: string;
-  cwd: string;
-  name: string;
-  model: string;
+  readonly runtimeSessionId: string;
+  readonly deploymentScope: string;
+  readonly generation: number;
+  readonly project: string;
+  readonly cwd: string;
+  readonly name: string;
+  readonly model: string;
 }
 
 export class PatchbayCoreClient {
@@ -175,8 +177,15 @@ export class PatchbayCoreClient {
   async reportSession(
     identity: SessionIdentity,
     activity: SessionActivityState,
-    connectivity = SessionConnectivityState.LIVE,
+    connectivity: SessionConnectivityState,
+    sourceOrder: SessionReportOrder,
   ): Promise<EventId | undefined> {
+    if (sourceOrder.revision <= 0n) {
+      throw new Error("session report revision must be positive");
+    }
+    if (sourceOrder.adapterGeneration !== this.#adapterGeneration) {
+      throw new Error("session report adapter generation does not match the active attachment");
+    }
     const result = await this.#postAttach(() =>
       this.#client.ingestObservation(
         create(ObservationRequestSchema, {
@@ -194,6 +203,12 @@ export class PatchbayCoreClient {
               cwd: identity.cwd,
               name: identity.name,
               model: identity.model,
+              sourceCursor: create(SessionReportSourceCursorSchema, {
+                adapterGeneration: create(GenerationSchema, {
+                  value: BigInt(sourceOrder.adapterGeneration),
+                }),
+                revision: sourceOrder.revision,
+              }),
             }),
           },
         }),
