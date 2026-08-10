@@ -766,6 +766,189 @@ fn rejected_event_does_not_claim_its_replay_identity() {
 }
 
 #[test]
+fn rejected_new_lsn_semantic_conflicts_are_non_mutating_and_do_not_claim_their_lsn() {
+    struct Case {
+        name: &'static str,
+        registry: SessionRegistry,
+        rejected: RecordedEvent,
+        corrected: RecordedEvent,
+    }
+
+    let generation_bump = |from: u64, to: u64| {
+        events::generation_bumped(
+            domain(),
+            SessionGenerationBumped {
+                adapter_id: Some(adapter()),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: Some(runtime()),
+                from_generation: Some(generation(from)),
+                to_generation: Some(generation(to)),
+                initial_state: Some(state(
+                    SessionConnectivityState::Unknown,
+                    SessionActivityState::Unknown,
+                )),
+                project: "patchbay".to_owned(),
+                cwd: "/work/patchbay".to_owned(),
+                name: "main".to_owned(),
+                model: format!("provider/model-{to}"),
+                spawn_origin: None,
+            },
+        )
+    };
+    let connectivity_change =
+        |generation_value: u64, from: SessionConnectivityState, to: SessionConnectivityState| {
+            events::connectivity_changed(
+                domain(),
+                SessionConnectivityChanged {
+                    adapter_id: Some(adapter()),
+                    deployment_scope: "machine-a".to_owned(),
+                    runtime_session_id: Some(runtime()),
+                    session_generation: Some(generation(generation_value)),
+                    from: from as i32,
+                    to: to as i32,
+                },
+            )
+        };
+    let activity_change = |from: SessionActivityState, to: SessionActivityState| {
+        events::activity_changed(
+            domain(),
+            SessionActivityChanged {
+                adapter_id: Some(adapter()),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: Some(runtime()),
+                session_generation: Some(generation(1)),
+                from: from as i32,
+                to: to as i32,
+            },
+        )
+    };
+
+    let stale_generation_delta = {
+        let mut registry = SessionRegistry::new(domain()).unwrap();
+        registry.observe(&recorded(1, &registration())).unwrap();
+        registry
+            .observe(&recorded(2, &generation_bump(1, 2)))
+            .unwrap();
+        assert!(registry.is_tombstoned(&adapter(), "machine-a", &runtime(), &generation(1)));
+        Case {
+            name: "stale/tombstoned generation delta versus live generation",
+            registry,
+            rejected: recorded(
+                3,
+                &connectivity_change(
+                    1,
+                    SessionConnectivityState::Unknown,
+                    SessionConnectivityState::Live,
+                ),
+            ),
+            corrected: recorded(
+                3,
+                &connectivity_change(
+                    2,
+                    SessionConnectivityState::Unknown,
+                    SessionConnectivityState::Live,
+                ),
+            ),
+        }
+    };
+
+    let wrong_bump_from_generation = {
+        let mut registry = SessionRegistry::new(domain()).unwrap();
+        registry.observe(&recorded(1, &registration())).unwrap();
+        Case {
+            name: "generation bump with wrong from_generation",
+            registry,
+            rejected: recorded(2, &generation_bump(0, 2)),
+            corrected: recorded(2, &generation_bump(1, 2)),
+        }
+    };
+
+    let false_connectivity_prior = {
+        let mut registry = SessionRegistry::new(domain()).unwrap();
+        registry.observe(&recorded(1, &registration())).unwrap();
+        Case {
+            name: "connectivity delta with false prior state",
+            registry,
+            rejected: recorded(
+                2,
+                &connectivity_change(
+                    1,
+                    SessionConnectivityState::Stale,
+                    SessionConnectivityState::Live,
+                ),
+            ),
+            corrected: recorded(
+                2,
+                &connectivity_change(
+                    1,
+                    SessionConnectivityState::Unknown,
+                    SessionConnectivityState::Live,
+                ),
+            ),
+        }
+    };
+
+    let false_activity_prior = {
+        let mut registry = SessionRegistry::new(domain()).unwrap();
+        registry.observe(&recorded(1, &registration())).unwrap();
+        Case {
+            name: "activity delta with false prior state",
+            registry,
+            rejected: recorded(
+                2,
+                &activity_change(SessionActivityState::Idle, SessionActivityState::Working),
+            ),
+            corrected: recorded(
+                2,
+                &activity_change(SessionActivityState::Unknown, SessionActivityState::Working),
+            ),
+        }
+    };
+
+    for Case {
+        name,
+        mut registry,
+        rejected,
+        corrected,
+    } in [
+        stale_generation_delta,
+        wrong_bump_from_generation,
+        false_connectivity_prior,
+        false_activity_prior,
+    ] {
+        assert_eq!(
+            rejected.event_id, corrected.event_id,
+            "{name} must be repaired at the same durable identity"
+        );
+        assert_ne!(
+            rejected.payload, corrected.payload,
+            "{name} must use a genuinely corrected envelope"
+        );
+
+        let before = registry.clone();
+        assert!(
+            matches!(
+                registry.observe(&rejected),
+                Err(SessionError::CorruptLog(_))
+            ),
+            "{name} must reject"
+        );
+        assert_eq!(
+            registry, before,
+            "{name} mutated state or claimed the rejected LSN"
+        );
+
+        registry
+            .observe(&corrected)
+            .unwrap_or_else(|error| panic!("{name} poisoned corrected same-LSN replay: {error}"));
+        assert_ne!(
+            registry, before,
+            "{name} correction returned success without applying the event"
+        );
+    }
+}
+
+#[test]
 fn old_security_redeliveries_do_not_cancel_later_lockdown_posture() {
     let mut registry = SessionRegistry::new(domain()).unwrap();
     registry.observe(&recorded(1, &registration())).unwrap();
