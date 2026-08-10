@@ -82,15 +82,23 @@ pub trait GrantCheck: Send + Sync {
         target_scope: &TargetScope,
         _evaluated_at: &Timestamp,
     ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
-        async move { self.check(authority_domain_id, issuer, operation_kind, target_scope).await }
+        async move {
+            self.check(authority_domain_id, issuer, operation_kind, target_scope)
+                .await
+        }
     }
 }
 
-/// The session-registry seam used to validate and bind an operation target.
+/// The operation-aware registry seam used to validate and bind a target.
+///
+/// Target shape is not meaningful without `OperationKind`: an adapter scope is
+/// a committed spawn boundary, while runtime-session and resource scopes are
+/// existing-target boundaries and must reject spawn before durable acceptance.
 pub trait TargetResolver: Send + Sync {
     fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
+        operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
 }
@@ -144,6 +152,9 @@ pub enum GrantDenied {
 /// Concrete target identity returned by the target-kind-polymorphic resolver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetBinding {
+    Adapter {
+        adapter_id: AdapterId,
+    },
     RuntimeSession {
         adapter_id: AdapterId,
         deployment_scope: String,

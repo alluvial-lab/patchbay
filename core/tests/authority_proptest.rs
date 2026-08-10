@@ -505,6 +505,7 @@ impl TargetResolver for AlwaysResolvedTarget {
     async fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
+        _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
         Ok(TargetBinding::RuntimeSession {

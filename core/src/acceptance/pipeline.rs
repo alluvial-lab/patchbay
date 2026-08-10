@@ -304,7 +304,11 @@ where
     })?;
 
     if target_resolver
-        .resolve(validated.authority_domain_id, validated.target_scope)
+        .resolve(
+            validated.authority_domain_id,
+            validated.operation_kind,
+            validated.target_scope,
+        )
         .await
         .is_err()
     {

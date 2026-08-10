@@ -300,6 +300,7 @@ impl TargetResolver for CountingResolver<'_> {
     async fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
+        _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
         self.0.fetch_add(1, Ordering::Relaxed);

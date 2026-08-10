@@ -7,13 +7,15 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, ActorId, AuditRecord, AuthorityDomainId, CommandTransition, DescendantGrant,
-    EventId, FailureCode, Grant, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
+    ActorId, AuditRecord, AuthorityDomainId, CommandTransition, DescendantGrant, EventId,
+    FailureCode, Grant, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
     OperationKind, OperationState, Revocation, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 
-use crate::{resource::ResourceIdentity, storage::RecordedEvent};
+use crate::{
+    acceptance::exact_command_correlation, resource::ResourceIdentity, storage::RecordedEvent,
+};
 
 use super::{
     spawn_tail::{descendant_grant_id, validate_descendant_audit_link},
@@ -137,7 +139,7 @@ impl AuthorityRegistry {
             })?;
         if observation.kind == ObservationKind::Result as i32
             && observation.failure_code == FailureCode::Unspecified as i32
-            && exactly_one_nonempty_command(&observation.correlations).is_some()
+            && exact_command_correlation(&observation.correlations).is_some()
         {
             insert_recorded_event(&mut self.completion_sources, event, "completion source")?;
         }
@@ -729,23 +731,6 @@ fn revocation_policy(
     Ok(policy)
 }
 
-fn exactly_one_nonempty_command(
-    correlations: &[patchbay_contracts::patchbay::TypedCorrelation],
-) -> Option<&patchbay_contracts::patchbay::CommandId> {
-    let mut commands =
-        correlations
-            .iter()
-            .filter_map(|correlation| match correlation.r#ref.as_ref() {
-                Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
-                _ => None,
-            });
-    let command = commands.next()?;
-    if command.value.is_empty() || commands.next().is_some() {
-        return None;
-    }
-    Some(command)
-}
-
 fn validate_completion_source_matches_audit(
     source: &RecordedEvent,
     audit: &AuditRecord,
@@ -772,7 +757,7 @@ fn validate_completion_source_matches_audit(
                 })?;
             if observation.kind != ObservationKind::Result as i32
                 || observation.failure_code != FailureCode::Unspecified as i32
-                || exactly_one_nonempty_command(&observation.correlations) != Some(command_id)
+                || exact_command_correlation(&observation.correlations).as_ref() != Some(command_id)
             {
                 return Err(AuthorityError::CorruptLog(format!(
                     "spawn-completion audit at LSN {audit_lsn} references a non-matching result"

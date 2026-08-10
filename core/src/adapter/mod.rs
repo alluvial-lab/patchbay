@@ -39,7 +39,7 @@ pub struct AdapterRecord {
     pub attach_event_id: EventId,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AdapterRegistry {
     records: HashMap<AdapterId, AdapterRecord>,
 }

@@ -94,7 +94,7 @@ A durable record of an accepted state transition.
 
 ## Grant
 
-An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific OperationKinds against a target scope. Spawn grants are fleet-level by default in v0.1.0; successful spawn records an auto-issued descendant grant for the spawned session. See `docs/PROTOCOL.md`.
+An authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform specific OperationKinds against a target scope. v0.1.0 spawn Operations explicitly select one attached adapter and require a matching spawn grant; fleet-default target selection is reserved. Successful spawn records an auto-issued descendant grant for the spawned session. See `docs/PROTOCOL.md`.
 
 ## Harness slash-command
 

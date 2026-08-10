@@ -164,11 +164,6 @@ where
         });
     }
 
-    let observation_event_id = storage
-        .append(authority_domain_id, observation_payload)
-        .await?;
-    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
-
     if snapshot.operation_kind == OperationKind::Spawn
         && candidate.to_state == OperationState::Completed
         && candidate.failure_code == FailureCode::Unspecified
@@ -177,10 +172,31 @@ where
             OperationState::Delivered | OperationState::Running
         )
     {
+        // Preserve bounded, redacted operational evidence while keeping the
+        // canonical command lifecycle non-terminal. `inspect-command` already
+        // returns a bounded command-audit page, and AuditRecordDraft has no
+        // arbitrary payload field, so the successful Result body cannot leak
+        // through this diagnostic checkpoint.
+        let mut audit = crate::storage::AuditRecordDraft::new(
+            crate::acceptance::SystemClock.now(),
+            patchbay_contracts::patchbay::AuditEventKind::CommandRunning,
+        );
+        audit.command_id = Some(candidate.command_id);
+        audit.target_scope = observation.target_scope.clone();
+        audit.reason_code = "spawn_completion_deferred".to_owned();
+        let observation_event_id = storage
+            .append_decision(authority_domain_id, observation_payload, audit)
+            .await?;
+        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
         return Ok(IngestResult::CompletionDeferred {
             observation_event_id,
         });
     }
+
+    let observation_event_id = storage
+        .append(authority_domain_id, observation_payload)
+        .await?;
+    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
 
     // Repeated status reports are useful evidence but do not represent a new
     // lifecycle transition.
@@ -304,7 +320,7 @@ pub fn derive_transition(observation: &Observation) -> Option<TransitionCandidat
     };
 
     Some(TransitionCandidate {
-        command_id: correlated_command_id(&observation.correlations)?,
+        command_id: exact_command_correlation(&observation.correlations)?,
         to_state,
         failure_code,
         correlations: observation.correlations.clone(),
@@ -325,7 +341,15 @@ fn validate_authority_domain(
     Ok(authority_domain_id)
 }
 
-fn correlated_command_id(correlations: &[TypedCorrelation]) -> Option<CommandId> {
+/// Qualify one exact command correlation from a typed-correlation list.
+///
+/// The wire list may repeat the same correlation during transport or adapter
+/// composition. Identical non-empty `CommandId` references collapse to one
+/// logical correlation; conflicting or empty command ids do not qualify.
+/// Other typed references remain available to their owning correlation layer
+/// and do not make the command reference ambiguous.
+#[must_use]
+pub fn exact_command_correlation(correlations: &[TypedCorrelation]) -> Option<CommandId> {
     let mut command_id: Option<&CommandId> = None;
     for correlation in correlations {
         let Some(typed_correlation::Ref::CommandId(candidate)) = correlation.r#ref.as_ref() else {

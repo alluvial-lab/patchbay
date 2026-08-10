@@ -19,7 +19,8 @@ pub use elicitation::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlot
 pub use elicitation_response::{validate_response_payload, validate_response_responder};
 pub use index::CommandIndex;
 pub use observation::{
-    ingest_observation, CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,
+    exact_command_correlation, ingest_observation, CommandSnapshot, CommandStateLookup,
+    IngestResult, TransitionCandidate,
 };
 pub use pipeline::{
     submit, submit_with_clock, submit_with_clock_and_posture, target_key_for,
@@ -32,4 +33,6 @@ pub use ports::{
 };
 pub use replay::rebuild_from_log;
 pub use state::{is_terminal, CommandRecord, OperationStateExt};
-pub use transitions::{allowed_transition, apply_grant_revocation_effect, apply_transition, AcceptanceError};
+pub use transitions::{
+    allowed_transition, apply_grant_revocation_effect, apply_transition, AcceptanceError,
+};

@@ -452,19 +452,13 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         operation: operation("command-spawn", OperationKind.SPAWN, "", 2),
       }),
     );
-    await waitForCommandState(control, "command-spawn", OperationState.REJECTED);
-    const spawnEvents = await readAfter(control, spawn.acceptedLsn?.value ?? 0n);
-    const spawnTransitions = spawnEvents
-      .filter((payload) => payload.kind === StoredEventKind.COMMAND_TRANSITION)
-      .map((payload) => fromBinary(CommandTransitionSchema, payload.payload))
-      .filter((transition) => transition.commandId?.value === "command-spawn");
-    assert.equal(spawnTransitions.some((transition) => transition.toState === OperationState.RUNNING), false);
-    assert.equal(spawnTransitions.at(-1)?.toState, OperationState.REJECTED);
-    assert.ok(
-      spawnEvents
-        .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
-        .map((payload) => fromBinary(ObservationSchema, payload.payload))
-        .some((observation) => observation.failureCode === FailureCode.UNSUPPORTED_COMMAND),
+    assert.equal(spawn.outcome, SubmissionOutcome.REJECTED);
+    assert.equal(spawn.failureCode, FailureCode.TARGET_NOT_FOUND);
+    assert.equal(spawn.operationState, OperationState.UNSPECIFIED);
+    assert.equal(
+      spawn.acceptedLsn,
+      undefined,
+      "a runtime-session target is incompatible with spawn and must reject before durability",
     );
 
     sessionFixture.faux.appendResponses([

@@ -1,6 +1,8 @@
 //! Acceptance target resolution backed by the session projection.
 
-use patchbay_contracts::patchbay::{AuthorityDomainId, TargetScope, TargetScopeKind};
+use patchbay_contracts::patchbay::{
+    AuthorityDomainId, OperationKind, TargetScope, TargetScopeKind,
+};
 
 use crate::acceptance::{TargetBinding, TargetNotFound, TargetResolver};
 
@@ -16,6 +18,7 @@ impl TargetResolver for SessionRegistry {
     async fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
+        _operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
         if TargetScopeKind::try_from(target_scope.kind).ok()

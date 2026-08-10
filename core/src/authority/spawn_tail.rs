@@ -18,7 +18,10 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 use prost_types::Timestamp;
 
-use crate::{acceptance::CommandIndex, storage::RecordedEvent};
+use crate::{
+    acceptance::{exact_command_correlation, CommandIndex},
+    storage::RecordedEvent,
+};
 
 use super::{
     grant_matches_request, AuthorityError, AuthorityRegistry, IssuerRef,
@@ -379,9 +382,7 @@ impl SpawnDescendantTail {
         }
         let mut scoped = self.clone();
         scoped.spawns.retain(|candidate, _| candidate == &key);
-        if let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) =
-            scoped.next_action()?
-        {
+        if let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) = scoped.next_action()? {
             return Ok(Some(issuance));
         }
 
@@ -582,12 +583,11 @@ impl SpawnDescendantTail {
         if failure != FailureCode::Unspecified {
             return Ok(());
         }
-        let Some(command_id) = single_nonempty_command_correlation(&observation.correlations)
-        else {
+        let Some(command_id) = exact_command_correlation(&observation.correlations) else {
             // A successful result for another command shape is not spawn
-            // completion evidence. Generic observation ingestion may retain
-            // duplicate correlations, so the global completion tail must not
-            // fail unrelated command processing on a non-qualifying fact.
+            // completion evidence. The shared qualifier accepts identical
+            // duplicate command references but keeps empty/conflicting ids
+            // inert so unrelated durable Observations cannot arm authority.
             return Ok(());
         };
         let Some(record) = self.commands.get_command(&command_id) else {
@@ -1315,10 +1315,12 @@ pub(crate) fn validate_descendant_audit_link(
                         "cannot decode descendant completion observation: {error}"
                     ))
                 })?;
-            let source_command = exactly_one_command_correlation(
-                &observation.correlations,
-                "descendant completion observation",
-                source_lsn,
+            let source_command = exact_command_correlation(&observation.correlations).ok_or_else(
+                || {
+                    AuthorityError::CorruptRecord(format!(
+                        "descendant completion observation at LSN {source_lsn} must have one exact non-empty command correlation"
+                    ))
+                },
             )?;
             if observation.kind != ObservationKind::Result as i32
                 || observation.failure_code != FailureCode::Unspecified as i32
@@ -1399,33 +1401,6 @@ pub(crate) fn descendant_grant_id(domain: &AuthorityDomainId, spawn_op: &Command
     GrantId {
         value: format!("desc:{}:{}", domain.value, spawn_op.value),
     }
-}
-
-fn single_nonempty_command_correlation(correlations: &[TypedCorrelation]) -> Option<CommandId> {
-    let mut command_ids =
-        correlations
-            .iter()
-            .filter_map(|correlation| match correlation.r#ref.as_ref() {
-                Some(typed_correlation::Ref::CommandId(command_id)) => Some(command_id),
-                _ => None,
-            });
-    let command_id = command_ids.next()?;
-    if command_id.value.is_empty() || command_ids.next().is_some() {
-        return None;
-    }
-    Some(command_id.clone())
-}
-
-fn exactly_one_command_correlation(
-    correlations: &[TypedCorrelation],
-    record_name: &str,
-    event_lsn: u64,
-) -> Result<CommandId, AuthorityError> {
-    single_nonempty_command_correlation(correlations).ok_or_else(|| {
-        AuthorityError::CorruptRecord(format!(
-            "{record_name} at LSN {event_lsn} must have exactly one non-empty command correlation"
-        ))
-    })
 }
 
 fn is_terminal(state: OperationState) -> bool {

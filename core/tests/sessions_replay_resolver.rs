@@ -12,8 +12,8 @@
 //! so calls are fully qualified as `TargetResolver::resolve(&registry, ...)`.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, Generation, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState, TargetScope, TargetScopeKind,
+    AdapterId, AuthorityDomainId, Generation, OperationKind, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::TargetResolver;
 use patchbay_core::session::{ingest_session_report, rebuild_from_log, SessionReport};
@@ -123,9 +123,14 @@ async fn resolve_binds_a_live_session() {
     .unwrap();
 
     let registry = rebuild(&storage).await;
-    let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1)))
-        .await
-        .unwrap();
+    let binding = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(Some(1)),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         binding,
         patchbay_core::acceptance::TargetBinding::RuntimeSession {
@@ -151,9 +156,14 @@ async fn resolve_binds_the_live_generation_when_unspecified() {
 
     let registry = rebuild(&storage).await;
     // No session_generation in the scope: bind the live one.
-    let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(None))
-        .await
-        .unwrap();
+    let binding = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(None),
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         binding,
         patchbay_core::acceptance::TargetBinding::RuntimeSession {
@@ -185,7 +195,13 @@ async fn resolve_rejects_a_tombstoned_generation() {
     .unwrap();
 
     let registry = rebuild(&storage).await;
-    let result = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
+    let result = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(Some(1)),
+    )
+    .await;
     assert!(result.is_err(), "tombstoned generation must not resolve");
 }
 
@@ -203,7 +219,13 @@ async fn resolve_rejects_a_generation_that_is_neither_live_nor_tombstoned() {
 
     let registry = rebuild(&storage).await;
     // Generation 99 was never registered and is not tombstoned.
-    let result = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(99))).await;
+    let result = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(Some(99)),
+    )
+    .await;
     assert!(result.is_err(), "unknown generation must not resolve");
 }
 
@@ -220,7 +242,8 @@ async fn resolve_rejects_an_unknown_session() {
         deployment_scope: "local".to_string(),
         ..TargetScope::default()
     };
-    let result = TargetResolver::resolve(&registry, &domain(), &scope).await;
+    let result =
+        TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &scope).await;
     assert!(result.is_err(), "unknown session must not resolve");
 }
 
@@ -239,7 +262,13 @@ async fn resolve_allows_an_offline_session() {
     .unwrap();
 
     let registry = rebuild(&storage).await;
-    let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
+    let binding = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(Some(1)),
+    )
+    .await;
     assert!(binding.is_ok(), "offline session must still resolve");
 }
 
@@ -257,6 +286,12 @@ async fn resolve_allows_a_failed_session() {
     .unwrap();
 
     let registry = rebuild(&storage).await;
-    let binding = TargetResolver::resolve(&registry, &domain(), &target_scope(Some(1))).await;
+    let binding = TargetResolver::resolve(
+        &registry,
+        &domain(),
+        OperationKind::Instruct,
+        &target_scope(Some(1)),
+    )
+    .await;
     assert!(binding.is_ok(), "failed session must still resolve");
 }

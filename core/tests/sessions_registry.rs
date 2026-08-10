@@ -1,5 +1,5 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, EventId, Generation, Lsn, RuntimeSessionId,
+    AdapterId, AuthorityDomainId, EventId, Generation, Lsn, OperationKind, RuntimeSessionId,
     SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
     SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
     SessionRelabeled, SessionState, StoredEventKind, StoredEventPayload, TargetScope,
@@ -301,7 +301,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
         deployment_scope: "machine-b".to_owned(),
         ..TargetScope::default()
     };
-    let binding = TargetResolver::resolve(&registry, &domain(), &target_b)
+    let binding = TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &target_b)
         .await
         .expect("a same-runtime session under another adapter must remain resolvable");
     assert!(matches!(

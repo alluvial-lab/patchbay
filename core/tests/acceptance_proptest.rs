@@ -288,6 +288,7 @@ impl TargetResolver for AlwaysResolved {
     fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
+        _operation_kind: OperationKind,
         _target_scope: &TargetScope,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send {
         ready(Ok(TargetBinding::RuntimeSession {

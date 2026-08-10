@@ -46,9 +46,13 @@ impl TargetResolver for AuthorityDomainTargetResolver {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
+        operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
-        if TargetScopeKind::try_from(target_scope.kind).ok() != Some(TargetScopeKind::AuthorityDomain) {
+        if operation_kind != OperationKind::Query
+            || TargetScopeKind::try_from(target_scope.kind).ok()
+                != Some(TargetScopeKind::AuthorityDomain)
+        {
             return Err(TargetNotFound::NotFound {
                 target: "diagnostics target is not an authority domain".to_owned(),
             });

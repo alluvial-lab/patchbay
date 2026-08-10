@@ -930,6 +930,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         TargetResolver::resolve(
             restarted.target_resolver(),
             &domain(),
+            OperationKind::Query,
             &TargetScope {
                 kind: TargetScopeKind::Resource as i32,
                 resource: Some(resource_identity.clone()),

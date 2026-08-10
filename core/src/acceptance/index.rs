@@ -7,16 +7,16 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition,
-    FailureCode, Observation, ObservationKind, Operation, OperationKind, OperationState,
-    Revocation, StoredEventKind,
+    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, Revocation, StoredEventKind,
 };
 use prost::Message;
 
 use crate::storage::{RecordedEvent, TargetKey};
 
 use super::{
-    apply_grant_revocation_effect, apply_transition, target_key_for, AcceptanceError, CommandRecord,
+    apply_grant_revocation_effect, apply_transition, exact_command_correlation, target_key_for,
+    AcceptanceError, CommandRecord,
 };
 
 type DedupKey = (String, String, String);
@@ -215,25 +215,10 @@ impl CommandIndex {
         {
             return Ok(());
         }
-        let mut command_id = None;
-        for correlation in &observation.correlations {
-            let Some(typed_correlation::Ref::CommandId(candidate)) = correlation.r#ref.as_ref()
-            else {
-                continue;
-            };
-            if candidate.value.is_empty() {
-                return Ok(());
-            }
-            match command_id {
-                None => command_id = Some(candidate),
-                Some(existing) if existing == candidate => {}
-                Some(_) => return Ok(()),
-            }
-        }
-        let Some(command_id) = command_id else {
+        let Some(command_id) = exact_command_correlation(&observation.correlations) else {
             return Ok(());
         };
-        let Some(record) = self.commands.get(command_id) else {
+        let Some(record) = self.commands.get(&command_id) else {
             // Unknown/pre-acceptance evidence is non-qualifying. It must not
             // become delivery or descendant authority if a matching command
             // appears later in the log.
@@ -252,7 +237,7 @@ impl CommandIndex {
             record.state,
             OperationState::Delivered | OperationState::Running
         ) {
-            self.deferred_spawn_successes.insert(command_id.clone());
+            self.deferred_spawn_successes.insert(command_id);
         }
         Ok(())
     }

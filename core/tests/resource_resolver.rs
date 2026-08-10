@@ -1,15 +1,17 @@
 use patchbay_contracts::patchbay::{
-    resource_state_mutation, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, Generation,
-    PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind, ResourceStateEvent,
-    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, TargetScope,
-    TargetScopeKind,
+    resource_state_mutation, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId, EndpointId, Generation,
+    OperationKind, PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind,
+    ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
+    TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
+    adapter::{ingest_registration, AdapterRegistry},
     diagnostics::AuthorityDomainTargetResolver,
     resource::{ResourceIdentity, ResourceRegistry},
     session::SessionRegistry,
-    storage::{event_id, RecordedEvent},
+    storage::{event_id, RecordedEvent, RusqliteStorage},
     target::{target_adapter_id, TargetRegistry},
 };
 use prost_types::Timestamp;
@@ -73,7 +75,7 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
     let targets = TargetRegistry::new(SessionRegistry::new(), resources);
 
     assert_eq!(
-        TargetResolver::resolve(&targets, &domain(), &registered.to_scope()).await,
+        TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &registered.to_scope()).await,
         Ok(TargetBinding::Resource(registered.clone()))
     );
     for unknown in [
@@ -82,7 +84,7 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
         identity("adapter-a", "pool", "other"),
     ] {
         assert!(
-            TargetResolver::resolve(&targets, &domain(), &unknown.to_scope())
+            TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &unknown.to_scope())
                 .await
                 .is_err()
         );
@@ -107,8 +109,95 @@ async fn malformed_legacy_and_nonordinary_resource_targets_fail_closed() {
         ..TargetScope::default()
     };
     for scope in [legacy, mixed, authority] {
-        assert!(TargetResolver::resolve(&targets, &domain(), &scope).await.is_err());
+        assert!(TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &scope).await.is_err());
     }
+}
+
+#[tokio::test]
+async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut adapters = AdapterRegistry::new();
+    ingest_registration(
+        &storage,
+        &mut adapters,
+        AdapterRegistration {
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "adapter-a-endpoint".to_owned(),
+            }),
+            authority_domain_id: Some(domain()),
+            adapter_generation: Some(Generation { value: 1 }),
+            capability: Some(AdapterCapability {
+                supported_operation_kinds: vec![OperationKind::Spawn as i32],
+                session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                ..AdapterCapability::default()
+            }),
+            ..AdapterRegistration::default()
+        },
+    )
+    .await
+    .unwrap();
+    let targets = TargetRegistry::with_adapters(
+        SessionRegistry::new(),
+        registry(&[identity("adapter-a", "pool", "shared")]),
+        adapters,
+    );
+    let adapter = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "adapter-a".to_owned(),
+        }),
+        ..TargetScope::default()
+    };
+    assert_eq!(
+        TargetResolver::resolve(&targets, &domain(), OperationKind::Spawn, &adapter).await,
+        Ok(TargetBinding::Adapter {
+            adapter_id: AdapterId {
+                value: "adapter-a".to_owned(),
+            },
+        })
+    );
+
+    let runtime = TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: adapter.adapter_id.clone(),
+        runtime_session_id: Some(patchbay_contracts::patchbay::RuntimeSessionId {
+            value: "existing".to_owned(),
+        }),
+        session_generation: Some(Generation { value: 1 }),
+        ..TargetScope::default()
+    };
+    let fleet = TargetScope {
+        kind: TargetScopeKind::FleetSupervisor as i32,
+        ..TargetScope::default()
+    };
+    let resource = identity("adapter-a", "pool", "shared").to_scope();
+    let unattached = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "adapter-b".to_owned(),
+        }),
+        ..TargetScope::default()
+    };
+    let mut mixed = adapter.clone();
+    mixed.project_or_group = "not-canonical".to_owned();
+    for incompatible in [runtime, resource, fleet, unattached, mixed] {
+        assert!(
+            TargetResolver::resolve(&targets, &domain(), OperationKind::Spawn, &incompatible)
+                .await
+                .is_err(),
+            "incompatible spawn target resolved: {incompatible:?}"
+        );
+    }
+    assert!(
+        TargetResolver::resolve(&targets, &domain(), OperationKind::Instruct, &adapter)
+            .await
+            .is_err(),
+        "adapter scope is a spawn-only operation boundary"
+    );
 }
 
 #[tokio::test]
@@ -118,13 +207,23 @@ async fn diagnostics_resolution_returns_an_honest_authority_domain_binding() {
         ..TargetScope::default()
     };
     assert_eq!(
-        TargetResolver::resolve(&AuthorityDomainTargetResolver, &domain(), &scope).await,
+        TargetResolver::resolve(
+            &AuthorityDomainTargetResolver,
+            &domain(),
+            OperationKind::Query,
+            &scope,
+        ).await,
         Ok(TargetBinding::AuthorityDomain(domain()))
     );
 
     let resource = identity("adapter-a", "pool", "shared").to_scope();
     assert!(
-        TargetResolver::resolve(&AuthorityDomainTargetResolver, &domain(), &resource)
+        TargetResolver::resolve(
+            &AuthorityDomainTargetResolver,
+            &domain(),
+            OperationKind::Query,
+            &resource,
+        )
             .await
             .is_err()
     );

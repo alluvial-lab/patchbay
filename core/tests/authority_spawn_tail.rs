@@ -8,6 +8,7 @@ use patchbay_contracts::patchbay::{
     StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
+    acceptance::CommandIndex,
     authority::{
         AuthorityError, DescendantGrantIssuance, SpawnCompletionAction, SpawnDescendantTail,
         DESCENDANT_GRANT_ALLOWED_KINDS,
@@ -602,12 +603,32 @@ fn adapter_scoped_spawn_rejects_cross_adapter_registration() {
 }
 
 #[test]
-fn non_qualifying_duplicate_command_correlation_is_inert() {
-    let mut duplicate = result_event(3);
+fn restart_uses_one_exact_duplicate_correlation_qualification_for_redelivery_and_completion() {
+    let mut duplicate = result_event(4);
     let mut observation = Observation::decode(duplicate.payload.payload.as_slice()).unwrap();
     observation.correlations.push(command_correlation());
     duplicate.payload.payload = observation.encode_to_vec();
+    let events = [
+        parent_grant_event(1),
+        spawn_event(2),
+        transition_event(3, OperationState::Accepted, OperationState::Delivered),
+        duplicate,
+        registration_event(5),
+    ];
+
+    // Fresh projections over the same durable restart prefix must agree: the
+    // successful result both suppresses unsafe redelivery and remains eligible
+    // for the descendant-completion writer. A correlation cannot qualify for
+    // only one side of that decision.
+    let mut commands = CommandIndex::new();
     let mut tail = SpawnDescendantTail::new();
-    tail.observe(&duplicate).unwrap();
-    assert_eq!(tail.next_action().unwrap(), None);
+    for event in &events {
+        commands.apply(event).unwrap();
+        tail.observe(event).unwrap();
+    }
+    assert!(commands.has_deferred_spawn_success(&command("spawn-1")));
+    assert!(matches!(
+        tail.next_action().unwrap(),
+        Some(SpawnCompletionAction::RecordAudit(_))
+    ));
 }

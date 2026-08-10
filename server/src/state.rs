@@ -13,6 +13,7 @@ use patchbay_core::{
         OperationPostureDenied, TargetBinding,
         TargetNotFound, TargetResolver,
     },
+    adapter::AdapterRegistry,
     authority::{
         ingest_control_surface_principal, ingest_control_surface_revocation,
         ingest_grant as ingest_authority_grant, ingest_operator_record,
@@ -103,6 +104,7 @@ impl ProjectionState {
         let mut authority = AuthorityRegistry::new();
         let mut sessions = SessionRegistry::new();
         let mut resources = ResourceRegistry::new();
+        let mut adapters = AdapterRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
         let mut diagnostics = DiagnosticsProjection::new();
@@ -117,6 +119,7 @@ impl ProjectionState {
                 .map_err(|error| error.to_string())?;
             sessions.observe(event).map_err(|error| error.to_string())?;
             resources.observe(event).map_err(|error| error.to_string())?;
+            adapters.observe(event).map_err(|error| error.to_string())?;
             commands.apply(event).map_err(|error| error.to_string())?;
             elicitation_slots
                 .observe(event)
@@ -139,7 +142,9 @@ impl ProjectionState {
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
-            target_resolver: LockedTargetResolver::new(TargetRegistry::new(sessions, resources)),
+            target_resolver: LockedTargetResolver::new(TargetRegistry::with_adapters(
+                sessions, resources, adapters,
+            )),
             state_lookup: LockedCommandStateLookup::new(commands),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
@@ -881,10 +886,17 @@ impl TargetResolver for LockedTargetResolver {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
+        operation_kind: OperationKind,
         target_scope: &TargetScope,
     ) -> Result<TargetBinding, TargetNotFound> {
         let registry = self.inner.lock().await;
-        TargetResolver::resolve(&*registry, authority_domain_id, target_scope).await
+        TargetResolver::resolve(
+            &*registry,
+            authority_domain_id,
+            operation_kind,
+            target_scope,
+        )
+        .await
     }
 }
 

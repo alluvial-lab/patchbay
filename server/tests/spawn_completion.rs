@@ -14,7 +14,8 @@ use patchbay_contracts::patchbay::{
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind, ObservationRequest,
     Operation, OperationKind, OperationState, OperatorRecord, PayloadEnvelope, PrincipalEnrollment,
-    ReceiveRequest, Revocation, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
+    ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind, Revocation, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState,
     SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload, SubmissionOutcome,
     SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
     VerifyOperatorPasswordRequest,
@@ -288,6 +289,14 @@ where
 }
 
 async fn seed_parent_grant<S: Storage>(storage: &S) {
+    seed_parent_grant_for(storage, fleet_scope()).await;
+}
+
+async fn seed_adapter_parent_grant<S: Storage>(storage: &S) {
+    seed_parent_grant_for(storage, adapter_scope()).await;
+}
+
+async fn seed_parent_grant_for<S: Storage>(storage: &S, target_scope: TargetScope) {
     let mut authority = AuthorityRegistry::new();
     ingest_grant(
         storage,
@@ -298,7 +307,7 @@ async fn seed_parent_grant<S: Storage>(storage: &S) {
             authority_domain_id: Some(domain()),
             subject_actor_id: Some(actor()),
             subject_endpoint_id: Some(endpoint()),
-            target_scope: Some(fleet_scope()),
+            target_scope: Some(target_scope),
             allowed_operation_kinds: vec![OperationKind::Spawn as i32],
             provenance: Some(GrantProvenance {
                 reason: "spawn authority fixture".to_owned(),
@@ -596,7 +605,10 @@ async fn acknowledge_delivery<S>(
         .unwrap();
 }
 
-async fn report_successful_spawn<S>(service: &AdapterControlServiceImpl<S>, token: &str)
+async fn report_successful_spawn<S>(
+    service: &AdapterControlServiceImpl<S>,
+    token: &str,
+) -> EventId
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
@@ -613,7 +625,7 @@ where
                         ..ActorEndpointRef::default()
                     }),
                     kind: ObservationKind::Result as i32,
-                    correlations: vec![correlation()],
+                    correlations: vec![correlation(), correlation()],
                     target_scope: Some(adapter_scope()),
                     failure_code: FailureCode::Unspecified as i32,
                     ..Observation::default()
@@ -622,7 +634,10 @@ where
             token,
         ))
         .await
-        .unwrap();
+        .unwrap()
+        .into_inner()
+        .event_id
+        .expect("successful spawn result has a durable event id")
 }
 
 fn production_audit<S>(storage: S) -> Arc<dyn AuditSink>
@@ -1179,10 +1194,20 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
 
 #[tokio::test]
 async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
+    for generation_bump in [false, true] {
+        run_real_adapter_scoped_submit_case(generation_bump).await;
+    }
+}
+
+async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("spawn-e2e.sqlite3");
+    let path = directory.path().join(if generation_bump {
+        "spawn-bump-e2e.sqlite3"
+    } else {
+        "spawn-registration-e2e.sqlite3"
+    });
     let storage = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
-    seed_parent_grant(&storage).await;
+    seed_adapter_parent_grant(&storage).await;
     seed_operator(&storage).await;
 
     let gate = CoreDecisionGate::default();
@@ -1215,7 +1240,10 @@ async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
     .await
     .unwrap();
     let token = attach_adapter(&adapter_service).await;
-    let driver_task = tokio::spawn(driver.run());
+    let mut driver_task = tokio::spawn(driver.run());
+    if generation_bump {
+        report_session(&adapter_service, &token, 6, None).await;
+    }
 
     let spawn = submitted_operation(
         "spawn-1",
@@ -1233,17 +1261,63 @@ async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(submitted.outcome, SubmissionOutcome::Rejected as i32);
-    assert_eq!(submitted.failure_code, FailureCode::TargetNotFound as i32);
-    // Current ordinary target resolution supports existing sessions/resources,
-    // not adapter/fleet spawn targets. Preserve that pre-existing limitation
-    // rather than broadening routing in this authority-completion feature; seed
-    // the already-accepted adapter-scoped handoff and exercise every later
-    // production boundary for the supported adapter path.
-    {
-        let _guard = gate.acquire().await;
-        seed_adapter_scoped_spawn(&storage).await;
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted as i32);
+    assert_eq!(submitted.operation_state, OperationState::Accepted as i32);
+    assert_eq!(submitted.failure_code, FailureCode::Unspecified as i32);
+    assert_eq!(submitted.decision_grant_id, Some(parent_grant_id()));
+
+    let incompatible_targets = [
+        ("spawn-existing-runtime", session_scope()),
+        (
+            "spawn-existing-resource",
+            TargetScope {
+                kind: TargetScopeKind::Resource as i32,
+                resource: Some(ResourceIdentity {
+                    adapter_id: adapter_scope().adapter_id,
+                    resource_kind: Some(ResourceKind {
+                        value: "runtime-pool".to_owned(),
+                    }),
+                    resource_id: Some(ResourceId {
+                        value: "pool-1".to_owned(),
+                    }),
+                }),
+                ..TargetScope::default()
+            },
+        ),
+    ];
+    for (command, target) in incompatible_targets {
+        let rejected = control
+            .submit(authenticated_control(
+                SubmitRequest {
+                    operation: Some(submitted_operation(
+                        command,
+                        &format!("{command}-key"),
+                        OperationKind::Spawn,
+                        target,
+                    )),
+                },
+                &auth,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(rejected.outcome, SubmissionOutcome::Rejected as i32);
+        assert_eq!(rejected.failure_code, FailureCode::TargetNotFound as i32);
     }
+    let accepted_command_ids: Vec<_> = all_events(&storage)
+        .await
+        .into_iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .map(|event| AcceptedOperation::decode(event.payload.payload.as_slice()).unwrap())
+        .filter_map(|accepted| accepted.operation?.command_id)
+        .map(|id| id.value)
+        .collect();
+    assert!(!accepted_command_ids
+        .iter()
+        .any(|id| id == "spawn-existing-runtime"));
+    assert!(!accepted_command_ids
+        .iter()
+        .any(|id| id == "spawn-existing-resource"));
 
     let mut deliveries = adapter_service
         .receive_deliveries(authenticated(
@@ -1268,19 +1342,68 @@ async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
     assert_eq!(delivered_operation.kind, OperationKind::Spawn as i32);
     assert_eq!(delivered_operation.target_scope, Some(adapter_scope()));
     acknowledge_delivery(&adapter_service, &token, &delivered_operation).await;
-    report_successful_spawn(&adapter_service, &token).await;
+    let deferred_source = report_successful_spawn(&adapter_service, &token).await;
+
+    let deferred_audits = storage
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: Some(command_id()),
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["spawn_completion_deferred".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(deferred_audits.records.len(), 1);
+    let deferred_audit = &deferred_audits.records[0];
+    assert_eq!(deferred_audit.kind, AuditEventKind::CommandRunning as i32);
+    assert_eq!(deferred_audit.source_event_id, Some(deferred_source));
+    assert_eq!(deferred_audit.command_id, Some(command_id()));
+    assert_eq!(deferred_audit.failure_code, FailureCode::Unspecified as i32);
+    assert!(deferred_audit.adapter_diagnostic.is_none());
+
+    let as_of = all_events(&storage)
+        .await
+        .last()
+        .and_then(|event| event.event_id.lsn)
+        .expect("deferred prefix has an LSN")
+        .value;
+    let diagnostics = control
+        .projection_state()
+        .diagnostics_at(&storage, &domain(), as_of)
+        .await
+        .unwrap();
+    let deferred_inspection = diagnostics.inspect_command(&command_id()).unwrap();
+    assert_eq!(
+        deferred_inspection.current_state,
+        OperationState::Delivered as i32,
+        "deferred success evidence must not present terminal success"
+    );
+    assert!(deferred_inspection.terminal_event_id.is_none());
+
     report_session(&adapter_service, &token, 7, Some(correlation())).await;
 
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if completion_counts(&all_events(&storage).await) == (1, 1, 1) {
-                break;
+    tokio::select! {
+        result = &mut driver_task => panic!("spawn completion driver exited early: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if completion_counts(&all_events(&storage).await) == (1, 1, 1) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("adapter-scoped accepted spawn completes with descendant authority");
+        }) => result.expect("adapter-scoped accepted spawn completes with descendant authority"),
+    }
     driver_task.abort();
     let _ = driver_task.await;
     drop(deliveries);

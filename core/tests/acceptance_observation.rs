@@ -285,26 +285,70 @@ async fn result_without_failure_emits_completed_transition() {
 }
 
 #[tokio::test]
-async fn successful_spawn_result_records_evidence_without_terminal_transition() {
+async fn successful_spawn_result_records_redacted_deferred_evidence_without_terminal_transition() {
     for state in [OperationState::Delivered, OperationState::Running] {
-        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let inner = RusqliteStorage::open_in_memory().unwrap();
+        let storage = AuditedStorage::new(inner.clone());
         let states = TestCommandStates::with_kind(command_id(), state, OperationKind::Spawn);
+        let mut submitted = observation(ObservationKind::Result, FailureCode::Unspecified);
+        submitted
+            .correlations
+            .push(command_correlation(command_id()));
 
-        let result = ingest_observation(
-            &storage,
-            &states,
-            observation(ObservationKind::Result, FailureCode::Unspecified),
-        )
-        .await
-        .unwrap();
+        let result = ingest_observation(&storage, &states, submitted)
+            .await
+            .unwrap();
 
-        assert!(matches!(result, IngestResult::CompletionDeferred { .. }));
-        let recorded = events(&storage).await;
-        assert_eq!(recorded.len(), 1);
+        let IngestResult::CompletionDeferred {
+            observation_event_id,
+        } = result
+        else {
+            panic!("successful spawn result must remain deferred");
+        };
+        let recorded = events(&inner).await;
+        assert_eq!(
+            recorded.len(),
+            2,
+            "source and redacted audit commit atomically"
+        );
         assert_eq!(
             StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
             StoredEventKind::Observation
         );
+        assert!(
+            recorded
+                .iter()
+                .all(|event| event.payload.kind != StoredEventKind::CommandTransition as i32),
+            "deferred evidence must not present terminal success"
+        );
+        let page = inner
+            .query_audit(
+                &authority_domain(),
+                patchbay_core::storage::AuditPageSpec {
+                    kinds: vec![],
+                    actor_id: None,
+                    endpoint_id: None,
+                    command_id: Some(command_id()),
+                    grant_id: None,
+                    target: None,
+                    failure_codes: vec![],
+                    reason_codes: vec!["spawn_completion_deferred".to_owned()],
+                    occurred_from: None,
+                    occurred_before: None,
+                    before_lsn: None,
+                    limit: 1,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(!page.has_more);
+        assert_eq!(page.records[0].source_event_id, Some(observation_event_id));
+        assert_eq!(
+            page.records[0].kind,
+            patchbay_contracts::patchbay::AuditEventKind::CommandRunning as i32
+        );
+        assert!(page.records[0].adapter_diagnostic.is_none());
     }
 }
 
