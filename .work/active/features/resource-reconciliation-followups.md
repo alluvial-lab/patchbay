@@ -1,7 +1,7 @@
 ---
 id: resource-reconciliation-followups
 kind: feature
-stage: review
+stage: done
 tags: [adapter, protocol]
 parent: null
 depends_on: []
@@ -280,4 +280,16 @@ node contracts/scripts/check-generated-drift.mjs
 - Deterministic regression: `report_ingest_folds_an_interleaved_ungated_audit_and_returns_committed_success` injects a real audit append inside the storage port after catch-up but before the resource append. It proves one report attempt returns the committed LSN without a false gap/Internal/retry ambiguity, consumes audit + report in order, and leaves hot projection equal to fresh replay. `report_ingest_fails_closed_when_the_committed_suffix_is_missing` withholds the bounded suffix once and proves ingest returns an error while rebuild reinstalls durable authority.
 - Protocol alignment: `docs/PROTOCOL.md` now distinguishes serialization of competing resource decisions from unrelated sibling writers and specifies exact post-append suffix folding plus fail-closed suffix validation.
 - Verification: `CARGO_INCREMENTAL=0 cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `CARGO_INCREMENTAL=0 cargo test -p patchbay-core --test conformance_vectors -- --nocapture`; `node contracts/scripts/check-vectors.mjs` (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses); `CARGO_INCREMENTAL=0 cargo test --workspace`; `CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings` — all passed.
-- Lifecycle: feature intentionally remains at `stage: review` for thorough pass-2 fix verification; no terminal transition was made.
+- Lifecycle: feature remained at `stage: review` for thorough pass-2 fix verification; no terminal transition was made by the fixer.
+
+## Review closure — pass 3
+
+- Fresh-context adversarial pass 3 found no material current-cycle blockers.
+- Confirmed bounded stored-suffix folding consumes ungated siblings, requires
+  the exact committed report at the returned LSN, installs atomically, and
+  preserves fail-closed rebuild behavior for invalid suffixes.
+- Recurring finding: the post-append gap assumption recurred after pass 1
+  because the first fix addressed evidence rather than writer interleaving; the
+  pass-2 suffix-fold correction removed the root assumption, and pass 3 was
+  clean.
+- Effective weight: `thorough` (explicit operator). Verdict: approved.
