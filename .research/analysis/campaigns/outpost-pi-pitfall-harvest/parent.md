@@ -30,7 +30,7 @@ Grounded harvest of the operator's hand-built control surface (`/home/agent/proj
 
 ### M1. "Don't infer X from Y" — the universal Patchbay lesson
 
-Every facet surfaces a distinct instance of inferring a stronger condition from a weaker signal, and each failed in the field. `{inferred: aggregates}`
+Every facet surfaces a distinct instance of inferring a stronger condition from a weaker signal, and each was observed to fail, was reproduced, or was exposed/rejected during review. `{inferred: aggregates}`
 
 - Don't infer **adapter-code uptake** from `/reload` receipt — a cached ESM module ran old code. `[restart-session-note-20260731]{1}`
 - Don't infer **process liveness/progress** from transport connectivity — a browser PTY stopped draining and froze single-threaded Pi while the relay WebSocket stayed live. `[herdr-session-20260731]{1}`
@@ -44,11 +44,12 @@ Every facet surfaces a distinct instance of inferring a stronger condition from 
 
 ### M2. Incarnation / generation fencing is the universal hard problem
 
-Three facets independently converge on incarnation-fenced lifecycle as the load-bearing mechanism, and each records it failing when the fence was a mutable/local token rather than a stable logical identity: `{inferred: converges}`
+Two facets independently converge on incarnation/process fencing as load-bearing, each recording a fence failure or exposed gap: `{inferred: converges}`
 
-- restart: an old `turn_end` timer killed a successor turn because it checked mutable module state instead of an incarnation token `[restart-hot-reload-feature]{5}`; a machine-global sentinel let multiple runtimes consume one request `[restart-hot-reload-feature]{2}`; exact child-PID correlation was *removed* to fix terminal ownership, reopening cross-wrapper marker consumption `[restart-wrapper-foreground-regression]{3}`.
+- restart: an old `turn_end` timer killed a successor turn because it checked mutable module state instead of an incarnation token `[restart-hot-reload-feature]{5}`; a machine-global sentinel let multiple runtimes consume one request `[restart-hot-reload-feature]{2}`; exact child-PID correlation was *removed* to fix terminal ownership, reopening cross-wrapper marker consumption as an exposed, untested gap `[restart-wrapper-foreground-regression]{3}`.
 - herdr: shell ancestry was treated as session ownership until tooling inserted bash/subshells `[herdr-ancestor-fix]{1}`.
-- keyring: credential loss silently crossed an authority boundary because the fallback key wasn't bound to the prior principal `[keyring-incident]{3}`.
+
+(The keyring identity-continuity failure is a *related but distinct* authority-continuity failure — see M1 — not an incarnation/process-fence failure; it is not field evidence for lifecycle fencing.)
 
 **Patchbay seam (central):** the spawn redesign's incarnation-fence requirements are the core instance. The 2026-08-09 spawn review's **BLOCKER 3** (stale-generation fencing absent from Observation ingress), **BLOCKER 4** (no exclusive generation-change claim; boundary dedup can't prevent duplicate runtimes), and **BLOCKER 5** (restart strands descendant authority) are each directly prefigured here — outpost_pi hit the concrete field failures (old-action-kills-successor; non-exclusive claim; identity not carried across replacement) that those blockers name abstractly. `[restart-hot-reload-feature]{5}{7}` `[restart-wrapper-foreground-regression]{1}`
 
@@ -63,7 +64,7 @@ Where outpost_pi independently worked the same problems, it converged on Patchba
 
 ### M4. Separate concerns the source system conflated (and Patchbay must keep distinct)
 
-`{inferred: aggregates}` settled-notification vs exclusive-quiescence vs delivery-durability (`[restart-hot-reload-feature]{8}{10}`); stop vs restart-as-continuation vs restart-fresh (`[restart-fresh-session-ea6b5fd]{1}`); process-existence vs terminal-drain-liveness vs agent-responsiveness (`[herdr-session-20260731]{1}`); text-injection vs lifecycle-control (`[herdr-restart-signal-fix]{1}`); credential-rotation vs identity-continuity (`[keyring-decisions]{2}`); event-order vs event-timestamp vs producer-identity (`[transcript-provenance-sweep-306dd7f]{1}`); Operations vs TUI-seam (`[mobile-ops]{1}`). Each conflation produced a recorded failure; each separation is a Patchbay seam decision.
+`{inferred: aggregates}` settled-notification vs exclusive-quiescence vs delivery-durability (`[restart-hot-reload-feature]{8}{10}`); stop vs restart-as-continuation vs restart-fresh (`[restart-fresh-session-ea6b5fd]{1}`); process-existence vs terminal-drain-liveness vs agent-responsiveness (`[herdr-session-20260731]{1}`); text-injection vs lifecycle-control (`[herdr-restart-signal-fix]{1}`); credential-rotation vs identity-continuity (`[keyring-decisions]{2}`); event-order vs event-timestamp vs producer-identity (`[transcript-provenance-sweep-306dd7f]{1}`); Operations vs TUI-seam (`[mobile-ops]{1}`). Each conflation produced a recorded failure, an exposed gap, or a review-rejected design; each separation is a Patchbay seam decision.
 
 ### M5. Honest-evidence / verification seam
 
@@ -82,10 +83,10 @@ Within-facet contradictions (e.g. extension comment overstates the live PID fenc
 
 ## Convergence with the 2026-08-09 Patchbay adversarial review
 
-The harvest independently corroborates five of that review's design-level blockers, converting them from abstract risk into field-attested failure modes: `{inferred: cross-band}`
+The harvest independently corroborates **four** of that review's design-level blockers from field-attested failure modes, plus a fifth as an *analogous warning* (not direct evidence): `{inferred: cross-band}`
 - spawn **BLOCKER 3** (stale-generation fencing absent) ← restart P4/P5 `[restart-hot-reload-feature]{5}`
 - spawn **BLOCKER 4** (no exclusive generation-change claim) ← restart P5/P6 `[restart-hot-reload-feature]{2}` `[restart-wrapper-foreground-regression]{3}`
-- spawn **BLOCKER 5** (descendant authority stranded after restart) ← keyring identity-continuity `[keyring-incident]{7}`
+- spawn **BLOCKER 5** (descendant authority stranded after restart) ← *analogous only*: the keyring silent-re-identity is an authority-continuity failure of the same shape — a credential/identity event crossing an authority boundary without an explicit transition `[keyring-incident]{7}` `{inferred: analogy}` — but the incident involves neither restart-as-continuation nor descendant grants, so it supports a warning, **not** field evidence for this blocker.
 - authority/sessions replay-integrity ← transcript ordering/ownership `[transcript-ordering-implementation-455dce8]{1}`
 - verification "executable + mutation-survivable, not green-assertions-only" ← restart P12 `[restart-enoent-race]{1}`
 

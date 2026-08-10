@@ -14,7 +14,7 @@ This facet is about the `outpost_pi` incident recorded on the `patchbay` worksta
 
 ## Disconfirming analysis
 
-The observed `/new` command is a tempting causal explanation, but the incident source explicitly separates session lifecycle from relay/pairing identity loading and says `/new` caused neither the keyring failure nor the re-identity nor the eviction. `[keyring-incident]{5}` The keyring failure's exact platform cause is also unresolved: the source lists an inaccessible, locked, gone, or unfindable entry and gives the rebrand service rename only as a possibility. `{ambiguous}` `[keyring-incident]{2}`
+The observed `/new` command is a tempting causal explanation, but the incident source explicitly separates session lifecycle from relay/pairing identity loading and says `/new` caused neither the keyring failure nor the re-identity nor the eviction. `[keyring-incident]{5}` The keyring failure's exact platform cause is unresolved: the source records `KeyRevoked` / keyring inaccessibility without attesting a specific locked/gone/unfindable taxonomy or the service-rename cause. `{ambiguous}` `[keyring-incident]{2}`
 
 ## Failure chain
 
@@ -58,7 +58,7 @@ The practical distinction for Patchbay is:
 
 ### Disconfirming analysis
 
-A file mirror alone is not sufficient: the incident demonstrates that a file can exist and still diverge from the Owner-paired key. `[keyring-incident]{3}` Conversely, always refusing to operate whenever a platform keyring is unavailable would make documented headless/file-only operation impossible; the source explicitly supports a file fallback on platforms without a guaranteed core keyring. `[keyring-storage]{2}` The design must therefore distinguish continuity-preserving recovery from authorized identity creation, rather than choosing a universal "always fallback" or "always fail" rule. `{inferred}`
+A file mirror alone is not sufficient: the incident demonstrates that a file can exist and still diverge from the Owner-paired key. `[keyring-incident]{3}` Conversely, always refusing to operate whenever a platform keyring is unavailable would make documented headless/file-only operation impossible; the source supports a file-identity fallback path. `[keyring-storage]{4}` The design must therefore distinguish continuity-preserving recovery from authorized identity creation, rather than choosing a universal "always fallback" or "always fail" rule. `{inferred}`
 
 ### Decision: make continuity a state transition, not a storage accident
 
@@ -100,7 +100,7 @@ The primary incident note leaves the underlying `KeyRevoked` cause open and expl
 
 ### Gaps
 
-1. **Cause attribution gap:** no source confirms whether the local keyring entry was revoked, locked, deleted, or lost during the destructive service rename. `{ambiguous}` `[keyring-incident]{2}`
+1. **Cause attribution gap:** the source records `KeyRevoked` / keyring inaccessibility but does not attest the specific platform cause. `{ambiguous}` `[keyring-incident]{2}`
 2. **Continuity-proof gap:** the storage code and tests do not compare fallback identity against a last-known local/Owner binding. `{inferred}` `[keyring-storage]{4}` `[keyring-tests]{3}`
 3. **Write-through gap:** no source-backed test proves keyring mint/read and file mirror remain identical across restart and backend loss. `{inferred}` `[keyring-storage]{6}` `[keyring-tests]{1}`
 4. **Transition/audit gap:** the observed user-facing event was revocation after membership reconciliation, not a prior identity-continuity-loss event. `{inferred}` `[keyring-incident]{4}` `[keyring-self-revoke]{5}`

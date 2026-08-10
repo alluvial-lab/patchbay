@@ -23,7 +23,7 @@ The seam also replaced the active editor with a newly constructed custom compone
 
 ### 2. Do not infer completion from incidental lifecycle events
 
-The proposed editor design attempted to turn `void` submission into success/error by observing lifecycle events. The review found no robust correlation: `session_start` lacked a request id, and commands such as reload or local UI commands did not provide a uniform completion signal. [mobile-review]{5}
+The proposed editor design attempted to turn `void` submission into success/error by observing lifecycle events. The review found no robust completion correlation across command kinds (no uniform acknowledgement signal). [mobile-review]{5}
 
 **Disconfirming analysis.** A fresh `session_start` can be useful evidence for a session-replacement operation, but it cannot be treated as a universal acknowledgement for arbitrary commands without an operation-specific correlation contract. This is an `{inferred}` Patchbay protocol requirement from the observed failure mode, not a claim that every operation must synchronously complete.
 
@@ -35,11 +35,11 @@ The proposed composer routing had a dangerous fallback: Pi's prompt path did not
 
 ### 4. Do not retire the existing typed session operation merely to make the UI look generic
 
-The rescope retained `session_new` because the daemon, restart protocol, and staggered app/extension deployments depend on its typed contract. The architectural gap was in the SDK capability available to the handler, not evidence that the wire operation itself should be replaced by arbitrary slash invocation. [mobile-ops]{2} [mobile-ops]{3}
+The rescope retained `session_new` as a dedicated typed operation rather than replacing it with arbitrary slash invocation; the architectural gap was in the SDK capability available to the handler, not the wire operation itself. [mobile-ops]{2} [mobile-ops]{3}
 
 ## Architectural gap
 
-The missing seam was a host-owned, mode-capable operation gateway. `{inferred}` The extension API exposed no public method to obtain a command context, invoke an extension command without an LLM turn, or replace the active session runtime. [mobile-newctx]{3} The SDK's restriction is intentional: session-control methods are command-gated to avoid event-handler deadlocks, while base-context operations such as compaction are available from ordinary extension contexts. [mobile-ops]{2} [mobile-ops]{3}
+The missing seam was a host-owned, mode-capable operation gateway. `{inferred}` The extension API exposed no public method to obtain a command context, invoke an extension command without an LLM turn, or replace the active session runtime. [mobile-newctx]{3} The SDK restricts session-control methods to command contexts ("safe only for user-initiated commands"), while base-context operations such as compaction are available from ordinary extension contexts; the deadlock-avoidance motive is not source-attested. [mobile-ops]{2} [mobile-ops]{3]
 
 This creates two distinct control paths that must not be conflated. `{inferred}`
 
@@ -55,7 +55,7 @@ The second path is the converged model. `{inferred}` The cockpit already routes 
 3. **Process ownership is part of capability.** `/new` via restart-fresh is valid only when a daemon supervisor or restart wrapper owns the process. The implementation acknowledges, resets projection state, exits with the shared fresh-session code, and lets the owner relaunch once without `--continue`. [mobile-fresh]{1} [mobile-fresh]{3} [mobile-fresh]{5} [mobile-fresh]{7}
 4. **Safe failure beats unsafe recycle.** Unmanaged interactive agents return `fresh_session_restart_unavailable` and do not exit. The eleven Herdr-managed agents were intentionally not migrated in this slice, so their limitation remains an explicit capability boundary rather than a hidden kill-and-resume risk. [mobile-fresh]{2} [mobile-fresh]{4}
 5. **Separate dispatch acknowledgement from completion.** An `action_ok` for a process recycle means the request was accepted/handed to the owner; successor session identity and `session_start reason=new` are separate lifecycle evidence. `{inferred}`
-6. **Do not make a mobile control surface a closed mirror of the TUI.** The failed command-picker plan also discovered that extension command discovery does not imply native TUI command enumeration. Patchbay should expose adapter-declared operations, not promise a complete slash catalog. `{inferred}`
+6. **Do not make a mobile control surface a closed mirror of the TUI.** The failed command-picker plan surfaced — `{inferred}` — that extension command discovery does not imply native TUI command enumeration. Patchbay should expose adapter-declared operations, not promise a complete slash catalog. `{inferred}`
 
 ## Contradictions
 
