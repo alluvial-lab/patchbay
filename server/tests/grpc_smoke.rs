@@ -56,6 +56,7 @@ use patchbay_core_server::{
     service::{
         map_storage_error_to_status, ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER,
     },
+    snapshot::encode_session_checkpoint,
     state::ProjectionState,
 };
 use prost::Message;
@@ -1810,8 +1811,9 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let checkpoint_lsn = checkpoint.snapshot_lsn.unwrap();
     let persisted_generation = checkpoint.core_generation.unwrap();
     let checkpoint_payload = checkpoint.encode_to_vec();
+    let stored_checkpoint = encode_session_checkpoint(&checkpoint);
     storage
-        .write_snapshot(&domain(), checkpoint_lsn, checkpoint_payload.clone())
+        .write_snapshot(&domain(), checkpoint_lsn, stored_checkpoint)
         .await
         .unwrap();
     drop(service);
@@ -1859,7 +1861,11 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     stale.snapshot_lsn = Some(Lsn { value: 1 });
     let stale_payload = stale.encode_to_vec();
     reopened
-        .write_snapshot(&domain(), Lsn { value: 1 }, stale_payload.clone())
+        .write_snapshot(
+            &domain(),
+            Lsn { value: 1 },
+            encode_session_checkpoint(&stale),
+        )
         .await
         .unwrap();
     let repaired_stale = restarted
@@ -1893,7 +1899,11 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
         incompatible.core_generation = incompatible_generation;
         let incompatible_payload = incompatible.encode_to_vec();
         reopened
-            .write_snapshot(&domain(), checkpoint_lsn, incompatible_payload.clone())
+            .write_snapshot(
+                &domain(),
+                checkpoint_lsn,
+                encode_session_checkpoint(&incompatible),
+            )
             .await
             .unwrap();
         let repaired = restarted

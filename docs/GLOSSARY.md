@@ -238,7 +238,7 @@ The separately protected trust boundary used to establish or recover the operato
 
 ## Snapshot
 
-An authoritative state view used to recover from missed events, reconnects, and stale UI state.
+An authoritative state view used to recover from missed events, reconnects, and stale UI state. Durable session checkpoints are disposable derived snapshots stored in a private typed, versioned session envelope; only a validator-approved exact domain/core-generation/LSN match may skip a recovery log prefix, while legacy undiscriminated or otherwise incompatible bytes replay from LSN 0.
 
 ## Stale
 

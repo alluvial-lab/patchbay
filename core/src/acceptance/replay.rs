@@ -1,7 +1,8 @@
 //! Recovery of the in-memory command projection from snapshots and log events.
-// v0.1.0: snapshot checkpointing is deferred (no projection discriminator in
-// the storage snapshot slot). The serialization code below is retained for the
-// future namespaced-snapshot integration; hence the dead-code allowance.
+// v0.1.0: the storage snapshot slot has a typed session envelope, not a
+// composite whole-core checkpoint. Command-index checkpointing is therefore
+// deferred; the serialization code below is retained for the future
+// namespaced/composite integration, hence the dead-code allowance.
 #![allow(dead_code)]
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, FailureCode, Operation, OperationState};
@@ -16,29 +17,27 @@ const COMMAND_INDEX_SNAPSHOT_VERSION: u32 = 1;
 /// Rebuild the command index from the durable event log.
 ///
 /// v0.1.0 always replays from LSN 0. Snapshot checkpointing of the command
-/// index is **deferred** because the storage port's `write_snapshot`/
-/// `load_latest_snapshot` slot is scoped to `(authority_domain_id, LSN)` with
-/// no projection discriminator. A command-only snapshot in that slot would
-/// hide pre-checkpoint events from sibling projections (authority, sessions,
+/// index is **deferred** because the current typed storage slot contains only a
+/// session projection. A command-only snapshot in that slot would hide
+/// pre-checkpoint events from sibling projections (authority, sessions,
 /// elicitation) that share the same authority domain. When the snapshot
-/// namespace is extended to carry a projection kind, this function will load
-/// the command-index snapshot and replay only its tail.
+/// namespace carries a composite whole-core checkpoint or independent
+/// per-projection cursors, this function can validate its own typed checkpoint
+/// and replay only the tail.
 ///
-/// For now, `recover()` is called to get the event tail, but any snapshot
-/// is ignored (we replay from LSN 0). The snapshot serialization code
-/// (`encode_snapshot`/`decode_snapshot`) is retained for the future
-/// namespaced-snapshot integration.
+/// For now this function reads the full log directly. The snapshot
+/// serialization code (`encode_snapshot`/`decode_snapshot`) is retained for
+/// the future namespaced/composite integration.
 pub async fn rebuild_from_log<S: Storage>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<CommandIndex, AcceptanceError> {
-    // v0.1.0: ignore snapshots (no projection discriminator). Read from LSN 0.
+    // v0.1.0: ignore the session-only checkpoint slot. Read from LSN 0.
     let mut index = CommandIndex::new();
     let mut previous_lsn = 0u64;
 
-    // Read all events from LSN 0. We use read_after directly rather than
-    // recover() because recover() would skip events at or before a snapshot
-    // LSN — and we're ignoring snapshots for now.
+    // Read all events from LSN 0. This projection has no compatible typed
+    // checkpoint to offer the validator-aware recovery helper yet.
     let events = storage
         .read_after(
             authority_domain_id,
@@ -79,13 +78,13 @@ pub async fn rebuild_from_log<S: Storage>(
 impl CommandIndex {
     /// Snapshot checkpointing is **deferred for v0.1.0**.
     ///
-    /// The storage port's `write_snapshot`/`load_latest_snapshot` slot is
-    /// scoped to `(authority_domain_id, LSN)` with no projection
-    /// discriminator. A command-only snapshot in that slot would hide
-    /// pre-checkpoint events from sibling projections (authority, sessions,
-    /// elicitation). When the snapshot namespace is extended to carry a
-    /// projection kind, this method will serialize the index and call
-    /// `storage.write_snapshot`. The serialization code is retained below.
+    /// The current typed storage slot contains a session checkpoint, not a
+    /// composite whole-core checkpoint. A command-only snapshot in that slot
+    /// would hide pre-checkpoint events from sibling projections (authority,
+    /// sessions, elicitation). When the namespace carries a composite
+    /// checkpoint or independent per-projection cursors, this method can
+    /// serialize the index and call `storage.write_snapshot`. The
+    /// serialization code is retained below.
     #[allow(dead_code)]
     pub async fn snapshot_checkpoint<S: Storage>(
         &self,

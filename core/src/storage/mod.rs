@@ -19,5 +19,5 @@ pub use port::{
     AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
     RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
 };
-pub use recovery::{recover, RecoveryState};
+pub use recovery::{recover, RecoveryState, ValidatedSnapshot};
 pub use rusqlite::{RusqliteStorage, LATEST_SCHEMA_VERSION};

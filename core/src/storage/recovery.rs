@@ -1,10 +1,12 @@
 //! Crash recovery and replay.
 //!
-//! On startup, the core reconstructs in-memory state by loading the latest
-//! snapshot (if any) and replaying events with `LSN > snapshot_lsn`. Recovery
-//! is deterministic — for unchanged storage contents (events and snapshots),
-//! it returns identical raw materials. Full idempotent replay depends on the
-//! domain layer's deterministic `apply` (`IdempotentLogReplay` obligation).
+//! On startup, the core reconstructs in-memory state from a compatible typed
+//! checkpoint, when one exists, and replays events with `LSN > snapshot_lsn`.
+//! A stored snapshot is never allowed to skip a log prefix merely because its
+//! storage row has an LSN: callers must validate and decode its projection
+//! type, format version, embedded domain/epoch/LSN anchors, and payload first.
+//! Any incompatible checkpoint is disposable derived data, so recovery returns
+//! no snapshot and replays from LSN 0.
 //!
 //! # Formal-model alignment
 //!
@@ -15,8 +17,9 @@
 //!
 //! - `IdempotentLogReplay`: replaying the same committed prefix produces
 //!   identical state. This module returns deterministic raw materials (the
-//!   same snapshot + tail for the same committed log contents); the domain
-//!   layer's `apply` must be deterministic for the property to hold end-to-end.
+//!   same validated snapshot + tail for the same committed log contents); the
+//!   domain layer's `apply` must be deterministic for the property to hold
+//!   end-to-end.
 //! - `CrashNoAcceptedLost`: after a crash, accepted pre-crash commands remain
 //!   reconstructable. This depends on the durable event log (this layer) AND
 //!   acceptance committing before acknowledgement (the acceptance feature).
@@ -30,45 +33,43 @@
 //! (`story-v0-core-persistence-proptests`) provides implementation-backed
 //! evidence for the storage-layer portion of each obligation.
 
-use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn};
+use patchbay_contracts::patchbay::{AuthorityDomainId, EventId, Lsn};
 
 use super::port::{RecordedEvent, Storage, StorageError, StoredSnapshot};
 
-/// The result of recovery: the starting point (snapshot, if any) and the
-/// events to apply to reconstruct in-memory state.
-///
-/// The storage layer does not own domain state (commands, sessions, grants) —
-/// that belongs to the sibling core features (acceptance, authority, sessions).
-/// This struct gives the domain layer the raw materials: a snapshot (opaque
-/// bytes the domain layer knows how to deserialize) and the event tail to
-/// apply on top.
+/// A checkpoint that has passed the caller's projection-specific decoder and
+/// compatibility checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecoveryState {
-    /// The snapshot loaded as the recovery starting point, if any.
-    /// `None` means no snapshot exists — replay from LSN 0.
-    pub snapshot: Option<StoredSnapshot>,
-    /// Events with `LSN > snapshot_lsn` (or all events if no snapshot),
-    /// in LSN order. The domain layer applies these to reconstruct state.
+pub struct ValidatedSnapshot<T> {
+    /// The durable storage-row anchor that was validated with the payload.
+    pub event_id: EventId,
+    /// The decoded projection value. Recovery consumers never receive opaque
+    /// checkpoint bytes as authority.
+    pub value: T,
+}
+
+/// The result of recovery: a validated typed starting point, if any, and the
+/// events to apply to reconstruct in-memory state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryState<T> {
+    /// The compatible decoded checkpoint loaded as the recovery starting
+    /// point. `None` means no compatible checkpoint exists and `tail` starts
+    /// at LSN 1.
+    pub snapshot: Option<ValidatedSnapshot<T>>,
+    /// Events with `LSN > snapshot_lsn` (or all events if no compatible
+    /// snapshot), in LSN order.
     pub tail: Vec<RecordedEvent>,
 }
 
-impl RecoveryState {
-    /// The LSN at which recovery starts. If a snapshot was loaded, this is
-    /// the snapshot's LSN (events at or before this LSN are already reflected
-    /// in the snapshot). If no snapshot, this is 0 (replay from the beginning).
-    ///
-    /// Returns `StorageError::CorruptRecord` if the snapshot exists but has
-    /// no LSN (malformed — Fail Fast rather than silently defaulting to 0).
+impl<T> RecoveryState<T> {
+    /// The LSN at which recovery starts. Validated snapshots always carry a
+    /// positive LSN; no snapshot means replay from the beginning (LSN 0).
     pub fn start_lsn(&self) -> Result<u64, StorageError> {
-        match &self.snapshot {
-            Some(s) => s
-                .event_id
-                .lsn
-                .as_ref()
-                .map(|l| l.value)
-                .ok_or_else(|| StorageError::CorruptRecord("snapshot has no LSN".to_string())),
-            None => Ok(0),
-        }
+        Ok(self
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.event_id.lsn.as_ref())
+            .map_or(0, |lsn| lsn.value))
     }
 
     /// Iterate over the events to apply, in LSN order.
@@ -77,54 +78,61 @@ impl RecoveryState {
     }
 }
 
-/// Recover in-memory state for an authority domain.
+/// Recover typed in-memory state for an authority domain.
 ///
-/// Loads the latest snapshot (if any), then reads events with
-/// `LSN > snapshot_lsn` (or all events if no snapshot). The caller (the core's
-/// domain layer) applies the snapshot payload and the event tail to
-/// reconstruct its in-memory state.
+/// `validate_snapshot` is the projection boundary. It must return `Some(T)`
+/// only after decoding the expected checkpoint type and format version and
+/// checking the embedded authority domain, durable continuity epoch, snapshot
+/// LSN, and payload invariants. Returning `None` declares the checkpoint
+/// incompatible. Recovery then discards it and reads the full durable log from
+/// LSN 0; incompatibility is a cache miss, not loss of authoritative state.
+///
+/// This function independently rejects a storage row with a missing/wrong
+/// authority domain or a missing/zero LSN before calling the validator. The
+/// accepted row LSN becomes the tail cursor only after both row and payload
+/// validation succeed.
 ///
 /// # Determinism (not unconditional idempotency)
 ///
-/// For unchanged storage contents (the same committed log), `recover()` is
-/// deterministic — it returns the same snapshot + tail. If events or newer
-/// snapshots commit between two calls, the second call may return different
-/// (newer) raw materials. This is correct behavior, not a violation: recovery
-/// reflects the current committed state at call time.
-///
-/// # Crash safety (storage-layer portion)
-///
-/// After a crash (no clean shutdown), `recover()` returns raw materials
-/// reflecting the last committed LSN. No committed event is absent from the
-/// returned snapshot+tail — the durable event log is the source of truth, and
-/// snapshots are derived checkpoints that only bound replay cost. Full
-/// "no accepted event is lost" depends additionally on the acceptance pipeline
-/// committing before acknowledgement (the acceptance feature) and the domain
-/// layer's deterministic application of these raw materials.
-pub async fn recover<S: Storage>(
+/// For unchanged storage contents and a deterministic validator, `recover()`
+/// returns the same typed snapshot + tail. If events or newer checkpoints
+/// commit between calls, the second call may return different (newer) raw
+/// materials. This is correct behavior, not a violation.
+pub async fn recover<S, T, V>(
     storage: &S,
     authority_domain_id: &AuthorityDomainId,
-) -> Result<RecoveryState, StorageError> {
-    // Load the latest snapshot.
-    let snapshot = storage
+    validate_snapshot: V,
+) -> Result<RecoveryState<T>, StorageError>
+where
+    S: Storage,
+    V: FnOnce(&StoredSnapshot) -> Option<T>,
+{
+    let candidate = storage
         .load_latest_snapshot(authority_domain_id, None)
         .await?;
 
-    // Determine the cursor: the snapshot's LSN, or 0 if no snapshot.
-    // Fail Fast: a snapshot without an LSN is malformed — reject it rather
-    // than silently defaulting to 0 (which would replay events the snapshot
-    // already reflects, causing duplicate application).
-    let cursor = match &snapshot {
-        Some(s) => s
-            .event_id
-            .lsn
-            .as_ref()
-            .map(|l| Lsn { value: l.value })
-            .ok_or_else(|| StorageError::CorruptRecord("snapshot has no LSN".to_string()))?,
-        None => Lsn { value: 0 },
+    let snapshot = match candidate {
+        Some(stored)
+            if stored.event_id.authority_domain_id.as_ref() == Some(authority_domain_id)
+                && stored
+                    .event_id
+                    .lsn
+                    .as_ref()
+                    .is_some_and(|lsn| lsn.value > 0) =>
+        {
+            validate_snapshot(&stored).map(|value| ValidatedSnapshot {
+                event_id: stored.event_id,
+                value,
+            })
+        }
+        _ => None,
     };
 
-    // Read events after the cursor.
+    let cursor = snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.event_id.lsn.as_ref())
+        .cloned()
+        .unwrap_or(Lsn { value: 0 });
     let tail = storage.read_after(authority_domain_id, cursor).await?;
 
     Ok(RecoveryState { snapshot, tail })

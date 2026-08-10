@@ -294,36 +294,111 @@ async fn v3_to_v4_migration_preserves_all_durable_rows_without_allocating_lsn() 
 }
 
 #[tokio::test]
-async fn malformed_v4_metadata_schema_is_rejected_without_repair_or_version_change() {
-    let directory = TempDir::new().unwrap();
-    let path = directory.path().join("malformed-v4.sqlite3");
-    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
-    drop(storage);
-    tokio::task::yield_now().await;
-    {
-        let db = rusqlite::Connection::open(&path).unwrap();
-        db.execute_batch(
-            "DROP TABLE authority_domain_metadata;
-             CREATE TABLE authority_domain_metadata (authority_domain_id TEXT PRIMARY KEY);",
-        )
-        .unwrap();
-    }
+async fn malformed_v4_metadata_constraints_are_rejected_without_repair_or_version_change() {
+    let mutations = [
+        (
+            "missing-primary-key-and-uniqueness",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL,
+                core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "unique-but-not-primary-key",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL UNIQUE,
+                core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "wrong-authority-domain-type",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id BLOB NOT NULL PRIMARY KEY,
+                core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "wrong-generation-type",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL PRIMARY KEY,
+                core_generation TEXT NOT NULL CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "nullable-authority-domain",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT PRIMARY KEY,
+                core_generation INTEGER NOT NULL CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "nullable-generation",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL PRIMARY KEY,
+                core_generation INTEGER CHECK(core_generation > 0)
+            );",
+        ),
+        (
+            "missing-positive-check",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL PRIMARY KEY,
+                core_generation INTEGER NOT NULL
+            );",
+        ),
+        (
+            "weakened-positive-check",
+            "CREATE TABLE authority_domain_metadata (
+                authority_domain_id TEXT NOT NULL PRIMARY KEY,
+                core_generation INTEGER NOT NULL CHECK(core_generation >= 0)
+            );",
+        ),
+    ];
 
-    assert!(matches!(
-        RusqliteStorage::open(path.to_str().unwrap()),
-        Err(StorageError::MalformedSchema(_))
-    ));
-    let db = rusqlite::Connection::open(&path).unwrap();
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
-    assert_eq!(version, 4);
-    let columns = db
-        .prepare("PRAGMA table_info(authority_domain_metadata)")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(columns, vec!["authority_domain_id"]);
+    for (name, mutated_schema) in mutations {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join(format!("{name}.sqlite3"));
+        let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        drop(storage);
+        tokio::task::yield_now().await;
+        let schema_before = {
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute_batch("DROP TABLE authority_domain_metadata;")
+                .unwrap();
+            db.execute_batch(mutated_schema).unwrap();
+            db.query_row(
+                "SELECT sql FROM sqlite_master
+                 WHERE type = 'table' AND name = 'authority_domain_metadata'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+        };
+
+        assert!(
+            matches!(
+                RusqliteStorage::open(path.to_str().unwrap()),
+                Err(StorageError::MalformedSchema(_))
+            ),
+            "metadata mutation {name} passed v4 preflight"
+        );
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let version: u32 = db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4, "metadata mutation {name} changed version");
+        let schema_after: String = db
+            .query_row(
+                "SELECT sql FROM sqlite_master
+                 WHERE type = 'table' AND name = 'authority_domain_metadata'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            schema_after, schema_before,
+            "metadata mutation {name} was repaired instead of rejected"
+        );
+    }
 }
 
 #[test]

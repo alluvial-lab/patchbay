@@ -728,19 +728,19 @@ where
                 .map_err(map_storage_error_to_status)?
             {
                 let stored_lsn = stored.event_id.lsn.as_ref().map(|lsn| lsn.value);
-                let compatible = decode_compatible_session_checkpoint(
+                if let Ok(snapshot) = decode_compatible_session_checkpoint(
                     &stored,
                     &authority_domain_id,
                     self.state.core_generation(),
-                )
-                .is_ok();
-                if compatible && stored_lsn.is_some_and(|lsn| lsn >= current_lsn) {
-                    return Ok(Response::new(LoadSnapshotResponse {
-                        present: true,
-                        event_id: Some(stored.event_id),
-                        snapshot_payload: stored.payload,
-                        view_kind: view_kind as i32,
-                    }));
+                ) {
+                    if stored_lsn.is_some_and(|lsn| lsn >= current_lsn) {
+                        return Ok(Response::new(LoadSnapshotResponse {
+                            present: true,
+                            event_id: Some(stored.event_id),
+                            snapshot_payload: snapshot.encode_to_vec(),
+                            view_kind: view_kind as i32,
+                        }));
+                    }
                 }
             }
 
@@ -765,8 +765,8 @@ where
             }));
         }
 
-        // Resource checkpoints cannot share the current undiscriminated
-        // session slot. Materialize directly from the replayable projection;
+        // Resource checkpoints cannot share the current session-only typed
+        // slot. Materialize directly from the replayable projection;
         // a historical bound repairs to the newer current authority.
         let mut snapshot = self
             .state

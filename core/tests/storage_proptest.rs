@@ -19,7 +19,8 @@
 //!   contiguity).
 //! - **Deterministic replay** (`replay_deterministic_for_unchanged_contents`):
 //!   `IdempotentLogReplay` (stated-normative, storage-layer portion). Two
-//!   `recover()` calls on unchanged contents return identical raw materials.
+//!   validator-aware `recover()` calls on unchanged contents return identical
+//!   typed snapshot + tail materials.
 //!   End-to-end idempotent replay requires the domain layer's deterministic
 //!   `apply`, which is not built yet.
 //! - **Crash recovery** (`crash_recovery_preserves_full_events`):
@@ -31,7 +32,7 @@
 //!   file. Process-level durability is a config assertion, not a proptest.
 //! - **Snapshot bounds replay to the correct tail** (`snapshot_bounds_tail`):
 //!   tests the storage-layer portion of `SnapshotConsistentPrefix`
-//!   (stated-normative) — a snapshot at LSN N bounds replay to events > N,
+//!   (stated-normative) — a test-validator-approved snapshot at LSN N bounds replay to events > N,
 //!   and the tail events are byte-identical to the corresponding events in a
 //!   full replay. The snapshot *payload content* (that it reflects events
 //!   1..=N) is a caller obligation per `port.rs` `write_snapshot`; the
@@ -72,7 +73,7 @@ use std::sync::Arc;
 use patchbay_contracts::patchbay::{
     AuthorityDomainId, EventId, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
 };
-use patchbay_core::storage::{recover, Storage, TargetKey};
+use patchbay_core::storage::{recover, Storage, StoredSnapshot, TargetKey};
 use proptest::prelude::*;
 
 /// Any concrete (non-`Unspecified`) event kind.
@@ -115,6 +116,10 @@ fn test_domain() -> AuthorityDomainId {
 
 fn lsn(v: u64) -> Lsn {
     Lsn { value: v }
+}
+
+fn accept_test_snapshot(snapshot: &StoredSnapshot) -> Option<Vec<u8>> {
+    Some(snapshot.payload.clone())
 }
 
 /// Open a fresh in-memory storage for each proptest case. Each case is
@@ -246,8 +251,8 @@ proptest! {
             for payload in &events {
                 storage.append(&domain, payload.clone()).await.unwrap();
             }
-            let state1 = recover(&storage, &domain).await.unwrap();
-            let state2 = recover(&storage, &domain).await.unwrap();
+            let state1 = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
+            let state2 = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
             prop_assert_eq!(&state1, &state2,
                 "two recover() calls diverged for unchanged contents");
             // Also verify the tail matches the written events (full payload).
@@ -276,8 +281,8 @@ proptest! {
                 .write_snapshot(&domain, lsn(snap_lsn), vec![0xEE])
                 .await
                 .unwrap();
-            let state1 = recover(&storage, &domain).await.unwrap();
-            let state2 = recover(&storage, &domain).await.unwrap();
+            let state1 = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
+            let state2 = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
             prop_assert_eq!(state1, state2);
             Ok(())
         })?;
@@ -317,8 +322,8 @@ proptest! {
         })?;
     }
 
-    /// Snapshot bounds replay to the correct tail: a snapshot at LSN N means
-    /// `recover()` replays only events > N, and those tail events are
+    /// Snapshot bounds replay to the correct tail: a validator-approved
+    /// snapshot at LSN N means `recover()` replays only events > N, and those tail events are
     /// byte-identical to the corresponding events in a full replay from 0.
     ///
     /// This is the storage-layer portion of `SnapshotConsistentPrefix`
@@ -343,7 +348,7 @@ proptest! {
                 .await
                 .unwrap();
 
-            let with_snap = recover(&storage, &domain).await.unwrap();
+            let with_snap = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
             prop_assert!(with_snap.snapshot.is_some());
             prop_assert_eq!(with_snap.start_lsn().unwrap(), snap_lsn);
             prop_assert_eq!(with_snap.tail.len() as u64, n_events - snap_lsn);
@@ -356,7 +361,7 @@ proptest! {
                     .await
                     .unwrap();
             }
-            let full = recover(&full_storage, &domain).await.unwrap();
+            let full = recover(&full_storage, &domain, accept_test_snapshot).await.unwrap();
             prop_assert!(full.snapshot.is_none());
 
             // The tail of the snapshot recovery must equal the corresponding
@@ -390,7 +395,7 @@ proptest! {
                 .write_snapshot(&domain, lsn(n_events), vec![0xCC])
                 .await
                 .unwrap();
-            let recovery = recover(&storage, &domain).await.unwrap();
+            let recovery = recover(&storage, &domain, accept_test_snapshot).await.unwrap();
             prop_assert_eq!(recovery.start_lsn().unwrap(), n_events);
             prop_assert!(recovery.tail.is_empty());
             Ok(())

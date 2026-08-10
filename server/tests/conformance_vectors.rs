@@ -13,7 +13,7 @@ use patchbay_contracts::patchbay::{
     ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
-    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
+    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest, ViewRevision,
 };
 use patchbay_core::{
     authority::events as authority_events,
@@ -30,6 +30,7 @@ use patchbay_core_server::{
     issuer::{OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER},
     rpc::{adapter_control_service_server::AdapterControlService, control_service_server::ControlService},
     service::ControlServiceImpl,
+    snapshot::{decode_compatible_session_checkpoint, encode_session_checkpoint},
     state::ProjectionState,
 };
 use prost::Message;
@@ -1047,6 +1048,72 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         return Err("session fixture did not commit at the vector's current revision".to_owned());
     }
 
+    if vector
+        .input
+        .pointer("/session_case/cached_snapshot/sessions")
+        .and_then(Value::as_array)
+        .is_none_or(|sessions| !sessions.is_empty())
+        || string(
+            &vector.input,
+            "/session_case/cached_snapshot/materialized_at",
+        )? != "2026-07-06T00:02:00Z"
+    {
+        return Err("session cached-checkpoint fixture is not the registered empty view".to_owned());
+    }
+    let cached_checkpoint = SessionSnapshot {
+        authority_domain_id: Some(authority_domain_id.clone()),
+        snapshot_lsn: Some(Lsn { value: cached_lsn }),
+        core_generation: Some(Generation {
+            value: cached_core_generation,
+        }),
+        sessions: Vec::new(),
+        view_revisions: vec![ViewRevision {
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                adapter_id: Some(adapter_id.clone()),
+                deployment_scope: deployment_scope.clone(),
+                runtime_session_id: Some(runtime_session_id.clone()),
+                session_generation: Some(generation),
+                ..TargetScope::default()
+            }),
+            revision_lsn: Some(Lsn { value: cached_lsn }),
+        }],
+        materialized_at: Some(Timestamp {
+            seconds: 1_783_296_120,
+            nanos: 0,
+        }),
+        lockdown: None,
+    };
+    let cached_checkpoint_payload = cached_checkpoint.encode_to_vec();
+    storage
+        .write_snapshot(
+            &authority_domain_id,
+            Lsn { value: cached_lsn },
+            encode_session_checkpoint(&cached_checkpoint),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let stored_checkpoint = storage
+        .load_latest_snapshot(
+            &authority_domain_id,
+            Some(Lsn { value: cached_lsn }),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("session stale checkpoint was not stored")?;
+    if decode_compatible_session_checkpoint(
+        &stored_checkpoint,
+        &authority_domain_id,
+        &Generation {
+            value: current_core_generation,
+        },
+    )
+    .map_err(|error| format!("seeded stale checkpoint is incompatible: {error}"))?
+        != cached_checkpoint
+    {
+        return Err("stored session checkpoint differs from the compatible stale witness".to_owned());
+    }
+
     let service = ControlServiceImpl::new_with_clock(
         storage.clone(),
         authority_domain_id.clone(),
@@ -1122,12 +1189,28 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
             != Some(current_lsn)
         || current_lsn < current_revision
         || current_lsn <= cached_lsn
+        || response.snapshot_payload == cached_checkpoint_payload
         || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
         || snapshot.core_generation
             != Some(Generation {
                 value: expected_core_generation,
             })
         || session.is_none()
+        || vector
+            .expected_outcome
+            .pointer("/session_case/stored_checkpoint/seeded_at_lsn/value")
+            .and_then(Value::as_u64)
+            != Some(cached_lsn)
+        || vector
+            .expected_outcome
+            .pointer("/session_case/stored_checkpoint/compatible")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || vector
+            .expected_outcome
+            .pointer("/session_case/stored_checkpoint/returned")
+            .and_then(Value::as_bool)
+            != Some(false)
     {
         return Err(
             "load_snapshot RPC did not replace the stale session view with current authority"

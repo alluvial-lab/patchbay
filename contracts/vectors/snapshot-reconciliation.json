@@ -21,7 +21,7 @@
     "patchbay.ObservationSubscription.cursor",
     "patchbay.Observation.lsn"
   ],
-  "description": "The existing session reconnect invariant is refined to explicit view discrimination and durable epoch carriage: older cached session/resource views are not authority, and current replacements carry the persisted core generation.",
+  "description": "The existing session reconnect invariant is refined to explicit view discrimination and durable epoch carriage: the runner stores an otherwise compatible typed session checkpoint at the cached LSN and proves it is rejected as stale, while older resource views are likewise replaced and current replacements carry the persisted core generation.",
   "input": {
     "session_case": {
       "snapshot_type": "patchbay.SessionSnapshot",
@@ -231,6 +231,13 @@
       "replacement_core_generation": {
         "value": 2
       },
+      "stored_checkpoint": {
+        "seeded_at_lsn": {
+          "value": 40
+        },
+        "compatible": true,
+        "returned": false
+      },
       "replay_result_type": "patchbay.Observation",
       "replayed_observations": [
         {
@@ -303,5 +310,5 @@
       }
     }
   },
-  "invariant_check": "SnapshotStaleRejected: explicit RESOURCE selection cannot decode a session checkpoint, older cached views are replaced by current core-LSN projections, and both replacement view kinds carry the persisted core generation."
+  "invariant_check": "SnapshotStaleRejected: the compatible typed session checkpoint stored at LSN 40 is rejected against current revision 45, explicit RESOURCE selection cannot decode the session checkpoint slot, older cached views are replaced by current core-LSN projections, and both replacement view kinds carry the persisted core generation."
 }

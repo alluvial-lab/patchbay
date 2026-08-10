@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_grant ON audit_records(authority_domain_id,
 
 const MIGRATION_4: &str = r#"
 CREATE TABLE authority_domain_metadata (
-    authority_domain_id TEXT PRIMARY KEY,
+    authority_domain_id TEXT NOT NULL PRIMARY KEY,
     core_generation INTEGER NOT NULL CHECK(core_generation > 0)
 );
 "#;
@@ -133,6 +133,138 @@ fn validate_columns(db: &Connection, table: &str, required: &[&str]) -> Result<(
             )));
         }
     }
+    Ok(())
+}
+
+fn validate_authority_domain_metadata_schema(db: &Connection) -> Result<(), StorageError> {
+    #[derive(Debug)]
+    struct Column {
+        name: String,
+        declared_type: String,
+        not_null: bool,
+        default_value: Option<String>,
+        primary_key_position: i64,
+    }
+
+    let malformed = |message: String| {
+        StorageError::MalformedSchema(format!("table authority_domain_metadata {message}"))
+    };
+    let mut statement = db
+        .prepare(
+            "SELECT name, type, \"notnull\", dflt_value, pk
+             FROM pragma_table_info('authority_domain_metadata')
+             ORDER BY cid",
+        )
+        .map_err(map_write_err)?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok(Column {
+                name: row.get(0)?,
+                declared_type: row.get(1)?,
+                not_null: row.get::<_, i64>(2)? != 0,
+                default_value: row.get(3)?,
+                primary_key_position: row.get(4)?,
+            })
+        })
+        .map_err(map_write_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_write_err)?;
+    if columns.len() != 2 {
+        return Err(malformed(format!(
+            "must have exactly authority_domain_id and core_generation columns, found {}",
+            columns.len()
+        )));
+    }
+    let authority_domain = &columns[0];
+    if authority_domain.name != "authority_domain_id"
+        || !authority_domain.declared_type.eq_ignore_ascii_case("TEXT")
+        || !authority_domain.not_null
+        || authority_domain.default_value.is_some()
+        || authority_domain.primary_key_position != 1
+    {
+        return Err(malformed(
+            "must declare authority_domain_id as TEXT NOT NULL PRIMARY KEY with no default"
+                .to_owned(),
+        ));
+    }
+    let core_generation = &columns[1];
+    if core_generation.name != "core_generation"
+        || !core_generation
+            .declared_type
+            .eq_ignore_ascii_case("INTEGER")
+        || !core_generation.not_null
+        || core_generation.default_value.is_some()
+        || core_generation.primary_key_position != 0
+    {
+        return Err(malformed(
+            "must declare core_generation as INTEGER NOT NULL with no default".to_owned(),
+        ));
+    }
+
+    let mut indexes = db
+        .prepare(
+            "SELECT name, \"unique\", origin, partial
+             FROM pragma_index_list('authority_domain_metadata')",
+        )
+        .map_err(map_write_err)?;
+    let indexes = indexes
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? != 0,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? != 0,
+            ))
+        })
+        .map_err(map_write_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_write_err)?;
+    let mut has_exact_primary_key_index = false;
+    for (name, unique, origin, partial) in indexes {
+        if !unique || origin != "pk" || partial {
+            continue;
+        }
+        let mut index_columns = db
+            .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+            .map_err(map_write_err)?;
+        let index_columns = index_columns
+            .query_map([name], |row| row.get::<_, String>(0))
+            .map_err(map_write_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_write_err)?;
+        if index_columns == ["authority_domain_id"] {
+            has_exact_primary_key_index = true;
+        }
+    }
+    if !has_exact_primary_key_index {
+        return Err(malformed(
+            "must enforce one unique primary key on authority_domain_id".to_owned(),
+        ));
+    }
+
+    let create_sql: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'authority_domain_metadata'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    let normalize_sql = |sql: &str| {
+        sql.chars()
+            .filter(|character| !character.is_ascii_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+            .trim_end_matches(';')
+            .to_owned()
+    };
+    if normalize_sql(&create_sql) != normalize_sql(MIGRATION_4) {
+        return Err(malformed(
+            "must match the canonical v4 definition, including CHECK(core_generation > 0)"
+                .to_owned(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -178,11 +310,7 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         ));
     }
     if version >= 4 {
-        validate_columns(
-            db,
-            "authority_domain_metadata",
-            &["authority_domain_id", "core_generation"],
-        )?;
+        validate_authority_domain_metadata_schema(db)?;
     }
 
     db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
