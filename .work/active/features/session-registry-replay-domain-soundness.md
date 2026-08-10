@@ -1,7 +1,7 @@
 ---
 id: session-registry-replay-domain-soundness
 kind: feature
-stage: review
+stage: done
 tags: [protocol, foundation]
 parent: null
 depends_on: []
@@ -322,6 +322,13 @@ Fallback if exact-payload retention proves materially too costly under measured 
 
 ## Status (wrapped 2026-08-10)
 Design is committed at `implementing`; implementation was not started before the operator wrap and resumes from the two declared child checkpoints after the current replay boundary.
+
+## Completion and thorough review
+
+- Implementation landed in `4d7b3f6`, `161b233`, and `651493c`; the non-verification child closed on green evidence, while the integration-evidence child completed its project-mandated completeness→adversarial deep lane and closed in `3639f1d` after mutation convergence.
+- Feature review pass 1 found that `DiagnosticsProjection` forwarded session events but skipped security-lockdown events, allowing its embedded registry to diverge and later reject a legitimate stale-to-live report. `5b44aa3` routes all concrete events through the embedded session registry and adds incremental/cold replay regressions; it also updates the bound-constructor pattern example.
+- The clean follow-up pass returned `ready` with no material or smaller findings. Focused suites, both named server regressions, workspace tests, clippy, model/vector checks, and diff hygiene passed. The known repository-wide rustfmt baseline remains unrelated.
+- Review status: approved after thorough convergence. Review was same-harness fresh-context Sol max, not cross-model.
 
 ## Implementation notes
 
