@@ -1,7 +1,7 @@
 ---
 id: session-registry-replay-domain-soundness-integration-evidence
 kind: story
-stage: review
+stage: done
 tags: [verification, protocol]
 parent: session-registry-replay-domain-soundness
 depends_on: [session-registry-replay-domain-soundness-bound-registry-contract]
@@ -132,3 +132,7 @@ mutation witnesses before advancing to `done`.
 - Verification: registry 23/23; ingest 17/17; replay/resolver 9/9; session properties 9/9; acceptance 25/25; named server `CoreDecisionGate` regression passed; `cargo test --workspace`, workspace Clippy with warnings denied, model checks (53 modeled properties), and vector checks (53 vectors, 16 promoted, 21 implementation checks, 37 existing vector mutation witnesses) passed.
 - Hygiene/assurance: scoped rustfmt, `git diff --check`, production-source zero-diff, and final unmutated focused execution passed. No production, model, vector, wire, foundation, backlog, unrelated item, or temporary mutation artifact remains; assurance stays implementation-checked.
 - Pass count/cap: Phase 1 completeness converged in 1/5; this is Phase 2 adversarial pass 4/5 and the fifth finding/fix pass overall. It is the final evidence-fix slot before the bounded lane cap. This story and its parent remain at `stage: review` for exactly one caller-owned final fresh-context recheck (Phase 2 pass 5/5), not closure in this commit.
+
+## Deep-lane closure
+
+Phase 2 pass 5/5 returned `ready` with no material or smaller findings. It re-ran all 16 recorded claim-breaking mutants—including exact-envelope, lockdown-ledger, late-domain-validation, identity-key, resolver-domain, and four new-LSN semantic-guard mutations—and killed every mutant with exit 101. Focused suites, workspace tests, clippy, model/vector checks, scoped formatting, and diff hygiene were green. The story therefore advances to `done` under the project `[verification]` deep-lane convention. Review was same-harness fresh-context Sol max, not cross-model.
