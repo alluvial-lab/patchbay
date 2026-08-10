@@ -17,7 +17,7 @@ mkdir -p -- "$test_tmp"
 cleanup() {
   rm -rf -- "$test_tmp"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 
 export TMPDIR="$test_tmp"
 cd "$repo_root"

@@ -76,6 +76,9 @@ fix touches the whole test harness layout and deserves its own pass.
   `empty_log_read_returns_empty` — one test passed and zero files remained.
 - `cargo clippy -p patchbay-core --all-targets -- -D warnings` — passed.
 - `bash -n scripts/test-rust` and `git diff --check` — passed.
+- Bounded review fix: cleanup is registered only on shell exit, avoiding an
+  INT/TERM trap that could remove the temp root while Cargo children are still
+  shutting down.
 - Repository-wide `cargo fmt --all --check` is pre-existingly red on unrelated
   committed server test formatting; the touched Rust hunk follows its file's
   current formatting style.
