@@ -15,7 +15,7 @@ use patchbay_contracts::patchbay::{
 };
 use prost::Message;
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::storage::{validate_next_replay_event, RecordedEvent, Storage};
 
 use super::AcceptanceError;
 
@@ -107,8 +107,10 @@ impl ElicitationSlotLayer {
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
             | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord
-            | StoredEventKind::Unspecified => Ok(()),
+            | StoredEventKind::AuditRecord => Ok(()),
+            StoredEventKind::Unspecified => Err(AcceptanceError::CorruptLog(
+                "elicitation replay event kind is unspecified".to_owned(),
+            )),
         }
     }
 
@@ -379,21 +381,15 @@ pub async fn rebuild_slots_from_log<S: Storage>(
     let mut previous_lsn = 0u64;
 
     for event in events {
-        let (event_domain, event_lsn) = event_identity(&event)?;
-        if event_domain != authority_domain_id {
-            return Err(AcceptanceError::CorruptLog(format!(
-                "recovery event belongs to authority domain {:?}, expected {:?}",
-                event_domain, authority_domain_id
-            )));
-        }
-        if event_lsn <= previous_lsn {
-            return Err(AcceptanceError::CorruptLog(format!(
-                "recovery event LSN {event_lsn} is not after previous LSN {previous_lsn}"
-            )));
-        }
-
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+            .map_err(|error| {
+                error.map(
+                    AcceptanceError::CorruptRecord,
+                    AcceptanceError::CorruptLog,
+                )
+            })?;
         layer.observe(&event)?;
-        previous_lsn = event_lsn;
+        previous_lsn = validated.lsn;
     }
 
     Ok(layer)

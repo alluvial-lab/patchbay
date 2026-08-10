@@ -197,7 +197,7 @@ impl SpawnDescendantTail {
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
             | StoredEventKind::SecurityLockdown => Ok(()),
-            StoredEventKind::Unspecified => Err(AuthorityError::CorruptRecord(format!(
+            StoredEventKind::Unspecified => Err(AuthorityError::CorruptLog(format!(
                 "spawn-tail event at LSN {event_lsn} has unspecified kind"
             ))),
         }

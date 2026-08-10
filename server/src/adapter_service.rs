@@ -343,9 +343,15 @@ fn command_projection_from_events(
     let mut index = CommandIndex::new();
     let mut cursor = 0;
     for event in events {
-        cursor = validate_next_replay_event(event, authority_domain_id, cursor)
-            .map_err(|error| acceptance::AcceptanceError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(authority_domain_id, cursor, event)
+            .map_err(|error| {
+                error.map(
+                    acceptance::AcceptanceError::CorruptRecord,
+                    acceptance::AcceptanceError::CorruptLog,
+                )
+            })?;
         index.apply(event)?;
+        cursor = validated.lsn;
     }
     Ok(CommandProjection { index, cursor })
 }
@@ -364,10 +370,19 @@ async fn catch_up_command_projection<S: Storage>(
         )
         .await?;
     for event in &events {
-        projection.cursor =
-            validate_next_replay_event(event, authority_domain_id, projection.cursor)
-                .map_err(|error| acceptance::AcceptanceError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(
+            authority_domain_id,
+            projection.cursor,
+            event,
+        )
+        .map_err(|error| {
+            error.map(
+                acceptance::AcceptanceError::CorruptRecord,
+                acceptance::AcceptanceError::CorruptLog,
+            )
+        })?;
         projection.index.apply(event)?;
+        projection.cursor = validated.lsn;
     }
     Ok(events)
 }
@@ -483,12 +498,19 @@ where
             {
                 Ok(events) => {
                     let applied = events.iter().try_for_each(|event| {
-                        scan_cursor =
-                            validate_next_replay_event(event, &authority_domain_id, scan_cursor)
-                                .map_err(|error| {
-                                    acceptance::AcceptanceError::CorruptLog(error.to_string())
-                                })?;
+                        let validated = validate_next_replay_event(
+                            &authority_domain_id,
+                            scan_cursor,
+                            event,
+                        )
+                        .map_err(|error| {
+                            error.map(
+                                acceptance::AcceptanceError::CorruptRecord,
+                                acceptance::AcceptanceError::CorruptLog,
+                            )
+                        })?;
                         subscription_commands.apply(event)?;
+                        scan_cursor = validated.lsn;
                         Ok::<(), acceptance::AcceptanceError>(())
                     });
                     match applied {
@@ -1324,7 +1346,8 @@ fn map_adapter_error(error: adapter::AdapterError) -> Status {
         adapter::AdapterError::InvalidDeliveryAcknowledgement(message) => {
             Status::failed_precondition(message)
         }
-        adapter::AdapterError::CorruptRecord(message) => Status::internal(message),
+        adapter::AdapterError::CorruptRecord(message)
+        | adapter::AdapterError::CorruptLog(message) => Status::internal(message),
         adapter::AdapterError::Resource(error) => map_resource_error(error),
         adapter::AdapterError::Storage(error) => map_storage_error_to_status(error),
     }

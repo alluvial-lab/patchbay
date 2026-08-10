@@ -75,8 +75,10 @@ impl CommandIndex {
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
             | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord
-            | StoredEventKind::Unspecified => Ok(()),
+            | StoredEventKind::AuditRecord => Ok(()),
+            StoredEventKind::Unspecified => Err(AcceptanceError::CorruptLog(
+                "command replay event kind is unspecified".to_owned(),
+            )),
         }
     }
 

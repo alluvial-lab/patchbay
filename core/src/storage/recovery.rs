@@ -35,42 +35,10 @@
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, EventId, Lsn};
 
-use super::port::{RecordedEvent, Storage, StorageError, StoredSnapshot};
-
-/// Validate the next event in one complete authority-domain replay.
-///
-/// Full replay and durable-tail catch-up both consume a monotonic, gap-free
-/// log. A duplicate, decreasing LSN, gap, missing identity, or foreign domain
-/// is corruption rather than benign redelivery at this boundary.
-pub fn validate_next_replay_event(
-    event: &RecordedEvent,
-    authority_domain_id: &AuthorityDomainId,
-    previous_lsn: u64,
-) -> Result<u64, StorageError> {
-    let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-        StorageError::CorruptRecord("replay event has no authority domain".to_owned())
-    })?;
-    if event_domain != authority_domain_id || event_domain.value.is_empty() {
-        return Err(StorageError::CorruptRecord(format!(
-            "replay event belongs to authority domain {event_domain:?}, expected {authority_domain_id:?}"
-        )));
-    }
-    let event_lsn = event
-        .event_id
-        .lsn
-        .as_ref()
-        .ok_or_else(|| StorageError::CorruptRecord("replay event has no LSN".to_owned()))?
-        .value;
-    let expected_lsn = previous_lsn
-        .checked_add(1)
-        .ok_or_else(|| StorageError::CorruptRecord("replay LSN overflow".to_owned()))?;
-    if event_lsn != expected_lsn {
-        return Err(StorageError::CorruptRecord(format!(
-            "replay event LSN {event_lsn} is not the next gap-free LSN {expected_lsn}"
-        )));
-    }
-    Ok(event_lsn)
-}
+use super::{
+    port::{RecordedEvent, Storage, StorageError, StoredSnapshot},
+    validate_next_replay_event,
+};
 
 /// A checkpoint that has passed the caller's projection-specific decoder and
 /// compatibility checks.
@@ -169,6 +137,12 @@ where
         .cloned()
         .unwrap_or(Lsn { value: 0 });
     let tail = storage.read_after(authority_domain_id, cursor).await?;
+    let mut previous_lsn = cursor.value;
+    for event in &tail {
+        previous_lsn = validate_next_replay_event(authority_domain_id, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?
+            .lsn;
+    }
 
     Ok(RecoveryState { snapshot, tail })
 }

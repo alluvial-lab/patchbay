@@ -480,10 +480,13 @@ pub trait Storage: Send + Sync {
         async move { self.append_dedup(authority_domain_id, key, target, payload).await }
     }
 
-    /// Read events with `LSN > cursor`, in LSN order.
+    /// Read the complete authority-domain suffix with `LSN > cursor`.
     ///
-    /// Used for crash recovery (`cursor = 0`) and cursor reconciliation
-    /// (`cursor` = the client's last-known LSN).
+    /// The result contains every committed event after the cursor in exact,
+    /// gap-free LSN order. Used for crash recovery (`cursor = 0`) and complete
+    /// projection catch-up. Filtered subscriptions, audit pages, and
+    /// adapter-specific subsets may omit unrelated LSNs after this read; those
+    /// filtered outputs are not contiguous-prefix inputs.
     fn read_after(
         &self,
         authority_domain_id: &AuthorityDomainId,

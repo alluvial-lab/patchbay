@@ -100,8 +100,8 @@ impl ResourceRegistry {
             ))
         })?;
         if kind == StoredEventKind::Unspecified {
-            return Err(ResourceError::CorruptRecord(
-                "stored event kind is unspecified".into(),
+            return Err(ResourceError::CorruptLog(
+                "resource replay event kind is unspecified".into(),
             ));
         }
 

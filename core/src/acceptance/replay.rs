@@ -46,9 +46,15 @@ pub async fn rebuild_from_log<S: Storage>(
         .await?;
 
     for event in events {
-        previous_lsn = validate_next_replay_event(&event, authority_domain_id, previous_lsn)
-            .map_err(|error| AcceptanceError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+            .map_err(|error| {
+                error.map(
+                    AcceptanceError::CorruptRecord,
+                    AcceptanceError::CorruptLog,
+                )
+            })?;
         index.apply(&event)?;
+        previous_lsn = validated.lsn;
     }
 
     Ok(index)

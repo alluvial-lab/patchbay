@@ -25,7 +25,7 @@ use prost::Message;
 use crate::{
     acceptance::{Clock, CommandIndex},
     resource::{ResourceIdentity, ResourceRegistry},
-    storage::{RecordedEvent, Storage},
+    storage::{validate_next_replay_event, RecordedEvent, Storage},
     target::target_adapter_id,
 };
 
@@ -84,8 +84,18 @@ impl AdapterRegistry {
     }
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AdapterError> {
-        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::Observation)
-        {
+        let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
+            AdapterError::CorruptRecord(format!(
+                "unknown stored event kind {}",
+                event.payload.kind
+            ))
+        })?;
+        if kind == StoredEventKind::Unspecified {
+            return Err(AdapterError::CorruptLog(
+                "adapter replay event kind is unspecified".to_owned(),
+            ));
+        }
+        if kind != StoredEventKind::Observation {
             return Ok(());
         }
         let observation =
@@ -185,6 +195,7 @@ pub async fn rebuild_from_log<S: Storage>(
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<AdapterRegistry, AdapterError> {
     let mut registry = AdapterRegistry::new();
+    let mut previous_lsn = 0;
     for event in storage
         .read_after(
             authority_domain_id,
@@ -192,7 +203,12 @@ pub async fn rebuild_from_log<S: Storage>(
         )
         .await?
     {
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+            .map_err(|error| {
+                error.map(AdapterError::CorruptRecord, AdapterError::CorruptLog)
+            })?;
         registry.observe(&event)?;
+        previous_lsn = validated.lsn;
     }
     Ok(registry)
 }
@@ -700,6 +716,8 @@ pub enum AdapterError {
     InvalidDeliveryAcknowledgement(String),
     #[error("corrupt adapter record: {0}")]
     CorruptRecord(String),
+    #[error("corrupt adapter log: {0}")]
+    CorruptLog(String),
     #[error(transparent)]
     Resource(#[from] crate::resource::ResourceError),
     #[error(transparent)]

@@ -100,7 +100,6 @@ pub struct DiagnosticsProjection {
     lifecycle: HashMap<AdapterId, AuditRecord>,
     sessions: SessionRegistry,
     recent_diagnostics: HashMap<AdapterId, Vec<patchbay_contracts::patchbay::AuditRecord>>,
-    last_lsn: u64,
 }
 
 impl DiagnosticsProjection {
@@ -118,19 +117,18 @@ impl DiagnosticsProjection {
         if event_domain.value.is_empty() {
             return Err(DiagnosticsError::CorruptEvent("event has an empty authority domain".to_owned()));
         }
-        let event_lsn = event
-            .event_id
-            .lsn
-            .as_ref()
-            .ok_or_else(|| DiagnosticsError::CorruptEvent("event has no LSN".to_owned()))?
-            .value;
-        if event_lsn <= self.last_lsn {
+        if event.event_id.lsn.is_none() {
             return Err(DiagnosticsError::CorruptEvent(
-                "diagnostics event LSN is not strictly increasing".to_owned(),
+                "event has no LSN".to_owned(),
             ));
         }
         let kind = StoredEventKind::try_from(event.payload.kind)
             .map_err(|_| DiagnosticsError::CorruptEvent("unknown stored event kind".to_owned()))?;
+        if kind == StoredEventKind::Unspecified {
+            return Err(DiagnosticsError::CorruptEvent(
+                "diagnostics replay event kind is unspecified".to_owned(),
+            ));
+        }
         match kind {
             StoredEventKind::Operation => {
                 let accepted = AcceptedOperation::decode(event.payload.payload.as_slice())
@@ -217,10 +215,9 @@ impl DiagnosticsProjection {
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
-            | StoredEventKind::SecurityLockdown
-            | StoredEventKind::Unspecified => {}
+            | StoredEventKind::SecurityLockdown => {}
+            StoredEventKind::Unspecified => unreachable!("rejected before dispatch"),
         }
-        self.last_lsn = event_lsn;
         Ok(())
     }
 

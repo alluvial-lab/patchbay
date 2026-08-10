@@ -1,14 +1,14 @@
 ---
 id: replay-integrity-prefix-discipline-shared-replay-boundary
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, storage]
 parent: replay-integrity-prefix-discipline
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Shared contiguous-prefix replay boundary
@@ -44,3 +44,20 @@ the cross-projection evidence checkpoint. It does not depend on the session
 replay-equality or resource prefix-covered-redelivery features: those own
 content equality and duplicate catch-up semantics after this strict new-prefix
 validation.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, xhigh; explicit caller selection for normative cross-projection replay integrity.
+- Review weight: `thorough` (explicit caller selection), retained for the feature review boundary; this child advances directly to done on verification.
+- Files changed: `core/src/storage/{prefix,mod,port,recovery}.rs`; complete-log replay/dispatch paths under `core/src/{acceptance,adapter,authority,diagnostics,resource,security,session}`; `server/src/{adapter_service,operator_session,spawn_completion,state}.rs`.
+- Tests added/removed: none owned by this checkpoint; the dependent evidence checkpoint owns the scripted-storage matrix and mutation witnesses. Focused existing acceptance, Elicitation, adapter, authority, diagnostics, resource, session, recovery, and server-state suites remained green against this implementation.
+- Simplification: moved the partial validator out of snapshot recovery into one storage-owned complete-prefix boundary; removed Elicitation, resource, security, diagnostics, and server-local monotonic/order gates; all complete consumers now validate domain, concrete generated kind, and exact successor before folding, then advance only after successful application.
+- Discrepancies from design: current `main` already contained a narrow exact-LSN `validate_next_replay_event` added by the overlapping descendant-completion work. This did not invalidate the design: it lacked kind validation, typed record/log classification, recovery-tail validation, and most call sites. Implementation consolidated and extended it rather than creating a second validator.
+- Adjacent issues parked: none (operator forbade backlog/exclusion expansion).
+
+## Verification evidence
+
+- `cargo check --workspace`
+- Focused core suites: `acceptance_replay`, `acceptance_elicitation`, `authority_replay`, `sessions_replay_resolver`, `resource_replay`, `adapter_capability`, `diagnostics_projection`.
+- Focused server state suite, including aggregate startup/catch-up/as-of behavior, passed before transition.
+- `git diff --check`

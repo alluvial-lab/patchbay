@@ -203,8 +203,16 @@ impl OperatorSessionRegistry {
     /// Fold durable generation-fence events into the process-local session
     /// registry. Lockdown entry uses the same monotonic fence as revoke-all.
     pub async fn observe(&self, event: &RecordedEvent) -> Result<(), String> {
-        let kind = StoredEventKind::try_from(event.payload.kind).ok();
-        let (actor, generation) = if kind == Some(StoredEventKind::OperatorSessionRevocation) {
+        let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
+            format!(
+                "corrupt replay record: unknown stored event kind {}",
+                event.payload.kind
+            )
+        })?;
+        if kind == StoredEventKind::Unspecified {
+            return Err("corrupt replay log: operator-session event kind is unspecified".to_owned());
+        }
+        let (actor, generation) = if kind == StoredEventKind::OperatorSessionRevocation {
             let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())
                 .map_err(|error| format!("cannot decode operator session revocation: {error}"))?;
             (
@@ -215,7 +223,7 @@ impl OperatorSessionRegistry {
                     .invalidated_through_generation
                     .ok_or_else(|| "operator session revocation has no generation".to_owned())?,
             )
-        } else if kind == Some(StoredEventKind::SecurityLockdown) {
+        } else if kind == StoredEventKind::SecurityLockdown {
             let source = SecurityLockdownEvent::decode(event.payload.payload.as_slice())
                 .map_err(|error| format!("cannot decode security event: {error}"))?;
             let entered = match source.transition {

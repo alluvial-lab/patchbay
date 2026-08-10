@@ -23,9 +23,12 @@ pub async fn rebuild_from_log<S: Storage>(
     let mut previous_lsn = 0u64;
 
     for event in events {
-        previous_lsn = validate_next_replay_event(&event, authority_domain_id, previous_lsn)
-            .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+            .map_err(|error| {
+                error.map(SessionError::CorruptRecord, SessionError::CorruptLog)
+            })?;
         registry.observe(&event)?;
+        previous_lsn = validated.lsn;
     }
 
     Ok(registry)

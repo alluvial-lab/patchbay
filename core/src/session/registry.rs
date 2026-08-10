@@ -87,6 +87,11 @@ impl SessionRegistry {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             SessionError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
         })?;
+        if kind == StoredEventKind::Unspecified {
+            return Err(SessionError::CorruptLog(
+                "session replay event kind is unspecified".to_owned(),
+            ));
+        }
         if kind == StoredEventKind::SecurityLockdown {
             return self.observe_security_lockdown(event);
         }

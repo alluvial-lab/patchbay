@@ -9,6 +9,7 @@
 
 pub mod audited;
 pub mod port;
+pub mod prefix;
 pub mod recovery;
 pub mod rusqlite;
 
@@ -19,5 +20,8 @@ pub use port::{
     GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage, StorageError, StoredSnapshot,
     TargetKey,
 };
-pub use recovery::{recover, validate_next_replay_event, RecoveryState, ValidatedSnapshot};
+pub use prefix::{
+    validate_next_replay_event, ReplayIntegrityError, ValidatedReplayEvent,
+};
+pub use recovery::{recover, RecoveryState, ValidatedSnapshot};
 pub use rusqlite::{RusqliteStorage, LATEST_SCHEMA_VERSION};

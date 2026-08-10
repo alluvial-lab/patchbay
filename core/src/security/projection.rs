@@ -47,6 +47,11 @@ impl SecurityPostureProjection {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             SecurityError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
         })?;
+        if kind == StoredEventKind::Unspecified {
+            return Err(SecurityError::CorruptLog(
+                "security replay event kind is unspecified".to_owned(),
+            ));
+        }
         if kind != StoredEventKind::SecurityLockdown {
             return Ok(());
         }

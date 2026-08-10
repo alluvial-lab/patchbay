@@ -2,7 +2,7 @@
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn};
 
-use crate::storage::{RecordedEvent, Storage};
+use crate::storage::{validate_next_replay_event, RecordedEvent, Storage};
 
 use super::{SecurityError, SecurityPostureProjection};
 
@@ -16,23 +16,12 @@ pub async fn rebuild_from_log<S: Storage>(
     let mut projection = SecurityPostureProjection::new();
     let mut previous_lsn = 0;
     for event in events {
-        let domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-            SecurityError::CorruptRecord("recovery event has no authority domain".to_owned())
-        })?;
-        let lsn = event
-            .event_id
-            .lsn
-            .as_ref()
-            .ok_or_else(|| SecurityError::CorruptRecord("recovery event has no LSN".to_owned()))?
-            .value;
-        if domain != authority_domain_id || lsn <= previous_lsn {
-            return Err(SecurityError::CorruptLog(format!(
-                "security recovery expected domain {:?} and LSN after {}, got {:?} at {}",
-                authority_domain_id, previous_lsn, domain, lsn
-            )));
-        }
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
+            .map_err(|error| {
+                error.map(SecurityError::CorruptRecord, SecurityError::CorruptLog)
+            })?;
         projection.observe(&event)?;
-        previous_lsn = lsn;
+        previous_lsn = validated.lsn;
     }
     Ok(projection)
 }

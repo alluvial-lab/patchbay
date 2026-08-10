@@ -74,8 +74,8 @@ impl AuthorityRegistry {
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
             | StoredEventKind::SecurityLockdown => Ok(()),
-            StoredEventKind::Unspecified => Err(AuthorityError::CorruptRecord(
-                "authority event kind is unspecified".to_owned(),
+            StoredEventKind::Unspecified => Err(AuthorityError::CorruptLog(
+                "authority replay event kind is unspecified".to_owned(),
             )),
         }
     }

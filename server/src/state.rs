@@ -113,7 +113,12 @@ impl ProjectionState {
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
         let mut last_applied_lsn = 0;
         for event in &events {
-            last_applied_lsn = validate_next_event(event, authority_domain_id, last_applied_lsn)?;
+            let validated = validate_next_replay_event(
+                authority_domain_id,
+                last_applied_lsn,
+                event,
+            )
+            .map_err(|error| error.to_string())?;
             authority
                 .observe(event)
                 .map_err(|error| error.to_string())?;
@@ -137,6 +142,7 @@ impl ProjectionState {
                 .observe(event)
                 .await
                 .map_err(|error| error.to_string())?;
+            last_applied_lsn = validated.lsn;
         }
         diagnostics.reset_adapter_liveness();
 
@@ -206,10 +212,18 @@ impl ProjectionState {
             .read_through(authority_domain_id, Lsn { value: 0 }, Lsn { value: as_of_lsn })
             .await?;
         let mut projection = DiagnosticsProjection::new();
+        let mut previous_lsn = 0;
         for event in events {
+            let validated = validate_next_replay_event(
+                authority_domain_id,
+                previous_lsn,
+                &event,
+            )
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             projection
                 .observe(&event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            previous_lsn = validated.lsn;
         }
         // Historical registration is not proof of current liveness. The
         // caller's live projection is the only source for fresh attachment
@@ -471,8 +485,8 @@ impl ProjectionState {
             .await?;
 
         for event in events {
-            let next_lsn = validate_next_event(&event, authority_domain_id, *cursor)
-                .map_err(StorageError::CorruptRecord)?;
+            let validated = validate_next_replay_event(authority_domain_id, *cursor, &event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             self.grant_check
                 .observe(&event)
                 .await
@@ -517,7 +531,7 @@ impl ProjectionState {
                 .observe(&event)
                 .await
                 .map_err(StorageError::CorruptRecord)?;
-            *cursor = next_lsn;
+            *cursor = validated.lsn;
         }
         Ok(())
     }
@@ -775,15 +789,6 @@ impl ProjectionState {
         )
         .await
     }
-}
-
-fn validate_next_event(
-    event: &RecordedEvent,
-    authority_domain_id: &AuthorityDomainId,
-    previous_lsn: u64,
-) -> Result<u64, String> {
-    validate_next_replay_event(event, authority_domain_id, previous_lsn)
-        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone)]

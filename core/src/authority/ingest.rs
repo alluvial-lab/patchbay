@@ -109,13 +109,16 @@ where
     let mut tail = SpawnDescendantTail::new();
     let mut previous_lsn = 0;
     for event in &durable_prefix {
-        previous_lsn = validate_next_replay_event(event, authority_domain_id, previous_lsn)
-            .map_err(|error| AuthorityError::CorruptLog(error.to_string()))?;
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, event)
+            .map_err(|error| {
+                error.map(AuthorityError::CorruptRecord, AuthorityError::CorruptLog)
+            })?;
         tail.observe(event)?;
         // Keep the caller's projection on the same authoritative prefix. This
         // is idempotent for an already-warm registry and ensures the append can
         // fold through its exact durable prerequisites.
         projection.observe(event)?;
+        previous_lsn = validated.lsn;
     }
     let issuance = tail
         .descendant_issuance_for(authority_domain_id, &spawn_operation_id)?

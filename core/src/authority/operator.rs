@@ -18,7 +18,9 @@ use prost_types::Timestamp;
 use scrypt::{scrypt, Params};
 use sha2::{Digest, Sha256};
 
-use crate::storage::{AuditRecordDraft, AuditedDecisionAppend, RecordedEvent, Storage};
+use crate::storage::{
+    validate_next_replay_event, AuditRecordDraft, AuditedDecisionAppend, RecordedEvent, Storage,
+};
 
 const PASSWORD_HASH_BYTES: usize = 64;
 const PRINCIPAL_CREDENTIAL_HASH_BYTES: usize = 32;
@@ -255,8 +257,10 @@ impl OperatorRegistry {
             | StoredEventKind::ResourceState
             | StoredEventKind::CommandTransition
             | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord
-            | StoredEventKind::Unspecified => Ok(()),
+            | StoredEventKind::AuditRecord => Ok(()),
+            StoredEventKind::Unspecified => Err(OperatorError::CorruptLog(
+                "operator replay event kind is unspecified".to_owned(),
+            )),
         }
     }
 
@@ -921,8 +925,14 @@ pub async fn rebuild_operator_registry<S: Storage>(
         .read_after(authority_domain_id, Lsn { value: 0 })
         .await?;
     let mut registry = OperatorRegistry::new();
+    let mut previous_lsn = 0;
     for event in &events {
+        let validated = validate_next_replay_event(authority_domain_id, previous_lsn, event)
+            .map_err(|error| {
+                error.map(OperatorError::CorruptRecord, OperatorError::CorruptLog)
+            })?;
         registry.observe(event)?;
+        previous_lsn = validated.lsn;
     }
     Ok(registry)
 }
