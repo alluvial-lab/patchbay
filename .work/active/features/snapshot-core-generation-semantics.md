@@ -1,7 +1,7 @@
 ---
 id: snapshot-core-generation-semantics
 kind: feature
-stage: review
+stage: done
 tags: [foundation, protocol]
 parent: null
 depends_on: []
@@ -279,3 +279,15 @@ node contracts/scripts/check-vectors.mjs
 **Verification**: `scripts/test-rust` passed all Rust workspace tests, including the wrong-type unit regression, 10 recovery boundary tests, 8 audit/migration tests, 24 SQLite storage tests, 18 storage property/mutation tests, 21 gRPC smoke tests, and the server conformance runner. `cargo clippy --workspace --all-targets -- -D warnings`, `node contracts/scripts/check-models.mjs`, `node contracts/scripts/check-vectors.mjs` (21 implementation checks, 37 killed mutation witnesses), and `quint compile specs/seed/snapshot_recovery.qnt` passed. `git diff --check` and standalone rustfmt checks for the rewritten checkpoint/recovery files passed. Workspace-wide `cargo fmt --all -- --check` remains red on the pre-existing unrelated rustfmt baseline beginning in `core/src/acceptance/elicitation.rs`; no unrelated formatting was taken into this fix.
 
 **Notes**: substrate feature review; effective weight `thorough` from the explicit operator request; pass-1 receiver/fix capability `openai-codex/gpt-5.6-sol` at xhigh. The caller prohibited nested agents and peeragent, so this endpoint performed no independent pass-2 review and intentionally made no item transition.
+
+## Review closure — pass 2
+
+- Fresh-context adversarial pass 2 found no material current-cycle blockers.
+- Confirmed typed/versioned checkpoint framing, replay-from-zero rejection
+  fallback, epoch persistence/concurrency, strengthened v4 schema preflight,
+  stale-vector execution, and downstream checkpoint-writer readiness.
+- Recurring findings: none. Both pass-1 checkpoint-boundary blockers were
+  eliminated rather than suppressed.
+- Rejected non-blocking trigger/index hardening as outside the owned-schema
+  threat model and disproportionate to this cycle.
+- Effective weight: `thorough` (explicit operator). Verdict: approved.
