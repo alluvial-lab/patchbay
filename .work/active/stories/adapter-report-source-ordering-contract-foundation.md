@@ -1,7 +1,7 @@
 ---
 id: adapter-report-source-ordering-contract-foundation
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, foundation]
 parent: adapter-report-source-ordering
 depends_on: []
@@ -52,3 +52,21 @@ property id.
 - `SessionReport` still lives only in `adapter_control.proto` with tags 1–11. Moving it to `sessions.proto` preserves the package-qualified `patchbay.SessionReport` identity and adds `source_cursor = 12`.
 - Existing session delta variants/tags are durable data and stay readable. The new `report_applied = 8` variant is additive; generated Rust/TypeScript files remain outputs only.
 - Current model/vector traceability is generated from live registries, so this checkpoint updates normative prose/property registration without hand-editing either generated table.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, maximum reasoning (caller-selected for a cross-language durability/security contract); direct-read single-owner delivery, no nested agents or peeragent.
+- Review weight: `thorough` (explicit caller override); child checkpoint review is not applicable.
+- Files changed: `contracts/proto/patchbay/{sessions,adapter_control}.proto`; regenerated `contracts/rust/src/gen/patchbay/patchbay.rs` and `contracts/ts/src/gen/patchbay/{sessions,adapter_control}_pb.ts`; `docs/{PROTOCOL,SECURITY,VERIFICATION,GLOSSARY,ADAPTER-PI}.md`.
+- Tests added/removed: no implementation-bound serialization tests; generation plus both generated-language builds protect the schema boundary.
+- Simplification: moved the sole package-qualified `SessionReport` definition instead of copying it; the new atomic event reuses that generated report shape, and legacy delta tags remain intact without a dual-write contract.
+- Discrepancies from design: `SessionGenerationBumped.source_cursor` uses current-HEAD tag 12 because `spawn_origin` already owns tag 11; model/vector registry and generated traceability promotion remain intentionally with the conformance checkpoint.
+- Adjacent issues parked: none.
+
+## Verification evidence
+
+- `PATH="$HOME/.npm-global/bin:$PATH"; (cd contracts && buf generate && buf build proto)` — passed.
+- `cargo test -p patchbay-contracts` — passed.
+- `npm --prefix contracts/ts run build` — passed.
+- Post-commit `npm --prefix contracts/ts run check:drift` — passed; generated Rust and TypeScript are byte-current with the proto source.
+- `git diff --check` — passed before the implementation commit.
