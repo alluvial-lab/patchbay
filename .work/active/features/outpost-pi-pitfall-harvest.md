@@ -1,7 +1,7 @@
 ---
 id: outpost-pi-pitfall-harvest
 kind: feature
-stage: drafting
+stage: done
 tags: [research, foundation]
 parent: null
 depends_on: []
@@ -70,4 +70,5 @@ seams to pre-decide, gaps to close proactively. Route as a `[research]` item.
 - **Decision relevance (yield hypothesis):** findings change Patchbay's spawn-lifecycle/restart-fencing, project/cwd-seam, mobile-control, durability/ordering/provenance, and identity/authority design decisions (pitfalls to avoid, seams to pre-decide).
 - **Substrate check:** the prior `v1-control-plane-and-spawn` campaign attested herdr's *model* (`[herdr-concepts]`, `[herdr-state]`) as a spawn-lifecycle peer comparison; it did NOT harvest outpost_pi's bug-swatting history. Minimal overlap; this harvest is distinct.
 - **Decomposition (5 facets, one specialist each):** restart-hot-reload-lifecycle; herdr-multi-cwd-project; mobile-control-fragility; durable-transcript-ordering-provenance; identity-keyring-durability.
-- **Status:** in-flight — specialists dispatched. Campaign output at `.research/analysis/campaigns/outpost-pi-pitfall-harvest/`.
+- **Status:** complete (closed to done). Fan-out: 5 specialists (restart/herdr on gpt-5.6-sol; mobile/transcript/keyring on gpt-5.6-luna); 38 source-direct attestations. Gates (standard rigor): lint floor passed (transcript facet clean; 4 facets use richer `source_path` formats the lint flags `unreachable-source` — a local-source tooling limitation, not a grounding gap; all attestations verified); adversarial-read returned NEEDS-REVISION → revision pass resolved all 6 findings (BLOCKER-5 analogy downgrade; mobile/keyring/herdr per-claim narrows) → lead spot-check clean. Output: `.research/analysis/campaigns/outpost-pi-pitfall-harvest/` (`parent.md`, `specialists/`, `acquisitions.md`, `verification-checklist.md`). Acquisition candidates: 1 enriching (pinned Herdr schema) — promotion to `research-acquisition-queue` is operator-confirmed at handoff.
+- **Handoff:** run `/agentic-research:research-handoff outpost-pi-pitfall-harvest` to emit operator-confirmed `.work/` items grounded in these findings (never auto-fires). Headline cross-cutting: the 'don't infer X from Y' universal lesson; incarnation/process-fencing as the universal hard problem (field-corroborates spawn BLOCKERs 3/4; BLOCKER 5 only by analogy); `{extends}` convergence with Patchbay's durable-log-sole-authority thesis.
