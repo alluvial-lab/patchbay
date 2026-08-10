@@ -67,4 +67,5 @@ what current code happens to do.
 - Simplification: removed the per-view and per-record obsolete-LSN branches; whole-event applied-prefix classification is the single redelivery rule.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+- Integrated commit: `4597fda`.
 - Verification evidence: `cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `cargo test -p patchbay-core --tests`; `cargo clippy -p patchbay-core --lib --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation -- -D warnings`.

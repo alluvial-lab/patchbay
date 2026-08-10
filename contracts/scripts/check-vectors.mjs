@@ -219,6 +219,12 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.input?.lower_generation_next_candidate?.adapter_generation === 1
       && vector.input?.sibling_prefix_probe?.lsn === 3
       && vector.input?.sibling_prefix_probe?.stored_event_kind === 'STORED_EVENT_KIND_OBSERVATION'
+      && vector.input?.failed_replacement?.lsn === 4
+      && vector.input?.failed_replacement?.adapter_generation === 2
+      && JSON.stringify(vector.input?.failed_replacement?.tombstone_identity) === JSON.stringify(['token-commune', 'provider_pool', 'new'])
+      && vector.input?.failed_replacement?.tombstone_from_revision_lsn === 2
+      && JSON.stringify(vector.input?.failed_replacement?.paired_upsert_identity) === JSON.stringify(['token-commune', 'provider_pool', 'old'])
+      && vector.input?.failed_replacement?.upsert_from_revision_lsn === 2
       && JSON.stringify(vector.input?.retired_mutation_candidates) === JSON.stringify(['upsert', 'unknown', 'tombstone'])
       && vector.expected_outcome?.initial_applied === true
       && vector.expected_outcome?.replacement_applied_atomically === true
@@ -231,13 +237,19 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.expected_outcome?.sibling_probe_advanced_prefix === true
       && vector.expected_outcome?.sibling_probe_resource_state_unchanged === true
       && vector.expected_outcome?.final_applied_through_lsn === 3
+      && vector.expected_outcome?.failed_replacement_result === 'terminal_tombstone'
+      && JSON.stringify(vector.expected_outcome?.failed_replacement_error_identity) === JSON.stringify(['token-commune', 'provider_pool', 'old'])
+      && vector.expected_outcome?.failed_replacement_applied_through_lsn === 3
+      && vector.expected_outcome?.failed_replacement_full_projection_unchanged === true
+      && vector.expected_outcome?.failed_replacement_views_unchanged === true
+      && vector.expected_outcome?.failed_replacement_durable_event_count === 3
       && JSON.stringify(vector.expected_outcome?.retired_mutations_rejected) === JSON.stringify(['upsert', 'unknown', 'tombstone'])
       && vector.expected_outcome?.durable_event_count === 3
       && vector.expected_outcome?.projection_unchanged_after_each_rejection === true
       && vector.expected_outcome?.hot_equals_fresh_replay === true
       && vector.expected_outcome?.fresh_replays_equal === true
       && vector.expected_outcome?.covered_prefix_replay_is_idempotent === true,
-    'covered lower-generation replay must be inert while the next lower-generation candidate and terminal mutations preserve the complete LSN-2 replacement projection',
+    'exact covered-record replay must be inert, while lower-generation, failed-replacement, and terminal candidates preserve the cursor-bearing projection and durable prefix',
   ),
   SnapshotStaleRejected: (vector) => everyExpectedCase(
     vector,

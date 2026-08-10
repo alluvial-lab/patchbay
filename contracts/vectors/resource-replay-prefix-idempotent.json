@@ -15,7 +15,7 @@
     "patchbay.Resource.revision_lsn",
     "patchbay.Resource.tombstoned"
   ],
-  "description": "A generation-1 resource event, generation-2 atomic replacement, covered generation-1 re-feed, lower-generation next-event candidate, and same-LSN sibling probe distinguish whole-prefix idempotence from new-event corruption without resurrecting the retired identity or advancing on rejection.",
+  "description": "A generation-1 resource event, generation-2 atomic replacement, exact committed-record re-feed, lower-generation next-event candidate, same-LSN sibling re-feed, failed replacement fold, and terminal candidates distinguish whole-prefix idempotence from new-event corruption while preserving rejected state atomically.",
   "input": {
     "authority_domain_id": "auth-main",
     "adapter_id": "token-commune",
@@ -43,6 +43,14 @@
       "lsn": 3,
       "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION"
     },
+    "failed_replacement": {
+      "lsn": 4,
+      "adapter_generation": 2,
+      "tombstone_identity": ["token-commune", "provider_pool", "new"],
+      "tombstone_from_revision_lsn": 2,
+      "paired_upsert_identity": ["token-commune", "provider_pool", "old"],
+      "upsert_from_revision_lsn": 2
+    },
     "retired_mutation_candidates": ["upsert", "unknown", "tombstone"]
   },
   "expected_outcome": {
@@ -57,6 +65,12 @@
     "sibling_probe_advanced_prefix": true,
     "sibling_probe_resource_state_unchanged": true,
     "final_applied_through_lsn": 3,
+    "failed_replacement_result": "terminal_tombstone",
+    "failed_replacement_error_identity": ["token-commune", "provider_pool", "old"],
+    "failed_replacement_applied_through_lsn": 3,
+    "failed_replacement_full_projection_unchanged": true,
+    "failed_replacement_views_unchanged": true,
+    "failed_replacement_durable_event_count": 3,
     "retired_mutations_rejected": ["upsert", "unknown", "tombstone"],
     "durable_event_count": 3,
     "projection_unchanged_after_each_rejection": true,
@@ -64,5 +78,5 @@
     "fresh_replays_equal": true,
     "covered_prefix_replay_is_idempotent": true
   },
-  "invariant_check": "IdempotentLogReplay: a structurally valid event already covered by the resource projection's contiguous authority-domain prefix is a whole-event no-op before generation checks, while the same lower generation at the next LSN is corruption and every rejected candidate preserves the durable prefix and complete projection."
+  "invariant_check": "IdempotentLogReplay: re-feeding an exact committed record already covered by the resource projection's contiguous authority-domain prefix is a whole-event no-op before generation checks; a lower generation at the next LSN is corruption, and a structurally valid replacement whose tombstone can apply before its paired upsert fails leaves the cursor, resources, views, and durable prefix unchanged."
 }

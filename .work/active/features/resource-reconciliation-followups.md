@@ -185,7 +185,7 @@ struct ReconciliationOracle {
 - [ ] Generated traces cover all five missing dimensions and shrink to readable failing sequences.
 - [ ] Hot/replay/replay-twice equality is checked after every accepted prefix, not only once at trace end.
 - [ ] Every rejected candidate proves durable prefix + full projection unchanged.
-- [ ] The executable vector kills moving prefix coverage after the generation guard, partial per-record obsolete filtering, non-atomic replacement, terminal resurrection, and cursor advance on rejection.
+- [ ] The executable vector kills moving prefix coverage after the generation guard, partial installation from a failed replacement, terminal resurrection, and cursor advance on rejection. Its covered-LSN witness re-feeds the immutable exact committed record; it does not claim to kill per-record filtering via an alternative same-LSN payload.
 - [ ] Existing completeness, ingest, server, resource conformance, and vector checks remain green without weakening an expected outcome.
 
 ## Implementation Order
@@ -251,7 +251,7 @@ node contracts/scripts/check-generated-drift.mjs
 ## Implementation notes
 - Execution capability: `openai-codex/gpt-5.6-sol`; explicit caller selection for protocol replay integrity and negative-state atomicity.
 - Review weight: `thorough` from the explicit caller selection; implementation stops at `stage: review` for a fresh reviewer.
-- Child commits: `af9ee64` (`resource-reconciliation-followups-applied-prefix-semantics`) and `3eea778` (`resource-reconciliation-followups-cross-dimensional-evidence`).
+- Integrated child commits: `4597fda` (`resource-reconciliation-followups-applied-prefix-semantics`) and `1aa4351` (`resource-reconciliation-followups-cross-dimensional-evidence`); feature integration commit: `9170538`.
 - Files changed: `core/src/resource/{registry,replay,ingest}.rs`; `core/tests/{resource_state,resource_replay,resource_ingest,resource_reconciliation,conformance_vectors}.rs`; `contracts/vectors/resource-replay-prefix-idempotent.json`; `contracts/scripts/check-vectors.mjs`; `docs/{PROTOCOL,ARCHITECTURE,GLOSSARY,VERIFICATION}.md`.
 - Tests added/removed: added prefix framing/atomicity and ingest catch-up regressions, replaced the generic bounded sampler with the 100-case cross-dimensional trace, and added the promoted vector's exact Rust runner/static expectation; removed no focused contract tests.
 - Simplification: whole-event applied-prefix classification replaces both per-view/per-record obsolete branches; existing storage, fold, report, reconciliation, and `IdempotentLogReplay` surfaces carry all evidence without a new service/model/property id.
@@ -265,4 +265,11 @@ node contracts/scripts/check-generated-drift.mjs
 - `node contracts/scripts/check-vectors.mjs` — passed: 53 vectors, 16 promoted, 21 implementation checks, 37 existing declared mutation witnesses.
 - `node contracts/scripts/check-models.mjs` — passed with generated traceability current; `IdempotentLogReplay` remains stated-normative because its model is draft.
 - `node contracts/scripts/check-generated-drift.mjs` — passed; generated Rust/TypeScript contracts are unchanged.
-- Acceptance walk: covered generation-1 re-feed after generation 2 is a complete no-op; the same generation at the next LSN is atomic corruption; sibling framing/gaps/full replay and report catch-up are enforced; accepted trace prefixes converge across hot/two-fresh/covered replays; rejected next-generation and terminal candidates preserve exact durable events and the full cursor-bearing projection; the promoted vector and verification prose retain implementation-checked rather than model-checked authority.
+- Acceptance walk: covered generation-1 re-feed after generation 2 is a complete no-op; the same generation at the next LSN is atomic corruption; sibling framing/gaps/full replay and report catch-up are enforced; accepted trace prefixes converge across hot/two-fresh/covered replays; rejected next-generation and terminal candidates preserve exact durable events and the full cursor-bearing projection; the promoted vector and verification prose retain implementation-checked rather than model-checked authority. The covered witness is the exact immutable committed record, not an alternative same-LSN payload, so it makes no per-record-filter mutation-kill claim.
+
+## Review pass 1 receiver fix
+- Accepted material finding: the successful replacement path did not discriminate failure atomicity. The promoted vector now constructs a structurally valid next-LSN pair where the active replacement source can be tombstoned first but the paired upsert targets an already-terminal identity. The production fold returns `TerminalTombstone`; exact registry equality covers cursor/resources/views, and the storage event list remains the same three-record durable prefix.
+- Evidence correction: covered replay feeds the exact committed `RecordedEvent` read from storage. The prior per-record-filter mutation-kill wording was retracted because an alternative payload at the same `(authority_domain_id, LSN)` violates the immutable committed-record contract; no payload-equivalence check inside `ResourceRegistry` is claimed.
+- Static/vector/docs alignment: `resource-replay-prefix-idempotent.json`, its Rust runner, the `IdempotentLogReplay` static expectation, and `docs/VERIFICATION.md` now name only the executed failed-replacement and exact-record witnesses.
+- Focused verification: `CARGO_INCREMENTAL=0 cargo test -p patchbay-core --test conformance_vectors -- --nocapture`; `CARGO_INCREMENTAL=0 cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `CARGO_INCREMENTAL=0 cargo clippy -p patchbay-core --test conformance_vectors --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation -- -D warnings`; `CARGO_INCREMENTAL=0 node contracts/scripts/check-vectors.mjs` — all passed (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses).
+- Lifecycle: feature intentionally remains at `stage: review` for the required thorough follow-up pass.

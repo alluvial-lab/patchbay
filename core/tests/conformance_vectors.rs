@@ -1109,6 +1109,163 @@ async fn resource_replay_prefix_idempotent(
         return Err("covered sibling prefix probe was not idempotent".into());
     }
 
+    let failed_tombstone = tuple(
+        &vector.input,
+        "/failed_replacement/tombstone_identity",
+    )?;
+    let failed_upsert = tuple(
+        &vector.input,
+        "/failed_replacement/paired_upsert_identity",
+    )?;
+    let failed_lsn = vector
+        .input
+        .pointer("/failed_replacement/lsn")
+        .and_then(Value::as_u64)
+        .ok_or("missing failed replacement LSN")?;
+    let failed_generation = vector
+        .input
+        .pointer("/failed_replacement/adapter_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing failed replacement generation")?;
+    let tombstone_from = vector
+        .input
+        .pointer("/failed_replacement/tombstone_from_revision_lsn")
+        .and_then(Value::as_u64)
+        .ok_or("missing failed replacement tombstone revision")?;
+    let upsert_from = vector
+        .input
+        .pointer("/failed_replacement/upsert_from_revision_lsn")
+        .and_then(Value::as_u64)
+        .ok_or("missing failed replacement upsert revision")?;
+    if failed_tombstone != replacement
+        || failed_upsert != old
+        || failed_lsn != 4
+        || failed_generation != 2
+        || tombstone_from != 2
+        || upsert_from != 2
+        || !registry.get(&failed_tombstone).is_some_and(|record| {
+            !record.tombstoned() && record.revision_lsn == tombstone_from
+        })
+        || !registry.get(&failed_upsert).is_some_and(|record| {
+            record.tombstoned() && record.revision_lsn == upsert_from
+        })
+    {
+        return Err(
+            "failed replacement fixture does not start with an applicable tombstone and terminal upsert target"
+                .into(),
+        );
+    }
+
+    let before_failed_events = storage
+        .read_after(&authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    let before_failed_views = registry.views().cloned().collect::<Vec<_>>();
+    let failed_replacement = RecordedEvent {
+        event_id: event_id(authority_domain_id.clone(), failed_lsn),
+        payload: resource_events::encode(&ResourceStateEvent {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            source_adapter_id: Some(adapter_id.clone()),
+            source_adapter_generation: Some(Generation {
+                value: failed_generation,
+            }),
+            views: vec![ResourceViewStateUpdate {
+                resource_kind: Some(resource_kind.clone()),
+                completeness: AdapterSnapshotSupport::Partial as i32,
+            }],
+            mutations: vec![
+                ResourceStateMutation {
+                    identity: Some(
+                        failed_tombstone
+                            .to_scope()
+                            .resource
+                            .expect("failed tombstone identity"),
+                    ),
+                    from_revision_lsn: Some(Lsn {
+                        value: tombstone_from,
+                    }),
+                    mutation: Some(resource_state_mutation::Mutation::Tombstone(
+                        ResourceStateTombstone {
+                            replaced_by: Some(
+                                failed_upsert
+                                    .to_scope()
+                                    .resource
+                                    .expect("failed upsert identity"),
+                            ),
+                        },
+                    )),
+                },
+                ResourceStateMutation {
+                    identity: Some(
+                        failed_upsert
+                            .to_scope()
+                            .resource
+                            .expect("failed upsert identity"),
+                    ),
+                    from_revision_lsn: Some(Lsn { value: upsert_from }),
+                    mutation: Some(resource_state_mutation::Mutation::Upsert(
+                        ResourceStateUpsert {
+                            resource_payload: Some(envelope("resource.schema", vec![3])),
+                            projection_payload: Some(envelope("projection.schema", vec![4])),
+                        },
+                    )),
+                },
+            ],
+            observed_at: Some(Timestamp {
+                seconds: 101,
+                nanos: 0,
+            }),
+        }),
+    };
+    let failed_identity = match registry.observe(&failed_replacement) {
+        Err(ResourceError::TerminalTombstone(identity)) => identity,
+        Err(error) => {
+            return Err(format!(
+                "failed replacement reached the wrong rejection boundary: {error}"
+            ))
+        }
+        Ok(()) => return Err("failed replacement unexpectedly applied".into()),
+    };
+    let after_failed_events = storage
+        .read_after(&authority_domain_id, Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
+    if failed_identity
+        != tuple(
+            &vector.expected_outcome,
+            "/failed_replacement_error_identity",
+        )?
+        || string(
+            &vector.expected_outcome,
+            "/failed_replacement_result",
+        )? != "terminal_tombstone"
+        || vector
+            .expected_outcome
+            .pointer("/failed_replacement_applied_through_lsn")
+            .and_then(Value::as_u64)
+            != Some(3)
+        || !boolean(
+            &vector.expected_outcome,
+            "/failed_replacement_full_projection_unchanged",
+        )?
+        || !boolean(
+            &vector.expected_outcome,
+            "/failed_replacement_views_unchanged",
+        )?
+        || vector
+            .expected_outcome
+            .pointer("/failed_replacement_durable_event_count")
+            .and_then(Value::as_u64)
+            != Some(before_failed_events.len() as u64)
+        || registry != after_sibling
+        || registry.views().cloned().collect::<Vec<_>>() != before_failed_views
+        || after_failed_events != before_failed_events
+    {
+        return Err(
+            "failed replacement changed cursor, resources, views, or durable prefix".into(),
+        );
+    }
+
     let mutation_names = vector
         .input
         .pointer("/retired_mutation_candidates")

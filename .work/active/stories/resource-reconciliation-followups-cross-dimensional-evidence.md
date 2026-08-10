@@ -52,8 +52,10 @@ tombstone, or prefix predicates.
   prefix-covered lower-generation no-op from lower-generation new-event
   corruption and checks atomic replacement plus terminal non-resurrection.
 - Mutation-sensitive assertions fail when prefix coverage is moved after the
-  generation guard, per-record skipping is restored, replacement ceases to be
-  atomic, terminal records can resurrect, or rejected candidates append/advance.
+  generation guard, a failed replacement partially installs its applicable
+  tombstone or view update, terminal records can resurrect, or rejected
+  candidates append/advance. Covered-LSN evidence re-feeds the immutable exact
+  committed record and makes no alternative-payload/per-record-filter kill claim.
 - `docs/VERIFICATION.md` records the stronger implementation evidence without
   promoting a formal property or overstating the vector's authority.
 
@@ -70,4 +72,10 @@ checkpoint's fixed prefix/no-op/corruption contract.
 - Simplification: reused the existing reconciliation property and `IdempotentLogReplay` registry instead of adding a second random sampler, property id, model, or replay mechanism.
 - Discrepancies from design: none.
 - Adjacent issues parked: none.
+- Integrated commit: `1aa4351`.
 - Verification evidence: `cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `cargo test -p patchbay-core --test conformance_vectors -- --nocapture`; `cargo clippy -p patchbay-core --test resource_reconciliation --test conformance_vectors -- -D warnings`; `node contracts/scripts/check-vectors.mjs`; `node contracts/scripts/check-models.mjs`; `node contracts/scripts/check-generated-drift.mjs`.
+
+## Review pass 1 evidence correction
+- Added the exact failed-replacement runner fixture: the source identity is active at revision 2, the paired upsert target is terminal at revision 2, and the structurally valid LSN-4 event orders the applicable source tombstone before the failing upsert. `TerminalTombstone` must leave the full cursor-bearing registry, views, and three-record storage prefix unchanged.
+- Narrowed the covered-LSN claim to what executes: the runner re-feeds the exact immutable committed record from storage and distinguishes prefix classification before generation. It does not substitute an alternative same-LSN payload and no longer claims to kill per-record filtering through such a fixture.
+- Pass-1 focused vector/resource tests and clippy passed; the umbrella vector checker passed all 53 vectors, 16 promoted vectors, 21 implementation checks, and 37 declared mutation witnesses.

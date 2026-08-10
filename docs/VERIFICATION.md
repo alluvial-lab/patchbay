@@ -317,7 +317,11 @@ paths. The bounded 100-case, 1–20-action reconciliation trace combines
 generation changes, same-event replacement, post-terminal candidates, covered
 re-feed, and lower-generation next-event corruption; every accepted prefix is
 compared with two fresh replays plus covered-prefix replay, and every rejection
-preserves the exact durable events and complete cursor-bearing projection.
+preserves the exact durable events and complete cursor-bearing projection. The
+exact vector additionally submits a structurally valid next-LSN replacement fold
+whose first tombstone is applicable but whose paired upsert targets an already
+terminal identity; the terminal error leaves the cursor, resources, views, and
+storage prefix unchanged.
 Authenticated server and real-process gRPC evidence exercises manifest
 tier/schema admission, authoritative-unknown pre-append rejection, atomic
 same-generation capability redeclaration, newer-generation attachment
@@ -345,7 +349,17 @@ classifications while adding resource refinements.
 | `ResourceStaleNeverLive` | `resource-stale-never-live` | real attachment-stream disconnect → durable stale snapshot; generated model+DOM eligibility oracle | omitted disconnect degradation, freshness-only current predicate, and adapter-health override mutants failed | promoted vector + implementation-checked; not model-checked |
 | `ResourceIdentityCollisionFenced` | `resource-identity-collision-fenced`; resource cases in `command-acceptance` and `failure-missing-grant` | exact grant/target acceptance plus generated adapter/kind/local-id containment and target-key checks | adapter-, kind-, and local-id-omitting comparisons failed | promoted vector + implementation-checked; not model-checked |
 | `ResourceCoreStateInjectionRejected` | `resource-core-state-injection-rejected` | generic Observation append plus durable discriminator replay against `ResourceRegistry` | Observation-payload dispatch to `ResourceStateEvent` failed on the forged state witness | promoted vector + implementation-checked; not model-checked |
-| `IdempotentLogReplay` | `resource-replay-prefix-idempotent` | generation-1 upsert, generation-2 atomic replacement, covered generation-1 re-feed, lower-generation next-event rejection, same-LSN sibling prefix probe, and three terminal-mutation candidates against the production fold | moving covered-prefix classification after generation, restoring partial obsolete filtering, splitting replacement, permitting resurrection, or advancing the cursor on rejection violates the exact full-projection/prefix oracle | promoted vector + implementation-checked; formal model remains draft |
+| `IdempotentLogReplay` | `resource-replay-prefix-idempotent` | generation-1 upsert, generation-2 atomic replacement, exact committed generation-1 re-feed, lower-generation next-event rejection, same-LSN sibling re-feed, a structurally valid failed replacement, and three terminal-mutation candidates against the production fold | moving covered-prefix classification after generation, installing either the applicable tombstone or view update from the failed replacement, permitting resurrection, or advancing the cursor on rejection violates the exact full-projection/prefix oracle | promoted vector + implementation-checked; formal model remains draft |
+
+The covered-LSN fixture re-feeds the exact `RecordedEvent` previously read from
+the append-only store. Under the single-writer durable-log contract,
+`(authority_domain_id, LSN)` identifies one immutable committed record; an
+alternative payload at an already committed LSN is not a valid re-feed under
+that record contract. The vector therefore demonstrates covered-prefix ordering before the
+generation guard, but does **not** claim to kill a per-record-obsolete-filter
+mutation by substituting a different same-LSN payload. Payload hashing/equality
+at this boundary is an assumption of the durable storage record contract, not a
+claim made by `ResourceRegistry`.
 
 `CommandDurability`, `NoCommandWithoutGrant`, `SnapshotStaleRejected`, and
 `IdempotentLogReplay` remain
