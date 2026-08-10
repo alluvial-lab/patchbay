@@ -1,14 +1,14 @@
 ---
 id: test-tempfile-hygiene
 kind: story
-stage: implementing
+stage: review
 tags: [testing, ops]
 parent: null
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-10
 ---
 
 # Backlog: test-suite tempfile hygiene (201K leaked SQLite temp files filled /tmp)
@@ -43,3 +43,39 @@ panics before `TempDir`/`NamedTempFile` drop runs).
 
 The leak was cleaned manually (2026-07-24, /tmp back to 7%); the structural
 fix touches the whole test harness layout and deserves its own pass.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-luna`-acceptable bounded story,
+  delivered by the run's Sol endpoint; the change is cohesive test
+  infrastructure plus one storage-lifetime correction.
+- Review weight: `thorough` (explicit caller selection); standalone-story
+  review remains the bounded inline lane.
+- Files changed: `scripts/test-rust`, `core/src/storage/rusqlite.rs`, and
+  `docs/RUNBOOK.md`.
+- Tests added/removed: no new test module. The existing SQLite storage suite
+  exercises the changed constructor; a process-level probe additionally
+  confirmed its scoped temp directory was empty after `open_in_memory()` test
+  shutdown.
+- Simplification: `open_in_memory()` no longer calls `TempPath::keep()` and
+  leaks each database. The writer actor retains the `NamedTempFile` guard until
+  both SQLite use and the writer loop end, then normal shutdown removes it.
+- Discrepancy from the recorded `#[cfg(test)]` refinement: Rust integration
+  tests compile the library without `cfg(test)` and use this helper throughout,
+  so gating it that way would remove the test interface. The implementation
+  instead eliminates the production-call leak and documents the intentionally
+  test-oriented API; the wrapper contains abnormal-termination residue under a
+  cleanable repository-local root.
+- Adjacent issues parked: none.
+
+## Verification
+
+- `./scripts/test-rust -p patchbay-core --test rusqlite_storage --quiet` — 20
+  tests passed; `target/test-tmp/` was removed on exit.
+- Scoped process probe with `TMPDIR=target/tempfile-lifetime-probe` and
+  `empty_log_read_returns_empty` — one test passed and zero files remained.
+- `cargo clippy -p patchbay-core --all-targets -- -D warnings` — passed.
+- `bash -n scripts/test-rust` and `git diff --check` — passed.
+- Repository-wide `cargo fmt --all --check` is pre-existingly red on unrelated
+  committed server test formatting; the touched Rust hunk follows its file's
+  current formatting style.

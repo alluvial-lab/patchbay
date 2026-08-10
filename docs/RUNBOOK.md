@@ -157,7 +157,8 @@ unknown submission outcome.
   instruct → durable command completion → live/idle): `cd e2e && npm test`.
   This complements the in-process Pi adapter integration suite rather than
   replacing it.
-- Per-package suites: `cargo test --workspace`, `cd web-server && npm test`,
+- Per-package suites: `./scripts/test-rust` (cleans and scopes Rust test
+  temporary files under `target/test-tmp/`), `cd web-server && npm test`,
   `cd web-cockpit && npm test`, `cd cli && npm test`,
   `cd pi-adapter && npm test`, `cd contracts/ts && npm run check:vectors &&
   npm run check:presentation`.

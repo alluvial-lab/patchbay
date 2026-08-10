@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test_tmp="$repo_root/target/test-tmp"
+
+case "$test_tmp" in
+  "$repo_root"/target/*) ;;
+  *)
+    printf 'refusing to clean unexpected test temp path: %s\n' "$test_tmp" >&2
+    exit 2
+    ;;
+esac
+
+rm -rf -- "$test_tmp"
+mkdir -p -- "$test_tmp"
+cleanup() {
+  rm -rf -- "$test_tmp"
+}
+trap cleanup EXIT INT TERM
+
+export TMPDIR="$test_tmp"
+cd "$repo_root"
+cargo test --workspace "$@"

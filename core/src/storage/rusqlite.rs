@@ -269,6 +269,13 @@ impl RusqliteStorage {
     /// SQLite opens it; SQLite derives WAL/SHM sidecar modes from that file.
     /// Spawns the writer actor on the current tokio runtime.
     pub fn open(path: &str) -> Result<Self, StorageError> {
+        Self::open_with_retained_temp(path, None)
+    }
+
+    fn open_with_retained_temp(
+        path: &str,
+        retained_temp: Option<tempfile::NamedTempFile>,
+    ) -> Result<Self, StorageError> {
         secure_database_file(path)?;
         let mut write_db = Connection::open(path).map_err(map_write_err)?;
         migrate(&mut write_db)?;
@@ -285,40 +292,40 @@ impl RusqliteStorage {
         let (writer_tx, writer_rx) = mpsc::channel::<WriterCommand>(64);
         let read_db = Arc::new(Mutex::new(read_db));
 
-        tokio::spawn(writer_actor(write_db, writer_rx));
+        tokio::spawn(writer_actor(write_db, writer_rx, retained_temp));
 
         Ok(Self { writer_tx, read_db })
     }
 
-    /// Open an in-memory storage backend (for tests). Uses a temp file
-    /// because WAL mode requires a file-backed database. The temp file is
-    /// intentionally retained for the storage's lifetime (via `keep()`);
-    /// tests are short-lived and OS cleanup handles eventual removal. This
-    /// leaks one file per `open_in_memory()` call — acceptable for the test
-    /// suite, not for production paths (which use `open()`).
+    /// Open a file-backed storage backend for tests that need WAL behavior.
+    ///
+    /// The writer actor owns the temporary file, so normal shutdown removes the
+    /// database instead of leaking one file per call. Test runs should still set
+    /// `TMPDIR` to a scoped directory because an abruptly killed process cannot
+    /// run Rust destructors; `scripts/test-rust` provides that boundary.
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let temp = tempfile::NamedTempFile::new().map_err(|e| StorageError::WriteFailed {
             message: format!("temp file creation failed: {e}"),
             retryable: false,
         })?;
-        let path = temp
-            .into_temp_path()
-            .keep()
-            .map_err(|e| StorageError::WriteFailed {
-                message: format!("temp path keep failed: {e}"),
-                retryable: false,
-            })?;
+        let path = temp.path().to_path_buf();
         let path_str = path.to_str().ok_or_else(|| StorageError::WriteFailed {
             message: "temp path is not valid UTF-8".to_string(),
             retryable: false,
         })?;
-        Self::open(path_str)
+        Self::open_with_retained_temp(path_str, Some(temp))
     }
 }
 
 /// The writer actor loop. Owns the single write `Connection`. Receives
-/// commands, executes them in transactions, replies via oneshot.
-async fn writer_actor(mut db: Connection, mut rx: mpsc::Receiver<WriterCommand>) {
+/// commands, executes them in transactions, replies via oneshot. Test-only
+/// storage also transfers its temporary-file guard here so the file outlives
+/// both SQLite connections and is removed when the actor shuts down.
+async fn writer_actor(
+    mut db: Connection,
+    mut rx: mpsc::Receiver<WriterCommand>,
+    _retained_temp: Option<tempfile::NamedTempFile>,
+) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             WriterCommand::Append {
