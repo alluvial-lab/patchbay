@@ -1,7 +1,7 @@
 ---
 id: authority-writer-correctness
 kind: feature
-stage: implementing
+stage: review
 tags: [security, foundation]
 parent: null
 depends_on: [authority-descendant-grant-completion]
@@ -270,3 +270,29 @@ If repository-wide formatting still reports pre-existing untouched drift, verify
 - **Caller:** active autopilot caller `drain`; routine decisions were resolved with judgment and logged above. No contradictory state or semantic hard halt was found.
 - **Execution capability contract:** Sol at xhigh reasoning for security/durability implementation, as explicitly selected by the caller.
 - **Effective review weight:** `thorough` (explicit caller selection, unchanged). Run iterative fresh-context review until no receiver-confirmed material current-cycle blockers remain. Reviewer findings are proposals; the receiving orchestrator verifies and adjudicates each against repository evidence, fixes material blockers, and records/rejects lower-risk proposals without letting labels substitute for judgment.
+
+## Implementation summary
+- Execution used the explicitly selected Sol/xhigh security-and-durability posture in one direct feature-owning context; no nested agent, peer mechanism, backlog work, unrelated item, push, model/vector promotion, or generated-contract edit was used.
+- `authority-writer-correctness-atomic-storage` (`245274c`) added the fail-closed storage contract, shared normal/descendant identity namespace, SQLite schema v5 key→earliest-source index, checked v4 backfill/every-open preflight, atomic source+identity+creation-audit transaction, exact retry no-op, pre-append content conflict, and production generic-route rejection.
+- `authority-writer-correctness-ingest-contract` (`000b9dd`) routed both stable public authority writers through that primitive, removed creation-time projection lookup/`GrantChanged`, mapped identity conflict to corrupt authority history, read the exact returned source back before projection fold, and preserved the hardened descendant provenance/lifecycle validation.
+- `authority-writer-correctness-retry-evidence` (`43ed3ee`) added committed-response-loss recovery for normal/descendant writers, barrier races through independent projections, audit-cardinality evidence, and live-driver repair from an ambiguous descendant prefix. The old redelivery test is now explicitly projection-only evidence.
+- All three child stories advanced directly from `implementing` to `done` after their own verification and commit. Integrated acceptance now derives from the storage transaction and checked log/index relationship, never from `CoreDecisionGate`; the gate remains only the completed driver's exposure/order coordination.
+
+## Integrated verification
+- `cargo test -p patchbay-core --test rusqlite_storage --test audit_records --test authority_ingest --test authority_replay --test authority_proptest` — passed (10 audit, 14 authority-ingest, 14 authority-property, 6 replay, and 29 SQLite-storage tests).
+- `cargo test -p patchbay-core-server --test spawn_completion` — passed (6 tests, including the committed-descendant/lost-ack repair).
+- `cargo test --workspace` — passed after the final code/test changes.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `npm --prefix contracts/ts run check:models` — passed; formal status unchanged.
+- `npm --prefix contracts/ts run check:vectors` — passed after installing declared local package dependencies and building the existing contract/operator packages; 21 implementation checks and 37 mutation witnesses passed, with no metadata regeneration.
+- `git diff --check` — passed; worktree clean before the parent transition.
+- `cargo fmt --all -- --check` — still reports the pre-existing repository formatting baseline beginning in untouched `core/src/acceptance/elicitation.rs`. A transient final rerun also hit a full shared target filesystem; removing only Cargo incremental/cache artifacts restored space and the focused suite passed. No unrelated source formatting or content was changed.
+
+## Implementation reconciliation and discrepancies
+- The hardened descendant-completion fold returned no issuance once a descendant source existed, which would reject an exact writer retry before storage. Its scoped helper now reconstructs the already-validated canonical issuance from durable prior facts for exact retry while retaining terminal/lifecycle suppression.
+- The new every-open identity preflight correctly exposed stale generic property fixtures that generated arbitrary bytes under grant discriminators and a restart fixture that raw-appended grants. Those fixtures now use opaque non-grant kinds or `ingest_grant`; raw SQLite append remains available only for intentional corruption/migration seams.
+- The new storage error variant required one exhaustive server status mapping. No public writer signature, protocol contract, generated artifact, formal claim, vector classification, revocation behavior, foundation assertion, or UI surface changed.
+- No material design flaw or blocker was found.
+
+## Review handoff
+The integrated feature is at `review` by explicit stop boundary. Effective review weight remains `thorough`; fresh review should focus on transaction/index corruption handling, ambiguous-commit identity preservation, descendant retry provenance, generic bypass closure, and audit idempotency. Findings remain proposals for receiver adjudication.
