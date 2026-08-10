@@ -193,6 +193,8 @@ Delegation is a reserved future direction, not a v0.1.0 field; a `parent grant i
 
 Spawn is adapter-scoped in v0.1.0: the Operation explicitly selects one attached adapter before a target session exists, and the core requires a live matching spawn grant for that scope. Runtime-session and operational-resource spawn targets are incompatible and reject before durable acceptance. Fleet-supervisor/authority-domain default selection and per-spawn-variant authority are reserved; broadcasting a non-idempotent spawn is excluded.
 
+Adapter routing identity comes only from the canonical durable registration envelope written by authenticated `Attach`; generic adapter Event ingress cannot write that schema, and replay rejects disagreement among the event domain, Observation domain/kind, canonical adapter target, canonical adapter actor/endpoint sender, payload descriptor, and embedded registration identity. A valid durable registration remains spawn-resolvable after ordinary core restart. The live attachment token/subscription is deliberately not persisted and grants no durable routing authority: it governs current delivery and liveness, so an accepted spawn still waits or fails through the existing adapter delivery behavior when no current attachment can receive it.
+
 Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant shape matches `docs/PROTOCOL.md` and is a normal grant instance with:
 
 - `grant id` — standard grant id (core-assigned).

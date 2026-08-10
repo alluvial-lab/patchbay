@@ -29,7 +29,7 @@ use crate::{
     target::target_adapter_id,
 };
 
-const REGISTRATION_SCHEMA: &str = "patchbay.AdapterRegistration";
+pub const ADAPTER_REGISTRATION_SCHEMA: &str = "patchbay.AdapterRegistration";
 pub const DELIVERY_ACKNOWLEDGEMENT_SCHEMA: &str = "patchbay.adapter.DeliveryAcknowledgement.v1";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,23 +105,11 @@ impl AdapterRegistry {
         let Some(payload) = observation.payload.as_ref() else {
             return Ok(());
         };
-        if payload.schema_ref != REGISTRATION_SCHEMA {
+        if payload.schema_ref != ADAPTER_REGISTRATION_SCHEMA {
             return Ok(());
         }
-        let registration =
-            AdapterRegistration::decode(payload.payload.as_slice()).map_err(|error| {
-                AdapterError::CorruptRecord(format!("cannot decode adapter registration: {error}"))
-            })?;
-        let validated_capability =
-            validate_registration(&registration, CapabilityValidationContext::Replay)?;
-        let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-            AdapterError::CorruptRecord("attach event has no authority domain".into())
-        })?;
-        if registration.authority_domain_id.as_ref() != Some(event_domain) {
-            return Err(AdapterError::CorruptRecord(
-                "adapter registration domain does not match attach event".into(),
-            ));
-        }
+        let (registration, validated_capability) =
+            validate_registration_observation(event, &observation, payload)?;
         let adapter_id = registration
             .adapter_id
             .clone()
@@ -357,32 +345,12 @@ fn prepare_registration(registration: AdapterRegistration) -> PreparedRegistrati
         .authority_domain_id
         .clone()
         .expect("validated authority domain");
-    let redacted = redact_registration(registration);
-    let adapter_id = redacted.adapter_id.clone().expect("validated adapter id");
-    let observation = Observation {
-        authority_domain_id: Some(authority_domain_id.clone()),
-        sender: redacted.endpoint_id.clone().map(|endpoint_id| {
-            patchbay_contracts::patchbay::ActorEndpointRef {
-                actor_id: Some(patchbay_contracts::patchbay::ActorId {
-                    value: adapter_id.value.clone(),
-                }),
-                endpoint_id: Some(endpoint_id),
-                ..Default::default()
-            }
-        }),
-        kind: ObservationKind::Event as i32,
-        target_scope: Some(TargetScope {
-            kind: TargetScopeKind::Adapter as i32,
-            adapter_id: Some(adapter_id.clone()),
-            ..Default::default()
-        }),
-        payload: Some(PayloadEnvelope {
-            payload: redacted.encode_to_vec(),
-            content_type: PayloadContentType::Protobuf as i32,
-            schema_ref: REGISTRATION_SCHEMA.to_owned(),
-        }),
-        ..Default::default()
-    };
+    let adapter_id = registration
+        .adapter_id
+        .clone()
+        .expect("validated adapter id");
+    let endpoint_id = registration.endpoint_id.clone();
+    let observation = canonical_registration_observation(registration);
     let source = StoredEventPayload {
         kind: StoredEventKind::Observation as i32,
         payload: observation.encode_to_vec(),
@@ -394,7 +362,7 @@ fn prepare_registration(registration: AdapterRegistration) -> PreparedRegistrati
     audit.actor_id = Some(patchbay_contracts::patchbay::ActorId {
         value: adapter_id.value.clone(),
     });
-    audit.endpoint_id = redacted.endpoint_id.clone();
+    audit.endpoint_id = endpoint_id;
     audit.target_scope = Some(TargetScope {
         kind: TargetScopeKind::Adapter as i32,
         adapter_id: Some(adapter_id),
@@ -406,6 +374,86 @@ fn prepare_registration(registration: AdapterRegistration) -> PreparedRegistrati
         source,
         audit,
     }
+}
+
+/// Return whether an Observation claims the attachment-owned registration schema.
+#[must_use]
+pub fn is_adapter_registration(observation: &Observation) -> bool {
+    observation
+        .payload
+        .as_ref()
+        .is_some_and(|payload| payload.schema_ref == ADAPTER_REGISTRATION_SCHEMA)
+}
+
+/// Build the one durable registration Observation shape owned by attachment.
+/// Replay compares the complete decoded envelope with this producer so a
+/// registration-schema payload cannot acquire routing identity through a
+/// merely registration-like generic Observation.
+fn canonical_registration_observation(registration: AdapterRegistration) -> Observation {
+    let redacted = redact_registration(registration);
+    let authority_domain_id = redacted
+        .authority_domain_id
+        .clone()
+        .expect("validated authority domain");
+    let adapter_id = redacted.adapter_id.clone().expect("validated adapter id");
+    let endpoint_id = redacted.endpoint_id.clone().expect("validated endpoint id");
+    Observation {
+        authority_domain_id: Some(authority_domain_id),
+        sender: Some(patchbay_contracts::patchbay::ActorEndpointRef {
+            actor_id: Some(patchbay_contracts::patchbay::ActorId {
+                value: adapter_id.value.clone(),
+            }),
+            endpoint_id: Some(endpoint_id),
+            ..Default::default()
+        }),
+        kind: ObservationKind::Event as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(adapter_id),
+            ..Default::default()
+        }),
+        payload: Some(PayloadEnvelope {
+            payload: redacted.encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: ADAPTER_REGISTRATION_SCHEMA.to_owned(),
+        }),
+        ..Default::default()
+    }
+}
+
+fn validate_registration_observation(
+    event: &RecordedEvent,
+    observation: &Observation,
+    payload: &PayloadEnvelope,
+) -> Result<(AdapterRegistration, ValidatedAdapterCapability), AdapterError> {
+    let registration =
+        AdapterRegistration::decode(payload.payload.as_slice()).map_err(|error| {
+            AdapterError::CorruptRecord(format!("cannot decode adapter registration: {error}"))
+        })?;
+    let validated_capability =
+        validate_registration(&registration, CapabilityValidationContext::Replay)?;
+
+    let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
+        AdapterError::CorruptRecord("attach event has no authority domain".into())
+    })?;
+    if event_domain.value.is_empty() {
+        return Err(AdapterError::CorruptRecord(
+            "attach event has an empty authority domain".into(),
+        ));
+    }
+    if observation.authority_domain_id.as_ref() != Some(event_domain) {
+        return Err(AdapterError::CorruptRecord(
+            "adapter registration Observation domain does not match attach event".into(),
+        ));
+    }
+
+    let expected = canonical_registration_observation(registration.clone());
+    if observation != &expected {
+        return Err(AdapterError::CorruptRecord(
+            "adapter registration is not in the canonical attachment envelope".into(),
+        ));
+    }
+    Ok((registration, validated_capability))
 }
 
 #[derive(Debug, Clone, PartialEq)]

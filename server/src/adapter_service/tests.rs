@@ -17,10 +17,17 @@ use patchbay_contracts::patchbay::{
     SessionConnectivityState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
 };
-use patchbay_core::{security::events as security_events, storage::{
-    AuditRecordDraft, AuditedBatchAppend, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
-    StorageError, StoredSnapshot, TargetKey,
-}};
+use patchbay_core::{
+    acceptance::{TargetBinding, TargetResolver},
+    resource::ResourceRegistry,
+    security::events as security_events,
+    session::SessionRegistry,
+    storage::{
+        AuditRecordDraft, AuditedBatchAppend, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
+        StorageError, StoredSnapshot, TargetKey,
+    },
+    target::TargetRegistry,
+};
 use prost::Message;
 use prost_types::Timestamp;
 use tokio::sync::Notify;
@@ -650,6 +657,132 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
             .len(),
         after_status.len(),
         "target fencing rejects before durable append"
+    );
+}
+
+#[tokio::test]
+async fn generic_registration_schema_ingress_cannot_register_an_embedded_adapter() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let adapter_b = AdapterId {
+        value: "embedded-adapter-b".into(),
+    };
+    let mut embedded_b = registration(domain.clone());
+    embedded_b.adapter_id = Some(adapter_b.clone());
+    embedded_b.endpoint_id = Some(EndpointId {
+        value: "embedded-adapter-b-endpoint".into(),
+    });
+    embedded_b.adapter_generation = Some(Generation { value: 9 });
+
+    let before = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read");
+    assert_eq!(
+        before
+            .iter()
+            .filter(|event| {
+                Observation::decode(event.payload.payload.as_slice())
+                    .ok()
+                    .and_then(|observation| observation.payload)
+                    .is_some_and(|payload| {
+                        payload.schema_ref == adapter::ADAPTER_REGISTRATION_SCHEMA
+                    })
+            })
+            .count(),
+        1,
+        "Attach is the only existing registration producer"
+    );
+
+    let error = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain.clone()),
+                    sender: Some(ActorEndpointRef {
+                        actor_id: Some(ActorId {
+                            value: adapter_id().value,
+                        }),
+                        endpoint_id: Some(EndpointId {
+                            value: "pi-adapter-endpoint".into(),
+                        }),
+                        ..ActorEndpointRef::default()
+                    }),
+                    kind: ObservationKind::Event as i32,
+                    target_scope: Some(TargetScope {
+                        kind: TargetScopeKind::Adapter as i32,
+                        adapter_id: Some(adapter_id()),
+                        ..TargetScope::default()
+                    }),
+                    payload: Some(PayloadEnvelope {
+                        payload: embedded_b.encode_to_vec(),
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: adapter::ADAPTER_REGISTRATION_SCHEMA.to_owned(),
+                    }),
+                    ..Observation::default()
+                })),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect_err("generic Event ingress cannot produce adapter registration");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+
+    let after = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read after rejected ingress");
+    assert_eq!(
+        after, before,
+        "rejected generic ingress appends no registration Observation or sibling event"
+    );
+
+    let replayed = adapter::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("canonical attachment prefix replays");
+    assert_eq!(
+        replayed
+            .get(&adapter_id())
+            .and_then(|record| record.registration.adapter_generation.as_ref())
+            .map(|generation| generation.value),
+        Some(1),
+        "authenticated adapter A generation remains unchanged"
+    );
+    assert!(
+        replayed.get(&adapter_b).is_none(),
+        "embedded adapter B has no registration generation"
+    );
+
+    let targets = TargetRegistry::with_adapters(
+        SessionRegistry::new(),
+        ResourceRegistry::new(),
+        replayed,
+    );
+    let adapter_a_scope = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_id()),
+        ..TargetScope::default()
+    };
+    assert_eq!(
+        TargetResolver::resolve(&targets, &domain, OperationKind::Spawn, &adapter_a_scope).await,
+        Ok(TargetBinding::Adapter {
+            adapter_id: adapter_id(),
+        })
+    );
+    let adapter_b_scope = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_b),
+        ..TargetScope::default()
+    };
+    assert!(
+        TargetResolver::resolve(&targets, &domain, OperationKind::Spawn, &adapter_b_scope)
+            .await
+            .is_err(),
+        "embedded adapter B is not spawn-resolvable"
     );
 }
 

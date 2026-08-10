@@ -1,14 +1,14 @@
 use patchbay_contracts::patchbay::{
-    AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
-    AdapterTargetCategory, AttachmentMethod, AuthorityDomainId, EndpointId, Generation,
-    Observation, ObservationKind, PayloadContentType, PayloadEnvelope, ResourceCapability,
-    ResourceId, ResourceKind, ResourceProjectionContract, SchemaDescriptor, StoredEventKind,
-    StoredEventPayload,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachmentMethod, AuthorityDomainId, EndpointId,
+    Generation, Observation, ObservationKind, PayloadContentType, PayloadEnvelope,
+    ResourceCapability, ResourceId, ResourceKind, ResourceProjectionContract, SchemaDescriptor,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     adapter::{
         ingest_registration, rebuild_from_log, AdapterRegistry, CapabilityValidationContext,
-        ValidatedAdapterCapability,
+        ValidatedAdapterCapability, ADAPTER_REGISTRATION_SCHEMA,
     },
     resource::ResourceIdentity,
     storage::{RusqliteStorage, Storage},
@@ -281,7 +281,7 @@ async fn registration_redacts_attachment_descriptor_before_durable_replay() {
         .find_map(|observation| {
             observation
                 .payload
-                .filter(|payload| payload.schema_ref == "patchbay.AdapterRegistration")
+                .filter(|payload| payload.schema_ref == ADAPTER_REGISTRATION_SCHEMA)
         })
         .map(|payload| {
             AdapterRegistration::decode(payload.payload.as_slice()).expect("registration decodes")
@@ -303,6 +303,150 @@ async fn registration_redacts_attachment_descriptor_before_durable_replay() {
         .and_then(|record| record.registration.capability.as_ref())
         .and_then(|capability| capability.attachment_method.as_ref())
         .is_some_and(|method| method.descriptor.is_empty()));
+}
+
+#[tokio::test]
+async fn replay_accepts_only_the_complete_canonical_attachment_envelope() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage");
+    let domain = AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    };
+    let mut producer_registry = AdapterRegistry::new();
+    ingest_registration(
+        &storage,
+        &mut producer_registry,
+        registration("canonical", session_capability()),
+    )
+    .await
+    .expect("attachment produces a registration");
+    let canonical = storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .expect("events read")
+        .into_iter()
+        .find(|event| {
+            Observation::decode(event.payload.payload.as_slice())
+                .ok()
+                .and_then(|observation| observation.payload)
+                .is_some_and(|payload| payload.schema_ref == ADAPTER_REGISTRATION_SCHEMA)
+        })
+        .expect("canonical registration event");
+
+    let mut replayed = AdapterRegistry::new();
+    replayed
+        .observe(&canonical)
+        .expect("the actual attachment envelope replays");
+    assert!(replayed
+        .get(&AdapterId {
+            value: "canonical".to_owned(),
+        })
+        .is_some());
+
+    for mutation in [
+        "event domain",
+        "outer domain",
+        "adapter target",
+        "sender actor",
+        "sender endpoint",
+        "observation kind",
+        "content type",
+        "schema",
+        "embedded adapter",
+        "embedded domain",
+        "embedded endpoint",
+        "embedded generation",
+        "embedded capability",
+    ] {
+        let mut candidate = canonical.clone();
+        if mutation == "event domain" {
+            candidate.event_id.authority_domain_id = Some(AuthorityDomainId {
+                value: "authority-foreign".to_owned(),
+            });
+        } else {
+            let mut observation =
+                Observation::decode(candidate.payload.payload.as_slice()).expect("observation");
+            match mutation {
+                "outer domain" => {
+                    observation.authority_domain_id = Some(AuthorityDomainId {
+                        value: "authority-foreign".to_owned(),
+                    });
+                }
+                "adapter target" => {
+                    observation
+                        .target_scope
+                        .as_mut()
+                        .expect("target")
+                        .adapter_id = Some(AdapterId {
+                        value: "adapter-foreign".to_owned(),
+                    });
+                }
+                "sender actor" => {
+                    observation.sender.as_mut().expect("sender").actor_id = Some(ActorId {
+                        value: "actor-foreign".to_owned(),
+                    });
+                }
+                "sender endpoint" => {
+                    observation.sender.as_mut().expect("sender").endpoint_id = Some(EndpointId {
+                        value: "endpoint-foreign".to_owned(),
+                    });
+                }
+                "observation kind" => observation.kind = ObservationKind::Status as i32,
+                "content type" => {
+                    observation.payload.as_mut().expect("payload").content_type =
+                        PayloadContentType::Json as i32;
+                }
+                "schema" => {
+                    observation.payload.as_mut().expect("payload").schema_ref =
+                        "example.not-registration".to_owned();
+                }
+                "embedded adapter"
+                | "embedded domain"
+                | "embedded endpoint"
+                | "embedded generation"
+                | "embedded capability" => {
+                    let payload = observation.payload.as_mut().expect("payload");
+                    let mut embedded = AdapterRegistration::decode(payload.payload.as_slice())
+                        .expect("embedded registration");
+                    match mutation {
+                        "embedded adapter" => {
+                            embedded.adapter_id = Some(AdapterId {
+                                value: "adapter-foreign".to_owned(),
+                            });
+                        }
+                        "embedded domain" => {
+                            embedded.authority_domain_id = Some(AuthorityDomainId {
+                                value: "authority-foreign".to_owned(),
+                            });
+                        }
+                        "embedded endpoint" => {
+                            embedded.endpoint_id = Some(EndpointId {
+                                value: "endpoint-foreign".to_owned(),
+                            });
+                        }
+                        "embedded generation" => embedded.adapter_generation = None,
+                        "embedded capability" => embedded.capability = None,
+                        _ => unreachable!(),
+                    }
+                    payload.payload = embedded.encode_to_vec();
+                }
+                _ => unreachable!(),
+            }
+            candidate.payload.payload = observation.encode_to_vec();
+        }
+
+        let mut registry = AdapterRegistry::new();
+        let result = registry.observe(&candidate);
+        if mutation == "schema" {
+            result.expect("another schema is an unrelated Observation");
+        } else {
+            assert!(result.is_err(), "{mutation} must fail closed");
+        }
+        assert_eq!(
+            registry,
+            AdapterRegistry::new(),
+            "{mutation} must not mutate adapter routing identity"
+        );
+    }
 }
 
 #[test]
@@ -487,13 +631,27 @@ async fn append_registration_observation(
     domain: &AuthorityDomainId,
     registration: AdapterRegistration,
 ) {
+    let adapter_id = registration.adapter_id.clone().expect("adapter id");
+    let endpoint_id = registration.endpoint_id.clone().expect("endpoint id");
     let observation = Observation {
         authority_domain_id: Some(domain.clone()),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: adapter_id.value.clone(),
+            }),
+            endpoint_id: Some(endpoint_id),
+            ..ActorEndpointRef::default()
+        }),
         kind: ObservationKind::Event as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(adapter_id),
+            ..TargetScope::default()
+        }),
         payload: Some(PayloadEnvelope {
             payload: registration.encode_to_vec(),
             content_type: PayloadContentType::Protobuf as i32,
-            schema_ref: "patchbay.AdapterRegistration".to_owned(),
+            schema_ref: ADAPTER_REGISTRATION_SCHEMA.to_owned(),
         }),
         ..Observation::default()
     };

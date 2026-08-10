@@ -951,6 +951,11 @@ where
                         .and_then(target_adapter_id),
                     &authenticated_adapter,
                 )?;
+                if adapter::is_adapter_registration(&observation) {
+                    return Err(Status::invalid_argument(
+                        "adapter registration is accepted only through Attach",
+                    ));
+                }
                 let mut commands = self.commands.lock().await;
                 catch_up_command_projection(&self.storage, &domain, &mut commands)
                     .await
