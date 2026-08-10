@@ -19,8 +19,8 @@ use patchbay_contracts::patchbay::{
     StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::storage::{
-    AuditRecordDraft, CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
-    Storage, StorageError, TargetKey,
+    validate_next_replay_event, AuditRecordDraft, CoreGenerationStore, DedupOutcome,
+    GrantAppendOutcome, GrantIdentityKey, ReplayIntegrityError, Storage, StorageError, TargetKey,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -858,18 +858,65 @@ async fn write_snapshot_rejects_invalid_lsn() {
 }
 
 #[tokio::test]
-async fn unspecified_event_kind_rejected() {
+async fn append_rejects_unspecified_and_unknown_event_kinds() {
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain = test_domain();
-    let bad_payload = StoredEventPayload {
-        kind: StoredEventKind::Unspecified as i32,
-        payload: vec![0x00],
-    };
-    let result = storage.append(&domain, bad_payload).await;
-    assert!(matches!(
-        result,
-        Err(patchbay_core::storage::StorageError::InvalidEventKind)
-    ));
+    for kind in [StoredEventKind::Unspecified as i32, i32::MAX] {
+        let result = storage
+            .append(
+                &domain,
+                StoredEventPayload {
+                    kind,
+                    payload: vec![0x00],
+                },
+            )
+            .await;
+        assert!(matches!(result, Err(StorageError::InvalidEventKind)));
+    }
+}
+
+#[tokio::test]
+async fn real_sqlite_reads_preserve_corrupt_kinds_for_shared_replay_classification() {
+    for (raw_kind, expected_log_corruption) in [
+        (StoredEventKind::Unspecified as i32, true),
+        (i32::MAX, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(format!("corrupt-kind-{raw_kind}.sqlite3"));
+        let path = path.to_str().unwrap();
+        let storage = patchbay_core::storage::RusqliteStorage::open(path).unwrap();
+        drop(storage);
+        tokio::task::yield_now().await;
+
+        // Seed a faulty stored row directly; no valid committed record is
+        // rewritten or substituted at this LSN.
+        let envelope = StoredEventPayload {
+            kind: raw_kind,
+            payload: Vec::new(),
+        };
+        let db = rusqlite::Connection::open(path).unwrap();
+        db.execute(
+            "INSERT INTO events (lsn, authority_domain_id, kind, payload) VALUES (1, ?1, ?2, ?3)",
+            rusqlite::params![test_domain().value, raw_kind, envelope.encode_to_vec()],
+        )
+        .unwrap();
+        drop(db);
+
+        let storage = patchbay_core::storage::RusqliteStorage::open(path).unwrap();
+        let events = storage
+            .read_after(&test_domain(), Lsn { value: 0 })
+            .await
+            .expect("SQLite read boundary preserves matching raw kind framing");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload.kind, raw_kind);
+        let error = validate_next_replay_event(&test_domain(), 0, &events[0])
+            .expect_err("the shared validator classifies stored kind corruption");
+        if expected_log_corruption {
+            assert!(matches!(error, ReplayIntegrityError::CorruptLog(_)));
+        } else {
+            assert!(matches!(error, ReplayIntegrityError::CorruptRecord(_)));
+        }
+    }
 }
 
 #[tokio::test]

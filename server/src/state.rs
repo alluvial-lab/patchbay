@@ -4,7 +4,7 @@ use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
     ControlSurfaceRevocation, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
     OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision, Session,
-    SessionSnapshot, TargetScope, TargetScopeKind, ViewRevision,
+    SessionSnapshot, StoredEventKind, TargetScope, TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
     acceptance::{
@@ -26,9 +26,9 @@ use patchbay_core::{
     resource::ResourceRegistry,
     session::SessionRegistry,
     storage::{
-        validate_next_replay_event, CoreGenerationStore, RecordedEvent, Storage, StorageError,
+        validate_next_replay_event, CoreGenerationStore, Storage, StorageError,
     },
-    target::{TargetRegistry, TargetRegistryError},
+    target::TargetRegistry,
 };
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -211,12 +211,28 @@ impl ProjectionState {
         let mut projection = DiagnosticsProjection::new();
         let mut previous_lsn = 0;
         for event in events {
+            let event_lsn = event.event_id.lsn.as_ref().ok_or_else(|| {
+                StorageError::CorruptRecord(
+                    "bounded diagnostics replay returned an event with no LSN".to_owned(),
+                )
+            })?;
+            if event_lsn.value > as_of_lsn {
+                return Err(StorageError::CorruptRecord(format!(
+                    "bounded diagnostics replay returned LSN {} beyond requested LSN {as_of_lsn}",
+                    event_lsn.value
+                )));
+            }
             let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             projection
                 .observe(&event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
             previous_lsn = validated.lsn;
+        }
+        if previous_lsn != as_of_lsn {
+            return Err(StorageError::CorruptRecord(format!(
+                "bounded diagnostics replay ended at LSN {previous_lsn}, expected exact LSN {as_of_lsn}"
+            )));
         }
         // Historical registration is not proof of current liveness. The
         // caller's live projection is the only source for fresh attachment
@@ -477,55 +493,94 @@ impl ProjectionState {
             .read_after(authority_domain_id, Lsn { value: *cursor })
             .await?;
 
-        for event in events {
-            let validated = validate_next_replay_event(authority_domain_id, *cursor, &event)
+        // A catch-up tail is one aggregate projection transaction. Clone every
+        // affected view, fold and validate the complete returned suffix, then
+        // install all views and the cursor only after the final event succeeds.
+        let mut staged_authority = self.grant_check.inner.lock().await.clone();
+        let mut staged_targets = self.target_resolver.inner.lock().await.clone();
+        let mut staged_commands = self.state_lookup.inner.lock().await.clone();
+        let mut staged_elicitations = self.elicitation_slots.inner.lock().await.clone();
+        let mut staged_diagnostics = self.diagnostics.lock().await.clone();
+        let mut staged_security = self.security_posture.inner.lock().await.clone();
+        let mut staged_operators = self.operators.lock().await.clone();
+        let _operator_session_guard = self.operator_sessions.replay_guard().await;
+        let staged_operator_sessions = self.operator_sessions.staged_clone_unlocked().await;
+        let mut staged_cursor = *cursor;
+
+        for event in &events {
+            let validated = validate_next_replay_event(
+                authority_domain_id,
+                staged_cursor,
+                event,
+            )
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            staged_authority
+                .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.grant_check
-                .observe(&event)
-                .await
+            staged_targets
+                .observe_event(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.target_resolver
-                .observe(&event)
-                .await
+            staged_commands
+                .apply(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.state_lookup
-                .apply(&event)
-                .await
+            staged_elicitations
+                .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.elicitation_slots
-                .observe(&event)
-                .await
+            staged_diagnostics
+                .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.diagnostics
-                .lock()
-                .await
-                .observe(&event)
+            staged_security
+                .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.security_posture
-                .observe(&event)
-                .await
+            staged_operators
+                .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            self.operators
-                .lock()
-                .await
-                .observe(&event)
-                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            if event.payload.kind == patchbay_contracts::patchbay::StoredEventKind::ControlSurfaceRevocation as i32 {
-                let revocation: ControlSurfaceRevocation = prost::Message::decode(event.payload.payload.as_slice())
-                    .map_err(|error| StorageError::CorruptRecord(format!("cannot decode control-surface revocation: {error}")))?;
-                let target = match revocation.target.ok_or_else(|| StorageError::CorruptRecord("control-surface revocation has no target".to_owned()))? {
+            if validated.kind == StoredEventKind::ControlSurfaceRevocation {
+                let revocation: ControlSurfaceRevocation =
+                    prost::Message::decode(event.payload.payload.as_slice()).map_err(|error| {
+                        StorageError::CorruptRecord(format!(
+                            "cannot decode control-surface revocation: {error}"
+                        ))
+                    })?;
+                let target = match revocation.target.ok_or_else(|| {
+                    StorageError::CorruptRecord(
+                        "control-surface revocation has no target".to_owned(),
+                    )
+                })? {
                     patchbay_contracts::patchbay::control_surface_revocation::Target::PrincipalId(id) => ControlSurfaceRevocationTarget::Principal(id),
                     patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(id) => ControlSurfaceRevocationTarget::Endpoint(id),
                     patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(id) => ControlSurfaceRevocationTarget::Device(id),
                 };
-                self.revoke_sessions_for_target(&target).await;
+                let principal = if let ControlSurfaceRevocationTarget::Principal(id) = &target {
+                    staged_operators.principal_record(id)
+                } else {
+                    None
+                };
+                revoke_operator_sessions_for_target(
+                    &staged_operator_sessions,
+                    &target,
+                    principal,
+                )
+                .await;
             }
-            self.operator_sessions
-                .observe(&event)
+            staged_operator_sessions
+                .observe(event)
                 .await
                 .map_err(StorageError::CorruptRecord)?;
-            *cursor = validated.lsn;
+            staged_cursor = validated.lsn;
         }
+
+        *self.grant_check.inner.lock().await = staged_authority;
+        *self.target_resolver.inner.lock().await = staged_targets;
+        *self.state_lookup.inner.lock().await = staged_commands;
+        *self.elicitation_slots.inner.lock().await = staged_elicitations;
+        *self.diagnostics.lock().await = staged_diagnostics;
+        *self.security_posture.inner.lock().await = staged_security;
+        *self.operators.lock().await = staged_operators;
+        self.operator_sessions
+            .install_from_unlocked(&staged_operator_sessions)
+            .await;
+        *cursor = staged_cursor;
         Ok(())
     }
 
@@ -620,36 +675,21 @@ impl ProjectionState {
         &self,
         target: &ControlSurfaceRevocationTarget,
     ) -> u32 {
-        match target {
-            ControlSurfaceRevocationTarget::Principal(principal_id) => {
-                let principal = self
-                    .operators
-                    .lock()
-                    .await
-                    .principal_record(principal_id)
-                    .cloned();
-                self.operator_sessions
-                    .revoke_matching_principal(|binding| {
-                        principal.as_ref().is_some_and(|record| {
-                            record.operator_actor_id.as_ref() == Some(&binding.actor_id)
-                                && record.endpoint_id.as_ref() == Some(&binding.endpoint_id)
-                                && record.device_id.as_ref() == Some(&binding.device_id)
-                                && record.endpoint_generation.as_ref() == Some(&binding.endpoint_generation)
-                        })
-                    })
-                    .await
-            }
-            ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => {
-                self.operator_sessions
-                    .revoke_matching_principal(|binding| &binding.endpoint_id == endpoint_id)
-                    .await
-            }
-            ControlSurfaceRevocationTarget::Device(device_id) => {
-                self.operator_sessions
-                    .revoke_matching_principal(|binding| &binding.device_id == device_id)
-                    .await
-            }
-        }
+        let principal = if let ControlSurfaceRevocationTarget::Principal(principal_id) = target {
+            self.operators
+                .lock()
+                .await
+                .principal_record(principal_id)
+                .cloned()
+        } else {
+            None
+        };
+        revoke_operator_sessions_for_target(
+            &self.operator_sessions,
+            target,
+            principal.as_ref(),
+        )
+        .await
     }
 
     pub async fn ingest_operator_session_revocation<S: Storage>(
@@ -784,6 +824,38 @@ impl ProjectionState {
     }
 }
 
+async fn revoke_operator_sessions_for_target(
+    operator_sessions: &OperatorSessionRegistry,
+    target: &ControlSurfaceRevocationTarget,
+    principal: Option<&ControlSurfacePrincipalRecord>,
+) -> u32 {
+    match target {
+        ControlSurfaceRevocationTarget::Principal(_) => {
+            operator_sessions
+                .revoke_matching_principal(|binding| {
+                    principal.is_some_and(|record| {
+                        record.operator_actor_id.as_ref() == Some(&binding.actor_id)
+                            && record.endpoint_id.as_ref() == Some(&binding.endpoint_id)
+                            && record.device_id.as_ref() == Some(&binding.device_id)
+                            && record.endpoint_generation.as_ref()
+                                == Some(&binding.endpoint_generation)
+                    })
+                })
+                .await
+        }
+        ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => {
+            operator_sessions
+                .revoke_matching_principal(|binding| &binding.endpoint_id == endpoint_id)
+                .await
+        }
+        ControlSurfaceRevocationTarget::Device(device_id) => {
+            operator_sessions
+                .revoke_matching_principal(|binding| &binding.device_id == device_id)
+                .await
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LockedSecurityPosture {
     inner: Arc<Mutex<SecurityPostureProjection>>,
@@ -794,10 +866,6 @@ impl LockedSecurityPosture {
         Self {
             inner: Arc::new(Mutex::new(projection)),
         }
-    }
-
-    async fn observe(&self, event: &RecordedEvent) -> Result<(), patchbay_core::security::SecurityError> {
-        self.inner.lock().await.observe(event)
     }
 
     async fn state(&self) -> patchbay_contracts::patchbay::SecurityLockdownState {
@@ -825,13 +893,6 @@ impl LockedGrantCheck {
         Self {
             inner: Arc::new(Mutex::new(registry)),
         }
-    }
-
-    async fn observe(
-        &self,
-        event: &RecordedEvent,
-    ) -> Result<(), patchbay_core::authority::AuthorityError> {
-        self.inner.lock().await.observe(event)
     }
 }
 
@@ -871,13 +932,6 @@ impl LockedTargetResolver {
             inner: Arc::new(Mutex::new(registry)),
         }
     }
-
-    async fn observe(
-        &self,
-        event: &RecordedEvent,
-    ) -> Result<(), TargetRegistryError> {
-        self.inner.lock().await.observe_event(event)
-    }
 }
 
 impl TargetResolver for LockedTargetResolver {
@@ -913,13 +967,6 @@ impl LockedElicitationContractLookup {
             inner: Arc::new(Mutex::new(layer)),
         }
     }
-
-    async fn observe(
-        &self,
-        event: &RecordedEvent,
-    ) -> Result<(), patchbay_core::acceptance::AcceptanceError> {
-        self.inner.lock().await.observe(event)
-    }
 }
 
 impl ElicitationContractLookup for LockedElicitationContractLookup {
@@ -946,13 +993,6 @@ impl LockedCommandStateLookup {
             inner: Arc::new(Mutex::new(index)),
         }
     }
-
-    async fn apply(
-        &self,
-        event: &RecordedEvent,
-    ) -> Result<(), patchbay_core::acceptance::AcceptanceError> {
-        self.inner.lock().await.apply(event)
-    }
 }
 
 impl LockedCommandStateLookup {
@@ -976,6 +1016,7 @@ mod tests {
         QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, StoredEventKind,
         StoredEventPayload,
     };
+    use patchbay_core::storage::RecordedEvent;
     use prost::Message;
 
     #[tokio::test]
@@ -1299,6 +1340,164 @@ mod tests {
         );
     }
 
+    #[derive(Debug, Clone, PartialEq)]
+    struct AggregateProjectionSnapshot {
+        authority: AuthorityRegistry,
+        targets: TargetRegistry,
+        commands: CommandIndex,
+        elicitations: ElicitationSlotLayer,
+        diagnostics: DiagnosticsProjection,
+        security: SecurityPostureProjection,
+        operators: OperatorRegistry,
+        cursor: u64,
+    }
+
+    async fn aggregate_projection_snapshot(
+        state: &ProjectionState,
+    ) -> AggregateProjectionSnapshot {
+        AggregateProjectionSnapshot {
+            authority: state.grant_check.inner.lock().await.clone(),
+            targets: state.target_resolver.inner.lock().await.clone(),
+            commands: state.state_lookup.inner.lock().await.clone(),
+            elicitations: state.elicitation_slots.inner.lock().await.clone(),
+            diagnostics: state.diagnostics.lock().await.clone(),
+            security: state.security_posture.inner.lock().await.clone(),
+            operators: state.operators.lock().await.clone(),
+            cursor: *state.last_applied_lsn.lock().await,
+        }
+    }
+
+    #[tokio::test]
+    async fn catch_up_failure_preserves_the_exact_aggregate_projection() {
+        use patchbay_contracts::patchbay::{
+            AcceptedOperation, AdapterId, GrantProvenance, GrantRevocationEffect,
+            GrantRevocationPolicy, Operation, OperationState, Revocation, RuntimeSessionId,
+        };
+
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        let grant_id = GrantId {
+            value: "grant-atomic".to_owned(),
+        };
+        storage
+            .append(
+                &authority_domain_id,
+                patchbay_core::authority::events::grant(
+                    authority_domain_id.clone(),
+                    Grant {
+                        grant_id: Some(grant_id.clone()),
+                        subject_actor_id: Some(ActorId {
+                            value: "operator".to_owned(),
+                        }),
+                        target_scope: Some(TargetScope {
+                            kind: TargetScopeKind::AuthorityDomain as i32,
+                            ..TargetScope::default()
+                        }),
+                        allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+                        provenance: Some(GrantProvenance {
+                            reason: "atomic replay fixture".to_owned(),
+                            ..GrantProvenance::default()
+                        }),
+                        revocation_policy: GrantRevocationPolicy::Continue as i32,
+                        ..Grant::default()
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+        for command in ["command-1", "command-2"] {
+            let operation = Operation {
+                command_id: Some(CommandId {
+                    value: command.to_owned(),
+                }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+                kind: OperationKind::Instruct as i32,
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::RuntimeSession as i32,
+                    adapter_id: Some(AdapterId {
+                        value: "pi".to_owned(),
+                    }),
+                    runtime_session_id: Some(RuntimeSessionId {
+                        value: "session-1".to_owned(),
+                    }),
+                    deployment_scope: "local".to_owned(),
+                    ..TargetScope::default()
+                }),
+                idempotency_key: format!("key-{command}"),
+                ..Operation::default()
+            };
+            storage
+                .append(
+                    &authority_domain_id,
+                    StoredEventPayload {
+                        kind: StoredEventKind::Operation as i32,
+                        payload: AcceptedOperation {
+                            operation: Some(operation),
+                            authorizing_grant_id: Some(grant_id.clone()),
+                        }
+                        .encode_to_vec(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
+        let before = aggregate_projection_snapshot(&state).await;
+        let operator_sessions_before = state.operator_sessions.staged_clone().await;
+        assert_eq!(before.cursor, 3);
+
+        storage
+            .append(
+                &authority_domain_id,
+                patchbay_core::authority::events::revocation(
+                    authority_domain_id.clone(),
+                    Revocation {
+                        grant_id: Some(grant_id),
+                        revocation_generation: Some(Generation { value: 1 }),
+                        accepted_operation_policy: GrantRevocationPolicy::Cancel as i32,
+                        command_effects: vec![
+                            GrantRevocationEffect {
+                                command_id: Some(CommandId {
+                                    value: "command-1".to_owned(),
+                                }),
+                                from_state: OperationState::Accepted as i32,
+                                to_state: OperationState::Cancelled as i32,
+                                failure_code:
+                                    patchbay_contracts::patchbay::FailureCode::Cancelled as i32,
+                            },
+                            GrantRevocationEffect {
+                                command_id: Some(CommandId {
+                                    value: "missing-command".to_owned(),
+                                }),
+                                from_state: OperationState::Accepted as i32,
+                                to_state: OperationState::Cancelled as i32,
+                                failure_code:
+                                    patchbay_contracts::patchbay::FailureCode::Cancelled as i32,
+                            },
+                        ],
+                        ..Revocation::default()
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+
+        state
+            .catch_up(&storage, &authority_domain_id)
+            .await
+            .expect_err("a later invalid effect rejects the aggregate event");
+        assert_eq!(aggregate_projection_snapshot(&state).await, before);
+        assert!(state
+            .operator_sessions
+            .equivalent_to(&operator_sessions_before)
+            .await);
+    }
+
     #[derive(Clone, Default)]
     struct ScriptedReplayStorage {
         events: Arc<Mutex<Vec<RecordedEvent>>>,
@@ -1311,8 +1510,8 @@ mod tests {
             }
         }
 
-        async fn replace(&self, events: Vec<RecordedEvent>) {
-            *self.events.lock().await = events;
+        async fn push(&self, event: RecordedEvent) {
+            self.events.lock().await.push(event);
         }
     }
 
@@ -1354,6 +1553,17 @@ mod tests {
                 })
                 .cloned()
                 .collect())
+        }
+
+        async fn read_through(
+            &self,
+            _authority_domain_id: &AuthorityDomainId,
+            _cursor: Lsn,
+            _as_of_lsn: Lsn,
+        ) -> Result<Vec<RecordedEvent>, StorageError> {
+            // Deliberately faulty bounded port: diagnostics_at must enforce
+            // both record framing and its trusted final bound itself.
+            Ok(self.events.lock().await.clone())
         }
 
         async fn write_snapshot(
@@ -1452,16 +1662,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_integrity_catch_up_preserves_cursor_on_validation_or_fold_failure() {
+    async fn replay_integrity_catch_up_preserves_aggregate_on_validation_or_fold_failure() {
         let authority_domain_id = AuthorityDomainId {
             value: "authority-main".to_owned(),
         };
         let first = harmless_observation(&authority_domain_id, 1);
-        let storage = ScriptedReplayStorage::new(vec![first.clone()]);
-        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
-            .await
-            .unwrap();
-        assert_eq!(state.current_lsn().await, 1);
 
         for corrupt in [
             harmless_observation(&authority_domain_id, 3),
@@ -1478,19 +1683,33 @@ mod tests {
                 vec![0xff],
             ),
         ] {
-            storage.replace(vec![first.clone(), corrupt]).await;
+            let storage = ScriptedReplayStorage::new(vec![first.clone()]);
+            let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+                .await
+                .unwrap();
+            let before = aggregate_projection_snapshot(&state).await;
+            let operator_sessions_before = state.operator_sessions.staged_clone().await;
+            storage.push(corrupt).await;
+
             state
                 .catch_up(&storage, &authority_domain_id)
                 .await
                 .expect_err("corrupt catch-up must fail closed");
-            assert_eq!(state.current_lsn().await, 1);
+            assert_eq!(aggregate_projection_snapshot(&state).await, before);
+            assert!(state
+                .operator_sessions
+                .equivalent_to(&operator_sessions_before)
+                .await);
         }
 
-        // ResourceRegistry may already cover an exact failed-fold LSN through
-        // an earlier sibling projection. Retrying the corrected complete event
-        // remains safe under its existing covered-prefix semantics.
+        // A distinct append-only fixture proves valid catch-up without ever
+        // replacing bytes at an already committed LSN.
+        let storage = ScriptedReplayStorage::new(vec![first]);
+        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+            .await
+            .unwrap();
         storage
-            .replace(vec![first, valid_elicitation(&authority_domain_id, 2)])
+            .push(valid_elicitation(&authority_domain_id, 2))
             .await;
         state
             .catch_up(&storage, &authority_domain_id)
@@ -1505,27 +1724,97 @@ mod tests {
             value: "authority-main".to_owned(),
         };
         let first = harmless_observation(&authority_domain_id, 1);
-        let storage = ScriptedReplayStorage::new(vec![first.clone()]);
-        let state = ProjectionState::rebuild(&storage, &authority_domain_id)
-            .await
-            .unwrap();
 
-        for corrupt in [
-            harmless_observation(&authority_domain_id, 3),
-            replay_event(
-                &authority_domain_id,
+        for (corrupt, as_of_lsn) in [
+            (harmless_observation(&authority_domain_id, 3), 3),
+            (
+                replay_event(
+                    &authority_domain_id,
+                    2,
+                    StoredEventKind::Unspecified,
+                    Vec::new(),
+                ),
                 2,
-                StoredEventKind::Unspecified,
-                Vec::new(),
             ),
         ] {
-            storage.replace(vec![first.clone(), corrupt]).await;
+            let storage = ScriptedReplayStorage::new(vec![first.clone()]);
+            let state = ProjectionState::rebuild(&storage, &authority_domain_id)
+                .await
+                .unwrap();
+            storage.push(corrupt).await;
             let error = state
-                .diagnostics_at(&storage, &authority_domain_id, 3)
+                .diagnostics_at(&storage, &authority_domain_id, as_of_lsn)
                 .await
                 .expect_err("as-of projection must reject corrupt complete prefix");
             assert!(error.to_string().contains("corrupt replay"));
         }
+    }
+
+    #[tokio::test]
+    async fn diagnostics_at_requires_the_exact_requested_final_bound() {
+        let authority_domain_id = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+
+        let empty = ScriptedReplayStorage::default();
+        let empty_state = ProjectionState::rebuild(&empty, &authority_domain_id)
+            .await
+            .unwrap();
+        assert!(empty_state
+            .diagnostics_at(&empty, &authority_domain_id, 1)
+            .await
+            .is_err());
+
+        let truncated = ScriptedReplayStorage::new(vec![harmless_observation(
+            &authority_domain_id,
+            1,
+        )]);
+        let truncated_state = ProjectionState::rebuild(&truncated, &authority_domain_id)
+            .await
+            .unwrap();
+        assert!(truncated_state
+            .diagnostics_at(&truncated, &authority_domain_id, 2)
+            .await
+            .is_err());
+
+        let over_bound = ScriptedReplayStorage::new(vec![
+            harmless_observation(&authority_domain_id, 1),
+            valid_elicitation(&authority_domain_id, 2),
+            harmless_observation(&authority_domain_id, 3),
+        ]);
+        let over_bound_state = ProjectionState::rebuild(&over_bound, &authority_domain_id)
+            .await
+            .unwrap();
+        let error = over_bound_state
+            .diagnostics_at(&over_bound, &authority_domain_id, 2)
+            .await
+            .expect_err("a faulty port must not return rows beyond the trusted bound");
+        assert!(error.to_string().contains("beyond requested LSN 2"));
+
+        let missing_lsn = ScriptedReplayStorage::default();
+        let missing_lsn_state = ProjectionState::rebuild(&missing_lsn, &authority_domain_id)
+            .await
+            .unwrap();
+        let mut malformed = harmless_observation(&authority_domain_id, 1);
+        malformed.event_id.lsn = None;
+        missing_lsn.push(malformed).await;
+        let error = missing_lsn_state
+            .diagnostics_at(&missing_lsn, &authority_domain_id, 1)
+            .await
+            .expect_err("missing LSN framing must be rejected, not filtered");
+        assert!(error.to_string().contains("no LSN"));
+
+        let exact = ScriptedReplayStorage::new(vec![
+            harmless_observation(&authority_domain_id, 1),
+            valid_elicitation(&authority_domain_id, 2),
+        ]);
+        let exact_state = ProjectionState::rebuild(&exact, &authority_domain_id)
+            .await
+            .unwrap();
+        exact_state
+            .diagnostics_at(&exact, &authority_domain_id, 2)
+            .await
+            .expect("an exact contiguous bounded prefix remains valid");
     }
 
     #[tokio::test]

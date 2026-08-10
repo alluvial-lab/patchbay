@@ -78,7 +78,7 @@ pub enum ValidatedDiagnosticsQuery {
     Adapters(patchbay_contracts::patchbay::AdapterStatusQuery),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct CommandTimeline {
     summary: CommandSummary,
     accepted_event_id: EventId,
@@ -89,7 +89,7 @@ struct CommandTimeline {
     history: Vec<CommandHistoryEntry>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct DiagnosticsProjection {
     commands: HashMap<CommandId, CommandTimeline>,
     adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
@@ -222,6 +222,19 @@ impl DiagnosticsProjection {
     }
 
     fn observe_revocation(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        // A revocation is one durable event even when it carries multiple
+        // command effects. Install none of its diagnostic changes unless all
+        // effects validate.
+        let mut staged = self.clone();
+        staged.observe_revocation_in_place(event)?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn observe_revocation_in_place(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), DiagnosticsError> {
         let revocation = Revocation::decode(event.payload.payload.as_slice())
             .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
         let grant_id = revocation.grant_id.ok_or_else(|| DiagnosticsError::CorruptEvent("revocation has no grant id".to_owned()))?;

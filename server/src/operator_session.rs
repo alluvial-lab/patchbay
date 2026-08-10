@@ -9,7 +9,7 @@ use patchbay_contracts::patchbay::{
     OperatorSessionRevocation, SecurityLockdownEvent, StoredEventKind,
 };
 use prost::Message;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::identity::random_token;
 use patchbay_core::storage::RecordedEvent;
@@ -30,7 +30,7 @@ pub struct IssuedOperatorSession {
     pub session_generation: Generation,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct OperatorSessionRecord {
     binding: OperatorSessionBinding,
     session_generation: Generation,
@@ -47,6 +47,9 @@ pub struct OperatorSessionRegistry {
     sessions: Arc<Mutex<HashMap<String, OperatorSessionRecord>>>,
     next_generation: Arc<Mutex<HashMap<String, u64>>>,
     invalidated_through_generation: Arc<Mutex<HashMap<String, u64>>>,
+    /// Serializes process-local mutation with aggregate replay staging so a
+    /// concurrent login/session refresh cannot be overwritten at install.
+    mutation_guard: Arc<Mutex<()>>,
     ttl: Duration,
 }
 
@@ -59,11 +62,69 @@ impl OperatorSessionRegistry {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_generation: Arc::new(Mutex::new(HashMap::new())),
             invalidated_through_generation: Arc::new(Mutex::new(HashMap::new())),
+            mutation_guard: Arc::new(Mutex::new(())),
             ttl,
         })
     }
 
+    /// Deep-clone the process-local session state for an aggregate replay
+    /// transaction. The ordinary `Clone` implementation intentionally shares
+    /// live state; catch-up needs an isolated candidate instead.
+    #[cfg(test)]
+    pub(crate) async fn staged_clone(&self) -> Self {
+        let _mutation_guard = self.mutation_guard.lock().await;
+        self.staged_clone_unlocked().await
+    }
+
+    pub(crate) async fn replay_guard(&self) -> MutexGuard<'_, ()> {
+        self.mutation_guard.lock().await
+    }
+
+    pub(crate) async fn staged_clone_unlocked(&self) -> Self {
+        let sessions = self.sessions.lock().await;
+        let next_generation = self.next_generation.lock().await;
+        let invalidated_through_generation = self.invalidated_through_generation.lock().await;
+        Self {
+            sessions: Arc::new(Mutex::new(sessions.clone())),
+            next_generation: Arc::new(Mutex::new(next_generation.clone())),
+            invalidated_through_generation: Arc::new(Mutex::new(
+                invalidated_through_generation.clone(),
+            )),
+            mutation_guard: Arc::new(Mutex::new(())),
+            ttl: self.ttl,
+        }
+    }
+
+    /// Install a fully validated staged replay state while the caller holds
+    /// `replay_guard`. All cloning happens before live maps are acquired, so
+    /// installation itself is infallible.
+    pub(crate) async fn install_from_unlocked(&self, staged: &Self) {
+        let staged_sessions = staged.sessions.lock().await.clone();
+        let staged_next_generation = staged.next_generation.lock().await.clone();
+        let staged_invalidated = staged.invalidated_through_generation.lock().await.clone();
+
+        let mut sessions = self.sessions.lock().await;
+        let mut next_generation = self.next_generation.lock().await;
+        let mut invalidated_through_generation =
+            self.invalidated_through_generation.lock().await;
+        *sessions = staged_sessions;
+        *next_generation = staged_next_generation;
+        *invalidated_through_generation = staged_invalidated;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn equivalent_to(&self, other: &Self) -> bool {
+        let left = self.staged_clone().await;
+        let right = other.staged_clone().await;
+        *left.sessions.lock().await == *right.sessions.lock().await
+            && *left.next_generation.lock().await == *right.next_generation.lock().await
+            && *left.invalidated_through_generation.lock().await
+                == *right.invalidated_through_generation.lock().await
+            && left.ttl == right.ttl
+    }
+
     pub async fn issue(&self, binding: OperatorSessionBinding) -> IssuedOperatorSession {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let mut next_generation = self.next_generation.lock().await;
         let floor = self
             .invalidated_through_generation
@@ -109,6 +170,7 @@ impl OperatorSessionRegistry {
         session_id: &OperatorSessionId,
         binding: &OperatorSessionBinding,
     ) -> bool {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let mut sessions = self.sessions.lock().await;
         let Some(session) = sessions.get_mut(&session_id.value) else {
             return false;
@@ -129,6 +191,7 @@ impl OperatorSessionRegistry {
         session_id: &OperatorSessionId,
         binding: &OperatorSessionBinding,
     ) -> bool {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let mut sessions = self.sessions.lock().await;
         let Some(session) = sessions.get_mut(&session_id.value) else {
             return false;
@@ -141,6 +204,7 @@ impl OperatorSessionRegistry {
     }
 
     pub async fn current_generation(&self, actor_id: &ActorId) -> Generation {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let next = self
             .next_generation
             .lock()
@@ -165,6 +229,7 @@ impl OperatorSessionRegistry {
         actor_id: &ActorId,
         through: &Generation,
     ) -> u32 {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let now = Instant::now();
         let mut sessions = self.sessions.lock().await;
         let mut revoked = 0;
@@ -185,6 +250,7 @@ impl OperatorSessionRegistry {
         &self,
         binding: impl Fn(&OperatorSessionBinding) -> bool,
     ) -> u32 {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let now = Instant::now();
         let mut sessions = self.sessions.lock().await;
         let mut revoked = 0;
@@ -203,6 +269,7 @@ impl OperatorSessionRegistry {
     /// Fold durable generation-fence events into the process-local session
     /// registry. Lockdown entry uses the same monotonic fence as revoke-all.
     pub async fn observe(&self, event: &RecordedEvent) -> Result<(), String> {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             format!(
                 "corrupt replay record: unknown stored event kind {}",
@@ -268,6 +335,7 @@ impl OperatorSessionRegistry {
     }
 
     pub async fn summaries(&self) -> Vec<patchbay_contracts::patchbay::OperatorSessionSummary> {
+        let _mutation_guard = self.mutation_guard.lock().await;
         let now = Instant::now();
         let sessions = self.sessions.lock().await;
         sessions
@@ -286,6 +354,7 @@ impl OperatorSessionRegistry {
 
     #[cfg(test)]
     pub async fn session_count(&self) -> usize {
+        let _mutation_guard = self.mutation_guard.lock().await;
         self.sessions.lock().await.len()
     }
 }

@@ -3,12 +3,15 @@ use patchbay_contracts::patchbay::{
     AdapterDiagnosticState, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
     AdapterTargetCategory,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, EventId,
-    FailureCode, Generation, Observation, ObservationKind, Operation, OperationKind,
-    OperationState, PayloadContentType, PayloadEnvelope, ResourceCapability, ResourceKind,
-    ResourceProjectionContract, SchemaDescriptor, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind,
+    FailureCode, Generation, GrantId, GrantRevocationEffect, Observation, ObservationKind,
+    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope, ResourceCapability,
+    ResourceKind, ResourceProjectionContract, Revocation, SchemaDescriptor, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind,
 };
-use patchbay_core::diagnostics::{DiagnosticsProjection, DIAGNOSTICS_SCHEMA};
+use patchbay_core::{
+    acceptance::CommandIndex,
+    diagnostics::{DiagnosticsProjection, DIAGNOSTICS_SCHEMA},
+};
 use patchbay_core::storage::RecordedEvent;
 use prost::Message;
 
@@ -149,6 +152,76 @@ fn replay_and_incremental_command_folds_match() {
     assert_eq!(replay.result_for_query(&command_id), incremental.result_for_query(&command_id));
     let history = replay.inspect_command(&command_id).unwrap().history;
     assert_eq!(history.len(), 2, "accepted and delivered are both real history entries");
+}
+
+#[test]
+fn multi_effect_revocation_is_atomic_in_command_and_diagnostics_projections() {
+    let domain = AuthorityDomainId { value: "main".to_owned() };
+    let grant_id = GrantId { value: "test-grant".to_owned() };
+    let operation_event = |lsn: u64, command: &str| {
+        event(
+            &domain,
+            lsn,
+            StoredEventKind::Operation,
+            AcceptedOperation {
+                operation: Some(Operation {
+                    command_id: Some(CommandId { value: command.to_owned() }),
+                    authority_domain_id: Some(domain.clone()),
+                    kind: OperationKind::Instruct as i32,
+                    target_scope: Some(TargetScope {
+                        kind: TargetScopeKind::RuntimeSession as i32,
+                        ..TargetScope::default()
+                    }),
+                    idempotency_key: format!("key-{command}"),
+                    ..Operation::default()
+                }),
+                authorizing_grant_id: Some(grant_id.clone()),
+            }
+            .encode_to_vec(),
+        )
+    };
+    let first = operation_event(1, "command-1");
+    let second = operation_event(2, "command-2");
+    let revocation = event(
+        &domain,
+        3,
+        StoredEventKind::Revocation,
+        Revocation {
+            authority_domain_id: Some(domain.clone()),
+            grant_id: Some(grant_id),
+            revocation_generation: Some(Generation { value: 1 }),
+            command_effects: vec![
+                GrantRevocationEffect {
+                    command_id: Some(CommandId { value: "command-1".to_owned() }),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Cancelled as i32,
+                    failure_code: FailureCode::Cancelled as i32,
+                },
+                GrantRevocationEffect {
+                    command_id: Some(CommandId { value: "missing-command".to_owned() }),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Cancelled as i32,
+                    failure_code: FailureCode::Cancelled as i32,
+                },
+            ],
+            ..Revocation::default()
+        }
+        .encode_to_vec(),
+    );
+
+    let mut commands = CommandIndex::new();
+    let mut diagnostics = DiagnosticsProjection::new();
+    for item in [&first, &second] {
+        commands.apply(item).expect("accepted command projects");
+        diagnostics.observe(item).expect("accepted diagnostic timeline projects");
+    }
+    let commands_before = commands.clone();
+    let diagnostics_before = diagnostics.clone();
+
+    assert!(commands.apply(&revocation).is_err());
+    assert!(diagnostics.observe(&revocation).is_err());
+    assert_eq!(commands, commands_before);
+    assert_eq!(diagnostics, diagnostics_before);
 }
 
 #[test]

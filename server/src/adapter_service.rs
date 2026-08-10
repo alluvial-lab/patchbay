@@ -317,7 +317,7 @@ const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
 type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct CommandProjection {
     index: CommandIndex,
     cursor: u64,
@@ -369,17 +369,19 @@ async fn catch_up_command_projection<S: Storage>(
             },
         )
         .await?;
+    let mut staged = projection.clone();
     for event in &events {
-        let validated = validate_next_replay_event(authority_domain_id, projection.cursor, event)
+        let validated = validate_next_replay_event(authority_domain_id, staged.cursor, event)
             .map_err(|error| {
                 error.map(
                     acceptance::AcceptanceError::CorruptRecord,
                     acceptance::AcceptanceError::CorruptLog,
                 )
             })?;
-        projection.index.apply(event)?;
-        projection.cursor = validated.lsn;
+        staged.index.apply(event)?;
+        staged.cursor = validated.lsn;
     }
+    *projection = staged;
     Ok(events)
 }
 

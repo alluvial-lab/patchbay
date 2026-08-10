@@ -245,6 +245,19 @@ impl CommandIndex {
     }
 
     fn apply_revocation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        // One revocation may carry several command effects. Stage the complete
+        // event so a later invalid effect cannot leave earlier commands
+        // terminalized in an otherwise rejected projection update.
+        let mut staged = self.clone();
+        staged.apply_revocation_in_place(event)?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn apply_revocation_in_place(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
         let revocation = Revocation::decode(event.payload.payload.as_slice()).map_err(|error| {
             AcceptanceError::CorruptRecord(format!(

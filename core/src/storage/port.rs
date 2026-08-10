@@ -357,10 +357,11 @@ pub enum StorageError {
     #[error("snapshot LSN {0} does not correspond to a committed event")]
     InvalidSnapshotLsn(u64),
 
-    /// A stored event payload carried `STORED_EVENT_KIND_UNSPECIFIED` or an
-    /// unknown kind value. Rejected at the boundary (Fail Fast) — every
-    /// durably-recorded event must carry a concrete, known kind so replay
-    /// can deserialize it unambiguously.
+    /// An append candidate carried `STORED_EVENT_KIND_UNSPECIFIED` or an
+    /// unknown kind value. Rejected before durable append (Fail Fast).
+    /// Read-side kind corruption is returned as raw stored framing to the
+    /// shared replay validator, which distinguishes unspecified log history
+    /// from an unknown numeric record kind.
     #[error("stored event kind is unspecified or unknown")]
     InvalidEventKind,
 
@@ -482,11 +483,14 @@ pub trait Storage: Send + Sync {
 
     /// Read the complete authority-domain suffix with `LSN > cursor`.
     ///
-    /// The result contains every committed event after the cursor in exact,
-    /// gap-free LSN order. Used for crash recovery (`cursor = 0`) and complete
-    /// projection catch-up. Filtered subscriptions, audit pages, and
-    /// adapter-specific subsets may omit unrelated LSNs after this read; those
-    /// filtered outputs are not contiguous-prefix inputs.
+    /// The backend contract requires every committed event after the cursor in
+    /// exact, gap-free LSN order. Used for crash recovery (`cursor = 0`) and
+    /// complete projection catch-up. Replay adjacency validation detects bad
+    /// returned rows, but without an independently trusted high-water mark it
+    /// cannot prove that a faulty backend did not omit an unknown final tail.
+    /// Filtered subscriptions, audit pages, and adapter-specific subsets may
+    /// omit unrelated LSNs after this read; those filtered outputs are not
+    /// contiguous-prefix inputs.
     fn read_after(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -495,7 +499,8 @@ pub trait Storage: Send + Sync {
 
     /// Read the authority-domain log through one explicit durable prefix.
     /// Backends should push the upper bound into their query; the default is
-    /// retained for small test ports and remains correct by filtering.
+    /// retained for small test ports. Missing LSN framing is corruption rather
+    /// than an event that may be silently removed by the bound filter.
     fn read_through(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -506,12 +511,17 @@ pub trait Storage: Send + Sync {
             if as_of_lsn.value < cursor.value {
                 return Ok(Vec::new());
             }
-            Ok(self
-                .read_after(authority_domain_id, cursor)
+            self.read_after(authority_domain_id, cursor)
                 .await?
                 .into_iter()
-                .filter(|event| event.event_id.lsn.as_ref().is_some_and(|lsn| lsn.value <= as_of_lsn.value))
-                .collect())
+                .filter_map(|event| match event.event_id.lsn.as_ref() {
+                    Some(lsn) if lsn.value <= as_of_lsn.value => Some(Ok(event)),
+                    Some(_) => None,
+                    None => Some(Err(StorageError::CorruptRecord(
+                        "bounded replay event has no LSN".to_owned(),
+                    ))),
+                })
+                .collect()
         }
     }
 

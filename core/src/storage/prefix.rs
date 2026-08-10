@@ -1,8 +1,11 @@
 //! Integrity validation for complete authority-domain replay prefixes.
 //!
 //! This boundary applies only to complete log reads (or complete tails after an
-//! explicit cursor). Filtered subscription, audit, and adapter-specific streams
-//! may legitimately omit unrelated LSNs and must not use this validator.
+//! explicit cursor). It validates adjacency among returned records. An
+//! open-ended read still relies on the storage port's completeness contract for
+//! an unknown omitted final tail unless the caller has a trusted high-water
+//! mark. Filtered subscription, audit, and adapter-specific streams may
+//! legitimately omit unrelated LSNs and must not use this validator.
 
 use patchbay_contracts::patchbay::{AuthorityDomainId, StoredEventKind};
 
@@ -45,7 +48,10 @@ pub struct ValidatedReplayEvent {
 /// A cold rebuild starts with `previous_lsn = 0`. A complete snapshot tail
 /// starts with the snapshot's validated LSN. Empty input needs no call and is
 /// valid. The caller must apply the event successfully before adopting the
-/// returned LSN as its next cursor.
+/// returned LSN as its next cursor. For an open-ended suffix, successful
+/// adjacency validation does not independently prove that a faulty backend
+/// returned the unknown final tail; exact bounded callers must also verify the
+/// final returned LSN equals their trusted bound.
 pub fn validate_next_replay_event(
     authority_domain_id: &AuthorityDomainId,
     previous_lsn: u64,

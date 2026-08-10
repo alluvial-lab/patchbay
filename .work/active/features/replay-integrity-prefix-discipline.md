@@ -28,6 +28,7 @@ This is **cross-cutting, not authority-only** — sessions and acceptance replay
 ## Design decisions
 
 - **Use one replay-integrity validator at every full authority-domain log boundary.** The storage port still guarantees ordered, gap-free committed LSNs, but a corrupt database or faulty `Storage` implementation must not be trusted by a projection. Each full-prefix consumer validates domain, concrete event kind, and exact successor LSN before any fold mutates state.
+- **Adjacency validation does not manufacture storage completeness.** It detects malformed framing and initial/interior gaps among returned rows. An open-ended `read_after` consumer has no independently trusted high-water mark, so it still relies on the storage port contract for an unknown omitted final tail. A bounded `read_through(..., as_of_lsn)` consumer can and must additionally require that its final validated LSN equals the trusted bound.
 - **Cold replay is a contiguous prefix, not merely a sorted subsequence.** A full rebuild starts with `previous_lsn = 0`, so the first event must be LSN 1 and every later event must equal `previous_lsn + 1`. A future snapshot-tail caller passes the snapshot LSN as `previous_lsn`; an empty prefix remains valid. Overflow, zero, duplicate, reversed, and skipped LSNs are corruption.
 - **`StoredEventKind::Unspecified` is corrupt log history, while an unknown numeric kind or malformed event identity is a corrupt record.** Both fail before projection-specific decode. Known concrete sibling event kinds remain valid and are ignored by projections that do not own them.
 - **The aggregate server rebuild/catch-up and standalone projection rebuilds share the same rule.** The production composition root currently has its own `<= previous_lsn` check, while command, Elicitation, authority, operator, session, resource, security, and adapter rebuilds duplicate or omit that check. The shared validator replaces those local sequence checks; the server advances `last_applied_lsn` only after every projection accepts the event.
@@ -219,6 +220,7 @@ node contracts/scripts/check-vectors.mjs
 - **Call-site omission can leave one rebuild weaker than production startup.** The inventory is defined by full `read_after`/`read_through` consumers, and the test matrix covers each exported rebuild plus the aggregate server path. Fallback if another full-log consumer appears is to route it through the helper, not add another local check.
 - **Replay failure may happen after a durable write.** This feature fails closed and leaves the server cursor unchanged; existing rebuild-before-reuse policy remains the recovery path. It does not attempt log repair or silently skip corruption.
 - **Future multi-domain storage must allocate a gap-free sequence per authority domain.** The validator already keys the expectation by domain, matching the committed `(authority_domain_id, LSN)` shape. Cross-domain global ordering remains outside this feature.
+- **A faulty open-ended storage read can hide an unknown tail.** Exact-successor validation catches gaps among returned rows but cannot infer a missing final event without a trusted high-water mark. `Storage::read_after` completeness remains a backend contract assumption; exact bounded diagnostics additionally verifies the requested final LSN.
 - **Independent advisory design review was unavailable by instruction.** The risk is mitigated by direct exhaustive call-site mapping, explicit mutation witnesses, and mandatory `thorough` integrated review; design-time peer absence is non-blocking.
 
 ## Extension pressure classification
@@ -264,3 +266,30 @@ Passed:
 - `git diff --check`.
 
 Repository discrepancy (non-feature baseline): `cargo fmt --check` remains red on broad existing workspace formatting drift (hundreds of rustfmt hunks across untouched core/server files). The new standalone validator/evidence/recovery files pass direct rustfmt checks, and this feature does not absorb repository-wide formatting churn.
+
+## Review fix — pass 1 (2026-08-10)
+
+**Status**: receiver-accepted pass-1 blockers fixed and verified; the feature intentionally remains at `stage: review` for the next `thorough` convergence pass.
+
+- **Aggregate event atomicity.** `ProjectionState::catch_up` now deep-stages authority, target/session/resource/adapter, command, Elicitation, diagnostics, security, operator, and process-local operator-session projections for the complete returned tail. It installs every staged view and then the cursor only after all events and all receivers succeed; a process-local mutation guard prevents a concurrent login/session refresh from being overwritten by the staged operator-session install. A real SQLite regression drives a multi-effect revocation that mutates authority and the first command effect before a later unknown-command failure; exact structural snapshots of every aggregate projection plus the operator-session maps remain unchanged.
+- **Adapter command atomicity.** Adapter command catch-up stages the entire `CommandProjection` and installs index plus cursor only after the full tail succeeds. Its real-backend regression appends one valid leading command and a later invalid transition and proves the projection is exactly unchanged. `CommandIndex` and `DiagnosticsProjection` separately stage multi-effect revocations so a later invalid effect cannot retain earlier terminalization.
+- **Exact diagnostics bounds.** `diagnostics_at(as_of_lsn)` rejects a missing LSN, any row above the requested bound, a gap, a truncated/empty positive prefix, and any final validated LSN other than `as_of_lsn`; LSN 0 with an empty log remains the only empty exact prefix. The default `Storage::read_through` now reports missing-LSN corruption rather than filtering the row away.
+- **Append/read kind separation.** SQLite append paths retain `InvalidEventKind` for `Unspecified` and unknown candidates. The complete-log read path now preserves matching raw SQL/envelope numeric framing so the shared validator classifies durable `Unspecified` as `CorruptLog` and an unknown numeric kind as `CorruptRecord`. Real file-backed SQLite tests seed faulty rows directly rather than rewriting or substituting bytes at a committed LSN.
+- **Completeness claim narrowed.** The port, validator docs, and feature decisions now state that adjacency validation cannot detect an unknown omitted open-ended tail without a trusted high-water mark. `read_after` completeness remains a storage-backend obligation; exact bounded diagnostics closes the final-bound gap where an `as_of_lsn` exists.
+- **Preserved semantics.** Filtered subscription/audit outputs remain excluded from contiguous-prefix validation; resource covered-prefix redelivery and exact committed-record semantics are unchanged; current authority, descendant-completion, and revocation fixes are untouched.
+- **Execution/review policy.** Sol xhigh remained the direct execution capability. No nested subagent, peer, backlog item, unrelated work item, push, or release action was used. Review weight remains `thorough` from the explicit caller, and no pass-2 approval is claimed here.
+
+Pass-1 verification:
+
+- `cargo test -p patchbay-core --test replay_integrity` — 7 passed.
+- `cargo test -p patchbay-core --test diagnostics_projection` — 6 passed.
+- `cargo test -p patchbay-core --test recovery` — 12 passed.
+- `cargo test -p patchbay-core --test rusqlite_storage` — 30 passed.
+- `cargo test -p patchbay-core-server state::tests::` — 10 passed.
+- `cargo test -p patchbay-core-server adapter_service::tests::command_projection_catch_up_is_atomic_on_late_fold_failure` — passed.
+- `cargo test --workspace` — all Rust unit, integration, conformance, and doc tests passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
+- `node contracts/scripts/check-models.mjs` — passed; traceability current.
+- `node contracts/scripts/check-vectors.mjs` — passed after local TypeScript dependency/build preparation; 21 implementation checks and 37 mutation witnesses passed.
+- `git diff --check` — passed.
+- `cargo fmt --check` — still reports the pre-existing broad workspace formatting baseline outside this pass-1 ownership; no unrelated formatting churn was applied.

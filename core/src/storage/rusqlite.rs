@@ -330,8 +330,8 @@ struct GrantIdentitySource {
 
 fn decoded_grant_boundary(
     payload: &StoredEventPayload,
+    kind: StoredEventKind,
 ) -> Result<(String, String, &'static str), StorageError> {
-    let kind = validate_kind(payload)?;
     let (grant_id, authority_domain_id, reason_code) = match kind {
         StoredEventKind::Grant => {
             let grant = Grant::decode(payload.payload.as_slice()).map_err(|error| {
@@ -402,7 +402,7 @@ fn authoritative_grant_identities(
             )));
         }
         let envelope = decode_payload(&envelope_bytes)?;
-        let envelope_kind = validate_kind(&envelope)?;
+        let envelope_kind = decode_stored_kind(&envelope, source_lsn)?;
         if envelope_kind as i32 != sql_kind
             || !matches!(
                 envelope_kind,
@@ -413,7 +413,8 @@ fn authoritative_grant_identities(
                 "grant source kind disagrees at LSN {source_lsn}"
             )));
         }
-        let (grant_id, embedded_domain, _) = decoded_grant_boundary(&envelope)?;
+        let (grant_id, embedded_domain, _) =
+            decoded_grant_boundary(&envelope, envelope_kind)?;
         if embedded_domain != row_domain {
             return Err(StorageError::CorruptRecord(format!(
                 "grant {grant_id} at LSN {source_lsn} embeds authority domain {embedded_domain}, row belongs to {row_domain}"
@@ -917,13 +918,36 @@ fn do_load_or_create_core_generation(
     Ok(Generation { value: stored as u64 })
 }
 
-/// Validate the event kind is not unspecified. `try_from` succeeds for
-/// `Unspecified` (it's a valid enum value), so we explicitly reject it.
-fn validate_kind(payload: &StoredEventPayload) -> Result<StoredEventKind, StorageError> {
+/// Validate an append candidate before it reaches the writer transaction.
+/// `try_from` succeeds for `Unspecified`, so append validation rejects it
+/// explicitly alongside unknown numeric values.
+fn validate_append_kind(
+    payload: &StoredEventPayload,
+) -> Result<StoredEventKind, StorageError> {
     let kind =
         StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
     if kind == StoredEventKind::Unspecified {
         return Err(StorageError::InvalidEventKind);
+    }
+    Ok(kind)
+}
+
+/// Parse a stored kind for read-side consumers that need a concrete variant.
+/// Database corruption is not an append-validation error.
+fn decode_stored_kind(
+    payload: &StoredEventPayload,
+    lsn: i64,
+) -> Result<StoredEventKind, StorageError> {
+    let kind = StoredEventKind::try_from(payload.kind).map_err(|_| {
+        StorageError::CorruptRecord(format!(
+            "event at LSN {lsn} has unknown stored event kind {}",
+            payload.kind
+        ))
+    })?;
+    if kind == StoredEventKind::Unspecified {
+        return Err(StorageError::CorruptRecord(format!(
+            "event at LSN {lsn} has unspecified stored event kind"
+        )));
     }
     Ok(kind)
 }
@@ -948,7 +972,7 @@ fn do_append(
     authority_domain_id: &str,
     payload: &StoredEventPayload,
 ) -> Result<EventId, StorageError> {
-    let kind = validate_kind(payload)?;
+    let kind = validate_append_kind(payload)?;
     let encoded = encode_payload(payload)?;
     let tx = db.transaction().map_err(map_write_err)?;
     tx.execute(
@@ -985,7 +1009,7 @@ fn insert_event(
     authority_domain_id: &str,
     payload: &StoredEventPayload,
 ) -> Result<(i64, Vec<u8>), StorageError> {
-    let kind = validate_kind(payload)?;
+    let kind = validate_append_kind(payload)?;
     let encoded = encode_payload(payload)?;
     tx.execute(
         "INSERT INTO events (authority_domain_id, kind, payload) VALUES (?1, ?2, ?3)",
@@ -1118,7 +1142,7 @@ fn do_append_audited(
     source: StoredEventPayload,
     mut audit: AuditRecordDraft,
 ) -> Result<AuditedAppend, StorageError> {
-    validate_kind(&source)?;
+    validate_append_kind(&source)?;
     audit.source_event_id = None;
     audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
     let tx = db.transaction().map_err(map_write_err)?;
@@ -1145,8 +1169,9 @@ fn do_append_grant_audited(
             "grant identity append requires a non-empty domain and identity".to_owned(),
         ));
     }
+    let source_kind = validate_append_kind(&source)?;
     let (embedded_identity, embedded_domain, expected_reason) =
-        decoded_grant_boundary(&source)?;
+        decoded_grant_boundary(&source, source_kind)?;
     if embedded_domain != authority_domain_id {
         return Err(StorageError::CorruptRecord(format!(
             "grant identity source embeds authority domain {embedded_domain}, expected {authority_domain_id}"
@@ -1214,9 +1239,9 @@ fn do_append_grant_audited(
             ))
         })?;
         let existing_envelope = decode_payload(&existing_bytes)?;
-        let existing_kind = validate_kind(&existing_envelope)?;
+        let existing_kind = decode_stored_kind(&existing_envelope, source_lsn)?;
         let (existing_identity, existing_domain, _) =
-            decoded_grant_boundary(&existing_envelope)?;
+            decoded_grant_boundary(&existing_envelope, existing_kind)?;
         if row_domain != authority_domain_id
             || existing_domain != authority_domain_id
             || existing_identity != identity
@@ -1322,7 +1347,7 @@ fn do_append_dedup_audited(
     mut audit: AuditRecordDraft,
     logical_payload: Vec<u8>,
 ) -> Result<AuditedDedupOutcome, StorageError> {
-    validate_kind(&source)?;
+    validate_append_kind(&source)?;
     audit.source_event_id = None;
     audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
     let canonical = logical_payload;
@@ -1372,7 +1397,7 @@ fn do_append_dedup(
     payload: &StoredEventPayload,
     logical_payload: &[u8],
 ) -> Result<DedupOutcome, StorageError> {
-    let kind = validate_kind(payload)?;
+    let kind = validate_append_kind(payload)?;
     let encoded = encode_payload(payload)?;
     let canonical = logical_payload.to_vec();
     let tx = db.transaction().map_err(map_write_err)?;
@@ -1612,7 +1637,7 @@ fn query_audit_sync(
             return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} points to event kind {event_kind}")));
         }
         let envelope = decode_payload(&payload_bytes)?;
-        if validate_kind(&envelope)? != StoredEventKind::AuditRecord {
+        if decode_stored_kind(&envelope, lsn)? != StoredEventKind::AuditRecord {
             return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} has a non-audit envelope")));
         }
         let record = AuditRecord::decode(envelope.payload.as_slice()).map_err(|error| StorageError::CorruptRecord(format!("cannot decode audit record at LSN {lsn}: {error}")))?;
@@ -2038,12 +2063,13 @@ impl RusqliteStorage {
         for row in rows {
             let (lsn, sql_kind, payload_bytes) = row.map_err(map_read_err)?;
             let payload = decode_payload(&payload_bytes)?;
-            // Validate the decoded kind and check SQL/envelope agreement.
-            let decoded_kind = validate_kind(&payload)?;
-            if decoded_kind as i32 != sql_kind {
+            // Preserve unknown/unspecified numeric framing for the shared
+            // complete-prefix validator. SQLite still owns exact agreement
+            // between its indexed kind column and the stored envelope.
+            if payload.kind != sql_kind {
                 return Err(StorageError::CorruptRecord(format!(
                     "kind mismatch at LSN {lsn}: SQL column says {sql_kind}, envelope says {}",
-                    decoded_kind as i32
+                    payload.kind
                 )));
             }
             events.push(RecordedEvent {

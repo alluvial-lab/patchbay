@@ -7,8 +7,9 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, typed_correlation,
     AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, EndpointId, FailureCode,
-    Generation, IdempotencyKey, Lsn, Observation, ObservationKind, Operation, OperationKind,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId,
+    CommandId, CommandTransition, EndpointId, FailureCode, Generation, IdempotencyKey, Lsn,
+    Observation, ObservationKind, Operation, OperationKind,
     PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
     ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
     ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
@@ -1303,6 +1304,70 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
     assert_eq!(audit.source_event_id, Some(diagnostic_source));
     assert_eq!(audit.reason_code, "pi_adapter_started");
     assert!(audit.adapter_diagnostic.is_some());
+}
+
+#[tokio::test]
+async fn command_projection_catch_up_is_atomic_on_late_fold_failure() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let operation = |command: &str| Operation {
+        command_id: Some(CommandId { value: command.into() }),
+        authority_domain_id: Some(domain.clone()),
+        kind: OperationKind::Instruct as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            ..TargetScope::default()
+        }),
+        idempotency_key: format!("key-{command}"),
+        ..Operation::default()
+    };
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation_bytes(&operation("command-1")),
+            },
+        )
+        .await
+        .expect("initial command appends");
+    let mut projection = rebuild_command_projection(&storage, &domain)
+        .await
+        .expect("initial command projection rebuilds");
+    let before = projection.clone();
+
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation_bytes(&operation("command-2")),
+            },
+        )
+        .await
+        .expect("valid leading tail event appends");
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(CommandId { value: "missing-command".into() }),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Delivered as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .expect("faulty durable transition appends");
+
+    catch_up_command_projection(&storage, &domain, &mut projection)
+        .await
+        .expect_err("a later invalid fold must reject the complete tail");
+    assert_eq!(projection, before);
 }
 
 #[test]

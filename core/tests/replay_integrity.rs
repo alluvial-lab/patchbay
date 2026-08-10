@@ -193,6 +193,23 @@ fn complete_prefix_validator_classifies_record_and_log_corruption() {
     }
 }
 
+#[tokio::test]
+async fn default_bounded_read_rejects_missing_lsn_instead_of_filtering_it_out() {
+    let mut missing_lsn = event(1, StoredEventKind::Grant);
+    missing_lsn.event_id.lsn = None;
+    let storage = ScriptedReplayStorage::new(vec![missing_lsn]);
+
+    let error = storage
+        .read_through(
+            &domain("authority-main"),
+            Lsn { value: 0 },
+            Lsn { value: 1 },
+        )
+        .await
+        .expect_err("missing LSN framing must fail the default bounded read");
+    assert!(matches!(error, StorageError::CorruptRecord(_)));
+}
+
 proptest! {
     #[test]
     fn exact_prefix_property_accepts_one_through_n(length in 0usize..32) {
