@@ -30,7 +30,12 @@ A marker of the coordination core's current incarnation, intended to reject snap
 
 ## Cursor
 
-A log sequence number a control surface or adapter holds to express that it has authoritative knowledge of the durable log up to that point, used to support reconciliation on reconnect.
+A log sequence number expressing authoritative knowledge of the durable log up
+to that point. Control surfaces and adapters carry cursors for reconnect
+reconciliation. The operational-resource projection also reconstructs one
+internal domain-qualified applied cursor from the shared log: it records the
+highest contiguous LSN the projection has validated, makes covered re-feed
+inert, and is neither a wire field nor a persisted checkpoint.
 
 ## Generation
 

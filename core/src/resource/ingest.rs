@@ -48,6 +48,7 @@ pub async fn ingest_resource_report<S: Storage>(
     registry: &mut ResourceRegistry,
     report: ValidatedResourceReport,
 ) -> Result<ResourceIngestResult, ResourceError> {
+    replay::catch_up_from_log(storage, &report.authority_domain_id, registry).await?;
     let event = normalize_report(registry, report)?;
     let authority_domain_id = event
         .authority_domain_id
@@ -57,7 +58,10 @@ pub async fn ingest_resource_report<S: Storage>(
     let touched_views = event.views.len();
     let payload = events::encode(&event);
     let event_id = storage.append(&authority_domain_id, payload.clone()).await?;
-    validate_event_id(&event_id, &authority_domain_id)?;
+    if let Err(error) = validate_event_id(&event_id, &authority_domain_id) {
+        *registry = replay::rebuild_from_log(storage, &authority_domain_id).await?;
+        return Err(error);
+    }
     let recorded = RecordedEvent {
         event_id: event_id.clone(),
         payload,

@@ -5,7 +5,7 @@ use patchbay_contracts::patchbay::{
     StoredEventPayload,
 };
 use patchbay_core::{
-    resource::{replay::rebuild_from_events, ResourceIdentity},
+    resource::{replay::rebuild_from_events, ResourceIdentity, ResourceRegistry},
     storage::{event_id, RecordedEvent},
 };
 use prost::Message;
@@ -30,8 +30,82 @@ fn replay_is_deterministic_and_rejects_wrong_domain_or_non_increasing_prefix() {
     assert!(rebuild_from_events(&domain, &[recorded(&other, 1, event.clone())]).is_err());
     assert!(rebuild_from_events(
         &domain,
-        &[recorded(&domain, 1, event.clone()), recorded(&domain, 1, event)],
+        &[recorded(&domain, 1, event.clone()), recorded(&domain, 1, event.clone())],
     ).is_err());
+    assert!(rebuild_from_events(&domain, &[recorded(&domain, 2, event)]).is_err());
+}
+
+#[test]
+fn sibling_coverage_requires_valid_contiguous_framing_and_owned_payload() {
+    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let identity = ResourceIdentity::new(
+        AdapterId { value: "adapter-a".into() },
+        ResourceKind { value: "provider_pool".into() },
+        ResourceId { value: "pool-1".into() },
+    ).unwrap();
+    let sibling = RecordedEvent {
+        event_id: event_id(domain.clone(), 1),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: Vec::new(),
+        },
+    };
+    let mut registry = ResourceRegistry::new();
+    registry.observe(&sibling).unwrap();
+    registry.observe(&recorded(&domain, 2, state_event(&domain, &identity))).unwrap();
+    let complete = registry.clone();
+
+    registry.observe(&sibling).unwrap();
+    assert_eq!(registry, complete, "covered sibling re-feed is inert");
+
+    let invalid = [
+        RecordedEvent {
+            event_id: event_id(domain.clone(), 3),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::Unspecified as i32,
+                payload: Vec::new(),
+            },
+        },
+        RecordedEvent {
+            event_id: event_id(domain.clone(), 3),
+            payload: StoredEventPayload { kind: i32::MAX, payload: Vec::new() },
+        },
+        RecordedEvent {
+            event_id: event_id(domain.clone(), 4),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: Vec::new(),
+            },
+        },
+        RecordedEvent {
+            event_id: event_id(AuthorityDomainId { value: "authority-other".into() }, 3),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: Vec::new(),
+            },
+        },
+        RecordedEvent {
+            event_id: event_id(domain.clone(), 3),
+            payload: StoredEventPayload {
+                kind: StoredEventKind::ResourceState as i32,
+                payload: vec![0xff],
+            },
+        },
+    ];
+    for event in invalid {
+        assert!(registry.observe(&event).is_err());
+        assert_eq!(registry, complete);
+    }
+
+    let zero = RecordedEvent {
+        event_id: event_id(domain, 0),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: Vec::new(),
+        },
+    };
+    assert!(registry.observe(&zero).is_err());
+    assert_eq!(registry, complete);
 }
 
 #[test]

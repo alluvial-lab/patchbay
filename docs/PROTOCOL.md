@@ -455,7 +455,7 @@ v0.1.0 revision/cursor rules:
 - A control surface reconciles by submitting its cursor; the core returns events with `LSN > cursor` and/or a snapshot materialized at a later `LSN`.
 - A snapshot with an `LSN` strictly less than the core's current state for that view is **older** and is rejected as an authority source; the core returns the current view instead.
 - A snapshot from a different authority domain is rejected outright. The core-generation field is wire-present for cross-incarnation rejection, but is currently unset: core-generation persistence and validation are a reserved seam.
-- Late events carry the `LSN` at which they were committed; an event whose `LSN` is older than the view it would mutate is recorded as an audit/reconciliation event and does not rewrite the current view.
+- Late events carry the `LSN` at which they were committed. The operational-resource projection classifies structurally valid re-feed against its whole validated applied prefix: an event at or below that prefix is inert and does not rewrite any resource/view state, while an event beyond the prefix must be the exact next LSN and satisfy the new-event fold. Other projections retain their own documented late-event audit/reconciliation rules.
 - The core may serve a compressed snapshot at any `LSN`; cursors remain valid across compaction because revisions are monotonic.
 
 ### Operational-resource state and reconciliation
@@ -503,6 +503,27 @@ the only Patchbay revision authority. The event carries explicit prior record
 revisions so replay rejects contradictory history. No resource projection
 mutation occurs before durable append; restart and live catch-up fold the same
 normalized event.
+
+`ResourceRegistry` additionally carries one
+`(authority_domain_id, applied_through_lsn)` cursor for the highest contiguous
+prefix of the shared authority-domain log it has validated. Known sibling event
+kinds advance this cursor without changing resources or views. Unknown or
+`UNSPECIFIED` durable kinds, missing/zero LSNs, wrong/empty domains, gaps, and
+malformed `RESOURCE_STATE` payloads fail before cursor advancement. Once this
+structural validation succeeds, a record whose LSN is at or below the cursor is
+a whole-event audit no-op before adapter-generation or prior-revision checks;
+per-record/view revisions are not a second obsolete-event classifier. A new
+record must be the next LSN. A lower source-adapter generation at that next LSN
+is corrupt and leaves both cursor and projection unchanged.
+
+Catch-up may re-feed an already validated prefix into an existing projection
+and is idempotent. Full recovery is stricter: storage rows must start at LSN 1
+and remain exactly gap-free, so duplicate, decreasing, or gapped rows are
+corruption rather than benign redelivery. Report ingress catches the resource
+projection up through the durable tail before deriving generation and
+`from_revision_lsn` mutations; the composition-root decision gate serializes
+that catch-up with append, and a committed fold failure rebuilds from the
+authoritative log rather than continuing with a false cursor.
 
 An authenticated adapter id and current adapter generation fence report
 source. A newer adapter attachment generation fences prior cached records before its

@@ -34,8 +34,12 @@ composite target resolver. Authenticated typed snapshot/delta reports normalize
 to atomic `RESOURCE_STATE` events; live catch-up and restart replay fold the same
 event. The projection owns active membership, current/stale/unknown cache
 freshness, per-adapter-kind completeness/revision, terminal exact-identity
-tombstones, and explicit replacement links. It is not a second persistence
-store and cannot be populated by opaque generic Observations.
+tombstones, explicit replacement links, and one domain-qualified cursor for the
+highest contiguous authority-domain log prefix it has observed. Every known
+durable event kind advances that cursor; only `RESOURCE_STATE` changes resource
+records. The cursor is reconstructed projection metadata, not a wire field,
+checkpoint, or second persistence store, and opaque generic Observations cannot
+be interpreted as resource state.
 
 ### Adapter plane
 

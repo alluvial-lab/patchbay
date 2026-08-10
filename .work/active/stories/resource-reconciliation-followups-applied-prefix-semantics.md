@@ -1,7 +1,7 @@
 ---
 id: resource-reconciliation-followups-applied-prefix-semantics
 kind: story
-stage: implementing
+stage: done
 tags: [adapter, protocol]
 parent: resource-reconciliation-followups
 depends_on: []
@@ -58,3 +58,13 @@ corresponding assertions in `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, and
 This semantic checkpoint must land before the generated reconciliation evidence
 so the generator tests a fixed protocol rule rather than selecting the rule by
 what current code happens to do.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected because the protocol replay prefix and rejected-state atomicity are load-bearing.
+- Review weight: `thorough` from the explicit caller selection; feature review is intentionally deferred to a fresh reviewer at `stage: review`.
+- Files changed: `core/src/resource/{registry,replay,ingest}.rs`, `core/tests/{resource_state,resource_replay,resource_ingest}.rs`, `docs/{PROTOCOL,ARCHITECTURE,GLOSSARY}.md`.
+- Tests added/removed: added covered-vs-next lower-generation regression, sibling framing/gap/owned-payload prefix validation, strict replay-gap rejection, and report-ingress durable-tail synchronization; removed no tests.
+- Simplification: removed the per-view and per-record obsolete-LSN branches; whole-event applied-prefix classification is the single redelivery rule.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.
+- Verification evidence: `cargo test -p patchbay-core --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation`; `cargo test -p patchbay-core --tests`; `cargo clippy -p patchbay-core --lib --test resource_state --test resource_replay --test resource_ingest --test resource_reconciliation -- -D warnings`.

@@ -241,6 +241,40 @@ fn unknown_freshness_clears_payload_and_current_requires_payload() {
 }
 
 #[test]
+fn prefix_covered_lower_generation_is_inert_but_next_event_is_corrupt() {
+    let domain = domain();
+    let id = identity("adapter-a", "provider_pool", "pool-1");
+    let generation_one = state_event(
+        &domain,
+        "adapter-a",
+        1,
+        vec![view("provider_pool", AdapterSnapshotSupport::Partial)],
+        vec![upsert(&id, None)],
+    );
+    let mut registry = ResourceRegistry::new();
+    registry.observe(&recorded(&domain, 1, generation_one.clone())).unwrap();
+    registry.observe(&recorded(
+        &domain,
+        2,
+        state_event(
+            &domain,
+            "adapter-a",
+            2,
+            vec![view("provider_pool", AdapterSnapshotSupport::Authoritative)],
+            vec![upsert(&id, Some(1))],
+        ),
+    )).unwrap();
+
+    let after_generation_two = registry.clone();
+    registry.observe(&recorded(&domain, 1, generation_one.clone())).unwrap();
+    assert_eq!(registry, after_generation_two);
+
+    let error = registry.observe(&recorded(&domain, 3, generation_one)).unwrap_err();
+    assert!(matches!(error, ResourceError::CorruptLog(_)));
+    assert_eq!(registry, after_generation_two);
+}
+
+#[test]
 fn later_event_cannot_lower_source_adapter_generation() {
     let domain = domain();
     let id = identity("adapter-a", "provider_pool", "pool-1");

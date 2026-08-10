@@ -14,11 +14,73 @@ use super::{
     ResourceError, ResourceIdentity, ResourceRecord, ResourceViewKey, ResourceViewRecord,
 };
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AppliedPrefix {
+    authority_domain_id: Option<AuthorityDomainId>,
+    applied_through_lsn: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrefixPosition {
+    Covered,
+    Next,
+}
+
+impl AppliedPrefix {
+    fn classify(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<PrefixPosition, ResourceError> {
+        if authority_domain_id.value.is_empty() {
+            return Err(ResourceError::CorruptRecord(
+                "resource event has empty authority domain".into(),
+            ));
+        }
+        if event_lsn == 0 {
+            return Err(ResourceError::CorruptRecord("resource event has zero LSN".into()));
+        }
+        if self
+            .authority_domain_id
+            .as_ref()
+            .is_some_and(|domain| domain != authority_domain_id)
+        {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource projection belongs to authority domain {:?}, event belongs to {:?}",
+                self.authority_domain_id, authority_domain_id
+            )));
+        }
+        if event_lsn <= self.applied_through_lsn {
+            return Ok(PrefixPosition::Covered);
+        }
+        let next_lsn = self.applied_through_lsn.checked_add(1).ok_or_else(|| {
+            ResourceError::CorruptLog("resource applied prefix LSN overflow".into())
+        })?;
+        if event_lsn != next_lsn {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource event LSN {event_lsn} leaves a gap after applied LSN {}",
+                self.applied_through_lsn
+            )));
+        }
+        Ok(PrefixPosition::Next)
+    }
+
+    fn advance(&mut self, authority_domain_id: &AuthorityDomainId, event_lsn: u64) {
+        debug_assert!(matches!(
+            self.classify(authority_domain_id, event_lsn),
+            Ok(PrefixPosition::Next)
+        ));
+        self.authority_domain_id = Some(authority_domain_id.clone());
+        self.applied_through_lsn = event_lsn;
+    }
+}
+
 /// Canonical operational-resource projection for one authority-domain log.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ResourceRegistry {
     resources: HashMap<ResourceIdentity, ResourceRecord>,
     views: HashMap<ResourceViewKey, ResourceViewRecord>,
+    applied_prefix: AppliedPrefix,
 }
 
 impl ResourceRegistry {
@@ -27,8 +89,9 @@ impl ResourceRegistry {
         Self::default()
     }
 
-    /// Fold one committed resource event atomically into this projection.
-    /// Sibling event kinds are ignored.
+    /// Observe one committed event against the validated authority-domain
+    /// prefix, folding owned resource state atomically and recording sibling
+    /// events as prefix coverage only.
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), ResourceError> {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             ResourceError::CorruptRecord(format!(
@@ -36,23 +99,69 @@ impl ResourceRegistry {
                 event.payload.kind
             ))
         })?;
-        if kind != StoredEventKind::ResourceState {
-            return Ok(());
+        if kind == StoredEventKind::Unspecified {
+            return Err(ResourceError::CorruptRecord(
+                "stored event kind is unspecified".into(),
+            ));
         }
 
         let (event_domain, event_lsn) = event_identity(event)?;
-        let state = ResourceStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
-            ResourceError::CorruptRecord(format!(
-                "cannot decode resource state event at LSN {event_lsn}: {error}"
-            ))
-        })?;
-        validate_event(&state, event_domain, event_lsn)?;
+        let state = if kind == StoredEventKind::ResourceState {
+            let state = ResourceStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                ResourceError::CorruptRecord(format!(
+                    "cannot decode resource state event at LSN {event_lsn}: {error}"
+                ))
+            })?;
+            validate_event(&state, event_domain, event_lsn)?;
+            Some(state)
+        } else {
+            None
+        };
 
-        // A malformed committed event must not leave a partially folded hot
-        // projection. Validate/apply against a clone, then install it whole.
-        let mut next = self.clone();
-        next.apply_validated(&state, event_lsn)?;
-        *self = next;
+        match self.applied_prefix.classify(event_domain, event_lsn)? {
+            PrefixPosition::Covered => Ok(()),
+            PrefixPosition::Next => {
+                let Some(state) = state else {
+                    self.applied_prefix.advance(event_domain, event_lsn);
+                    return Ok(());
+                };
+
+                // A malformed committed event must not leave a partially folded
+                // projection or advance its applied prefix.
+                let mut next = self.clone();
+                next.apply_validated(&state, event_lsn)?;
+                next.applied_prefix.advance(event_domain, event_lsn);
+                *self = next;
+                Ok(())
+            }
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn applied_lsn(&self) -> u64 {
+        self.applied_prefix.applied_through_lsn
+    }
+
+    pub(crate) fn require_authority_domain(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+    ) -> Result<(), ResourceError> {
+        if authority_domain_id.value.is_empty() {
+            return Err(ResourceError::CorruptRecord(
+                "resource projection requires a non-empty authority domain".into(),
+            ));
+        }
+        if self
+            .applied_prefix
+            .authority_domain_id
+            .as_ref()
+            .is_some_and(|domain| domain != authority_domain_id)
+        {
+            return Err(ResourceError::CorruptLog(format!(
+                "resource projection belongs to authority domain {:?}, requested {:?}",
+                self.applied_prefix.authority_domain_id, authority_domain_id
+            )));
+        }
         Ok(())
     }
 
@@ -116,13 +225,6 @@ impl ResourceRegistry {
                 adapter_id: adapter_id.clone(),
                 resource_kind: view.resource_kind.clone().expect("validated resource kind"),
             };
-            if self
-                .views
-                .get(&key)
-                .is_some_and(|record| record.revision_lsn >= event_lsn)
-            {
-                continue;
-            }
             self.views.insert(
                 key.clone(),
                 ResourceViewRecord {
@@ -140,13 +242,6 @@ impl ResourceRegistry {
             let identity = ResourceIdentity::try_from_wire(
                 mutation.identity.as_ref().expect("validated identity"),
             )?;
-            if self
-                .resources
-                .get(&identity)
-                .is_some_and(|record| record.revision_lsn >= event_lsn)
-            {
-                continue;
-            }
             let prior = self.resources.get(&identity).cloned();
             validate_from_revision(prior.as_ref(), mutation, event_lsn)?;
 

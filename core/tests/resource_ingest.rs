@@ -2,7 +2,7 @@ use patchbay_contracts::patchbay::{
     resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, Generation,
     PayloadContentType, PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceIdentity,
     ResourceKind, ResourceReportMutation, ResourceStateTombstone, ResourceStateUnknown,
-    ResourceStateUpsert, ResourceViewReport,
+    ResourceStateUpsert, ResourceViewReport, StoredEventKind, StoredEventPayload,
 };
 use patchbay_core::{
     resource::{
@@ -271,6 +271,52 @@ async fn newer_adapter_generation_stales_prior_unreported_state_and_old_generati
     .unwrap_err();
     assert!(error.to_string().contains("stale adapter generation"));
     assert!(!registry.contains(&domain_identity("late")));
+}
+
+#[tokio::test]
+async fn report_ingest_catches_up_the_durable_prefix_before_normalizing() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut writer = ResourceRegistry::new();
+    ingest_resource_report(
+        &storage,
+        &mut writer,
+        report(
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![upsert("one")],
+        ),
+    )
+    .await
+    .unwrap();
+
+    let mut stale = ResourceRegistry::new();
+    let result = ingest_resource_report(
+        &storage,
+        &mut stale,
+        report(
+            1,
+            ResourceReportMode::Delta,
+            AdapterSnapshotSupport::Partial,
+            vec![upsert("one")],
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.event_id.lsn.unwrap().value, 3);
+    assert_eq!(stale.get(&domain_identity("one")).unwrap().revision_lsn, 3);
+    assert_eq!(stale, rebuild_from_log(&storage, &domain()).await.unwrap());
 }
 
 #[tokio::test]
