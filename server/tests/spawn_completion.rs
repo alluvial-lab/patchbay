@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use patchbay_contracts::patchbay::{
@@ -10,19 +13,22 @@ use patchbay_contracts::patchbay::{
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
     DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind, ObservationRequest,
-    Operation, OperationKind, OperationState, Revocation, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionStateEvent, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    Operation, OperationKind, OperationState, OperatorRecord, PayloadEnvelope, PrincipalEnrollment,
+    ReceiveRequest, Revocation, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
+    SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
+    VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
+    adapter,
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{
         grant_authorizes, ingest_descendant_grant, ingest_grant, ingest_revocation,
         rebuild_from_log, AuthorityRegistry, IssuerRef, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::{
-        AuditRecordDraft, AuditedStorage, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
-        StorageError, StoredSnapshot, TargetKey,
+        AuditRecordDraft, AuditedStorage, CoreGenerationStore, DedupOutcome, RecordedEvent,
+        RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
     },
     time::TestClock,
 };
@@ -32,12 +38,21 @@ use patchbay_core_server::{
         ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
     },
     decision_gate::CoreDecisionGate,
-    rpc::adapter_control_service_server::AdapterControlService,
+    issuer::{
+        OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
+    },
+    login_security::{LoginLimiter, StderrLoginAuditSink},
+    rpc::{
+        adapter_control_service_server::AdapterControlService,
+        control_service_server::ControlService,
+    },
+    service::ControlServiceImpl,
     spawn_completion::{SpawnCompletionDriver, SpawnCompletionError},
 };
 use prost::Message;
 use prost_types::Timestamp;
 use tokio::sync::Semaphore;
+use tokio_stream::StreamExt;
 use tonic::{Request, Response};
 
 fn domain() -> AuthorityDomainId {
@@ -124,6 +139,7 @@ async fn all_events<S: Storage>(storage: &S) -> Vec<RecordedEvent> {
 }
 
 async fn seed_evidence<S: Storage>(storage: &S) -> EventId {
+    seed_parent_grant(storage).await;
     storage
         .append(
             &domain(),
@@ -141,6 +157,7 @@ async fn seed_evidence<S: Storage>(storage: &S) -> EventId {
                         }),
                         kind: OperationKind::Spawn as i32,
                         target_scope: Some(fleet_scope()),
+                        idempotency_key: "spawn-1-key".to_owned(),
                         ..Operation::default()
                     }),
                     authorizing_grant_id: Some(parent_grant_id()),
@@ -293,6 +310,109 @@ async fn seed_parent_grant<S: Storage>(storage: &S) {
     .unwrap();
 }
 
+#[derive(Clone)]
+struct ControlAuth {
+    session_id: String,
+    principal_id: String,
+    principal_secret: String,
+}
+
+async fn seed_operator<S: Storage>(storage: &S) {
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::OperatorRecord as i32,
+                payload: OperatorRecord {
+                    actor_id: Some(actor()),
+                    password_hash: "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g".to_owned(),
+                    created_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+                    authority_domain_id: Some(domain()),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+async fn login_control<S>(service: &ControlServiceImpl<S>) -> ControlAuth
+where
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
+{
+    let login = service
+        .verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(actor()),
+            password: "correct-password".to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(endpoint()),
+                device_id: Some(device()),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let principal = login.principal.unwrap();
+    ControlAuth {
+        session_id: login.operator_session_id.unwrap().value,
+        principal_id: principal.principal_id,
+        principal_secret: principal.secret,
+    }
+}
+
+fn authenticated_control<T>(message: T, auth: &ControlAuth) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert(OPERATOR_ID_HEADER, actor().value.parse().unwrap());
+    request
+        .metadata_mut()
+        .insert(OPERATOR_SESSION_HEADER, auth.session_id.parse().unwrap());
+    request
+        .metadata_mut()
+        .insert(PRINCIPAL_ID_HEADER, auth.principal_id.parse().unwrap());
+    request.metadata_mut().insert(
+        PRINCIPAL_SECRET_HEADER,
+        auth.principal_secret.parse().unwrap(),
+    );
+    request
+}
+
+fn submitted_operation(
+    command: &str,
+    key: &str,
+    kind: OperationKind,
+    target_scope: TargetScope,
+) -> Operation {
+    Operation {
+        command_id: Some(CommandId {
+            value: command.to_owned(),
+        }),
+        authority_domain_id: Some(domain()),
+        sender: Some(ActorEndpointRef::default()),
+        recipient: Some(ActorEndpointRef::default()),
+        kind: kind as i32,
+        target_scope: Some(target_scope),
+        idempotency_key: key.to_owned(),
+        validity_window: Some(TimeWindow {
+            starts_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 253_402_300_799,
+                nanos: 0,
+            }),
+        }),
+        submitted_at: Some(Timestamp {
+            seconds: 1,
+            nanos: 0,
+        }),
+        ..Operation::default()
+    }
+}
+
 fn adapter_registration() -> AdapterRegistration {
     AdapterRegistration {
         adapter_id: Some(AdapterId {
@@ -436,6 +556,40 @@ async fn seed_adapter_scoped_spawn<S: Storage>(storage: &S) {
                 .encode_to_vec(),
             },
         )
+        .await
+        .unwrap();
+}
+
+async fn acknowledge_delivery<S>(
+    service: &AdapterControlServiceImpl<S>,
+    token: &str,
+    operation: &Operation,
+) where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain()),
+                    kind: ObservationKind::Event as i32,
+                    correlations: vec![TypedCorrelation {
+                        r#ref: Some(typed_correlation::Ref::CommandId(
+                            operation.command_id.clone().unwrap(),
+                        )),
+                    }],
+                    target_scope: operation.target_scope.clone(),
+                    payload: Some(PayloadEnvelope {
+                        schema_ref: adapter::DELIVERY_ACKNOWLEDGEMENT_SCHEMA.to_owned(),
+                        ..PayloadEnvelope::default()
+                    }),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                })),
+            },
+            token,
+        ))
         .await
         .unwrap();
 }
@@ -836,6 +990,166 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
             &session_scope(),
         ));
     }
+}
+
+#[tokio::test]
+async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("spawn-e2e.sqlite3");
+    let storage = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    seed_parent_grant(&storage).await;
+    seed_operator(&storage).await;
+
+    let gate = CoreDecisionGate::default();
+    let driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        gate.clone(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .unwrap();
+    let control = ControlServiceImpl::new_with_security_and_decision_gate(
+        storage.clone(),
+        domain(),
+        Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let auth = login_control(&control).await;
+    let adapter_service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new("adapter-test-secret").unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&adapter_service).await;
+    let driver_task = tokio::spawn(driver.run());
+
+    let spawn = submitted_operation(
+        "spawn-1",
+        "spawn-1-key",
+        OperationKind::Spawn,
+        adapter_scope(),
+    );
+    let submitted = control
+        .submit(authenticated_control(
+            SubmitRequest {
+                operation: Some(spawn.clone()),
+            },
+            &auth,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(submitted.outcome, SubmissionOutcome::Rejected as i32);
+    assert_eq!(submitted.failure_code, FailureCode::TargetNotFound as i32);
+    // Current ordinary target resolution supports existing sessions/resources,
+    // not adapter/fleet spawn targets. Preserve that pre-existing limitation
+    // rather than broadening routing in this authority-completion feature; seed
+    // the already-accepted adapter-scoped handoff and exercise every later
+    // production boundary for the supported adapter path.
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(&storage).await;
+    }
+
+    let mut deliveries = adapter_service
+        .receive_deliveries(authenticated(
+            ReceiveRequest {
+                adapter_id: adapter_scope().adapter_id,
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &token,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let delivered = tokio::time::timeout(Duration::from_secs(2), deliveries.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let delivered_operation = delivered
+        .operation
+        .expect("delivery carries the accepted spawn");
+    assert_eq!(delivered_operation.command_id, spawn.command_id);
+    assert_eq!(delivered_operation.kind, OperationKind::Spawn as i32);
+    assert_eq!(delivered_operation.target_scope, Some(adapter_scope()));
+    acknowledge_delivery(&adapter_service, &token, &delivered_operation).await;
+    report_successful_spawn(&adapter_service, &token).await;
+    report_session(&adapter_service, &token, 7, Some(correlation())).await;
+
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if completion_counts(&all_events(&storage).await) == (1, 1, 1) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("adapter-scoped accepted spawn completes with descendant authority");
+    driver_task.abort();
+    let _ = driver_task.await;
+    drop(deliveries);
+    drop(adapter_service);
+    drop(control);
+    drop(storage);
+
+    let reopened = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    let restart_gate = CoreDecisionGate::default();
+    let restarted_driver = SpawnCompletionDriver::bootstrap(
+        reopened.clone(),
+        domain(),
+        restart_gate.clone(),
+        production_audit(reopened.clone()),
+        clock(),
+    )
+    .await
+    .unwrap();
+    drop(restarted_driver);
+    assert_eq!(completion_counts(&all_events(&reopened).await), (1, 1, 1));
+
+    let restarted_control = ControlServiceImpl::new_with_security_and_decision_gate(
+        reopened,
+        domain(),
+        Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+        restart_gate,
+    )
+    .await
+    .unwrap();
+    let restarted_auth = login_control(&restarted_control).await;
+    let subsequent = restarted_control
+        .submit(authenticated_control(
+            SubmitRequest {
+                operation: Some(submitted_operation(
+                    "instruct-after-spawn",
+                    "instruct-after-spawn-key",
+                    OperationKind::Instruct,
+                    session_scope(),
+                )),
+            },
+            &restarted_auth,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(subsequent.outcome, SubmissionOutcome::Accepted as i32);
+    assert_eq!(
+        subsequent.decision_grant_id,
+        Some(GrantId {
+            value: "desc:authority-main:spawn-1".to_owned(),
+        })
+    );
 }
 
 #[tokio::test]

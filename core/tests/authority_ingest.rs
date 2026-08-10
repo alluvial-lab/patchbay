@@ -1,9 +1,11 @@
 use patchbay_contracts::patchbay::{
-    typed_correlation, ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuthorityDomainId,
-    CommandId, DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, FailureCode,
-    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn, Observation,
-    ObservationKind, OperationKind, Revocation, RuntimeSessionId, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
+    AdapterId, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
+    DescendantGrantProvenance, DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation,
+    OperationKind, OperationState, Revocation, RuntimeSessionId, SessionRegistered,
+    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
@@ -100,22 +102,85 @@ async fn ingest_valid_descendant(
     let command_id = CommandId {
         value: "spawn-1".to_owned(),
     };
-    let source = Observation {
-        authority_domain_id: Some(domain()),
-        kind: ObservationKind::Result as i32,
-        correlations: vec![TypedCorrelation {
-            r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
-        }],
-        target_scope: Some(fleet_scope()),
-        failure_code: FailureCode::Unspecified as i32,
-        ..Observation::default()
+    let correlation = TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
     };
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(Operation {
+                        command_id: Some(command_id.clone()),
+                        authority_domain_id: Some(domain()),
+                        sender: Some(ActorEndpointRef {
+                            actor_id: Some(actor()),
+                            ..ActorEndpointRef::default()
+                        }),
+                        kind: OperationKind::Spawn as i32,
+                        target_scope: Some(fleet_scope()),
+                        idempotency_key: "spawn-1-key".to_owned(),
+                        ..Operation::default()
+                    }),
+                    authorizing_grant_id: Some(grant_id(parent_id)),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id.clone()),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Delivered as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
     let source_event_id = storage
         .append(
             &domain(),
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
-                payload: source.encode_to_vec(),
+                payload: Observation {
+                    authority_domain_id: Some(domain()),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![correlation.clone()],
+                    target_scope: Some(fleet_scope()),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
+    storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::SessionState as i32,
+                payload: SessionStateEvent {
+                    authority_domain_id: Some(domain()),
+                    mutation: Some(session_state_event::Mutation::Registered(
+                        SessionRegistered {
+                            adapter_id: session_scope().adapter_id,
+                            deployment_scope: "machine-a".to_owned(),
+                            runtime_session_id: session_scope().runtime_session_id,
+                            session_generation: Some(Generation { value: 1 }),
+                            spawn_origin: Some(correlation),
+                            ..SessionRegistered::default()
+                        },
+                    )),
+                }
+                .encode_to_vec(),
             },
         )
         .await?;
@@ -209,12 +274,15 @@ async fn descendant_with_wrong_allowed_kinds_fails_before_write() {
 async fn descendant_with_canonical_kind_set_succeeds() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = AuthorityRegistry::new();
+    ingest_grant(&storage, &mut registry, &domain(), grant("parent"))
+        .await
+        .unwrap();
 
     let (event_id, descendant_id) = ingest_valid_descendant(&storage, &mut registry, "parent")
         .await
         .expect("the canonical descendant grant must be ingested");
 
-    assert_eq!(event_id.lsn, Some(Lsn { value: 3 }));
+    assert_eq!(event_id.lsn, Some(Lsn { value: 7 }));
     let record = registry
         .get_grant(&descendant_id)
         .expect("ingestion must warm the descendant projection");
@@ -223,6 +291,64 @@ async fn descendant_with_canonical_kind_set_succeeds() {
         record.allowed_operation_kinds,
         DESCENDANT_GRANT_ALLOWED_KINDS
     );
+}
+
+#[tokio::test]
+async fn self_consistent_source_audit_and_grant_without_accepted_context_is_rejected() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    let command_id = CommandId {
+        value: "spawn-1".to_owned(),
+    };
+    let source_event_id = storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: Observation {
+                    authority_domain_id: Some(domain()),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![TypedCorrelation {
+                        r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+                    }],
+                    target_scope: Some(fleet_scope()),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    let occurred_at = Timestamp {
+        seconds: 10,
+        nanos: 0,
+    };
+    let mut audit = AuditRecordDraft::new(occurred_at, AuditEventKind::CommandCompleted);
+    audit.actor_id = Some(actor());
+    audit.command_id = Some(command_id.clone());
+    audit.grant_id = Some(grant_id("forged-parent"));
+    audit.target_scope = Some(session_scope());
+    audit.reason_code = "spawn_completion".to_owned();
+    audit.source_event_id = Some(source_event_id);
+    let audit_id = storage.append_audit(&domain(), audit).await.unwrap();
+    let mut descendant = descendant_grant("desc:authority-main:spawn-1", "forged-parent");
+    descendant.subject_endpoint_class.clear();
+    descendant.provenance = Some(DescendantGrantProvenance {
+        spawn_operation_id: Some(command_id),
+        spawning_grant_id: Some(grant_id("forged-parent")),
+    });
+    descendant.created_at = Some(occurred_at);
+    descendant.audit_id = Some(audit_id);
+
+    let error = ingest_descendant_grant(&storage, &mut registry, &domain(), descendant)
+        .await
+        .expect_err("a self-consistent forged chain cannot create authority");
+    assert!(matches!(
+        error,
+        AuthorityError::CorruptLog(_) | AuthorityError::InvalidGrant(_)
+    ));
+    assert_eq!(events(&storage).await.len(), 2);
 }
 
 #[tokio::test]
@@ -248,7 +374,7 @@ async fn revoking_parent_does_not_cascade_to_descendant() {
         .get_grant(&descendant_id)
         .expect("non-cascade retains the descendant record")
         .is_live());
-    assert_eq!(events(&storage).await.len(), 6);
+    assert_eq!(events(&storage).await.len(), 9);
 }
 
 #[tokio::test]

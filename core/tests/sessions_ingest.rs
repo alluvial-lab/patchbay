@@ -206,6 +206,28 @@ async fn first_report_writes_registration() {
 }
 
 #[tokio::test]
+async fn malformed_spawn_origin_is_rejected_before_session_append() {
+    for origin in [
+        TypedCorrelation {
+            r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+                value: String::new(),
+            })),
+        },
+        TypedCorrelation { r#ref: None },
+    ] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut registry = SessionRegistry::new();
+        let mut candidate = report(1);
+        candidate.spawn_origin = Some(origin);
+        let error = ingest_session_report(&storage, &mut registry, candidate)
+            .await
+            .expect_err("malformed spawn_origin must fail before durability");
+        assert!(matches!(error, SessionError::CorruptRecord(_)));
+        assert!(events(&storage).await.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn newer_report_writes_one_generation_bump_and_tombstones_prior_generation() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = SessionRegistry::new();

@@ -15,9 +15,8 @@ pub mod rusqlite;
 pub use audited::{audit_draft_for_source, AuditedStorage};
 pub use port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
-    AuditedDecisionAppend,
-    AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    RecordedEvent, Storage, StorageError, StoredSnapshot, TargetKey,
+    AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome, RecordedEvent,
+    Storage, StorageError, StoredSnapshot, TargetKey,
 };
-pub use recovery::{recover, RecoveryState, ValidatedSnapshot};
+pub use recovery::{recover, validate_next_replay_event, RecoveryState, ValidatedSnapshot};
 pub use rusqlite::{RusqliteStorage, LATEST_SCHEMA_VERSION};

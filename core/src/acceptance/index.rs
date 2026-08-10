@@ -4,10 +4,11 @@
 //! path used for command and idempotency-key lookups; recovery reconstructs it
 //! by applying the same ordered event sequence.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, Operation, OperationKind,
+    typed_correlation, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition,
+    FailureCode, Observation, ObservationKind, Operation, OperationKind, OperationState,
     Revocation, StoredEventKind,
 };
 use prost::Message;
@@ -29,6 +30,11 @@ type DedupKey = (String, String, String);
 pub struct CommandIndex {
     commands: HashMap<CommandId, CommandRecord>,
     key_to_command: HashMap<DedupKey, CommandId>,
+    /// Successful spawn result evidence that intentionally did not terminalize
+    /// the command. Delivery reconstruction uses this durable checkpoint to
+    /// avoid re-executing a non-idempotent spawn while completion waits for its
+    /// correlated session fact.
+    deferred_spawn_successes: HashSet<CommandId>,
 }
 
 impl CommandIndex {
@@ -55,11 +61,11 @@ impl CommandIndex {
             StoredEventKind::Operation => self.apply_operation(event),
             StoredEventKind::CommandTransition => self.apply_command_transition(event),
             StoredEventKind::Revocation => self.apply_revocation(event),
-            // Observations are evidence. Command state changes only through
-            // explicit CommandTransition events, so replay does not derive a
-            // second transition interpretation from an Observation.
-            StoredEventKind::Observation
-            | StoredEventKind::Elicitation
+            // Observations never mutate CommandState. The one auxiliary fact
+            // retained here is a successful spawn result whose terminalization
+            // is deliberately deferred to the descendant-completion owner.
+            StoredEventKind::Observation => self.apply_observation(event),
+            StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::SessionState
@@ -96,6 +102,13 @@ impl CommandIndex {
         self.key_to_command
             .get(&key)
             .and_then(|command_id| self.commands.get(command_id))
+    }
+
+    /// Whether durable successful-result evidence suppresses redelivery while
+    /// this spawn waits for registration and descendant completion.
+    #[must_use]
+    pub fn has_deferred_spawn_success(&self, command_id: &CommandId) -> bool {
+        self.deferred_spawn_successes.contains(command_id)
     }
 
     /// Number of accepted commands in the projection.
@@ -186,6 +199,62 @@ impl CommandIndex {
 
         let record = CommandRecord::new_accepted(operation, grant_id, event_lsn)?;
         self.insert_recovered_record(record)
+    }
+
+    fn apply_observation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let observation =
+            Observation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode observation at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+            || FailureCode::try_from(observation.failure_code).ok()
+                != Some(FailureCode::Unspecified)
+        {
+            return Ok(());
+        }
+        let mut command_id = None;
+        for correlation in &observation.correlations {
+            let Some(typed_correlation::Ref::CommandId(candidate)) = correlation.r#ref.as_ref()
+            else {
+                continue;
+            };
+            if candidate.value.is_empty() {
+                return Ok(());
+            }
+            match command_id {
+                None => command_id = Some(candidate),
+                Some(existing) if existing == candidate => {}
+                Some(_) => return Ok(()),
+            }
+        }
+        let Some(command_id) = command_id else {
+            return Ok(());
+        };
+        let Some(record) = self.commands.get(command_id) else {
+            // Unknown/pre-acceptance evidence is non-qualifying. It must not
+            // become delivery or descendant authority if a matching command
+            // appears later in the log.
+            return Ok(());
+        };
+        if record.operation.kind != OperationKind::Spawn as i32 {
+            return Ok(());
+        }
+        if observation.target_scope != record.operation.target_scope {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "successful spawn result target does not match command {:?} at LSN {event_lsn}",
+                command_id
+            )));
+        }
+        if matches!(
+            record.state,
+            OperationState::Delivered | OperationState::Running
+        ) {
+            self.deferred_spawn_successes.insert(command_id.clone());
+        }
+        Ok(())
     }
 
     fn apply_revocation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {

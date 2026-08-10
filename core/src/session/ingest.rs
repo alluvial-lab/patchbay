@@ -6,10 +6,10 @@
 //! schema-owned session delta needed to represent the report.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityChanged,
-    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionState, TypedCorrelation,
+    typed_correlation, AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId,
+    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
+    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
+    SessionRelabeled, SessionState, TypedCorrelation,
 };
 
 use crate::{
@@ -590,6 +590,27 @@ fn validate_report(report: &SessionReport) -> Result<(), SessionError> {
         return Err(SessionError::CorruptRecord(format!(
             "session report {field} is empty"
         )));
+    }
+    if let Some(origin) = &report.spawn_origin {
+        match origin.r#ref.as_ref() {
+            Some(typed_correlation::Ref::CommandId(command_id)) if !command_id.value.is_empty() => {
+            }
+            Some(typed_correlation::Ref::CommandId(_)) => {
+                return Err(SessionError::CorruptRecord(
+                    "session report spawn_origin command_id is empty".to_owned(),
+                ));
+            }
+            Some(_) => {
+                return Err(SessionError::CorruptRecord(
+                    "session report spawn_origin is not a command correlation".to_owned(),
+                ));
+            }
+            None => {
+                return Err(SessionError::CorruptRecord(
+                    "session report spawn_origin has no typed reference".to_owned(),
+                ));
+            }
+        }
     }
     Ok(())
 }

@@ -11,7 +11,7 @@ use patchbay_core::{
         ingest_descendant_grant, AuthorityError, AuthorityRegistry, SpawnCompletionAction,
         SpawnDescendantTail,
     },
-    storage::{AuditRecordDraft, RecordedEvent, Storage, StorageError},
+    storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
 use tokio::time::sleep;
@@ -155,30 +155,12 @@ where
     }
 
     fn fold_event(&mut self, event: &RecordedEvent) -> Result<(), SpawnCompletionError> {
-        let domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-            SpawnCompletionError::CorruptLog("event has no authority domain".to_owned())
-        })?;
-        let lsn = event
-            .event_id
-            .lsn
-            .as_ref()
-            .ok_or_else(|| SpawnCompletionError::CorruptLog("event has no LSN".to_owned()))?;
-        if domain != &self.authority_domain_id || domain.value.is_empty() {
-            return Err(SpawnCompletionError::CorruptLog(format!(
-                "event domain {:?} does not match configured domain {:?}",
-                domain, self.authority_domain_id
-            )));
-        }
-        if lsn.value == 0 || lsn.value <= self.cursor {
-            return Err(SpawnCompletionError::CorruptLog(format!(
-                "event LSN {} does not advance cursor {}",
-                lsn.value, self.cursor
-            )));
-        }
+        let next_lsn = validate_next_replay_event(event, &self.authority_domain_id, self.cursor)
+            .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?;
 
         self.tail.observe(event)?;
         self.authority.observe(event)?;
-        self.cursor = lsn.value;
+        self.cursor = next_lsn;
         Ok(())
     }
 
@@ -236,8 +218,9 @@ where
                 .await?;
             }
             SpawnCompletionAction::CommitCompleted(completion) => {
+                let command_id = completion.spawn_operation_id;
                 let transition = CommandTransition {
-                    command_id: Some(completion.spawn_operation_id),
+                    command_id: Some(command_id.clone()),
                     from_state: completion.from_state as i32,
                     to_state: OperationState::Completed as i32,
                     failure_code: FailureCode::Unspecified as i32,
@@ -255,6 +238,10 @@ where
                     )
                     .await?;
                 validate_written_event_id(&event_id, &self.authority_domain_id)?;
+                eprintln!(
+                    "patchbay-core-server: spawn completion finalized authority_domain_id={} command_id={}",
+                    self.authority_domain_id.value, command_id.value
+                );
             }
         }
         Ok(())

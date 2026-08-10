@@ -24,7 +24,9 @@ use patchbay_core::{
     security::SecurityPostureProjection,
     resource::ResourceRegistry,
     session::SessionRegistry,
-    storage::{CoreGenerationStore, RecordedEvent, Storage, StorageError},
+    storage::{
+        validate_next_replay_event, CoreGenerationStore, RecordedEvent, Storage, StorageError,
+    },
     target::{TargetRegistry, TargetRegistryError},
 };
 use tokio::sync::{Mutex, MutexGuard};
@@ -775,29 +777,8 @@ fn validate_next_event(
     authority_domain_id: &AuthorityDomainId,
     previous_lsn: u64,
 ) -> Result<u64, String> {
-    let domain = event
-        .event_id
-        .authority_domain_id
-        .as_ref()
-        .ok_or_else(|| "replay event has no authority domain".to_owned())?;
-    if domain != authority_domain_id {
-        return Err(format!(
-            "replay event belongs to authority domain {:?}, expected {:?}",
-            domain, authority_domain_id
-        ));
-    }
-    let lsn = event
-        .event_id
-        .lsn
-        .as_ref()
-        .ok_or_else(|| "replay event has no LSN".to_owned())?
-        .value;
-    if lsn <= previous_lsn {
-        return Err(format!(
-            "replay event LSN {lsn} is not after previous LSN {previous_lsn}"
-        ));
-    }
-    Ok(lsn)
+    validate_next_replay_event(event, authority_domain_id, previous_lsn)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone)]

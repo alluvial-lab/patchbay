@@ -2,10 +2,10 @@ use patchbay_contracts::patchbay::{
     session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition,
     DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode,
-    Generation, GrantId, GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation,
-    OperationKind, OperationState, RuntimeSessionId, SessionGenerationBumped, SessionRegistered,
-    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    Generation, Grant, GrantId, GrantProvenance, GrantRevocationEffect, GrantRevocationPolicy, Lsn,
+    Observation, ObservationKind, Operation, OperationKind, OperationState, Revocation,
+    RuntimeSessionId, SessionGenerationBumped, SessionRegistered, SessionStateEvent,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
@@ -87,6 +87,27 @@ fn recorded<M: Message>(lsn: u64, kind: StoredEventKind, message: &M) -> Recorde
     }
 }
 
+fn parent_grant_event(lsn: u64) -> RecordedEvent {
+    recorded(
+        lsn,
+        StoredEventKind::Grant,
+        &Grant {
+            grant_id: Some(grant_id("spawn-grant")),
+            authority_domain_id: Some(domain("authority-main")),
+            subject_actor_id: Some(actor("operator")),
+            subject_endpoint_id: Some(endpoint("browser")),
+            target_scope: Some(spawn_target()),
+            allowed_operation_kinds: vec![OperationKind::Spawn as i32],
+            provenance: Some(GrantProvenance {
+                reason: "spawn authority fixture".into(),
+                ..GrantProvenance::default()
+            }),
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
+        },
+    )
+}
+
 fn spawn_event(lsn: u64) -> RecordedEvent {
     recorded(
         lsn,
@@ -103,6 +124,7 @@ fn spawn_event(lsn: u64) -> RecordedEvent {
                 }),
                 kind: OperationKind::Spawn as i32,
                 target_scope: Some(spawn_target()),
+                idempotency_key: "spawn-1-key".into(),
                 ..Operation::default()
             }),
             authorizing_grant_id: Some(grant_id("spawn-grant")),
@@ -241,14 +263,15 @@ fn observe_all(tail: &mut SpawnDescendantTail, events: &[RecordedEvent]) {
 
 #[test]
 fn registration_and_generation_bump_produce_the_same_ordered_actions() {
-    for session_event in [registration_event(4), bump_event(4)] {
+    for session_event in [registration_event(5), bump_event(5)] {
         let mut tail = SpawnDescendantTail::new();
         observe_all(
             &mut tail,
             &[
-                spawn_event(1),
-                transition_event(2, OperationState::Accepted, OperationState::Delivered),
-                result_event(3),
+                parent_grant_event(1),
+                spawn_event(2),
+                transition_event(3, OperationState::Accepted, OperationState::Delivered),
+                result_event(4),
                 session_event,
             ],
         );
@@ -256,14 +279,14 @@ fn registration_and_generation_bump_produce_the_same_ordered_actions() {
         let SpawnCompletionAction::RecordAudit(audit) = tail.next_action().unwrap().unwrap() else {
             panic!("audit must be first");
         };
-        assert_eq!(audit.completion_source_event_id, event_id(3));
+        assert_eq!(audit.completion_source_event_id, event_id(4));
         assert_eq!(audit.spawning_grant_id, grant_id("spawn-grant"));
         assert_eq!(audit.subject_actor_id, actor("operator"));
         assert_eq!(audit.subject_endpoint_id, Some(endpoint("browser")));
         assert_eq!(audit.subject_device_id, Some(device("laptop")));
         assert_eq!(audit.spawned_session_scope, session_target());
 
-        tail.observe(&audit_event(5, event_id(3))).unwrap();
+        tail.observe(&audit_event(6, event_id(4))).unwrap();
         let SpawnCompletionAction::IssueDescendantGrant(issuance) =
             tail.next_action().unwrap().unwrap()
         else {
@@ -277,10 +300,10 @@ fn registration_and_generation_bump_produce_the_same_ordered_actions() {
             issuance.allowed_operation_kinds,
             DESCENDANT_GRANT_ALLOWED_KINDS
         );
-        assert_eq!(issuance.audit_id, event_id(5));
+        assert_eq!(issuance.audit_id, event_id(6));
 
         tail.observe(&recorded(
-            6,
+            7,
             StoredEventKind::DescendantGrant,
             &descendant_from(&issuance),
         ))
@@ -295,36 +318,49 @@ fn registration_and_generation_bump_produce_the_same_ordered_actions() {
 }
 
 #[test]
-fn relevant_fact_arrival_orders_converge_and_durable_progress_survives_redelivery() {
-    let facts = [
-        spawn_event(1),
-        transition_event(2, OperationState::Accepted, OperationState::Running),
-        result_event(3),
-        registration_event(4),
-    ];
-    let orders = [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1], [1, 3, 0, 2]];
-    for order in orders {
+fn relevant_fact_lsn_orders_converge_and_durable_progress_survives_redelivery() {
+    for facts in [
+        vec![
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
+        ],
+        vec![
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            registration_event(4),
+            result_event(5),
+        ],
+    ] {
         let mut tail = SpawnDescendantTail::new();
-        for index in order {
-            tail.observe(&facts[index]).unwrap();
-        }
+        observe_all(&mut tail, &facts);
         assert!(matches!(
             tail.next_action().unwrap(),
             Some(SpawnCompletionAction::RecordAudit(_))
         ));
-        tail.observe(&audit_event(5, event_id(3))).unwrap();
+        let result_lsn = facts
+            .iter()
+            .find(|event| event.payload.kind == StoredEventKind::Observation as i32)
+            .and_then(|event| event.event_id.lsn)
+            .unwrap()
+            .value;
+        let audit = audit_event(6, event_id(result_lsn));
+        tail.observe(&audit).unwrap();
         let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) =
             tail.next_action().unwrap()
         else {
             panic!("expected grant action");
         };
         let grant = recorded(
-            6,
+            7,
             StoredEventKind::DescendantGrant,
             &descendant_from(&issuance),
         );
         tail.observe(&grant).unwrap();
-        tail.observe(&audit_event(5, event_id(3))).unwrap();
+        tail.observe(&audit).unwrap();
         tail.observe(&grant).unwrap();
         assert!(matches!(
             tail.next_action().unwrap(),
@@ -346,11 +382,12 @@ fn failed_or_competing_terminal_spawn_never_requests_authority() {
         observe_all(
             &mut tail,
             &[
-                spawn_event(1),
-                transition_event(2, OperationState::Accepted, OperationState::Delivered),
-                result_event(3),
-                registration_event(4),
-                transition_event(5, OperationState::Delivered, terminal),
+                parent_grant_event(1),
+                spawn_event(2),
+                transition_event(3, OperationState::Accepted, OperationState::Delivered),
+                result_event(4),
+                registration_event(5),
+                transition_event(6, OperationState::Delivered, terminal),
             ],
         );
         assert_eq!(tail.next_action().unwrap(), None, "terminal={terminal:?}");
@@ -363,24 +400,25 @@ fn legacy_completed_transition_repairs_audit_and_grant_but_not_terminal() {
     observe_all(
         &mut tail,
         &[
-            spawn_event(1),
-            transition_event(2, OperationState::Accepted, OperationState::Delivered),
-            result_event(3),
-            transition_event(4, OperationState::Delivered, OperationState::Completed),
-            registration_event(5),
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            transition_event(5, OperationState::Delivered, OperationState::Completed),
+            registration_event(6),
         ],
     );
     let Some(SpawnCompletionAction::RecordAudit(audit)) = tail.next_action().unwrap() else {
         panic!("legacy completion must be repaired");
     };
-    assert_eq!(audit.completion_source_event_id, event_id(4));
-    tail.observe(&audit_event(6, event_id(4))).unwrap();
+    assert_eq!(audit.completion_source_event_id, event_id(5));
+    tail.observe(&audit_event(7, event_id(5))).unwrap();
     let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) = tail.next_action().unwrap()
     else {
         panic!("legacy completion must issue missing grant");
     };
     tail.observe(&recorded(
-        7,
+        8,
         StoredEventKind::DescendantGrant,
         &descendant_from(&issuance),
     ))
@@ -394,24 +432,32 @@ fn wrong_verified_audit_or_conflicting_session_target_fails_closed() {
     observe_all(
         &mut tail,
         &[
-            spawn_event(1),
-            transition_event(2, OperationState::Accepted, OperationState::Delivered),
-            result_event(3),
-            registration_event(4),
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
         ],
     );
-    let mut wrong = audit_event(5, event_id(3));
+    let mut wrong = audit_event(6, event_id(4));
     let mut record = AuditRecord::decode(wrong.payload.payload.as_slice()).unwrap();
     record.actor_id = Some(actor("spoofed"));
     wrong.payload.payload = record.encode_to_vec();
-    tail.observe(&wrong).unwrap();
     assert!(matches!(
-        tail.next_action(),
+        tail.observe(&wrong),
         Err(AuthorityError::CorruptLog(_))
     ));
 
     let mut conflict = SpawnDescendantTail::new();
-    conflict.observe(&registration_event(4)).unwrap();
+    observe_all(
+        &mut conflict,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            registration_event(4),
+        ],
+    );
     let mut bumped = bump_event(5);
     let mut state = SessionStateEvent::decode(bumped.payload.payload.as_slice()).unwrap();
     let Some(session_state_event::Mutation::GenerationBumped(ref mut mutation)) = state.mutation
@@ -422,6 +468,135 @@ fn wrong_verified_audit_or_conflicting_session_target_fails_closed() {
     bumped.payload.payload = state.encode_to_vec();
     assert!(matches!(
         conflict.observe(&bumped),
+        Err(AuthorityError::CorruptLog(_))
+    ));
+}
+
+#[test]
+fn accepted_state_and_preseed_success_never_arm_descendant_authority() {
+    let mut accepted_only = SpawnDescendantTail::new();
+    observe_all(
+        &mut accepted_only,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            result_event(3),
+            transition_event(4, OperationState::Accepted, OperationState::Delivered),
+            registration_event(5),
+        ],
+    );
+    assert_eq!(accepted_only.next_action().unwrap(), None);
+
+    let mut preseed = SpawnDescendantTail::new();
+    preseed.observe(&result_event(1)).unwrap();
+    assert_eq!(preseed.next_action().unwrap(), None);
+}
+
+#[test]
+fn revocation_command_effect_terminal_suppresses_issuance_after_staged_audit() {
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
+            audit_event(6, event_id(4)),
+        ],
+    );
+    assert!(matches!(
+        tail.next_action().unwrap(),
+        Some(SpawnCompletionAction::IssueDescendantGrant(_))
+    ));
+    tail.observe(&recorded(
+        7,
+        StoredEventKind::Revocation,
+        &Revocation {
+            authority_domain_id: Some(domain("authority-main")),
+            grant_id: Some(grant_id("spawn-grant")),
+            revocation_generation: Some(Generation { value: 1 }),
+            accepted_operation_policy: GrantRevocationPolicy::Cancel as i32,
+            command_effects: vec![GrantRevocationEffect {
+                command_id: Some(command("spawn-1")),
+                from_state: OperationState::Delivered as i32,
+                to_state: OperationState::Cancelled as i32,
+                failure_code: FailureCode::Cancelled as i32,
+            }],
+            ..Revocation::default()
+        },
+    ))
+    .unwrap();
+    assert_eq!(tail.next_action().unwrap(), None);
+}
+
+#[test]
+fn require_reauthorization_effect_wins_before_success_evidence() {
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            recorded(
+                3,
+                StoredEventKind::Revocation,
+                &Revocation {
+                    authority_domain_id: Some(domain("authority-main")),
+                    grant_id: Some(grant_id("spawn-grant")),
+                    revocation_generation: Some(Generation { value: 1 }),
+                    accepted_operation_policy: GrantRevocationPolicy::RequireReauthorization as i32,
+                    command_effects: vec![GrantRevocationEffect {
+                        command_id: Some(command("spawn-1")),
+                        from_state: OperationState::Accepted as i32,
+                        to_state: OperationState::Rejected as i32,
+                        failure_code: FailureCode::AuthorizationDenied as i32,
+                    }],
+                    ..Revocation::default()
+                },
+            ),
+            result_event(4),
+            registration_event(5),
+        ],
+    );
+    assert_eq!(tail.next_action().unwrap(), None);
+}
+
+#[test]
+fn adapter_scoped_spawn_rejects_cross_adapter_registration() {
+    let mut accepted = spawn_event(2);
+    let mut accepted_message =
+        AcceptedOperation::decode(accepted.payload.payload.as_slice()).unwrap();
+    accepted_message.operation.as_mut().unwrap().target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId { value: "pi".into() }),
+        ..TargetScope::default()
+    });
+    accepted.payload.payload = accepted_message.encode_to_vec();
+
+    let mut cross_adapter = registration_event(4);
+    let mut session = SessionStateEvent::decode(cross_adapter.payload.payload.as_slice()).unwrap();
+    let Some(session_state_event::Mutation::Registered(registered)) = session.mutation.as_mut()
+    else {
+        unreachable!()
+    };
+    registered.adapter_id = Some(AdapterId {
+        value: "other-adapter".into(),
+    });
+    cross_adapter.payload.payload = session.encode_to_vec();
+
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            accepted,
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+        ],
+    );
+    assert!(matches!(
+        tail.observe(&cross_adapter),
         Err(AuthorityError::CorruptLog(_))
     ));
 }

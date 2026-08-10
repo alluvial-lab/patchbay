@@ -270,25 +270,102 @@ async fn ingest_test_descendant<L: GrantProjection>(
     subject_actor_id: &ActorId,
     target_scope: TargetScope,
 ) -> Result<GrantId, AuthorityError> {
+    let parent_grant_id = grant_id(parent_id);
+    if projection.current_grant(&parent_grant_id).await.is_none() {
+        ingest_live_grant(
+            storage,
+            projection,
+            authority_domain_id,
+            parent_id,
+            subject_actor_id,
+            &[OperationKind::Spawn],
+            fleet_scope(),
+        )
+        .await?;
+    }
+
     let command_id = CommandId {
         value: command_value.to_owned(),
     };
-    let source = Observation {
-        authority_domain_id: Some(authority_domain_id.clone()),
-        kind: ObservationKind::Result as i32,
-        correlations: vec![TypedCorrelation {
-            r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
-        }],
-        target_scope: Some(fleet_scope()),
-        failure_code: FailureCode::Unspecified as i32,
-        ..Observation::default()
+    let correlation = TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
     };
+    storage
+        .append(
+            authority_domain_id,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(Operation {
+                        command_id: Some(command_id.clone()),
+                        authority_domain_id: Some(authority_domain_id.clone()),
+                        sender: Some(ActorEndpointRef {
+                            actor_id: Some(subject_actor_id.clone()),
+                            ..ActorEndpointRef::default()
+                        }),
+                        kind: OperationKind::Spawn as i32,
+                        target_scope: Some(fleet_scope()),
+                        idempotency_key: format!("{command_value}-key"),
+                        ..Operation::default()
+                    }),
+                    authorizing_grant_id: Some(parent_grant_id.clone()),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
+    storage
+        .append(
+            authority_domain_id,
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id.clone()),
+                    from_state: OperationState::Accepted as i32,
+                    to_state: OperationState::Delivered as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
     let source_event_id = storage
         .append(
             authority_domain_id,
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
-                payload: source.encode_to_vec(),
+                payload: Observation {
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![correlation.clone()],
+                    target_scope: Some(fleet_scope()),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await?;
+    storage
+        .append(
+            authority_domain_id,
+            StoredEventPayload {
+                kind: StoredEventKind::SessionState as i32,
+                payload: SessionStateEvent {
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                    mutation: Some(session_state_event::Mutation::Registered(
+                        SessionRegistered {
+                            adapter_id: target_scope.adapter_id.clone(),
+                            deployment_scope: target_scope.deployment_scope.clone(),
+                            runtime_session_id: target_scope.runtime_session_id.clone(),
+                            session_generation: target_scope.session_generation,
+                            spawn_origin: Some(correlation),
+                            ..SessionRegistered::default()
+                        },
+                    )),
+                }
+                .encode_to_vec(),
             },
         )
         .await?;
@@ -299,7 +376,7 @@ async fn ingest_test_descendant<L: GrantProjection>(
     let mut audit = AuditRecordDraft::new(occurred_at, AuditEventKind::CommandCompleted);
     audit.actor_id = Some(subject_actor_id.clone());
     audit.command_id = Some(command_id.clone());
-    audit.grant_id = Some(grant_id(parent_id));
+    audit.grant_id = Some(parent_grant_id.clone());
     audit.target_scope = Some(target_scope.clone());
     audit.reason_code = "spawn_completion".to_owned();
     audit.source_event_id = Some(source_event_id);
@@ -323,7 +400,7 @@ async fn ingest_test_descendant<L: GrantProjection>(
                 .collect(),
             provenance: Some(DescendantGrantProvenance {
                 spawn_operation_id: Some(command_id),
-                spawning_grant_id: Some(grant_id(parent_id)),
+                spawning_grant_id: Some(parent_grant_id),
             }),
             created_at: Some(occurred_at),
             revocation_policy: GrantRevocationPolicy::Continue as i32,
@@ -691,7 +768,8 @@ fn spawn_facts(
     adapter_id: &str,
     session_id: &str,
     generation: u64,
-) -> [RecordedEvent; 4] {
+    session_before_result: bool,
+) -> Vec<RecordedEvent> {
     let correlation = TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
     };
@@ -704,6 +782,7 @@ fn spawn_facts(
         }),
         kind: OperationKind::Spawn as i32,
         target_scope: Some(fleet_scope()),
+        idempotency_key: format!("{}-key", command_id.value),
         ..Operation::default()
     };
     let delivered = CommandTransition {
@@ -735,9 +814,17 @@ fn spawn_facts(
         )),
     };
 
-    [
+    let parent = operator_grant(
+        "spawn-grant",
+        authority_domain_id,
+        actor_id,
+        fleet_scope(),
+        &[OperationKind::Spawn],
+    );
+    let mut events = vec![
+        recorded(1, authority_domain_id, StoredEventKind::Grant, &parent),
         recorded(
-            1,
+            2,
             authority_domain_id,
             StoredEventKind::Operation,
             &AcceptedOperation {
@@ -748,42 +835,55 @@ fn spawn_facts(
             },
         ),
         recorded(
-            2,
+            3,
             authority_domain_id,
             StoredEventKind::CommandTransition,
             &delivered,
         ),
-        recorded(
-            3,
-            authority_domain_id,
-            StoredEventKind::Observation,
-            &result,
-        ),
-        recorded(
+    ];
+    if session_before_result {
+        events.push(recorded(
             4,
             authority_domain_id,
             StoredEventKind::SessionState,
             &registered,
-        ),
-    ]
+        ));
+        events.push(recorded(
+            5,
+            authority_domain_id,
+            StoredEventKind::Observation,
+            &result,
+        ));
+    } else {
+        events.push(recorded(
+            4,
+            authority_domain_id,
+            StoredEventKind::Observation,
+            &result,
+        ));
+        events.push(recorded(
+            5,
+            authority_domain_id,
+            StoredEventKind::SessionState,
+            &registered,
+        ));
+    }
+    events
 }
 
 /// Oracle 6: durable spawn facts request a verified audit and then one deterministic grant.
 fn spawn_creates_descendant_grant_holds(
-    events: &[RecordedEvent; 4],
-    order: [usize; 4],
+    events: &[RecordedEvent],
     authority_domain_id: &AuthorityDomainId,
     command_id: &CommandId,
     expected_actor: &ActorId,
 ) -> Result<(), String> {
     fn issue(
-        events: &[RecordedEvent; 4],
-        order: [usize; 4],
+        events: &[RecordedEvent],
     ) -> Result<patchbay_core::authority::DescendantGrantIssuance, String> {
         let mut tail = SpawnDescendantTail::new();
-        for index in order {
-            tail.observe(&events[index])
-                .map_err(|error| error.to_string())?;
+        for event in events {
+            tail.observe(event).map_err(|error| error.to_string())?;
         }
         let Some(SpawnCompletionAction::RecordAudit(audit)) =
             tail.next_action().map_err(|error| error.to_string())?
@@ -793,7 +893,7 @@ fn spawn_creates_descendant_grant_holds(
         let event_domain = audit.authority_domain_id.clone();
         let audit_event_id = EventId {
             authority_domain_id: Some(event_domain.clone()),
-            lsn: Some(Lsn { value: 5 }),
+            lsn: Some(Lsn { value: 6 }),
         };
         let audit_record = AuditRecord {
             audit_event_id: Some(audit_event_id.clone()),
@@ -814,7 +914,7 @@ fn spawn_creates_descendant_grant_holds(
             ..AuditRecord::default()
         };
         tail.observe(&recorded(
-            5,
+            6,
             &event_domain,
             StoredEventKind::AuditRecord,
             &audit_record,
@@ -826,7 +926,7 @@ fn spawn_creates_descendant_grant_holds(
         }
     }
 
-    let issuance = issue(events, order)?;
+    let issuance = issue(events)?;
     let expected_id = grant_id(&format!(
         "desc:{}:{}",
         authority_domain_id.value, command_id.value
@@ -840,7 +940,7 @@ fn spawn_creates_descendant_grant_holds(
         return Err(format!("incorrect descendant issuance: {issuance:?}"));
     }
 
-    let replayed = issue(events, order)?;
+    let replayed = issue(events)?;
     if replayed.descendant_grant_id != issuance.descendant_grant_id
         || replayed.audit_id != issuance.audit_id
     {
@@ -1393,7 +1493,7 @@ proptest! {
         })?;
     }
 
-    /// 6. SpawnCreatesDescendantGrant: completed spawn facts join in any order.
+    /// 6. SpawnCreatesDescendantGrant: result/session LSN orders converge after valid authority/lifecycle.
     #[test]
     fn spawn_creates_descendant_grant(
         domain_value in any_domain(),
@@ -1402,10 +1502,7 @@ proptest! {
         adapter_value in any_adapter(),
         session_suffix in "[a-z0-9]{1,12}",
         generation in 1u64..=4,
-        order in prop::sample::select(vec![
-            [0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1],
-            [1, 3, 0, 2], [3, 0, 2, 1], [1, 2, 3, 0],
-        ]),
+        session_before_result in any::<bool>(),
     ) {
         let authority_domain_id = domain(&domain_value);
         let subject = actor(&actor_value);
@@ -1417,10 +1514,10 @@ proptest! {
             &adapter_value,
             &format!("session-{session_suffix}"),
             generation,
+            session_before_result,
         );
         spawn_creates_descendant_grant_holds(
             &events,
-            order,
             &authority_domain_id,
             &command_id,
             &subject,

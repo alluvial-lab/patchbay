@@ -8,7 +8,7 @@
 use patchbay_contracts::patchbay::{AuthorityDomainId, FailureCode, Operation, OperationState};
 use prost::Message;
 
-use crate::storage::Storage;
+use crate::storage::{validate_next_replay_event, Storage};
 
 use super::{is_terminal, AcceptanceError, CommandIndex, CommandRecord};
 
@@ -46,30 +46,9 @@ pub async fn rebuild_from_log<S: Storage>(
         .await?;
 
     for event in events {
-        let event_domain = event.event_id.authority_domain_id.as_ref().ok_or_else(|| {
-            AcceptanceError::CorruptRecord("recovery event has no authority domain".to_owned())
-        })?;
-        if event_domain != authority_domain_id {
-            return Err(AcceptanceError::CorruptLog(format!(
-                "recovery event belongs to authority domain {:?}, expected {:?}",
-                event_domain, authority_domain_id
-            )));
-        }
-
-        let event_lsn = event
-            .event_id
-            .lsn
-            .as_ref()
-            .ok_or_else(|| AcceptanceError::CorruptRecord("recovery event has no LSN".to_owned()))?
-            .value;
-        if event_lsn <= previous_lsn {
-            return Err(AcceptanceError::CorruptLog(format!(
-                "recovery event LSN {event_lsn} is not after previous LSN {previous_lsn}"
-            )));
-        }
-
+        previous_lsn = validate_next_replay_event(&event, authority_domain_id, previous_lsn)
+            .map_err(|error| AcceptanceError::CorruptLog(error.to_string()))?;
         index.apply(&event)?;
-        previous_lsn = event_lsn;
     }
 
     Ok(index)

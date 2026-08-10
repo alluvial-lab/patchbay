@@ -23,7 +23,7 @@ use patchbay_core::{
         self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
     },
     session::{self, SessionRegistry, SessionReport},
-    storage::{AuditRecordDraft, RecordedEvent, Storage},
+    storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage},
     target::target_adapter_id,
 };
 use prost::Message;
@@ -333,17 +333,19 @@ async fn rebuild_command_projection<S: Storage>(
             patchbay_contracts::patchbay::Lsn { value: 0 },
         )
         .await?;
-    command_projection_from_events(&events)
+    command_projection_from_events(&events, authority_domain_id)
 }
 
 fn command_projection_from_events(
     events: &[RecordedEvent],
+    authority_domain_id: &AuthorityDomainId,
 ) -> Result<CommandProjection, acceptance::AcceptanceError> {
     let mut index = CommandIndex::new();
     let mut cursor = 0;
     for event in events {
+        cursor = validate_next_replay_event(event, authority_domain_id, cursor)
+            .map_err(|error| acceptance::AcceptanceError::CorruptLog(error.to_string()))?;
         index.apply(event)?;
-        cursor = recorded_event_lsn(event)?;
     }
     Ok(CommandProjection { index, cursor })
 }
@@ -362,19 +364,12 @@ async fn catch_up_command_projection<S: Storage>(
         )
         .await?;
     for event in &events {
+        projection.cursor =
+            validate_next_replay_event(event, authority_domain_id, projection.cursor)
+                .map_err(|error| acceptance::AcceptanceError::CorruptLog(error.to_string()))?;
         projection.index.apply(event)?;
-        projection.cursor = recorded_event_lsn(event)?;
     }
     Ok(events)
-}
-
-fn recorded_event_lsn(event: &RecordedEvent) -> Result<u64, acceptance::AcceptanceError> {
-    event
-        .event_id
-        .lsn
-        .as_ref()
-        .map(|lsn| lsn.value)
-        .ok_or_else(|| acceptance::AcceptanceError::CorruptRecord("event has no LSN".into()))
 }
 
 fn deliveries_for_events(
@@ -418,7 +413,7 @@ fn deliveries_for_events(
                     matches!(
                         record.state,
                         OperationState::Accepted | OperationState::Delivered
-                    )
+                    ) && !commands.has_deferred_spawn_success(&record.command_id)
                 });
             (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
                 operation: Some(operation),
@@ -488,8 +483,12 @@ where
             {
                 Ok(events) => {
                     let applied = events.iter().try_for_each(|event| {
+                        scan_cursor =
+                            validate_next_replay_event(event, &authority_domain_id, scan_cursor)
+                                .map_err(|error| {
+                                    acceptance::AcceptanceError::CorruptLog(error.to_string())
+                                })?;
                         subscription_commands.apply(event)?;
-                        scan_cursor = recorded_event_lsn(event)?;
                         Ok::<(), acceptance::AcceptanceError>(())
                     });
                     match applied {
@@ -1015,8 +1014,8 @@ where
                 .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
                 .await
                 .map_err(map_storage_error_to_status)?;
-            *live_commands =
-                command_projection_from_events(&events).map_err(map_acceptance_error_to_status)?;
+            *live_commands = command_projection_from_events(&events, &domain)
+                .map_err(map_acceptance_error_to_status)?;
             (events, live_commands.clone())
         };
 

@@ -3,7 +3,7 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use patchbay_contracts::patchbay::AuthorityDomainId;
 use patchbay_core::{
     acceptance::SystemClock,
-    audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
+    audit::{AuditSink, DurableAuditSink},
     storage::{AuditedStorage, RusqliteStorage},
 };
 use patchbay_core_server::{
@@ -59,12 +59,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage = AuditedStorage::new(RusqliteStorage::open(&database_path)?);
     let decision_gate = CoreDecisionGate::default();
-    let audit: Arc<dyn AuditSink> = Arc::new(RequiredAuditFanout::new(
-        Arc::new(DurableAuditSink::new(
-            storage.clone(),
-            authority_domain_id.clone(),
-        )),
-        vec![Arc::new(StderrAuditSink)],
+    // The spawn-completion audit is a staged durable prerequisite, not the
+    // public terminal transition. Keep it out of the immediate stderr fanout;
+    // the driver emits a redacted finalized diagnostic only after the grant
+    // and terminal transition are both durable.
+    let audit: Arc<dyn AuditSink> = Arc::new(DurableAuditSink::new(
+        storage.clone(),
+        authority_domain_id.clone(),
     ));
     // Repair every replayable completion prefix before any service projection
     // is constructed or either listener can bind.

@@ -1767,6 +1767,86 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
 }
 
 #[tokio::test]
+async fn deferred_spawn_success_suppresses_redelivery_after_restart_and_reattach() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let mut operation = targeted_operation(domain.clone(), "spawn-non-idempotent");
+    operation.kind = OperationKind::Spawn as i32;
+    operation.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_id()),
+        ..TargetScope::default()
+    });
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation_bytes(&operation),
+            },
+        )
+        .await
+        .expect("spawn operation appends");
+
+    let mut first_tail = receive_from_start(&service, &attachment_token).await;
+    let first_delivery = first_tail
+        .next()
+        .await
+        .expect("spawn is initially offered")
+        .expect("initial delivery is valid");
+    assert_eq!(first_delivery.operation, Some(operation.clone()));
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), &operation),
+            &attachment_token,
+        ))
+        .await
+        .expect("spawn delivery acknowledgement commits");
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain.clone()),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![TypedCorrelation {
+                        r#ref: Some(typed_correlation::Ref::CommandId(
+                            operation.command_id.clone().unwrap(),
+                        )),
+                    }],
+                    target_scope: operation.target_scope.clone(),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                })),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("successful spawn result is durably deferred");
+    drop(first_tail);
+    drop(service);
+
+    let restarted = AdapterControlServiceImpl::new(
+        storage,
+        domain.clone(),
+        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+    )
+    .await
+    .expect("adapter service rebuilds from the durable result");
+    let restarted_token = attach_generation(&restarted, domain, 2).await;
+    let mut restarted_tail = receive_from_start(&restarted, &restarted_token).await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), restarted_tail.next())
+            .await
+            .is_err(),
+        "a durable successful result must suppress non-idempotent spawn redelivery"
+    );
+}
+
+#[tokio::test]
 async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {

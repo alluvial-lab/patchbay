@@ -6,19 +6,19 @@
 use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
-    AuditRecord, AuthorityDomainId, DescendantGrant, EventId, FailureCode, Grant, GrantId,
+    AuthorityDomainId, DescendantGrant, EventId, FailureCode, Grant, GrantId,
     GrantRevocationEffect, GrantRevocationPolicy, Lsn, OperationState, Revocation,
     StoredEventPayload, TargetScope, TargetScopeKind,
 };
-use prost::Message;
 
 use crate::{
     acceptance::Clock,
-    storage::{AuditRecordDraft, RecordedEvent, Storage},
+    storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage},
 };
 
 use super::{
-    events, AuthorityError, AuthorityRegistry, GrantProjection, DESCENDANT_GRANT_ALLOWED_KINDS,
+    events, spawn_tail::validate_descendant_issuance_candidate, AuthorityError, AuthorityRegistry,
+    GrantProjection, SpawnDescendantTail, DESCENDANT_GRANT_ALLOWED_KINDS,
 };
 
 /// Validate, durably append, and project an operator-issued grant.
@@ -81,50 +81,47 @@ where
         "descendant grant",
     )?;
     validate_descendant_kinds(&grant.allowed_operation_kinds)?;
+    let spawn_operation_id = grant
+        .provenance
+        .as_ref()
+        .and_then(|provenance| provenance.spawn_operation_id.as_ref())
+        .filter(|command_id| !command_id.value.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant(
+                "descendant grant is missing a non-empty spawn_operation_id".to_owned(),
+            )
+        })?;
 
-    // The audit id is not trusted as a bare LSN. Resolve the exact immutable
-    // event, then resolve the exact immutable source named by that audit and
-    // run the same link validator used by AuthorityRegistry replay.
-    let audit_id = grant.audit_id.clone().ok_or_else(|| {
-        AuthorityError::InvalidGrant("descendant grant is missing audit_id".to_owned())
-    })?;
-    let audit_event = read_exact_event(storage, authority_domain_id, &audit_id).await?;
-    let audit = AuditRecord::decode(audit_event.payload.payload.as_slice()).map_err(|error| {
-        AuthorityError::InvalidGrant(format!("cannot decode descendant audit: {error}"))
-    })?;
-    let source_id = audit.source_event_id.as_ref().ok_or_else(|| {
-        AuthorityError::InvalidGrant(
-            "descendant completion audit is missing source_event_id".to_owned(),
-        )
-    })?;
-    let source_event = read_exact_event(storage, authority_domain_id, source_id).await?;
-    super::spawn_tail::validate_descendant_audit_link(&grant, &audit_event, &source_event)?;
+    // Validate against the complete gap-free durable context, not merely the
+    // source/audit pair repeated by the candidate. The spawn tail requires a
+    // prior exact parent grant, accepted verified sender/target, valid
+    // delivered/running lifecycle, successful result (or valid historical
+    // completion), contained session registration/bump, and matching audit.
+    let durable_prefix = storage
+        .read_after(authority_domain_id, Lsn { value: 0 })
+        .await?;
+    let mut tail = SpawnDescendantTail::new();
+    let mut previous_lsn = 0;
+    for event in &durable_prefix {
+        previous_lsn = validate_next_replay_event(event, authority_domain_id, previous_lsn)
+            .map_err(|error| AuthorityError::CorruptLog(error.to_string()))?;
+        tail.observe(event)?;
+        // Keep the caller's projection on the same authoritative prefix. This
+        // is idempotent for an already-warm registry and ensures the append can
+        // fold through its exact durable prerequisites.
+        projection.observe(event)?;
+    }
+    let issuance = tail
+        .descendant_issuance_for(authority_domain_id, &spawn_operation_id)?
+        .ok_or_else(|| {
+            AuthorityError::InvalidGrant(
+                "durable spawn context is not eligible for descendant grant issuance".to_owned(),
+            )
+        })?;
+    validate_descendant_issuance_candidate(&grant, &issuance)?;
 
     let payload = events::descendant_grant(authority_domain_id.clone(), grant);
-    let audit_lsn = audit_id
-        .lsn
-        .as_ref()
-        .expect("read_exact_event validated LSN")
-        .value;
-    let mut validator = AuthorityRegistry::new();
-    validator.observe(&source_event)?;
-    validator.observe(&audit_event)?;
-    validator.observe(&RecordedEvent {
-        event_id: EventId {
-            authority_domain_id: Some(authority_domain_id.clone()),
-            lsn: Some(Lsn {
-                value: audit_lsn.checked_add(1).ok_or_else(|| {
-                    AuthorityError::InvalidGrant("descendant audit LSN overflow".to_owned())
-                })?,
-            }),
-        },
-        payload: payload.clone(),
-    })?;
-
-    // Warm the caller's projection with the already-durable prerequisites so
-    // the newly appended grant can be validated by the same replay path.
-    projection.observe(&source_event)?;
-    projection.observe(&audit_event)?;
     append_and_warm(storage, projection, authority_domain_id, payload).await
 }
 
@@ -228,38 +225,6 @@ where
     // storage implementation cannot silently persist the source without its
     // required GrantRevoked audit.
     append_and_warm_decision_many(storage, projection, authority_domain_id, payload, audits).await
-}
-
-async fn read_exact_event<S: Storage>(
-    storage: &S,
-    authority_domain_id: &AuthorityDomainId,
-    event_id: &EventId,
-) -> Result<RecordedEvent, AuthorityError> {
-    if event_id.authority_domain_id.as_ref() != Some(authority_domain_id) {
-        return Err(AuthorityError::InvalidGrant(
-            "descendant link has a foreign authority domain".to_owned(),
-        ));
-    }
-    let lsn = event_id
-        .lsn
-        .as_ref()
-        .filter(|lsn| lsn.value > 0)
-        .ok_or_else(|| {
-            AuthorityError::InvalidGrant("descendant link has no positive LSN".to_owned())
-        })?;
-    let cursor = Lsn {
-        value: lsn.value - 1,
-    };
-    let events = storage
-        .read_through(authority_domain_id, cursor, *lsn)
-        .await?;
-    if events.len() != 1 || events[0].event_id != *event_id {
-        return Err(AuthorityError::InvalidGrant(format!(
-            "descendant link does not resolve to exact immutable event {:?}",
-            event_id
-        )));
-    }
-    Ok(events.into_iter().next().expect("length checked"))
 }
 
 async fn append_and_warm<S, L>(
