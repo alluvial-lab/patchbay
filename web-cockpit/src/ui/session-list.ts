@@ -62,9 +62,14 @@ export function renderSessionRow(
   if (selected) row.classList.add("session-row--active");
   if (session.needsYou && stableTarget(session)) row.classList.add("session-row--needs-you");
 
-  row.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
-  row.append(textElement(document, "span", "session-row__label", sessionLabel(session)));
-  row.append(textElement(document, "span", "session-row__context", sessionContext(session)));
+  const identity = textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity));
+  identity.title = formatSessionIdentity(session.identity);
+  const label = textElement(document, "span", "session-row__label", sessionLabel(session));
+  const contextText = sessionContext(session);
+  const context = textElement(document, "span", "session-row__context", contextText);
+  context.title = contextText;
+  context.setAttribute("aria-label", `Session context: ${contextText}`);
+  row.append(identity, label, context);
 
   const badges = document.createElement("span");
   badges.className = "session-row__badges";
@@ -147,7 +152,7 @@ function sessionLabel(session: SessionView): string {
 }
 
 function sessionContext(session: SessionView): string {
-  const metadata = [session.model ?? "Model unknown", session.label.project, session.label.cwd]
+  const metadata = [session.label.cwd, session.label.project, session.model ?? "Model unknown"]
     .filter(Boolean)
     .join(" · ");
   const updated = session.lastUpdate ? ` · updated ${session.lastUpdate.toLocaleString()}` : "";

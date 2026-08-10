@@ -1,7 +1,7 @@
 ---
 id: cockpit-ux-polish-session-rows
 kind: story
-stage: implementing
+stage: done
 parent: cockpit-ux-polish
 depends_on: [cockpit-ux-polish-visual-contract]
 release_binding: null
@@ -23,6 +23,15 @@ Refine the existing session list row so an operator can switch quickly without l
 
 ## Acceptance evidence
 
-- [ ] Existing session-list tests cover identity-first order, selected/needs-you styling, stale dominance, and cwd overflow behavior.
-- [ ] A mobile-width DOM/CSS check shows the identity and activity remain readable without horizontal page overflow.
-- [ ] Re-labelling a session does not change its selection key or target identity.
+- [x] Existing session-list tests cover identity-first order, selected/needs-you styling, stale dominance, and cwd overflow behavior.
+- [x] A mobile-width DOM/CSS check shows the identity and activity remain readable without horizontal page overflow.
+- [x] Re-labelling a session does not change its selection key or target identity.
+
+## Implementation notes
+- Execution capability: `openai-codex/gpt-5.6-luna` high, direct implementation after the visual-contract checkpoint.
+- Review weight: thorough (caller override), feature review remains pending after integrated implementation.
+- Files changed: `web-cockpit/src/ui/session-list.ts`, `web-cockpit/src/ui/shell.css`, `web-cockpit/tests/shell.test.ts`.
+- Tests added/removed: accessible full-context/title coverage for long cwd values, stable selection-key assertion, identity-first context assertion; shell tests pass after type build.
+- Simplification: reused the existing identity formatter, status primitive, and row selection key; no new session state or label-derived identity was added.
+- Discrepancies from design: none.
+- Adjacent issues parked: none.

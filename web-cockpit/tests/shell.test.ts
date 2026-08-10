@@ -112,7 +112,7 @@ test("shell stylesheet provides responsive layout without rebinding protocol sta
 
 test("desktop shell is two-pane and rows lead with identity before label metadata", () => {
   const dom = new JSDOM();
-  const first = session("session-1", 1n, { name: "core", project: "patchbay" });
+  const first = session("session-1", 1n, { name: "core", project: "patchbay", cwd: "/projects/patchbay" });
   first.model = "provider/model-1";
   const second = session("session-2", 1n, { name: "adapter", project: "patchbay" });
   second.needsYou = true;
@@ -132,6 +132,7 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(rows[0]!.firstElementChild!.className, "session-row__identity");
   assert.match(rows[0]!.querySelector(".session-row__identity")!.textContent!, /pi@laptop · runtime session-2 · gen 1/);
   assert.equal(rows[0]!.classList.contains("session-row--needs-you"), true);
+  assert.match(rows[0]!.querySelector(".session-row__context")!.getAttribute("aria-label")!, /\/projects\/patchbay/);
   assert.ok(rows[0]!.querySelector(".connectivity-indicator"));
   assert.ok(rows[0]!.querySelector(".activity-indicator"));
   assert.match(rows[1]!.textContent!, /provider\/model-1/);
@@ -284,6 +285,21 @@ test("pooled session linkage opens the exact resource and mobile resources drill
   assert.equal(mobile.element.querySelector<HTMLElement>(".resource-detail")!.hidden, false);
   mobile.element.querySelector<HTMLButtonElement>(".resource-detail__back")!.click();
   assert.equal(mobile.element.querySelector<HTMLElement>(".resource-list")!.hidden, false);
+});
+
+test("session rows keep long cwd context accessible without changing identity keys", () => {
+  const dom = new JSDOM();
+  const view = session("session-long", 4n, {
+    name: "Long context",
+    project: "patchbay",
+    cwd: "/srv/agents/patchbay/worktrees/feature-with-a-very-long-name",
+  });
+  const row = renderSessionRow(dom.window.document, view, false, () => undefined);
+  const context = row.querySelector<HTMLElement>(".session-row__context")!;
+  assert.match(context.textContent!, /feature-with-a-very-long-name/);
+  assert.equal(context.title, context.textContent);
+  assert.match(context.getAttribute("aria-label")!, /Session context:/);
+  assert.equal(row.dataset.sessionKey, sessionKey(view.identity));
 });
 
 test("session rows render unavailable models honestly", () => {
