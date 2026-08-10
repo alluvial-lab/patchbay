@@ -1,7 +1,7 @@
 ---
 id: authority-grant-selection-determinism
 kind: feature
-stage: review
+stage: done
 tags: [security, foundation]
 parent: null
 depends_on: []
@@ -262,4 +262,14 @@ All acceptance criteria are satisfied. This is implementation-level replay evide
 - `node contracts/scripts/check-vectors.mjs` — passed (21 implementation checks; 37 mutation witnesses killed); no model, vector, generated source, or traceability table changed.
 - `rustfmt --edition 2021 --check core/src/authority/check.rs core/tests/authority_replay.rs` and `git diff --check` — passed. Repository-wide `cargo fmt --all -- --check` remains red on 71 pre-existing, out-of-scope Rust files; neither owned Rust file appears in that diff.
 
-The corrected feature remains at `review` for thorough convergence pass 2.
+The corrected feature remained at `review` for thorough convergence pass 2.
+
+## Review closure — pass 2
+
+- Fresh-context adversarial pass 2 found no material current-cycle blockers.
+- Confirmed revocation-first liveness classification, live → expired → revoked
+  class selection, raw UTF-8 grant-id ordering, and exact hot/replay provenance.
+- Recurring findings: none. The pass-1 evidence gap did not recur.
+- Lower-risk endpoint-class matching remains outside this feature and is parked
+  separately; it does not affect current producers, which leave the class empty.
+- Effective weight: `thorough` (explicit operator). Verdict: approved.
