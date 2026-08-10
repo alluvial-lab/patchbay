@@ -5,6 +5,8 @@ use patchbay_contracts::patchbay::{
     SessionModelChanged, SessionRegistered, SessionRelabeled, SessionState, StoredEventKind,
     StoredEventPayload, TargetScope,
 };
+use prost::Message;
+
 use patchbay_core::{
     acceptance::TargetResolver,
     security::events as security_events,
@@ -96,6 +98,26 @@ fn identity(generation_value: u64) -> SessionIdentity {
         runtime_session_id: runtime(),
         session_generation: generation(generation_value),
     }
+}
+
+fn payload_only_redelivery_mutant_accepts(
+    applied: &StoredEventPayload,
+    candidate: &StoredEventPayload,
+) -> bool {
+    applied.payload == candidate.payload
+}
+
+fn decoded_semantic_redelivery_mutant_accepts(
+    applied: &StoredEventPayload,
+    candidate: &StoredEventPayload,
+) -> bool {
+    if applied.kind != StoredEventKind::SessionState as i32
+        || candidate.kind != StoredEventKind::SessionState as i32
+    {
+        return false;
+    }
+    SessionStateEvent::decode(applied.payload.as_slice()).unwrap()
+        == SessionStateEvent::decode(candidate.payload.as_slice()).unwrap()
 }
 
 #[test]
@@ -520,40 +542,84 @@ fn reobserving_a_committed_prefix_is_idempotent() {
 }
 
 #[test]
-fn conflicting_and_unseen_owned_events_reject_without_mutation() {
+fn exact_envelope_equality_kills_payload_only_and_decoded_semantic_mutants() {
     let registration_event = recorded(1, &registration());
     let mut applied = SessionRegistry::new(domain()).unwrap();
     applied.observe(&registration_event).unwrap();
 
-    let mut changed_bytes = registration_event.clone();
-    changed_bytes.payload.payload.push(0xff);
-    let changed_kind = RecordedEvent {
+    let changed_owned_kind = RecordedEvent {
         event_id: registration_event.event_id.clone(),
         payload: StoredEventPayload {
             kind: StoredEventKind::SecurityLockdown as i32,
-            payload: Vec::new(),
+            payload: registration_event.payload.payload.clone(),
         },
     };
-    let changed_to_sibling = RecordedEvent {
+    let changed_to_sibling_kind = RecordedEvent {
         event_id: registration_event.event_id.clone(),
         payload: StoredEventPayload {
             kind: StoredEventKind::Observation as i32,
-            payload: Vec::new(),
+            payload: registration_event.payload.payload.clone(),
         },
     };
     for (name, candidate) in [
-        ("changed bytes", changed_bytes),
-        ("changed owned kind", changed_kind),
-        ("changed to sibling kind", changed_to_sibling),
+        ("another owned kind", &changed_owned_kind),
+        ("a sibling kind", &changed_to_sibling_kind),
+    ] {
+        assert_ne!(candidate.payload.kind, registration_event.payload.kind);
+        assert!(
+            payload_only_redelivery_mutant_accepts(&registration_event.payload, &candidate.payload),
+            "the {name} fixture must expose a payload-only equality mutant"
+        );
+    }
+
+    let mut semantically_equal_reencoding = registration_event.clone();
+    // Unknown field 127 with varint value 1 is valid Protobuf framing. Prost
+    // drops it while decoding, so the decoded SessionStateEvent is unchanged.
+    semantically_equal_reencoding
+        .payload
+        .payload
+        .extend_from_slice(&[0xf8, 0x07, 0x01]);
+    assert_ne!(
+        semantically_equal_reencoding.payload.payload,
+        registration_event.payload.payload
+    );
+    assert!(
+        decoded_semantic_redelivery_mutant_accepts(
+            &registration_event.payload,
+            &semantically_equal_reencoding.payload
+        ),
+        "the valid alternate encoding must expose a decoded-semantic equality mutant"
+    );
+
+    for (name, candidate) in [
+        ("kind-only change to another owned kind", changed_owned_kind),
+        (
+            "kind-only change to a sibling kind",
+            changed_to_sibling_kind,
+        ),
+        (
+            "bytes-only semantically equal re-encoding",
+            semantically_equal_reencoding,
+        ),
     ] {
         let mut registry = applied.clone();
         let before = registry.clone();
-        assert!(matches!(
-            registry.observe(&candidate),
-            Err(SessionError::CorruptLog(_))
-        ));
+        assert!(
+            matches!(
+                registry.observe(&candidate),
+                Err(SessionError::CorruptLog(_))
+            ),
+            "{name} was mistaken for exact redelivery"
+        );
         assert_eq!(registry, before, "{name} mutated the registry");
     }
+}
+
+#[test]
+fn unseen_and_duplicate_owned_events_reject_without_mutation() {
+    let registration_event = recorded(1, &registration());
+    let mut applied = SessionRegistry::new(domain()).unwrap();
+    applied.observe(&registration_event).unwrap();
 
     let mut high_water = SessionRegistry::new(domain()).unwrap();
     high_water.observe(&recorded(2, &registration())).unwrap();

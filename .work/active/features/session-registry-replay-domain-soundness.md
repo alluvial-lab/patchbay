@@ -346,3 +346,9 @@ Design is committed at `implementing`; implementation was not started before the
 - `node contracts/scripts/check-models.mjs` — pass (53 modeled properties; traceability current).
 - `node contracts/scripts/check-vectors.mjs` — pass (53 vectors, 16 promoted, 21 implementation checks, 37 mutation witnesses).
 - `git diff --check` — pass. Changed blocks were format-reconciled without broad churn. The required `cargo fmt --all -- --check` was run and remains blocked by the known repository-wide rustfmt baseline (13,224 diff lines; first failure is unrelated `core/src/acceptance/elicitation.rs:8`), which the caller explicitly excluded from scope.
+
+## Review notes — deep-lane Phase 1 exact-envelope fix
+
+- Accepted blocker: the old conflict fixtures changed kind and bytes together or used invalid bytes, so payload-only and decoded-semantic equality mutants survived even though production's full-envelope comparison was correct.
+- The integration child now carries isolated kind-only owned/sibling witnesses and a valid bytes-only, decode-equivalent unknown-field witness. Temporary production mutations for payload-only and decoded-semantic equality each failed the strengthened test and were restored; no production change was required.
+- Focused feature tests, the named server gate regression, workspace tests/Clippy, and model/vector checks are green. Assurance remains implementation-checked only, and both parent and child remain at `stage: review` for the next deep-lane pass.

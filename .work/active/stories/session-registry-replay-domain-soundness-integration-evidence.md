@@ -78,3 +78,11 @@ mutation witnesses before advancing to `done`.
 - `cargo test -p patchbay-core --test sessions_ingest` — 17 passed; single/multi-delta immediate warming, both-domain no-append checks, committed-prefix failure, and hot/cold equality are green.
 - `cargo test -p patchbay-core-server concurrent_conflicting_model_reports_leave_a_replayable_log` — pass, retained solely as `CoreDecisionGate` composition-root race evidence.
 - Story intentionally stops at `stage: review`; the driver owns the required completeness → adversarial convergence lane before `done`.
+
+## Deep-lane Phase-1 fix — exact-envelope equality
+
+- Adjudication: confirmed an evidence gap, not a production defect. Before this fix, temporary payload-only and decoded-semantic equality mutations both passed the old conflicting-redelivery test; production already compared the complete `StoredEventPayload`.
+- `core/tests/sessions_registry.rs` now isolates kind-only changes to another owned kind and to a sibling kind while preserving the original bytes, plus a bytes-only valid Protobuf re-encoding whose unknown field is discarded on decode. Test-owned mutant predicates prove those fixtures fool payload-only and decoded-semantic equality respectively.
+- Mutation results: the temporary payload-only production mutation failed the strengthened test on the kind-only owned candidate; the temporary decoded-semantic mutation failed on the semantically equal alternate encoding (both exit 101). Both mutations were reverted, and the production test passed.
+- Verification: registry 16/16; ingest 17/17; replay/resolver 9/9; session properties 9/9; acceptance 25/25; named server gate regression passed; `cargo test --workspace`, workspace Clippy with warnings denied, and model/vector checks passed (53 models; 53 vectors, 21 implementation checks, 37 existing vector mutation witnesses).
+- Assurance/lifecycle: implementation-checked evidence only; no model/vector/wire promotion. This child and its parent remain at `stage: review` for the continuing deep lane.
