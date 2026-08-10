@@ -7,7 +7,8 @@ use patchbay_contracts::patchbay::{
     ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode, Generation, GrantId, Lsn,
     Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
-    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
+    SessionActivityState, SessionConnectivityState, StoredEventKind, SubmissionOutcome,
+    TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     submit, submit_with_clock, AcceptanceError, ActiveElicitation, Authorized, Clock,
@@ -16,6 +17,7 @@ use patchbay_core::acceptance::{
 };
 use patchbay_core::{
     authority::IssuerContext,
+    session::{ingest_session_report, SessionRegistry, SessionReport},
     storage::{RusqliteStorage, Storage},
 };
 use prost::Message;
@@ -372,10 +374,125 @@ fn state(result: &patchbay_contracts::patchbay::SubmissionResult) -> OperationSt
 }
 
 async fn durable_events(storage: &RusqliteStorage) -> Vec<patchbay_core::storage::RecordedEvent> {
+    durable_events_in(storage, &authority_domain()).await
+}
+
+async fn durable_events_in(
+    storage: &RusqliteStorage,
+    authority_domain_id: &AuthorityDomainId,
+) -> Vec<patchbay_core::storage::RecordedEvent> {
     storage
-        .read_after(&authority_domain(), Lsn { value: 0 })
+        .read_after(authority_domain_id, Lsn { value: 0 })
         .await
         .expect("test storage remains readable")
+}
+
+fn live_session_report(authority_domain_id: AuthorityDomainId) -> SessionReport {
+    SessionReport {
+        authority_domain_id,
+        adapter_id: AdapterId {
+            value: "pi".to_owned(),
+        },
+        deployment_scope: "local".to_owned(),
+        runtime_session_id: RuntimeSessionId {
+            value: "session-1".to_owned(),
+        },
+        session_generation: Generation { value: 7 },
+        connectivity: SessionConnectivityState::Live,
+        activity: SessionActivityState::Idle,
+        project: "patchbay".to_owned(),
+        cwd: "/work/patchbay".to_owned(),
+        name: "main".to_owned(),
+        model: "provider/model".to_owned(),
+        spawn_origin: None,
+    }
+}
+
+#[tokio::test]
+async fn real_session_registry_resolves_same_domain_acceptance() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut sessions = SessionRegistry::new(authority_domain()).unwrap();
+    ingest_session_report(
+        &storage,
+        &mut sessions,
+        live_session_report(authority_domain()),
+    )
+    .await
+    .unwrap();
+    let grant = TestGrantCheck::new(true);
+
+    let result = submit(
+        &storage,
+        &grant,
+        &sessions,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        operation(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&result), SubmissionOutcome::Accepted);
+    assert_eq!(failure(&result), FailureCode::Unspecified);
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 1);
+    let events = durable_events(&storage).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn real_session_registry_domain_mismatch_rejects_without_command_append() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut sessions = SessionRegistry::new(authority_domain()).unwrap();
+    ingest_session_report(
+        &storage,
+        &mut sessions,
+        live_session_report(authority_domain()),
+    )
+    .await
+    .unwrap();
+    let other_domain = AuthorityDomainId {
+        value: "authority-other".to_owned(),
+    };
+    let mut submitted = operation();
+    submitted.authority_domain_id = Some(other_domain.clone());
+    let grant = TestGrantCheck::new(true);
+    let main_before = durable_events_in(&storage, &authority_domain()).await;
+    let other_before = durable_events_in(&storage, &other_domain).await;
+
+    let result = submit(
+        &storage,
+        &grant,
+        &sessions,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &TestIssuer::new(other_domain.clone()),
+        submitted,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&result), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&result), FailureCode::TargetNotFound);
+    assert_eq!(result.reason_code, "target_not_found");
+    assert_eq!(grant.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        durable_events_in(&storage, &authority_domain()).await,
+        main_before
+    );
+    assert_eq!(
+        durable_events_in(&storage, &other_domain).await,
+        other_before
+    );
+    assert!(main_before
+        .iter()
+        .all(|event| event.payload.kind != StoredEventKind::Operation as i32));
 }
 
 #[tokio::test]

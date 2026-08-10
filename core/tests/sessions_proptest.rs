@@ -8,15 +8,17 @@
 //! applies the generation oracle to a deliberately faulty registry which
 //! accepts lower generations; the oracle must reject that registry.
 
+use std::collections::{BTreeSet, HashMap};
+
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, Generation, Lsn, RuntimeSessionId, SessionActivityState,
+    AdapterId, AuthorityDomainId, Generation, RuntimeSessionId, SessionActivityState,
     SessionConnectivityState,
 };
 use patchbay_core::session::{
-    ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRegistry,
-    SessionReport,
+    ingest_session_report, rebuild_from_log, IngestResult, SessionError, SessionRecord,
+    SessionRegistry, SessionReport,
 };
-use patchbay_core::storage::{RusqliteStorage, Storage};
+use patchbay_core::storage::RusqliteStorage;
 use proptest::prelude::*;
 
 fn domain() -> AuthorityDomainId {
@@ -104,49 +106,96 @@ fn any_session_report_sequence() -> impl Strategy<Value = Vec<SessionReport>> {
     )
 }
 
-fn event_lsn(result: &IngestResult) -> Option<u64> {
-    let event_id = match result {
-        IngestResult::Registered { event_id }
-        | IngestResult::ConnectivityChanged { event_id, .. }
-        | IngestResult::ActivityChanged { event_id, .. }
-        | IngestResult::Relabeled { event_id }
-        | IngestResult::ModelChanged { event_id, .. } => event_id,
-        IngestResult::GenerationBumped {
-            new_generation_event_id,
-            ..
-        } => new_generation_event_id,
-        IngestResult::DeltasApplied { event_ids } => {
-            return event_ids
-                .last()
-                .and_then(|event_id| event_id.lsn.as_ref())
-                .map(|lsn| lsn.value);
-        }
-        IngestResult::NoChange => return None,
-    };
-    event_id.lsn.as_ref().map(|lsn| lsn.value)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OracleSessionKey {
+    adapter: String,
+    deployment_scope: String,
+    runtime_session: String,
 }
 
-/// Apply one report through the writer, then feed exactly the newly committed
-/// events into the hot registry. This mirrors production's warm path while
-/// leaving the log as the authoritative source of truth.
-async fn ingest_and_observe(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OracleSessionState {
+    live_generation: u64,
+    tombstoned_generations: BTreeSet<u64>,
+}
+
+fn collision_keys() -> [OracleSessionKey; 4] {
+    [
+        OracleSessionKey {
+            adapter: "adapter-a".to_owned(),
+            deployment_scope: "scope-a".to_owned(),
+            runtime_session: "runtime-shared".to_owned(),
+        },
+        OracleSessionKey {
+            adapter: "adapter-b".to_owned(),
+            deployment_scope: "scope-a".to_owned(),
+            runtime_session: "runtime-shared".to_owned(),
+        },
+        OracleSessionKey {
+            adapter: "adapter-a".to_owned(),
+            deployment_scope: "scope-b".to_owned(),
+            runtime_session: "runtime-shared".to_owned(),
+        },
+        OracleSessionKey {
+            adapter: "adapter-a".to_owned(),
+            deployment_scope: "scope-a".to_owned(),
+            runtime_session: "runtime-other".to_owned(),
+        },
+    ]
+}
+
+fn any_multi_identity_sequence() -> impl Strategy<Value = Vec<(usize, u64)>> {
+    prop::collection::vec((0usize..4, 0u64..=4), 1..=20)
+}
+
+fn report_for_key(key: &OracleSessionKey, generation: u64) -> SessionReport {
+    SessionReport {
+        authority_domain_id: domain(),
+        adapter_id: AdapterId {
+            value: key.adapter.clone(),
+        },
+        deployment_scope: key.deployment_scope.clone(),
+        runtime_session_id: RuntimeSessionId {
+            value: key.runtime_session.clone(),
+        },
+        session_generation: Generation { value: generation },
+        connectivity: SessionConnectivityState::Live,
+        activity: SessionActivityState::Idle,
+        project: format!("project-{}", key.deployment_scope),
+        cwd: format!("/work/{}", key.deployment_scope),
+        name: format!("{}-{}", key.adapter, key.runtime_session),
+        model: "provider/model".to_owned(),
+        spawn_origin: None,
+    }
+}
+
+fn projection_by_oracle_key(
+    registry: &SessionRegistry,
+) -> Result<HashMap<OracleSessionKey, SessionRecord>, String> {
+    let mut records = HashMap::new();
+    for record in registry.sessions() {
+        let key = OracleSessionKey {
+            adapter: record.identity.adapter_id.value.clone(),
+            deployment_scope: record.identity.deployment_scope.clone(),
+            runtime_session: record.identity.runtime_session_id.value.clone(),
+    };
+        if records.insert(key.clone(), record.clone()).is_some() {
+            return Err(format!(
+                "projection exposed duplicate independent key {key:?}"
+            ));
+        }
+    }
+    Ok(records)
+}
+
+/// Apply one report through the production append-then-fold writer. A success
+/// must already be visible in `registry`; cold replay is compared separately.
+async fn ingest_hot(
     storage: &RusqliteStorage,
     registry: &mut SessionRegistry,
-    cursor: &mut u64,
     report: SessionReport,
 ) -> Result<IngestResult, SessionError> {
-    let result = ingest_session_report(storage, registry, report).await?;
-    if let Some(appended_lsn) = event_lsn(&result) {
-        let events = storage
-            .read_after(&domain(), Lsn { value: *cursor })
-            .await
-            .expect("the in-memory test log can read committed session events");
-        for event in events {
-            registry.observe(&event)?;
-        }
-        *cursor = appended_lsn;
-    }
-    Ok(result)
+    ingest_session_report(storage, registry, report).await
 }
 
 fn report_at(
@@ -194,13 +243,12 @@ fn check_non_decreasing(previous: &mut u64, next: u64) -> Result<(), String> {
 
 async fn run_generation_monotonic_check(reports: &[SessionReport]) -> Result<(), String> {
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
-    let mut registry = SessionRegistry::new();
-    let mut cursor = 0;
+    let mut registry = SessionRegistry::new(domain()).unwrap();
     let mut expected_live_generation = 0;
 
     for report in reports.iter().cloned() {
         let reported_generation = report.session_generation.value;
-        let result = ingest_and_observe(&storage, &mut registry, &mut cursor, report).await;
+        let result = ingest_hot(&storage, &mut registry, report).await;
         match result {
             Ok(IngestResult::GenerationBumped { to_generation, .. }) => {
                 if to_generation.value <= expected_live_generation {
@@ -249,6 +297,148 @@ async fn run_generation_monotonic_check(reports: &[SessionReport]) -> Result<(),
     Ok(())
 }
 
+async fn run_multi_identity_check(actions: &[(usize, u64)]) -> Result<(), String> {
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut registry = SessionRegistry::new(domain()).map_err(|error| error.to_string())?;
+    let keys = collision_keys();
+    let mut oracle: HashMap<OracleSessionKey, OracleSessionState> = HashMap::new();
+
+    for &(key_index, reported_generation) in actions {
+        let addressed = keys[key_index].clone();
+        let before_registry = registry.clone();
+        let before = projection_by_oracle_key(&registry)?;
+        let previous = oracle.get(&addressed).cloned();
+        let result = ingest_session_report(
+            &storage,
+            &mut registry,
+            report_for_key(&addressed, reported_generation),
+        )
+        .await;
+
+        match previous {
+            None => {
+                if !matches!(&result, Ok(IngestResult::Registered { .. })) {
+                    return Err(format!(
+                        "first report for {addressed:?} did not register: {result:?}"
+                    ));
+                }
+                oracle.insert(
+                    addressed.clone(),
+                    OracleSessionState {
+                        live_generation: reported_generation,
+                        tombstoned_generations: BTreeSet::new(),
+                    },
+                );
+            }
+            Some(mut expected) if reported_generation > expected.live_generation => {
+                if !matches!(
+                    &result,
+                    Ok(IngestResult::GenerationBumped {
+                        from_generation,
+                        to_generation,
+                        ..
+                    }) if from_generation.value == expected.live_generation
+                        && to_generation.value == reported_generation
+                ) {
+                    return Err(format!(
+                        "strict bump for {addressed:?} had wrong result: {result:?}"
+                    ));
+                }
+                expected
+                    .tombstoned_generations
+                    .insert(expected.live_generation);
+                expected.live_generation = reported_generation;
+                oracle.insert(addressed.clone(), expected);
+            }
+            Some(expected) if reported_generation == expected.live_generation => {
+                if !matches!(&result, Ok(IngestResult::NoChange)) {
+                    return Err(format!(
+                        "equal report for {addressed:?} was not inert: {result:?}"
+                    ));
+                }
+                if registry != before_registry {
+                    return Err(format!(
+                        "equal report for {addressed:?} mutated the exact registry"
+                    ));
+                }
+            }
+            Some(expected) => {
+                if !matches!(
+                    &result,
+                    Err(SessionError::StaleGeneration { live, reported })
+                        if live.value == expected.live_generation
+                            && reported.value == reported_generation
+                ) {
+                    return Err(format!(
+                        "lower report for {addressed:?} had wrong result: {result:?}"
+                    ));
+                }
+                if registry != before_registry {
+                    return Err(format!(
+                        "lower report for {addressed:?} mutated the exact registry"
+                    ));
+                }
+            }
+        }
+
+        let after = projection_by_oracle_key(&registry)?;
+        if after.len() != oracle.len() {
+            return Err(format!(
+                "projection key count {} differs from oracle count {}",
+                after.len(),
+                oracle.len()
+            ));
+        }
+        for (other_key, before_record) in &before {
+            if other_key != &addressed && after.get(other_key) != Some(before_record) {
+                return Err(format!(
+                    "report for {addressed:?} interfered with {other_key:?}"
+                ));
+            }
+        }
+        for (key, expected) in &oracle {
+            let record = after
+                .get(key)
+                .ok_or_else(|| format!("missing live record for {key:?}"))?;
+            if record.identity.session_generation.value != expected.live_generation {
+                return Err(format!(
+                    "live generation for {key:?} is {}, expected {}",
+                    record.identity.session_generation.value, expected.live_generation
+                ));
+            }
+            for tombstoned_generation in &expected.tombstoned_generations {
+                if registry
+                    .get_tombstone(
+                        &AdapterId {
+                            value: key.adapter.clone(),
+                        },
+                        &key.deployment_scope,
+                        &RuntimeSessionId {
+                            value: key.runtime_session.clone(),
+                        },
+                        &Generation {
+                            value: *tombstoned_generation,
+                        },
+                    )
+                    .is_none()
+                {
+                    return Err(format!(
+                        "missing retained tombstone for {key:?} generation {tombstoned_generation}"
+                    ));
+                }
+            }
+        }
+    }
+
+    let rebuilt = rebuild_from_log(&storage, &domain())
+        .await
+        .map_err(|error| format!("multi-identity replay failed: {error}"))?;
+    if rebuilt != registry {
+        return Err("multi-identity hot registry differed from cold replay".to_owned());
+    }
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 100,
@@ -268,6 +458,23 @@ proptest! {
         })?;
     }
 
+    /// SessionIdentityTuple / isolation implementation evidence: reports vary
+    /// every canonical identity dimension across deliberate one-field
+    /// collisions. The independent oracle checks only the addressed tuple,
+    /// retained tombstones, generation non-decrease, and hot/cold equality.
+    #[test]
+    fn multi_identity_sequences_preserve_isolation_and_replay(
+        actions in any_multi_identity_sequence(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            run_multi_identity_check(&actions)
+                .await
+                .map_err(TestCaseError::fail)?;
+            Ok::<(), TestCaseError>(())
+        })?;
+    }
+
     /// Strict supersession: an identical equal-generation report is a no-op;
     /// a lower-generation report is rejected and leaves the live generation
     /// unchanged.
@@ -280,20 +487,19 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let storage = RusqliteStorage::open_in_memory().unwrap();
-            let mut registry = SessionRegistry::new();
-            let mut cursor = 0;
+            let mut registry = SessionRegistry::new(domain()).unwrap();
             let original = report_at(generation, connectivity, activity);
-            let registered = ingest_and_observe(&storage, &mut registry, &mut cursor, original.clone()).await.unwrap();
+            let registered = ingest_hot(&storage, &mut registry, original.clone()).await.unwrap();
             prop_assert!(matches!(registered, IngestResult::Registered { .. }), "first report must register");
             let before_equal = live_generation(&registry);
 
-            let equal = ingest_and_observe(&storage, &mut registry, &mut cursor, original.clone()).await.unwrap();
+            let equal = ingest_hot(&storage, &mut registry, original.clone()).await.unwrap();
             prop_assert!(matches!(equal, IngestResult::NoChange));
             prop_assert_eq!(live_generation(&registry), before_equal);
 
             let mut lower = original;
             lower.session_generation = Generation { value: generation - 1 };
-            let rejected = ingest_and_observe(&storage, &mut registry, &mut cursor, lower).await;
+            let rejected = ingest_hot(&storage, &mut registry, lower).await;
             prop_assert!(matches!(
                 rejected,
                 Err(SessionError::StaleGeneration { live, reported })
@@ -315,16 +521,15 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let storage = RusqliteStorage::open_in_memory().unwrap();
-            let mut registry = SessionRegistry::new();
-            let mut cursor = 0;
+            let mut registry = SessionRegistry::new(domain()).unwrap();
             let first = report_at(start, connectivity, activity);
-            ingest_and_observe(&storage, &mut registry, &mut cursor, first.clone()).await.unwrap();
+            ingest_hot(&storage, &mut registry, first.clone()).await.unwrap();
             let bumped = report_at(start + 1, connectivity, activity);
-            let result = ingest_and_observe(&storage, &mut registry, &mut cursor, bumped).await.unwrap();
+            let result = ingest_hot(&storage, &mut registry, bumped).await.unwrap();
             prop_assert!(matches!(result, IngestResult::GenerationBumped { .. }), "newer report must bump generation");
             let live_before_late = live_generation(&registry);
 
-            let late = ingest_and_observe(&storage, &mut registry, &mut cursor, first).await;
+            let late = ingest_hot(&storage, &mut registry, first).await;
             prop_assert!(
                 matches!(late, Err(SessionError::StaleGeneration { .. })),
                 "late report must be stale"
@@ -348,14 +553,13 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let storage = RusqliteStorage::open_in_memory().unwrap();
-            let mut registry = SessionRegistry::new();
-            let mut cursor = 0;
+            let mut registry = SessionRegistry::new(domain()).unwrap();
             let original = report_at(
                 generation.value,
                 SessionConnectivityState::Live,
                 SessionActivityState::Idle,
             );
-            ingest_and_observe(&storage, &mut registry, &mut cursor, original.clone()).await.unwrap();
+            ingest_hot(&storage, &mut registry, original.clone()).await.unwrap();
             let identity_before = registry
                 .get_live_session(&adapter(), "local", &runtime_session("session-1"))
                 .unwrap()
@@ -366,7 +570,7 @@ proptest! {
             relabeled.project = "project-b".to_owned();
             relabeled.cwd = "/work/b".to_owned();
             relabeled.name = "session-b".to_owned();
-            let result = ingest_and_observe(&storage, &mut registry, &mut cursor, relabeled).await.unwrap();
+            let result = ingest_hot(&storage, &mut registry, relabeled).await.unwrap();
             prop_assert!(matches!(result, IngestResult::Relabeled { .. }), "metadata-only report must relabel");
             let record = registry
                 .get_live_session(&adapter(), "local", &runtime_session("session-1"))
@@ -391,16 +595,24 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let storage = RusqliteStorage::open_in_memory().unwrap();
-            let mut registry = SessionRegistry::new();
-            let mut cursor = 0;
-            let generations = [start, start + first_increment, start + first_increment + second_increment];
+            let mut registry = SessionRegistry::new(domain()).unwrap();
+            let generations = [
+                start,
+                start + first_increment,
+                start + first_increment + second_increment,
+            ];
             for generation in generations {
-                ingest_and_observe(
+                ingest_hot(
                     &storage,
                     &mut registry,
-                    &mut cursor,
-                    report_at(generation, SessionConnectivityState::Live, SessionActivityState::Idle),
-                ).await.unwrap();
+                    report_at(
+                        generation,
+                        SessionConnectivityState::Live,
+                        SessionActivityState::Idle,
+                    ),
+                )
+                .await
+                .unwrap();
             }
             prop_assert_eq!(live_generation(&registry), generations[2]);
             for generation in &generations[..2] {
@@ -423,10 +635,9 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let storage = RusqliteStorage::open_in_memory().unwrap();
-            let mut live = SessionRegistry::new();
-            let mut cursor = 0;
+            let mut live = SessionRegistry::new(domain()).unwrap();
             for report in reports {
-                match ingest_and_observe(&storage, &mut live, &mut cursor, report).await {
+                match ingest_hot(&storage, &mut live, report).await {
                     Ok(_) | Err(SessionError::StaleGeneration { .. }) | Err(SessionError::InvalidTransition { .. }) => {},
                     Err(error) => return Err(TestCaseError::fail(format!("unexpected report rejection: {error}"))),
                 }
@@ -441,6 +652,70 @@ proptest! {
 }
 
 // ===== Mutation discipline =====
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FaultySessionKey {
+    adapter: String,
+    deployment_scope: String,
+    runtime_session: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OmittedIdentityDimension {
+    Adapter,
+    DeploymentScope,
+    RuntimeSession,
+}
+
+fn faulty_key(key: &OracleSessionKey, omitted: OmittedIdentityDimension) -> FaultySessionKey {
+    FaultySessionKey {
+        adapter: if matches!(omitted, OmittedIdentityDimension::Adapter) {
+            String::new()
+        } else {
+            key.adapter.clone()
+        },
+        deployment_scope: if matches!(omitted, OmittedIdentityDimension::DeploymentScope) {
+            String::new()
+        } else {
+            key.deployment_scope.clone()
+        },
+        runtime_session: if matches!(omitted, OmittedIdentityDimension::RuntimeSession) {
+            String::new()
+        } else {
+            key.runtime_session.clone()
+        },
+    }
+}
+
+fn independent_keys_are_injective<K: std::hash::Hash + Eq + std::fmt::Debug>(
+    keys: &[OracleSessionKey],
+    key_for: impl Fn(&OracleSessionKey) -> K,
+) -> Result<(), String> {
+    let mut seen = HashMap::new();
+    for key in keys {
+        let candidate = key_for(key);
+        if let Some(previous) = seen.insert(candidate, key) {
+            return Err(format!("identity alias between {previous:?} and {key:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn independent_identity_oracle_kills_each_dimension_omission_mutant() {
+    let keys = collision_keys();
+    assert!(independent_keys_are_injective(&keys, Clone::clone).is_ok());
+    for omitted in [
+        OmittedIdentityDimension::Adapter,
+        OmittedIdentityDimension::DeploymentScope,
+        OmittedIdentityDimension::RuntimeSession,
+    ] {
+        assert!(
+            independent_keys_are_injective(&keys, |key| faulty_key(key, omitted)).is_err(),
+            "oracle failed to detect {omitted:?} omission"
+        );
+    }
+}
 
 /// Mutant: models a registry whose generation-update action overwrites the
 /// live generation for every report, including an older report. This is the
