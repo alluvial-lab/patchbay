@@ -68,22 +68,13 @@ pub struct RecoveredSessionRegistry {
     pub checkpoint_lsn: u64,
     pub recovered_through_lsn: u64,
     pub replayed_event_count: usize,
+    pub checkpoint_rejected: bool,
 }
 
 /// Encode a complete private checkpoint payload.
 #[must_use]
 pub fn encode_stored_session_checkpoint(checkpoint: &StoredSessionCheckpoint) -> Vec<u8> {
     encode_checkpoint(CheckpointKind::Session, &checkpoint.encode_to_vec())
-}
-
-/// Test/repair convenience for a live-only snapshot. Production periodic writes
-/// use [`encode_stored_session_checkpoint`] so retained tombstones are included.
-#[must_use]
-pub fn encode_session_checkpoint(snapshot: &SessionSnapshot) -> Vec<u8> {
-    encode_stored_session_checkpoint(&StoredSessionCheckpoint {
-        snapshot: Some(snapshot.clone()),
-        tombstones: Vec::new(),
-    })
 }
 
 pub fn decode_compatible_session_checkpoint(
@@ -278,13 +269,57 @@ pub async fn recover_session_registry<S: Storage>(
     })
     .await?;
     let checkpoint_lsn = recovery.start_lsn()?;
-    let mut registry = match recovery.snapshot {
-        Some(snapshot) => snapshot.value.registry,
-        None => SessionRegistry::new(authority_domain_id.clone())?,
-    };
-    let replayed_event_count = recovery.tail.len();
-    let mut recovered_through_lsn = checkpoint_lsn;
-    for event in recovery.tail {
+    let used_checkpoint = recovery.snapshot.is_some();
+    let registry = recovery.snapshot.map_or_else(
+        || SessionRegistry::new(authority_domain_id.clone()),
+        |snapshot| Ok(snapshot.value.registry),
+    )?;
+    match fold_session_tail(registry, recovery.tail, checkpoint_lsn) {
+        Ok((registry, recovered_through_lsn, replayed_event_count)) => {
+            Ok(RecoveredSessionRegistry {
+                registry,
+                checkpoint_lsn,
+                recovered_through_lsn,
+                replayed_event_count,
+                checkpoint_rejected: false,
+            })
+        }
+        Err(checkpoint_error) if used_checkpoint => {
+            // A checkpoint is disposable derived data. Its internal fields may
+            // validate yet still disagree with the authoritative post-anchor
+            // tail. Retry from LSN 0 and report corruption only if that strict
+            // full replay also fails.
+            let full = recover(storage, authority_domain_id, |_| {
+                None::<CompatibleSessionCheckpoint>
+            })
+            .await?;
+            let full_registry = SessionRegistry::new(authority_domain_id.clone())?;
+            let (registry, recovered_through_lsn, replayed_event_count) =
+                fold_session_tail(full_registry, full.tail, 0).map_err(|full_error| {
+                    SessionError::CorruptLog(format!(
+                        "session checkpoint tail rejected ({checkpoint_error}); full replay also rejected ({full_error})"
+                    ))
+                })?;
+            Ok(RecoveredSessionRegistry {
+                registry,
+                checkpoint_lsn: 0,
+                recovered_through_lsn,
+                replayed_event_count,
+                checkpoint_rejected: true,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn fold_session_tail(
+    mut registry: SessionRegistry,
+    tail: Vec<patchbay_core::storage::RecordedEvent>,
+    start_lsn: u64,
+) -> Result<(SessionRegistry, u64, usize), SessionError> {
+    let replayed_event_count = tail.len();
+    let mut recovered_through_lsn = start_lsn;
+    for event in tail {
         registry.observe(&event)?;
         recovered_through_lsn = event
             .event_id
@@ -293,12 +328,7 @@ pub async fn recover_session_registry<S: Storage>(
             .expect("generic recovery validated every tail event LSN")
             .value;
     }
-    Ok(RecoveredSessionRegistry {
-        registry,
-        checkpoint_lsn,
-        recovered_through_lsn,
-        replayed_event_count,
-    })
+    Ok((registry, recovered_through_lsn, replayed_event_count))
 }
 
 fn validate_checkpoint_lockdown(
@@ -317,8 +347,16 @@ fn validate_checkpoint_lockdown(
             Err(SessionCheckpointRejection::Semantic)
         };
     }
-    if lockdown.reason_code.is_empty()
-        || lockdown.entered_at.is_none()
+    if lockdown.reason_code.len() > 64
+        || lockdown.reason_code.is_empty()
+        || !lockdown
+            .reason_code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        || lockdown.entered_at.as_ref().is_none_or(|timestamp| {
+            !(-62_135_596_800..=253_402_300_799).contains(&timestamp.seconds)
+                || !(0..1_000_000_000).contains(&timestamp.nanos)
+        })
         || lockdown.entered_by.is_none()
         || lockdown.entered_event_id.as_ref().is_none_or(|event_id| {
             event_id.authority_domain_id.as_ref() != Some(expected_domain)
@@ -408,7 +446,10 @@ mod tests {
                 authority_domain_id: Some(domain("main")),
                 lsn: Some(Lsn { value: 7 }),
             },
-            payload: encode_session_checkpoint(&snapshot),
+            payload: encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+                snapshot: Some(snapshot),
+                tombstones: Vec::new(),
+            }),
         }
     }
 

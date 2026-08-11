@@ -15,7 +15,7 @@ use patchbay_contracts::patchbay::{
     ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionReport, SessionReportSourceCursor,
     SessionSnapshot, SessionState, SnapshotViewKind,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
+    StoredEventKind, StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome, SubmitRequest, TargetScope,
     TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
@@ -33,7 +33,7 @@ use patchbay_core_server::{
     issuer::{OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER},
     rpc::{adapter_control_service_server::AdapterControlService, control_service_server::ControlService},
     service::ControlServiceImpl,
-    snapshot::{decode_compatible_session_checkpoint, encode_session_checkpoint},
+    snapshot::{decode_compatible_session_checkpoint, encode_stored_session_checkpoint},
     state::ProjectionState,
 };
 use prost::Message;
@@ -1116,7 +1116,10 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         .write_snapshot(
             &authority_domain_id,
             Lsn { value: cached_lsn },
-            encode_session_checkpoint(&cached_checkpoint),
+            encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+                snapshot: Some(cached_checkpoint.clone()),
+                tombstones: Vec::new(),
+            }),
         )
         .await
         .map_err(|error| error.to_string())?;

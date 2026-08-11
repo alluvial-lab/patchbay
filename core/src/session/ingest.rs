@@ -406,11 +406,14 @@ pub(crate) fn validate_source_cursor(
     cursor: &SessionReportSourceCursor,
     context: &str,
 ) -> Result<(), SessionError> {
-    cursor.adapter_generation.ok_or_else(|| {
-        SessionError::CorruptRecord(format!(
-            "{context} source_cursor is missing adapter_generation"
-        ))
-    })?;
+    cursor
+        .adapter_generation
+        .filter(|generation| generation.value > 0)
+        .ok_or_else(|| {
+            SessionError::CorruptRecord(format!(
+                "{context} source_cursor is missing a positive adapter_generation"
+            ))
+        })?;
     if cursor.revision == 0 {
         return Err(SessionError::CorruptRecord(format!(
             "{context} source_cursor revision is zero"

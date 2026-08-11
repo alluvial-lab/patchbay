@@ -242,7 +242,7 @@ The separately protected trust boundary used to establish or recover the operato
 
 ## Snapshot
 
-An authoritative state view used to recover from missed events, reconnects, and stale UI state. Durable session checkpoints are disposable derived snapshots stored in a private typed, versioned envelope containing complete live `SessionRegistry` state plus retained generation tombstones. Only exact domain/core-generation/LSN and semantic validation may seed session tail replay; legacy undiscriminated or otherwise incompatible bytes replay sessions from LSN 0. The best-effort latest-only writer targets each 256 observed events under healthy scheduling, but sibling projections still full-replay, so this is not a whole-core recovery bound. No checkpoint, replica, or projection is an independent ordering or authority source.
+An authoritative state view used to recover from missed events, reconnects, and stale UI state. Durable session checkpoints are disposable derived snapshots stored in a private typed, versioned envelope containing complete live `SessionRegistry` state plus retained generation tombstones. Only exact domain/core-generation/LSN and semantic validation may seed session tail replay; legacy undiscriminated, otherwise incompatible bytes, or a derived seed that disagrees with its authoritative tail replay sessions from LSN 0. The best-effort latest-only writer targets each 256 observed events under healthy scheduling, but sibling projections still full-replay, so this is not a whole-core recovery bound. No checkpoint, replica, or projection is an independent ordering or authority source.
 
 ## Stale
 

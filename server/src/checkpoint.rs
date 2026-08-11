@@ -1,7 +1,7 @@
 use std::{
     num::NonZeroU64,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -76,7 +76,8 @@ pub trait CheckpointObserver: Send + Sync {
         stage: CheckpointFailureStage,
         attempted_lsn: Option<u64>,
         consecutive_failures: u32,
-        error: &str,
+        retryable: bool,
+        error_class: &'static str,
     );
 }
 
@@ -89,15 +90,16 @@ impl CheckpointObserver for StderrCheckpointObserver {
         stage: CheckpointFailureStage,
         attempted_lsn: Option<u64>,
         consecutive_failures: u32,
-        error: &str,
+        retryable: bool,
+        error_class: &'static str,
     ) {
-        let bounded: String = error.chars().take(256).collect();
         eprintln!(
-            "{{\"event\":\"session_checkpoint_failed\",\"stage\":\"{}\",\"attempted_lsn\":{},\"consecutive_failures\":{},\"error\":{}}}",
+            "{{\"event\":\"session_checkpoint_failed\",\"stage\":\"{}\",\"attempted_lsn\":{},\"consecutive_failures\":{},\"retryable\":{},\"error_class\":\"{}\"}}",
             stage_name(stage),
             attempted_lsn.map_or_else(|| "null".to_owned(), |lsn| lsn.to_string()),
             consecutive_failures,
-            serde_json::to_string(&bounded).unwrap_or_else(|_| "\"redacted\"".to_owned())
+            retryable,
+            error_class,
         );
     }
 }
@@ -112,6 +114,16 @@ pub struct CheckpointWriterError {
 }
 
 impl CheckpointWriterError {
+    fn error_class(&self) -> &'static str {
+        if self.stage == CheckpointFailureStage::Materialize {
+            "projection_invalid"
+        } else if self.retryable {
+            "storage_transient"
+        } else {
+            "storage_permanent"
+        }
+    }
+
     fn storage(
         stage: CheckpointFailureStage,
         attempted_lsn: Option<u64>,
@@ -157,6 +169,9 @@ pub struct SessionCheckpointWriter<S> {
     policy: SessionCheckpointPolicy,
     observer: Arc<dyn CheckpointObserver>,
     consecutive_failures: AtomicU32,
+    last_examined_head: AtomicU64,
+    last_known_checkpoint_lsn: AtomicU64,
+    force_rewrite: AtomicBool,
 }
 
 impl<S> SessionCheckpointWriter<S>
@@ -171,6 +186,8 @@ where
         policy: SessionCheckpointPolicy,
         observer: Arc<dyn CheckpointObserver>,
     ) -> Result<Self, &'static str> {
+        let last_known_checkpoint_lsn = state.session_recovery_checkpoint_lsn();
+        let force_rewrite = state.session_checkpoint_was_rejected();
         Ok(Self {
             storage,
             state,
@@ -179,14 +196,36 @@ where
             policy: policy.validate()?,
             observer,
             consecutive_failures: AtomicU32::new(0),
+            last_examined_head: AtomicU64::new(0),
+            last_known_checkpoint_lsn: AtomicU64::new(last_known_checkpoint_lsn),
+            force_rewrite: AtomicBool::new(force_rewrite),
         })
     }
 
     pub async fn run_once(&self) -> Result<CheckpointTickOutcome, CheckpointWriterError> {
         let result = self.run_once_inner().await;
         match &result {
-            Ok(_) => {
+            Ok(outcome) => {
                 self.consecutive_failures.store(0, Ordering::Relaxed);
+                match outcome {
+                    CheckpointTickOutcome::EmptyLog => {}
+                    CheckpointTickOutcome::NotDue {
+                        checkpoint_lsn,
+                        current_lsn,
+                    } => {
+                        self.last_known_checkpoint_lsn
+                            .store(*checkpoint_lsn, Ordering::Relaxed);
+                        self.last_examined_head
+                            .store(*current_lsn, Ordering::Relaxed);
+                    }
+                    CheckpointTickOutcome::Written { checkpoint_lsn, .. } => {
+                        self.last_known_checkpoint_lsn
+                            .store(*checkpoint_lsn, Ordering::Relaxed);
+                        self.last_examined_head
+                            .store(*checkpoint_lsn, Ordering::Relaxed);
+                        self.force_rewrite.store(false, Ordering::Relaxed);
+                    }
+                }
             }
             Err(error) => {
                 let failures = self
@@ -197,7 +236,8 @@ where
                     error.stage,
                     error.attempted_lsn,
                     failures,
-                    &error.message,
+                    error.retryable,
+                    error.error_class(),
                 );
             }
         }
@@ -216,6 +256,16 @@ where
         if current_lsn == 0 {
             drop(decision_guard);
             return Ok(CheckpointTickOutcome::EmptyLog);
+        }
+        if !self.force_rewrite.load(Ordering::Relaxed)
+            && self.last_examined_head.load(Ordering::Relaxed) == current_lsn
+        {
+            let checkpoint_lsn = self.last_known_checkpoint_lsn.load(Ordering::Relaxed);
+            drop(decision_guard);
+            return Ok(CheckpointTickOutcome::NotDue {
+                checkpoint_lsn,
+                current_lsn,
+            });
         }
 
         let candidate = self
@@ -242,7 +292,9 @@ where
             .and_then(|compatible| compatible.snapshot.snapshot_lsn)
             .map_or(0, |lsn| lsn.value);
 
-        if current_lsn.saturating_sub(prior_lsn) < self.policy.events_per_checkpoint.get() {
+        if !self.force_rewrite.load(Ordering::Relaxed)
+            && current_lsn.saturating_sub(prior_lsn) < self.policy.events_per_checkpoint.get()
+        {
             drop(decision_guard);
             return Ok(CheckpointTickOutcome::NotDue {
                 checkpoint_lsn: prior_lsn,
@@ -369,9 +421,11 @@ mod tests {
         }
     }
 
+    type FailureObservation = (CheckpointFailureStage, Option<u64>, u32, bool, &'static str);
+
     #[derive(Default)]
     struct RecordingObserver {
-        failures: StdMutex<Vec<(CheckpointFailureStage, Option<u64>, u32)>>,
+        failures: StdMutex<Vec<FailureObservation>>,
     }
 
     impl CheckpointObserver for RecordingObserver {
@@ -380,12 +434,15 @@ mod tests {
             stage: CheckpointFailureStage,
             attempted_lsn: Option<u64>,
             consecutive_failures: u32,
-            _error: &str,
+            retryable: bool,
+            error_class: &'static str,
         ) {
             self.failures.lock().expect("observer lock").push((
                 stage,
                 attempted_lsn,
                 consecutive_failures,
+                retryable,
+                error_class,
             ));
         }
     }
@@ -603,9 +660,77 @@ mod tests {
             fresh.lockdown_active()
         );
 
+        // Mutate an internally well-formed checkpoint so it disagrees with
+        // the authoritative tail's previous cursor. Recovery must discard the
+        // checkpoint, replay from zero, and force a prompt replacement even
+        // though the normal event gap is below the policy threshold.
+        let mut inconsistent = compatible.snapshot;
+        inconsistent.sessions[0]
+            .last_source_cursor
+            .as_mut()
+            .unwrap()
+            .revision = 99;
+        storage
+            .write_snapshot(
+                &domain(),
+                Lsn { value: 2 },
+                encode_stored_session_checkpoint(
+                    &patchbay_contracts::patchbay::StoredSessionCheckpoint {
+                        snapshot: Some(inconsistent),
+                        tombstones: compatible
+                            .registry
+                            .tombstones()
+                            .map(|tombstone| {
+                                patchbay_contracts::patchbay::SessionCheckpointTombstone {
+                                    adapter_id: Some(tombstone.adapter_id.clone()),
+                                    deployment_scope: tombstone.deployment_scope.clone(),
+                                    runtime_session_id: Some(tombstone.runtime_session_id.clone()),
+                                    generation: Some(tombstone.superseded_generation),
+                                    superseded_at_lsn: Some(Lsn {
+                                        value: tombstone.superseded_at_lsn,
+                                    }),
+                                }
+                            })
+                            .collect(),
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+        let fallback = crate::snapshot::recover_session_registry(&storage, &domain(), &generation)
+            .await
+            .unwrap();
+        assert!(fallback.checkpoint_rejected);
+        assert_eq!(fallback.checkpoint_lsn, 0);
+        assert_eq!(fallback.replayed_event_count, 3);
+        assert_eq!(
+            fallback.registry.sessions().collect::<Vec<_>>(),
+            fresh.sessions().collect::<Vec<_>>()
+        );
+
         let restarted = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
-        assert_eq!(restarted.session_recovery_checkpoint_lsn(), 2);
-        assert_eq!(restarted.session_replayed_event_count(), 1);
+        assert_eq!(restarted.session_recovery_checkpoint_lsn(), 0);
+        assert_eq!(restarted.session_replayed_event_count(), 3);
+        assert!(restarted.session_checkpoint_was_rejected());
+        let repair_writer = SessionCheckpointWriter::new(
+            storage.clone(),
+            restarted,
+            domain(),
+            Arc::new(TestClock::new(prost_types::Timestamp {
+                seconds: 6,
+                nanos: 0,
+            })),
+            SessionCheckpointPolicy::default(),
+            Arc::new(RecordingObserver::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            repair_writer.run_once().await.unwrap(),
+            CheckpointTickOutcome::Written {
+                prior_lsn: 2,
+                checkpoint_lsn: 3,
+            }
+        );
     }
 
     #[derive(Clone)]
@@ -723,7 +848,13 @@ mod tests {
             .is_none());
         assert_eq!(
             observer.failures.lock().unwrap().as_slice(),
-            &[(CheckpointFailureStage::Write, Some(2), 1)]
+            &[(
+                CheckpointFailureStage::Write,
+                Some(2),
+                1,
+                true,
+                "storage_transient",
+            )]
         );
         assert_eq!(
             writer.run_once().await.unwrap(),

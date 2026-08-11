@@ -399,6 +399,14 @@ async fn malformed_report_fields_fail_before_append() {
         .adapter_generation = None;
     invalid_reports.push(("adapter_generation", missing_adapter_generation));
 
+    let mut zero_adapter_generation = report(1, 4, 1);
+    zero_adapter_generation
+        .source_cursor
+        .as_mut()
+        .unwrap()
+        .adapter_generation = Some(Generation { value: 0 });
+    invalid_reports.push(("positive adapter_generation", zero_adapter_generation));
+
     let mut zero_revision = report(1, 4, 1);
     zero_revision.source_cursor.as_mut().unwrap().revision = 0;
     invalid_reports.push(("revision is zero", zero_revision));

@@ -106,14 +106,22 @@ impl DiagnosticsProjection {
     pub fn new(authority_domain_id: AuthorityDomainId) -> Result<Self, DiagnosticsError> {
         let sessions = SessionRegistry::new(authority_domain_id)
             .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
-        Ok(Self {
+        Ok(Self::with_session_registry(sessions))
+    }
+
+    /// Seed the embedded session view from the same accepted checkpoint as the
+    /// canonical session projection while replaying all diagnostics-owned
+    /// sibling state from the authoritative log.
+    #[must_use]
+    pub fn with_session_registry(sessions: SessionRegistry) -> Self {
+        Self {
             commands: HashMap::new(),
             adapters: HashMap::new(),
             current_process_adapters: HashMap::new(),
             lifecycle: HashMap::new(),
             sessions,
             recent_diagnostics: HashMap::new(),
-        })
+        }
     }
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
@@ -138,12 +146,16 @@ impl DiagnosticsProjection {
             ));
         }
         // The embedded session view owns exact-envelope classification for its
-        // session and lockdown events. Feed every concrete durable event before
-        // diagnostics-specific dispatch so a sibling-kind re-encoding cannot
-        // bypass that ledger and recovery observes the same lockdown clamp.
-        self.sessions
-            .observe(event)
-            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        // session and lockdown events. A compact checkpoint cannot retain that
+        // envelope ledger for the covered prefix, so skip only the already
+        // validated prefix and continue strict classification for every tail
+        // event. Diagnostics-owned sibling state still folds the full log.
+        let lsn = event.event_id.lsn.as_ref().expect("validated above").value;
+        if self.sessions.covered_through_lsn().is_none_or(|covered| lsn > covered) {
+            self.sessions
+                .observe(event)
+                .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        }
         match kind {
             StoredEventKind::Operation => {
                 let accepted = AcceptedOperation::decode(event.payload.payload.as_slice())

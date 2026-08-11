@@ -138,15 +138,26 @@ impl SessionRegistry {
                 runtime_session_id: tombstone.runtime_session_id.clone(),
                 generation: tombstone.superseded_generation,
             };
-            if sessions.get(&SessionLiveKey {
+            let live_key = SessionLiveKey {
                 adapter_id: key.adapter_id.clone(),
                 deployment_scope: key.deployment_scope.clone(),
                 runtime_session_id: key.runtime_session_id.clone(),
-            }).is_some_and(|record| {
-                record.identity.session_generation == tombstone.superseded_generation
-            }) {
+            };
+            let live = sessions.get(&live_key).ok_or_else(|| {
+                SessionError::CorruptRecord(
+                    "session checkpoint contains a tombstone without a current live slot"
+                        .to_owned(),
+                )
+            })?;
+            if tombstone.superseded_generation.value >= live.identity.session_generation.value
+                || tombstone.superseded_at_lsn
+                    > live
+                        .last_authoritative_lsn
+                        .expect("checkpoint live record validated above")
+            {
                 return Err(SessionError::CorruptRecord(
-                    "session checkpoint tombstones a current live generation".to_owned(),
+                    "session checkpoint tombstone is not earlier than its current live generation"
+                        .to_owned(),
                 ));
             }
             if retained.insert(key, tombstone).is_some() {
@@ -155,6 +166,29 @@ impl SessionRegistry {
                 ));
             }
         }
+        let mut lineages: HashMap<SessionLiveKey, Vec<(u64, u64)>> = HashMap::new();
+        for tombstone in retained.values() {
+            lineages
+                .entry(SessionLiveKey {
+                    adapter_id: tombstone.adapter_id.clone(),
+                    deployment_scope: tombstone.deployment_scope.clone(),
+                    runtime_session_id: tombstone.runtime_session_id.clone(),
+                })
+                .or_default()
+                .push((
+                    tombstone.superseded_generation.value,
+                    tombstone.superseded_at_lsn,
+                ));
+        }
+        for lineage in lineages.values_mut() {
+            lineage.sort_unstable();
+            if lineage.windows(2).any(|pair| pair[0].1 >= pair[1].1) {
+                return Err(SessionError::CorruptRecord(
+                    "session checkpoint tombstone lineage has non-increasing event LSNs".to_owned(),
+                ));
+            }
+        }
+
         if lockdown_active
             && sessions.values().any(|record| {
                 record.state.connectivity == SessionConnectivityState::Live as i32

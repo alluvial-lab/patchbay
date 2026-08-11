@@ -22,7 +22,7 @@ use patchbay_contracts::patchbay::{
     ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
     SessionActivityState,
     SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome,
+    StoredEventKind, StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome,
     SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
     VerifyOperatorPasswordRequest, diagnostics_query, query_diagnostics_response,
 };
@@ -59,7 +59,7 @@ use patchbay_core_server::{
     service::{
         map_storage_error_to_status, ControlServiceImpl, CoreSecretInterceptor, CORE_SECRET_HEADER,
     },
-    snapshot::encode_session_checkpoint,
+    snapshot::encode_stored_session_checkpoint,
     state::ProjectionState,
 };
 use prost::Message;
@@ -1815,7 +1815,10 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let checkpoint_lsn = checkpoint.snapshot_lsn.unwrap();
     let persisted_generation = checkpoint.core_generation.unwrap();
     let checkpoint_payload = checkpoint.encode_to_vec();
-    let stored_checkpoint = encode_session_checkpoint(&checkpoint);
+    let stored_checkpoint = encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+        snapshot: Some(checkpoint.clone()),
+        tombstones: Vec::new(),
+    });
     storage
         .write_snapshot(&domain(), checkpoint_lsn, stored_checkpoint)
         .await
@@ -1869,7 +1872,10 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
             .write_snapshot(
                 &domain(),
                 Lsn { value: 1 },
-                encode_session_checkpoint(&stale),
+                encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+                    snapshot: Some(stale),
+                    tombstones: Vec::new(),
+                }),
             )
             .await,
         Err(StorageError::SnapshotStale(1))
@@ -1908,7 +1914,10 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
             .write_snapshot(
                 &domain(),
                 checkpoint_lsn,
-                encode_session_checkpoint(&incompatible),
+                encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+                    snapshot: Some(incompatible),
+                    tombstones: Vec::new(),
+                }),
             )
             .await
             .unwrap();

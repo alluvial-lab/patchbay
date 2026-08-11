@@ -64,6 +64,7 @@ pub struct ProjectionState {
     last_applied_lsn: Arc<Mutex<u64>>,
     session_recovery_checkpoint_lsn: u64,
     session_replayed_event_count: usize,
+    session_checkpoint_was_rejected: bool,
     decision_gate: CoreDecisionGate,
 }
 
@@ -115,6 +116,7 @@ impl ProjectionState {
         let session_recovery_checkpoint_lsn = recovered_sessions.checkpoint_lsn;
         let session_replayed_event_count = recovered_sessions.replayed_event_count;
         let session_recovered_through_lsn = recovered_sessions.recovered_through_lsn;
+        let session_checkpoint_was_rejected = recovered_sessions.checkpoint_rejected;
 
         let mut authority = AuthorityRegistry::new();
         let mut sessions = recovered_sessions.registry;
@@ -122,8 +124,7 @@ impl ProjectionState {
         let mut adapters = AdapterRegistry::new();
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
-        let mut diagnostics = DiagnosticsProjection::new(authority_domain_id.clone())
-            .map_err(|error| error.to_string())?;
+        let mut diagnostics = DiagnosticsProjection::with_session_registry(sessions.clone());
         let mut security_posture = SecurityPostureProjection::new();
         let mut operators = OperatorRegistry::new();
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
@@ -176,6 +177,7 @@ impl ProjectionState {
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
             session_recovery_checkpoint_lsn,
             session_replayed_event_count,
+            session_checkpoint_was_rejected,
             decision_gate,
         })
     }
@@ -302,6 +304,11 @@ impl ProjectionState {
     #[must_use]
     pub fn session_replayed_event_count(&self) -> usize {
         self.session_replayed_event_count
+    }
+
+    #[must_use]
+    pub fn session_checkpoint_was_rejected(&self) -> bool {
+        self.session_checkpoint_was_rejected
     }
 
     pub async fn current_runtime_session_count(&self) -> u32 {
@@ -584,6 +591,9 @@ impl ProjectionState {
         let events = storage
             .read_after(authority_domain_id, Lsn { value: *cursor })
             .await?;
+        if events.is_empty() {
+            return Ok(());
+        }
 
         // A catch-up tail is one aggregate projection transaction. Clone every
         // affected view, fold and validate the complete returned suffix, then
