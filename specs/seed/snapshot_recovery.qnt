@@ -4,10 +4,11 @@
 // docs/VERIFICATION.md "Snapshot convergence" and "Crash recovery" sections.
 //
 // DEFERRAL REASON:
-// The snapshot/recovery state machine is large (8+ model variables, recovery phases,
-// crash/restart triggers, and snapshot/event-prefix transitions) and warrants its own
-// implementation item rather than inflating the seed stride. The property-ids are
-// reserved here so downstream work can promote them one at a time.
+// This is a command-oriented abstract whole-core draft. It deliberately does not model
+// the production session-only format-2 checkpoint, retained session tombstones/source
+// cursors, event-gap scheduler, latest-row replacement, or retry loop. Those behaviors
+// have implementation evidence only; the property ids below remain reserved until a
+// trace-faithful whole-core model includes the elided projections and failure boundary.
 //
 // Model variables trace to VERIFICATION normative-variable set:
 //   - LSN, Cursor, SnapshotRevision, AuthorityDomain, CoreGeneration
@@ -351,7 +352,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view
   // }
   // @promotion {
@@ -364,7 +365,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   applied snapshots do not change authority when origin domain or core generation differs
   // }
   // @promotion {
@@ -377,7 +378,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it
   // }
   // @promotion {
@@ -390,7 +391,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view
   // }
   // @promotion {
@@ -403,7 +404,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   after ungraceful restart and replay, accepted pre-crash command entries remain reconstructable in-memory
   // }
   // @promotion {
@@ -416,7 +417,7 @@ module snapshot_recovery {
   //   bounds:      { TBD }
   //   expected:    pass
   //   proto_fields: [none]
-  //   deferral_reason: The snapshot/recovery state machine is large (8+ model variables, recovery phases, crash/restart triggers) and warrants its own implementation item rather than inflating the seed stride. The property-ids are reserved here so downstream work can promote them one at a time.
+  //   deferral_reason: This command-oriented abstract whole-core draft does not model the production session-only checkpoint writer, complete SessionRegistry payload, scheduling, or failure/retry boundary; promotion waits for a trace-faithful whole-core model.
   //   semantics:   replaying the same committed prefix does not produce additional state divergence
   // }
 }

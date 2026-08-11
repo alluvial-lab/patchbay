@@ -52,6 +52,7 @@ pub struct SessionTombstone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRegistry {
     authority_domain_id: AuthorityDomainId,
+    covered_through_lsn: Option<u64>,
     applied_events: BTreeMap<u64, StoredEventPayload>,
     sessions: HashMap<SessionLiveKey, SessionRecord>,
     tombstones: HashMap<SessionTombstoneKey, SessionTombstone>,
@@ -88,6 +89,7 @@ impl SessionRegistry {
         }
         Ok(Self {
             authority_domain_id,
+            covered_through_lsn: None,
             applied_events: BTreeMap::new(),
             sessions: HashMap::new(),
             tombstones: HashMap::new(),
@@ -95,10 +97,94 @@ impl SessionRegistry {
         })
     }
 
+    /// Restore a complete session projection from a validated checkpoint.
+    ///
+    /// The covered prefix is compact: prior event bytes are not retained, so
+    /// any direct re-feed at or below the anchor fails closed. Exact envelope
+    /// redelivery remains available for tail events observed after hydration.
+    pub fn from_checkpoint(
+        authority_domain_id: AuthorityDomainId,
+        checkpoint_lsn: u64,
+        live_records: Vec<SessionRecord>,
+        tombstones: Vec<SessionTombstone>,
+        lockdown_active: bool,
+    ) -> Result<Self, SessionError> {
+        if authority_domain_id.value.is_empty() {
+            return Err(SessionError::EmptyAuthorityDomain);
+        }
+        if checkpoint_lsn == 0 {
+            return Err(SessionError::CorruptRecord(
+                "session checkpoint has a zero LSN".to_owned(),
+            ));
+        }
+
+        let mut sessions = HashMap::new();
+        for record in live_records {
+            validate_checkpoint_record(checkpoint_lsn, &record)?;
+            let key = live_key(&record.identity);
+            if sessions.insert(key, record).is_some() {
+                return Err(SessionError::CorruptRecord(
+                    "session checkpoint contains duplicate live session identities".to_owned(),
+                ));
+            }
+        }
+
+        let mut retained = HashMap::new();
+        for tombstone in tombstones {
+            validate_checkpoint_tombstone(checkpoint_lsn, &tombstone)?;
+            let key = SessionTombstoneKey {
+                adapter_id: tombstone.adapter_id.clone(),
+                deployment_scope: tombstone.deployment_scope.clone(),
+                runtime_session_id: tombstone.runtime_session_id.clone(),
+                generation: tombstone.superseded_generation,
+            };
+            if sessions.get(&SessionLiveKey {
+                adapter_id: key.adapter_id.clone(),
+                deployment_scope: key.deployment_scope.clone(),
+                runtime_session_id: key.runtime_session_id.clone(),
+            }).is_some_and(|record| {
+                record.identity.session_generation == tombstone.superseded_generation
+            }) {
+                return Err(SessionError::CorruptRecord(
+                    "session checkpoint tombstones a current live generation".to_owned(),
+                ));
+            }
+            if retained.insert(key, tombstone).is_some() {
+                return Err(SessionError::CorruptRecord(
+                    "session checkpoint contains duplicate tombstone identities".to_owned(),
+                ));
+            }
+        }
+        if lockdown_active
+            && sessions.values().any(|record| {
+                record.state.connectivity == SessionConnectivityState::Live as i32
+            })
+        {
+            return Err(SessionError::CorruptRecord(
+                "active-lockdown checkpoint contains a live session".to_owned(),
+            ));
+        }
+
+        Ok(Self {
+            authority_domain_id,
+            covered_through_lsn: Some(checkpoint_lsn),
+            applied_events: BTreeMap::new(),
+            sessions,
+            tombstones: retained,
+            lockdown_active,
+        })
+    }
+
     /// Return the authority domain whose log this projection folds.
     #[must_use]
     pub fn authority_domain_id(&self) -> &AuthorityDomainId {
         &self.authority_domain_id
+    }
+
+    /// Return the compact checkpoint prefix, when this registry was hydrated.
+    #[must_use]
+    pub fn covered_through_lsn(&self) -> Option<u64> {
+        self.covered_through_lsn
     }
 
     pub(crate) fn require_authority_domain(
@@ -121,6 +207,15 @@ impl SessionRegistry {
     /// no-ops. Exact re-delivery of an already applied owned envelope is inert;
     /// reusing its domain-local LSN for different content is corrupt history.
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), SessionError> {
+        if let Some(covered_through_lsn) = self.covered_through_lsn {
+            let (event_domain, event_lsn) = event_identity(event)?;
+            self.require_authority_domain(event_domain)?;
+            if event_lsn <= covered_through_lsn {
+                return Err(SessionError::CorruptLog(format!(
+                    "session checkpoint covers LSN {event_lsn}; compacted event bytes cannot be authenticated for redelivery through {covered_through_lsn}"
+                )));
+            }
+        }
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
             SessionError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
         })?;
@@ -335,6 +430,11 @@ impl SessionRegistry {
             deployment_scope: deployment_scope.to_owned(),
             runtime_session_id: runtime_session_id.clone(),
         })
+    }
+
+    /// Iterate over retained superseded-generation facts.
+    pub fn tombstones(&self) -> impl Iterator<Item = &SessionTombstone> {
+        self.tombstones.values()
     }
 
     /// Look up the retained tombstone for one session identity and generation.
@@ -742,6 +842,63 @@ impl SessionRegistry {
         }
         Ok(record)
     }
+}
+
+fn validate_checkpoint_record(
+    checkpoint_lsn: u64,
+    record: &SessionRecord,
+) -> Result<(), SessionError> {
+    if record.identity.adapter_id.value.is_empty()
+        || record.identity.deployment_scope.is_empty()
+        || record.identity.runtime_session_id.value.is_empty()
+        || record.identity.session_generation.value == 0
+    {
+        return Err(SessionError::CorruptRecord(
+            "session checkpoint contains malformed live identity".to_owned(),
+        ));
+    }
+    validate_state(&record.state, "session checkpoint", checkpoint_lsn)?;
+    if record.state.connectivity == SessionConnectivityState::Unspecified as i32
+        || record.state.activity == SessionActivityState::Unspecified as i32
+        || record.tombstoned
+        || record.superseded_at_lsn.is_some()
+    {
+        return Err(SessionError::CorruptRecord(
+            "session checkpoint contains invalid live record state".to_owned(),
+        ));
+    }
+    let revision = record.last_authoritative_lsn.ok_or_else(|| {
+        SessionError::CorruptRecord(
+            "session checkpoint live record has no authoritative revision".to_owned(),
+        )
+    })?;
+    if revision == 0 || revision > checkpoint_lsn {
+        return Err(SessionError::CorruptRecord(format!(
+            "session checkpoint live revision {revision} is outside 1..={checkpoint_lsn}"
+        )));
+    }
+    if let Some(cursor) = record.last_source_cursor.as_ref() {
+        validate_source_cursor(cursor, "session checkpoint")?;
+    }
+    Ok(())
+}
+
+fn validate_checkpoint_tombstone(
+    checkpoint_lsn: u64,
+    tombstone: &SessionTombstone,
+) -> Result<(), SessionError> {
+    if tombstone.adapter_id.value.is_empty()
+        || tombstone.deployment_scope.is_empty()
+        || tombstone.runtime_session_id.value.is_empty()
+        || tombstone.superseded_generation.value == 0
+        || tombstone.superseded_at_lsn == 0
+        || tombstone.superseded_at_lsn > checkpoint_lsn
+    {
+        return Err(SessionError::CorruptRecord(
+            "session checkpoint contains a malformed tombstone".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn mutation_identity(

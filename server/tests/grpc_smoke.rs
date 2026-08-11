@@ -1864,14 +1864,16 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let mut stale = checkpoint.clone();
     stale.snapshot_lsn = Some(Lsn { value: 1 });
     let stale_payload = stale.encode_to_vec();
-    reopened
-        .write_snapshot(
-            &domain(),
-            Lsn { value: 1 },
-            encode_session_checkpoint(&stale),
-        )
-        .await
-        .unwrap();
+    assert!(matches!(
+        reopened
+            .write_snapshot(
+                &domain(),
+                Lsn { value: 1 },
+                encode_session_checkpoint(&stale),
+            )
+            .await,
+        Err(StorageError::SnapshotStale(1))
+    ));
     let repaired_stale = restarted
         .load_snapshot(authenticated_request(
             LoadSnapshotRequest {

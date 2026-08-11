@@ -16,7 +16,7 @@ use patchbay_contracts::patchbay::{
     SessionConnectivityState, SessionRegistered, SessionReport, SessionReportSourceCursor,
     SessionSnapshot, SessionState, SnapshotViewKind,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
-    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest, ViewRevision,
+    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     authority::events as authority_events,
@@ -1002,8 +1002,8 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
     .to_owned();
     let target = vector
         .input
-        .pointer("/session_case/cached_snapshot/view_revisions/0/target_scope")
-        .ok_or("missing session view target")?;
+        .pointer("/session_case/target")
+        .ok_or("missing session target")?;
     let adapter_id = AdapterId {
         value: string(target, "/adapter_id/value")?.to_owned(),
     };
@@ -1104,22 +1104,12 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
             value: cached_core_generation,
         }),
         sessions: Vec::new(),
-        view_revisions: vec![ViewRevision {
-            target_scope: Some(TargetScope {
-                kind: TargetScopeKind::RuntimeSession as i32,
-                adapter_id: Some(adapter_id.clone()),
-                deployment_scope: deployment_scope.clone(),
-                runtime_session_id: Some(runtime_session_id.clone()),
-                session_generation: Some(generation),
-                ..TargetScope::default()
-            }),
-            revision_lsn: Some(Lsn { value: cached_lsn }),
-        }],
+        view_revisions: Vec::new(),
         materialized_at: Some(Timestamp {
             seconds: 1_783_296_120,
             nanos: 0,
         }),
-        lockdown: None,
+        lockdown: Some(patchbay_contracts::patchbay::SecurityLockdownState::default()),
     };
     let cached_checkpoint_payload = cached_checkpoint.encode_to_vec();
     storage
@@ -1146,6 +1136,7 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         },
     )
     .map_err(|error| format!("seeded stale checkpoint is incompatible: {error}"))?
+        .snapshot
         != cached_checkpoint
     {
         return Err("stored session checkpoint differs from the compatible stale witness".to_owned());

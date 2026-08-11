@@ -537,8 +537,10 @@ pub trait Storage: Send + Sync {
     /// but the **consistent-prefix construction** of the payload itself is the
     /// caller's responsibility — the caller must materialize the payload by
     /// reading a consistent prefix up to `snapshot_lsn` before calling this.
-    /// The implementation writes the snapshot and the log atomically in one
-    /// transaction so the snapshot cannot reorder the log.
+    /// The implementation validates non-regression and atomically replaces
+    /// prior snapshot rows for the authority domain in one transaction, so
+    /// either the old or complete new checkpoint remains and no log LSN is
+    /// consumed or reordered.
     ///
     /// This obligation split is deliberate: the port enforces the LSN anchor
     /// and the write atomicity (the snapshot write does not reorder the log);

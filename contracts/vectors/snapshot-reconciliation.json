@@ -17,14 +17,31 @@
     "patchbay.ResourceSnapshot.snapshot_lsn",
     "patchbay.ResourceSnapshot.resources",
     "patchbay.Resource.revision_lsn",
+    "patchbay.StoredSessionCheckpoint.snapshot",
+    "patchbay.StoredSessionCheckpoint.tombstones",
     "patchbay.SessionSnapshot.core_generation",
+    "patchbay.SessionSnapshot.view_revisions",
+    "patchbay.SessionSnapshot.lockdown",
     "patchbay.ObservationSubscription.cursor",
     "patchbay.Observation.lsn"
   ],
-  "description": "The existing session reconnect invariant is refined to explicit view discrimination and durable epoch carriage: the runner stores an otherwise compatible typed session checkpoint at the cached LSN and proves it is rejected as stale, while older resource views are likewise replaced and current replacements carry the persisted core generation.",
+  "description": "The existing session reconnect invariant is refined to explicit view discrimination, durable epoch carriage, and private format-2 checkpoint framing: the runner stores an otherwise compatible complete session checkpoint at the cached LSN and proves it is rejected as stale, while older resource views are likewise replaced and current replacements carry the persisted core generation.",
   "input": {
     "session_case": {
       "snapshot_type": "patchbay.SessionSnapshot",
+      "target": {
+        "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
+        "adapter_id": {
+          "value": "pi"
+        },
+        "deployment_scope": "conformance-host",
+        "runtime_session_id": {
+          "value": "sess-001"
+        },
+        "session_generation": {
+          "value": 12
+        }
+      },
       "cached_snapshot": {
         "authority_domain_id": {
           "value": "auth-main"
@@ -36,27 +53,11 @@
           "value": 2
         },
         "sessions": [],
-        "view_revisions": [
-          {
-            "target_scope": {
-              "kind": "TARGET_SCOPE_KIND_RUNTIME_SESSION",
-              "adapter_id": {
-                "value": "pi"
-              },
-              "deployment_scope": "conformance-host",
-              "runtime_session_id": {
-                "value": "sess-001"
-              },
-              "session_generation": {
-                "value": 12
-              }
-            },
-            "revision_lsn": {
-              "value": 40
-            }
-          }
-        ],
-        "materialized_at": "2026-07-06T00:02:00Z"
+        "view_revisions": [],
+        "materialized_at": "2026-07-06T00:02:00Z",
+        "lockdown": {
+          "active": false
+        }
       },
       "current_authoritative_view": {
         "authority_domain_id": {

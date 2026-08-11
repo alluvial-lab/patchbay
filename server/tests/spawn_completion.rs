@@ -479,7 +479,7 @@ fn attachment_token<T>(response: &Response<T>) -> String {
 
 async fn attach_adapter<S>(service: &AdapterControlServiceImpl<S>) -> String
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     let response = service
         .attach(Request::new(AttachRequest {
@@ -497,7 +497,7 @@ async fn report_session<S>(
     generation: u64,
     spawn_origin: Option<TypedCorrelation>,
 ) where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     service
         .ingest_observation(authenticated(
@@ -587,7 +587,7 @@ async fn acknowledge_delivery<S>(
     token: &str,
     operation: &Operation,
 ) where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     service
         .ingest_observation(authenticated(
@@ -621,7 +621,7 @@ async fn report_successful_spawn<S>(
     token: &str,
 ) -> EventId
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     service
         .ingest_observation(authenticated(

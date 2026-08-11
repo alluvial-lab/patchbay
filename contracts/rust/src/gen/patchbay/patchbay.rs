@@ -1284,6 +1284,28 @@ pub struct SessionSnapshot {
     #[prost(message, optional, tag = "7")]
     pub lockdown: ::core::option::Option<SecurityLockdownState>,
 }
+/// Private persisted recovery payload. LoadSnapshot returns only `snapshot`;
+/// tombstones remain projection-owned checkpoint state.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StoredSessionCheckpoint {
+    #[prost(message, optional, tag = "1")]
+    pub snapshot: ::core::option::Option<SessionSnapshot>,
+    #[prost(message, repeated, tag = "2")]
+    pub tombstones: ::prost::alloc::vec::Vec<SessionCheckpointTombstone>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionCheckpointTombstone {
+    #[prost(message, optional, tag = "1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag = "2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag = "4")]
+    pub generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag = "5")]
+    pub superseded_at_lsn: ::core::option::Option<Lsn>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ViewRevision {
     #[prost(message, optional, tag = "1")]

@@ -3,6 +3,7 @@ extern crate patchbay_test_support;
 
 pub mod adapter_service;
 pub mod admin_service;
+pub mod checkpoint;
 pub mod decision_gate;
 pub mod identity;
 pub mod issuer;

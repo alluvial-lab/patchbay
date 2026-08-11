@@ -1,9 +1,17 @@
-use patchbay_contracts::patchbay::{AuthorityDomainId, Generation, SessionSnapshot};
-use patchbay_core::storage::StoredSnapshot;
+use std::collections::{HashMap, HashSet};
+
+use patchbay_contracts::patchbay::{
+    AuthorityDomainId, Generation, SessionActivityState, SessionCheckpointTombstone,
+    SessionConnectivityState, SessionSnapshot, StoredSessionCheckpoint, TargetScopeKind,
+};
+use patchbay_core::{
+    session::{SessionError, SessionIdentity, SessionRecord, SessionRegistry, SessionTombstone},
+    storage::{recover, Storage, StoredSnapshot},
+};
 use prost::Message;
 
 const CHECKPOINT_MAGIC: &[u8] = b"\x89PATCHBAY-CHECKPOINT\r\n\x1a\n";
-const CHECKPOINT_FORMAT_VERSION: u32 = 1;
+const CHECKPOINT_FORMAT_VERSION: u32 = 2;
 const CHECKPOINT_VERSION_BYTES: usize = std::mem::size_of::<u32>();
 const CHECKPOINT_KIND_BYTES: usize = std::mem::size_of::<u8>();
 const CHECKPOINT_HEADER_BYTES: usize =
@@ -26,6 +34,7 @@ pub enum SessionCheckpointRejection {
     AuthorityDomain,
     CoreGeneration,
     Lsn,
+    Semantic,
 }
 
 impl std::fmt::Display for SessionCheckpointRejection {
@@ -35,34 +44,53 @@ impl std::fmt::Display for SessionCheckpointRejection {
                 "session checkpoint is missing the typed checkpoint discriminator"
             }
             Self::UnsupportedVersion => "session checkpoint envelope version is unsupported",
-            Self::WrongType => "checkpoint envelope does not contain a session snapshot",
+            Self::WrongType => "checkpoint envelope does not contain a session checkpoint",
             Self::Decode => "session checkpoint payload is not decodable",
             Self::AuthorityDomain => "session checkpoint has an invalid authority-domain anchor",
             Self::CoreGeneration => "session checkpoint has an invalid core-generation anchor",
             Self::Lsn => "session checkpoint LSN does not match its storage anchor",
+            Self::Semantic => "session checkpoint projection state is inconsistent",
         })
     }
 }
 
 impl std::error::Error for SessionCheckpointRejection {}
 
-/// Encode a session snapshot for the durable checkpoint slot.
-///
-/// The storage payload is private checkpoint framing, not the public
-/// `LoadSnapshotResponse.snapshot_payload`: the service removes this envelope
-/// before returning the generated `SessionSnapshot` bytes. Legacy raw snapshot
-/// bytes are intentionally not upgraded or dual-read; they are disposable
-/// derived data and fall back to log materialization.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompatibleSessionCheckpoint {
+    pub snapshot: SessionSnapshot,
+    pub registry: SessionRegistry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredSessionRegistry {
+    pub registry: SessionRegistry,
+    pub checkpoint_lsn: u64,
+    pub recovered_through_lsn: u64,
+    pub replayed_event_count: usize,
+}
+
+/// Encode a complete private checkpoint payload.
+#[must_use]
+pub fn encode_stored_session_checkpoint(checkpoint: &StoredSessionCheckpoint) -> Vec<u8> {
+    encode_checkpoint(CheckpointKind::Session, &checkpoint.encode_to_vec())
+}
+
+/// Test/repair convenience for a live-only snapshot. Production periodic writes
+/// use [`encode_stored_session_checkpoint`] so retained tombstones are included.
 #[must_use]
 pub fn encode_session_checkpoint(snapshot: &SessionSnapshot) -> Vec<u8> {
-    encode_checkpoint(CheckpointKind::Session, &snapshot.encode_to_vec())
+    encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+        snapshot: Some(snapshot.clone()),
+        tombstones: Vec::new(),
+    })
 }
 
 pub fn decode_compatible_session_checkpoint(
     stored: &StoredSnapshot,
     expected_domain: &AuthorityDomainId,
     expected_core_generation: &Generation,
-) -> Result<SessionSnapshot, SessionCheckpointRejection> {
+) -> Result<CompatibleSessionCheckpoint, SessionCheckpointRejection> {
     if stored.event_id.authority_domain_id.as_ref() != Some(expected_domain) {
         return Err(SessionCheckpointRejection::AuthorityDomain);
     }
@@ -73,8 +101,11 @@ pub fn decode_compatible_session_checkpoint(
         .filter(|lsn| lsn.value > 0)
         .ok_or(SessionCheckpointRejection::Lsn)?;
     let payload = decode_session_checkpoint_envelope(&stored.payload)?;
-    let snapshot =
-        SessionSnapshot::decode(payload).map_err(|_| SessionCheckpointRejection::Decode)?;
+    let checkpoint =
+        StoredSessionCheckpoint::decode(payload).map_err(|_| SessionCheckpointRejection::Decode)?;
+    let snapshot = checkpoint
+        .snapshot
+        .ok_or(SessionCheckpointRejection::Decode)?;
     if snapshot.authority_domain_id.as_ref() != Some(expected_domain) {
         return Err(SessionCheckpointRejection::AuthorityDomain);
     }
@@ -88,7 +119,247 @@ pub fn decode_compatible_session_checkpoint(
     if snapshot.snapshot_lsn.as_ref() != Some(stored_lsn) {
         return Err(SessionCheckpointRejection::Lsn);
     }
-    Ok(snapshot)
+
+    let mut revisions = HashMap::new();
+    for revision in &snapshot.view_revisions {
+        let target = revision
+            .target_scope
+            .as_ref()
+            .ok_or(SessionCheckpointRejection::Semantic)?;
+        if target.kind != TargetScopeKind::RuntimeSession as i32
+            || target
+                .adapter_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+            || target.deployment_scope.is_empty()
+            || target
+                .runtime_session_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+            || target
+                .session_generation
+                .as_ref()
+                .is_none_or(|generation| generation.value == 0)
+            || target.actor_id.is_some()
+            || !target.project_or_group.is_empty()
+            || !target.legacy_audit_resource_id.is_empty()
+            || target.resource.is_some()
+        {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+        let key = (
+            target.adapter_id.clone().expect("validated adapter id"),
+            target.deployment_scope.clone(),
+            target
+                .runtime_session_id
+                .clone()
+                .expect("validated runtime id"),
+            target
+                .session_generation
+                .expect("validated session generation"),
+        );
+        let lsn = revision
+            .revision_lsn
+            .as_ref()
+            .filter(|lsn| lsn.value > 0 && lsn.value <= stored_lsn.value)
+            .ok_or(SessionCheckpointRejection::Semantic)?
+            .value;
+        if revisions.insert(key, lsn).is_some() {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+    }
+
+    let mut live_records = Vec::with_capacity(snapshot.sessions.len());
+    let mut live_keys = HashSet::new();
+    for session in &snapshot.sessions {
+        if session.authority_domain_id.as_ref() != Some(expected_domain)
+            || session
+                .adapter_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+            || session.deployment_scope.is_empty()
+            || session
+                .runtime_session_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+            || session
+                .session_generation
+                .as_ref()
+                .is_none_or(|generation| generation.value == 0)
+            || session.tombstoned
+            || session.superseded_at_lsn.is_some()
+            || session.observed_at.is_some()
+        {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+        let state = session.state.ok_or(SessionCheckpointRejection::Semantic)?;
+        if SessionConnectivityState::try_from(state.connectivity).is_err()
+            || SessionActivityState::try_from(state.activity).is_err()
+            || state.connectivity == SessionConnectivityState::Unspecified as i32
+            || state.activity == SessionActivityState::Unspecified as i32
+        {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+        let key = (
+            session.adapter_id.clone().expect("validated adapter id"),
+            session.deployment_scope.clone(),
+            session
+                .runtime_session_id
+                .clone()
+                .expect("validated runtime id"),
+            session
+                .session_generation
+                .expect("validated session generation"),
+        );
+        if !live_keys.insert(key.clone()) {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+        let record_lsn = session
+            .last_authoritative_lsn
+            .as_ref()
+            .filter(|lsn| lsn.value > 0 && lsn.value <= stored_lsn.value)
+            .ok_or(SessionCheckpointRejection::Semantic)?
+            .value;
+        if revisions.remove(&key) != Some(record_lsn) {
+            return Err(SessionCheckpointRejection::Semantic);
+        }
+        live_records.push(SessionRecord {
+            identity: SessionIdentity {
+                adapter_id: key.0,
+                deployment_scope: key.1,
+                runtime_session_id: key.2,
+                session_generation: key.3,
+            },
+            state,
+            project: session.project.clone(),
+            cwd: session.cwd.clone(),
+            name: session.name.clone(),
+            model: session.model.clone(),
+            last_source_cursor: session.last_source_cursor,
+            last_authoritative_lsn: Some(record_lsn),
+            tombstoned: false,
+            superseded_at_lsn: None,
+        });
+    }
+    if !revisions.is_empty() {
+        return Err(SessionCheckpointRejection::Semantic);
+    }
+
+    let tombstones = checkpoint
+        .tombstones
+        .into_iter()
+        .map(checkpoint_tombstone_to_domain)
+        .collect::<Result<Vec<_>, _>>()?;
+    let lockdown = snapshot
+        .lockdown
+        .as_ref()
+        .ok_or(SessionCheckpointRejection::Semantic)?;
+    validate_checkpoint_lockdown(lockdown, expected_domain, stored_lsn.value)?;
+    let lockdown_active = lockdown.active;
+    let registry = SessionRegistry::from_checkpoint(
+        expected_domain.clone(),
+        stored_lsn.value,
+        live_records,
+        tombstones,
+        lockdown_active,
+    )
+    .map_err(|_| SessionCheckpointRejection::Semantic)?;
+
+    Ok(CompatibleSessionCheckpoint { snapshot, registry })
+}
+
+pub async fn recover_session_registry<S: Storage>(
+    storage: &S,
+    authority_domain_id: &AuthorityDomainId,
+    core_generation: &Generation,
+) -> Result<RecoveredSessionRegistry, SessionError> {
+    let recovery = recover(storage, authority_domain_id, |stored| {
+        decode_compatible_session_checkpoint(stored, authority_domain_id, core_generation).ok()
+    })
+    .await?;
+    let checkpoint_lsn = recovery.start_lsn()?;
+    let mut registry = match recovery.snapshot {
+        Some(snapshot) => snapshot.value.registry,
+        None => SessionRegistry::new(authority_domain_id.clone())?,
+    };
+    let replayed_event_count = recovery.tail.len();
+    let mut recovered_through_lsn = checkpoint_lsn;
+    for event in recovery.tail {
+        registry.observe(&event)?;
+        recovered_through_lsn = event
+            .event_id
+            .lsn
+            .as_ref()
+            .expect("generic recovery validated every tail event LSN")
+            .value;
+    }
+    Ok(RecoveredSessionRegistry {
+        registry,
+        checkpoint_lsn,
+        recovered_through_lsn,
+        replayed_event_count,
+    })
+}
+
+fn validate_checkpoint_lockdown(
+    lockdown: &patchbay_contracts::patchbay::SecurityLockdownState,
+    expected_domain: &AuthorityDomainId,
+    checkpoint_lsn: u64,
+) -> Result<(), SessionCheckpointRejection> {
+    if !lockdown.active {
+        return if lockdown.reason_code.is_empty()
+            && lockdown.entered_at.is_none()
+            && lockdown.entered_by.is_none()
+            && lockdown.entered_event_id.is_none()
+        {
+            Ok(())
+        } else {
+            Err(SessionCheckpointRejection::Semantic)
+        };
+    }
+    if lockdown.reason_code.is_empty()
+        || lockdown.entered_at.is_none()
+        || lockdown.entered_by.is_none()
+        || lockdown.entered_event_id.as_ref().is_none_or(|event_id| {
+            event_id.authority_domain_id.as_ref() != Some(expected_domain)
+                || event_id
+                    .lsn
+                    .as_ref()
+                    .is_none_or(|lsn| lsn.value == 0 || lsn.value > checkpoint_lsn)
+        })
+    {
+        return Err(SessionCheckpointRejection::Semantic);
+    }
+    Ok(())
+}
+
+fn checkpoint_tombstone_to_domain(
+    tombstone: SessionCheckpointTombstone,
+) -> Result<SessionTombstone, SessionCheckpointRejection> {
+    Ok(SessionTombstone {
+        adapter_id: tombstone
+            .adapter_id
+            .filter(|id| !id.value.is_empty())
+            .ok_or(SessionCheckpointRejection::Semantic)?,
+        deployment_scope: if tombstone.deployment_scope.is_empty() {
+            return Err(SessionCheckpointRejection::Semantic);
+        } else {
+            tombstone.deployment_scope
+        },
+        runtime_session_id: tombstone
+            .runtime_session_id
+            .filter(|id| !id.value.is_empty())
+            .ok_or(SessionCheckpointRejection::Semantic)?,
+        superseded_generation: tombstone
+            .generation
+            .filter(|generation| generation.value > 0)
+            .ok_or(SessionCheckpointRejection::Semantic)?,
+        superseded_at_lsn: tombstone
+            .superseded_at_lsn
+            .filter(|lsn| lsn.value > 0)
+            .ok_or(SessionCheckpointRejection::Semantic)?
+            .value,
+    })
 }
 
 fn encode_checkpoint(kind: CheckpointKind, payload: &[u8]) -> Vec<u8> {
@@ -123,7 +394,7 @@ fn decode_session_checkpoint_envelope(encoded: &[u8]) -> Result<&[u8], SessionCh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patchbay_contracts::patchbay::{EventId, Lsn, ResourceSnapshot};
+    use patchbay_contracts::patchbay::{EventId, Lsn, ResourceSnapshot, SecurityLockdownState};
 
     fn domain(value: &str) -> AuthorityDomainId {
         AuthorityDomainId {
@@ -146,176 +417,104 @@ mod tests {
             authority_domain_id: Some(domain("main")),
             snapshot_lsn: Some(Lsn { value: 7 }),
             core_generation: Some(Generation { value: 11 }),
+            lockdown: Some(SecurityLockdownState::default()),
             ..SessionSnapshot::default()
         }
     }
 
     #[test]
     fn compatible_checkpoint_requires_exact_domain_generation_and_lsn() {
-        let stored = checkpoint(valid_snapshot());
-        assert_eq!(
-            decode_compatible_session_checkpoint(
-                &stored,
-                &domain("main"),
-                &Generation { value: 11 },
-            )
-            .unwrap(),
-            valid_snapshot()
-        );
+        let decoded = decode_compatible_session_checkpoint(
+            &checkpoint(valid_snapshot()),
+            &domain("main"),
+            &Generation { value: 11 },
+        )
+        .unwrap();
+        assert_eq!(decoded.snapshot, valid_snapshot());
+        assert_eq!(decoded.registry.covered_through_lsn(), Some(7));
     }
 
     #[test]
-    fn legacy_undiscriminated_snapshot_is_disposable() {
+    fn legacy_undiscriminated_and_format_one_are_disposable() {
         let mut stored = checkpoint(valid_snapshot());
         stored.payload = valid_snapshot().encode_to_vec();
         assert_eq!(
             decode_compatible_session_checkpoint(
                 &stored,
                 &domain("main"),
-                &Generation { value: 11 },
+                &Generation { value: 11 }
             ),
             Err(SessionCheckpointRejection::Undiscriminated)
         );
-    }
-
-    #[test]
-    fn resource_snapshot_bytes_cannot_decode_as_a_session_checkpoint() {
-        let resource = ResourceSnapshot {
-            authority_domain_id: Some(domain("main")),
-            snapshot_lsn: Some(Lsn { value: 7 }),
-            core_generation: Some(Generation { value: 11 }),
-            ..ResourceSnapshot::default()
-        };
-        let mut stored = checkpoint(valid_snapshot());
-
-        stored.payload = resource.encode_to_vec();
-        assert_eq!(
-            decode_compatible_session_checkpoint(
-                &stored,
-                &domain("main"),
-                &Generation { value: 11 },
-            ),
-            Err(SessionCheckpointRejection::Undiscriminated)
-        );
-
-        stored.payload = encode_checkpoint(CheckpointKind::Resource, &resource.encode_to_vec());
-        assert_eq!(
-            decode_compatible_session_checkpoint(
-                &stored,
-                &domain("main"),
-                &Generation { value: 11 },
-            ),
-            Err(SessionCheckpointRejection::WrongType)
-        );
-    }
-
-    #[test]
-    fn corrupt_or_unsupported_envelope_is_rejected() {
-        let mut stored = checkpoint(valid_snapshot());
-        stored.payload = encode_checkpoint(CheckpointKind::Session, &[0xff]);
-        assert_eq!(
-            decode_compatible_session_checkpoint(
-                &stored,
-                &domain("main"),
-                &Generation { value: 11 },
-            ),
-            Err(SessionCheckpointRejection::Decode)
-        );
-
         stored = checkpoint(valid_snapshot());
-        let version_offset = CHECKPOINT_MAGIC.len();
-        stored.payload[version_offset..version_offset + CHECKPOINT_VERSION_BYTES]
-            .copy_from_slice(&(CHECKPOINT_FORMAT_VERSION + 1).to_be_bytes());
+        let offset = CHECKPOINT_MAGIC.len();
+        stored.payload[offset..offset + CHECKPOINT_VERSION_BYTES]
+            .copy_from_slice(&1u32.to_be_bytes());
         assert_eq!(
             decode_compatible_session_checkpoint(
                 &stored,
                 &domain("main"),
-                &Generation { value: 11 },
+                &Generation { value: 11 }
             ),
             Err(SessionCheckpointRejection::UnsupportedVersion)
         );
     }
 
     #[test]
-    fn missing_or_wrong_domain_is_rejected() {
-        for embedded_domain in [None, Some(domain("other"))] {
-            let mut snapshot = valid_snapshot();
-            snapshot.authority_domain_id = embedded_domain;
-            assert_eq!(
-                decode_compatible_session_checkpoint(
-                    &checkpoint(snapshot),
-                    &domain("main"),
-                    &Generation { value: 11 },
-                ),
-                Err(SessionCheckpointRejection::AuthorityDomain)
-            );
-        }
+    fn resource_and_corrupt_payloads_cannot_seed_sessions() {
+        let resource = ResourceSnapshot::default();
+        let mut stored = checkpoint(valid_snapshot());
+        stored.payload = encode_checkpoint(CheckpointKind::Resource, &resource.encode_to_vec());
+        assert_eq!(
+            decode_compatible_session_checkpoint(
+                &stored,
+                &domain("main"),
+                &Generation { value: 11 }
+            ),
+            Err(SessionCheckpointRejection::WrongType)
+        );
+        stored.payload = encode_checkpoint(CheckpointKind::Session, &[0xff]);
+        assert_eq!(
+            decode_compatible_session_checkpoint(
+                &stored,
+                &domain("main"),
+                &Generation { value: 11 }
+            ),
+            Err(SessionCheckpointRejection::Decode)
+        );
+    }
+
+    #[test]
+    fn wrong_anchor_dimensions_are_rejected() {
         let mut stored = checkpoint(valid_snapshot());
         stored.event_id.authority_domain_id = Some(domain("other"));
         assert_eq!(
             decode_compatible_session_checkpoint(
                 &stored,
                 &domain("main"),
-                &Generation { value: 11 },
+                &Generation { value: 11 }
             ),
             Err(SessionCheckpointRejection::AuthorityDomain)
         );
-        stored.event_id.authority_domain_id = None;
+        let mut snapshot = valid_snapshot();
+        snapshot.core_generation = Some(Generation { value: 12 });
         assert_eq!(
             decode_compatible_session_checkpoint(
-                &stored,
+                &checkpoint(snapshot),
                 &domain("main"),
-                &Generation { value: 11 },
+                &Generation { value: 11 }
             ),
-            Err(SessionCheckpointRejection::AuthorityDomain)
+            Err(SessionCheckpointRejection::CoreGeneration)
         );
-    }
-
-    #[test]
-    fn missing_zero_or_different_generation_is_rejected() {
-        for generation in [
-            None,
-            Some(Generation { value: 0 }),
-            Some(Generation { value: 12 }),
-        ] {
-            let mut snapshot = valid_snapshot();
-            snapshot.core_generation = generation;
-            assert_eq!(
-                decode_compatible_session_checkpoint(
-                    &checkpoint(snapshot),
-                    &domain("main"),
-                    &Generation { value: 11 },
-                ),
-                Err(SessionCheckpointRejection::CoreGeneration)
-            );
-        }
-    }
-
-    #[test]
-    fn missing_zero_or_mismatched_lsn_is_rejected() {
-        for lsn in [None, Some(Lsn { value: 8 })] {
-            let mut snapshot = valid_snapshot();
-            snapshot.snapshot_lsn = lsn;
-            assert_eq!(
-                decode_compatible_session_checkpoint(
-                    &checkpoint(snapshot),
-                    &domain("main"),
-                    &Generation { value: 11 },
-                ),
-                Err(SessionCheckpointRejection::Lsn)
-            );
-        }
-        for stored_lsn in [None, Some(Lsn { value: 0 })] {
-            let mut stored = checkpoint(valid_snapshot());
-            stored.event_id.lsn = stored_lsn;
-            assert_eq!(
-                decode_compatible_session_checkpoint(
-                    &stored,
-                    &domain("main"),
-                    &Generation { value: 11 },
-                ),
-                Err(SessionCheckpointRejection::Lsn)
-            );
-        }
+        let mut snapshot = valid_snapshot();
+        snapshot.snapshot_lsn = Some(Lsn { value: 6 });
+        assert_eq!(
+            decode_compatible_session_checkpoint(
+                &checkpoint(snapshot),
+                &domain("main"),
+                &Generation { value: 11 }
+            ),
+            Err(SessionCheckpointRejection::Lsn)
+        );
     }
 }

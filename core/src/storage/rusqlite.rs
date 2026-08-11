@@ -1475,8 +1475,24 @@ fn do_write_snapshot(
         tx.rollback().map_err(map_write_err)?;
         return Err(StorageError::InvalidSnapshotLsn(snapshot_lsn));
     }
+    let latest: Option<i64> = tx
+        .query_row(
+            "SELECT MAX(snapshot_lsn) FROM snapshots WHERE authority_domain_id = ?1",
+            rusqlite::params![authority_domain_id],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if latest.is_some_and(|latest| snapshot_lsn_i64 < latest) {
+        tx.rollback().map_err(map_write_err)?;
+        return Err(StorageError::SnapshotStale(snapshot_lsn));
+    }
     tx.execute(
-        "INSERT OR REPLACE INTO snapshots (authority_domain_id, snapshot_lsn, payload)
+        "DELETE FROM snapshots WHERE authority_domain_id = ?1",
+        rusqlite::params![authority_domain_id],
+    )
+    .map_err(map_write_err)?;
+    tx.execute(
+        "INSERT INTO snapshots (authority_domain_id, snapshot_lsn, payload)
          VALUES (?1, ?2, ?3)",
         rusqlite::params![authority_domain_id, snapshot_lsn_i64, payload],
     )

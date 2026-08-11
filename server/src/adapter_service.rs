@@ -9,8 +9,8 @@ use std::{
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
     AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport,
-    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, ObservationRequest,
-    ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
+    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
+    ObservationRequest, ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
@@ -22,7 +22,9 @@ use patchbay_core::{
         self, ResourceIdentity, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
     },
     session::{self, SessionRegistry},
-    storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage},
+    storage::{
+        validate_next_replay_event, AuditRecordDraft, CoreGenerationStore, RecordedEvent, Storage,
+    },
     target::target_adapter_id,
 };
 use prost::Message;
@@ -38,8 +40,9 @@ mod tests;
 
 use crate::{
     decision_gate::CoreDecisionGate,
-    identity::random_token,
+    identity::{random_core_generation, random_token},
     rpc::adapter_control_service_server::AdapterControlService,
+    snapshot::recover_session_registry,
     service::{map_acceptance_error_to_status, map_storage_error_to_status},
 };
 
@@ -139,6 +142,7 @@ pub enum AdapterServiceConformanceFault {
 pub struct AdapterControlServiceImpl<S> {
     storage: S,
     authority_domain_id: AuthorityDomainId,
+    core_generation: Generation,
     evidence: AdapterEvidenceVerifier,
     audit: Arc<dyn AuditSink>,
     adapters: Arc<Mutex<AdapterRegistry>>,
@@ -154,7 +158,7 @@ pub struct AdapterControlServiceImpl<S> {
 
 impl<S> AdapterControlServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     pub async fn new(
         storage: S,
@@ -220,15 +224,20 @@ where
         if authority_domain_id.value.is_empty() {
             return Err("authority domain id must not be empty".into());
         }
+        let core_generation = storage
+            .load_or_create_core_generation(&authority_domain_id, random_core_generation())
+            .await
+            .map_err(|error| error.to_string())?;
         let adapters = adapter::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
         let commands = rebuild_command_projection(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
-        let sessions = session::rebuild_from_log(&storage, &authority_domain_id)
+        let sessions = recover_session_registry(&storage, &authority_domain_id, &core_generation)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .registry;
         let resources = resource::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
@@ -242,6 +251,7 @@ where
         Ok(Self {
             storage,
             authority_domain_id,
+            core_generation,
             evidence,
             audit,
             adapters: Arc::new(Mutex::new(adapters)),
@@ -619,7 +629,7 @@ impl Drop for DeliveryTail {
 #[tonic::async_trait]
 impl<S> AdapterControlService for AdapterControlServiceImpl<S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     async fn attach(
         &self,
@@ -838,9 +848,14 @@ where
                 // delta; otherwise a lockdown (or any core-side append) can
                 // leave this writer with a stale pre-event view and produce a
                 // live registration/transition that replay correctly rejects.
-                let rebuilt = session::rebuild_from_log(&self.storage, &domain)
-                    .await
-                    .map_err(map_session_error)?;
+                let rebuilt = recover_session_registry(
+                    &self.storage,
+                    &domain,
+                    &self.core_generation,
+                )
+                .await
+                .map_err(map_session_error)?
+                .registry;
                 #[cfg(feature = "conformance-fault-injection")]
                 if self.conformance_fault
                     == AdapterServiceConformanceFault::AcceptNonIncreasingSessionRevision
@@ -923,9 +938,14 @@ where
                         return Err(map_session_error(error));
                     }
                 };
-                let rebuilt = session::rebuild_from_log(&self.storage, &domain)
-                    .await
-                    .map_err(map_session_error)?;
+                let rebuilt = recover_session_registry(
+                    &self.storage,
+                    &domain,
+                    &self.core_generation,
+                )
+                .await
+                .map_err(map_session_error)?
+                .registry;
                 *sessions = rebuilt;
                 session_result_event_id(result)
             }
@@ -1132,7 +1152,7 @@ where
         let decision_gate = self.decision_gate.clone();
         let stale_domain = domain.clone();
         let stale_adapter = authenticated_adapter.clone();
-        #[cfg(feature = "conformance-fault-injection")]
+        let core_generation = self.core_generation;        #[cfg(feature = "conformance-fault-injection")]
         let conformance_fault = self.conformance_fault;
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
@@ -1174,9 +1194,14 @@ where
                 };
 
                 let state_result: Result<(), String> = async {
-                    let rebuilt_sessions = session::rebuild_from_log(&storage, &stale_domain)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    let rebuilt_sessions = recover_session_registry(
+                        &storage,
+                        &stale_domain,
+                        &core_generation,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .registry;
                     let rebuilt_resources = resource::rebuild_from_log(&storage, &stale_domain)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -1229,9 +1254,14 @@ where
                             .await
                             .map_err(|error| error.to_string())?;
                     }
-                    *sessions.lock().await = session::rebuild_from_log(&storage, &stale_domain)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    *sessions.lock().await = recover_session_registry(
+                        &storage,
+                        &stale_domain,
+                        &core_generation,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .registry;
                     *resources.lock().await = resource::rebuild_from_log(&storage, &stale_domain)
                         .await
                         .map_err(|error| error.to_string())?;

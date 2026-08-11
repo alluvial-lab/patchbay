@@ -4,7 +4,8 @@ use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
     ControlSurfaceRevocation, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
     OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision, Session,
-    SessionSnapshot, StoredEventKind, TargetScope, TargetScopeKind, ViewRevision,
+    SessionCheckpointTombstone, SessionSnapshot, StoredEventKind, StoredSessionCheckpoint,
+    TargetScope, TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
     acceptance::{
@@ -24,7 +25,6 @@ use patchbay_core::{
     diagnostics::DiagnosticsProjection,
     security::SecurityPostureProjection,
     resource::ResourceRegistry,
-    session::SessionRegistry,
     storage::{
         validate_next_replay_event, CoreGenerationStore, Storage, StorageError,
     },
@@ -36,6 +36,7 @@ use crate::{
     decision_gate::CoreDecisionGate,
     identity::random_core_generation,
     operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL},
+    snapshot::recover_session_registry,
 };
 
 /// Server-owned concurrency boundary around core projections.
@@ -61,6 +62,8 @@ pub struct ProjectionState {
     pub(crate) operator_sessions: OperatorSessionRegistry,
     core_generation: Generation,
     last_applied_lsn: Arc<Mutex<u64>>,
+    session_recovery_checkpoint_lsn: u64,
+    session_replayed_event_count: usize,
     decision_gate: CoreDecisionGate,
 }
 
@@ -102,9 +105,19 @@ impl ProjectionState {
             .await
             .map_err(|error| error.to_string())?;
 
+        let recovered_sessions = recover_session_registry(
+            storage,
+            authority_domain_id,
+            &core_generation,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let session_recovery_checkpoint_lsn = recovered_sessions.checkpoint_lsn;
+        let session_replayed_event_count = recovered_sessions.replayed_event_count;
+        let session_recovered_through_lsn = recovered_sessions.recovered_through_lsn;
+
         let mut authority = AuthorityRegistry::new();
-        let mut sessions =
-            SessionRegistry::new(authority_domain_id.clone()).map_err(|error| error.to_string())?;
+        let mut sessions = recovered_sessions.registry;
         let mut resources = ResourceRegistry::new();
         let mut adapters = AdapterRegistry::new();
         let mut commands = CommandIndex::new();
@@ -122,7 +135,9 @@ impl ProjectionState {
             authority
                 .observe(event)
                 .map_err(|error| error.to_string())?;
-            sessions.observe(event).map_err(|error| error.to_string())?;
+            if validated.lsn > session_recovered_through_lsn {
+                sessions.observe(event).map_err(|error| error.to_string())?;
+            }
             resources.observe(event).map_err(|error| error.to_string())?;
             adapters.observe(event).map_err(|error| error.to_string())?;
             commands.apply(event).map_err(|error| error.to_string())?;
@@ -159,6 +174,8 @@ impl ProjectionState {
             operator_sessions,
             core_generation,
             last_applied_lsn: Arc::new(Mutex::new(last_applied_lsn)),
+            session_recovery_checkpoint_lsn,
+            session_replayed_event_count,
             decision_gate,
         })
     }
@@ -277,6 +294,16 @@ impl ProjectionState {
         *self.last_applied_lsn.lock().await
     }
 
+    #[must_use]
+    pub fn session_recovery_checkpoint_lsn(&self) -> u64 {
+        self.session_recovery_checkpoint_lsn
+    }
+
+    #[must_use]
+    pub fn session_replayed_event_count(&self) -> usize {
+        self.session_replayed_event_count
+    }
+
     pub async fn current_runtime_session_count(&self) -> u32 {
         self.target_resolver.inner.lock().await.sessions().sessions().count() as u32
     }
@@ -357,6 +384,52 @@ impl ProjectionState {
             view_revisions,
             materialized_at: Some(materialized_at),
             lockdown: Some(lockdown),
+        }
+    }
+
+    /// Materialize the complete private session checkpoint payload.
+    ///
+    /// The caller must hold the shared decision gate across this call. That
+    /// makes the separately encoded snapshot and tombstone collection one
+    /// consistent applied prefix without holding the gate during storage I/O.
+    pub async fn materialize_session_checkpoint(
+        &self,
+        authority_domain_id: AuthorityDomainId,
+        materialized_at: prost_types::Timestamp,
+    ) -> StoredSessionCheckpoint {
+        let snapshot = self
+            .materialize_session_snapshot(authority_domain_id, materialized_at)
+            .await;
+        let registry = self.target_resolver.inner.lock().await;
+        let mut tombstones: Vec<_> = registry.sessions().tombstones().cloned().collect();
+        tombstones.sort_by(|left, right| {
+            (
+                &left.adapter_id.value,
+                &left.deployment_scope,
+                &left.runtime_session_id.value,
+                left.superseded_generation.value,
+            )
+                .cmp(&(
+                    &right.adapter_id.value,
+                    &right.deployment_scope,
+                    &right.runtime_session_id.value,
+                    right.superseded_generation.value,
+                ))
+        });
+        StoredSessionCheckpoint {
+            snapshot: Some(snapshot),
+            tombstones: tombstones
+                .into_iter()
+                .map(|tombstone| SessionCheckpointTombstone {
+                    adapter_id: Some(tombstone.adapter_id),
+                    deployment_scope: tombstone.deployment_scope,
+                    runtime_session_id: Some(tombstone.runtime_session_id),
+                    generation: Some(tombstone.superseded_generation),
+                    superseded_at_lsn: Some(Lsn {
+                        value: tombstone.superseded_at_lsn,
+                    }),
+                })
+                .collect(),
         }
     }
 

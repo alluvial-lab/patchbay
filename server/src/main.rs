@@ -9,6 +9,7 @@ use patchbay_core::{
 use patchbay_core_server::{
     adapter_service::{AdapterControlServiceImpl, AdapterEvidenceVerifier},
     admin_service::{AdminServiceImpl, SetupSecret},
+    checkpoint::{SessionCheckpointPolicy, StderrCheckpointObserver},
     decision_gate::CoreDecisionGate,
     login_security::{LoginLimiter, StderrLoginAuditSink},
     operator_session::DEFAULT_OPERATOR_SESSION_TTL,
@@ -87,11 +88,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let bootstrapped = control_service.is_bootstrapped().await;
+    let checkpoint_writer = control_service.session_checkpoint_writer(
+        SessionCheckpointPolicy::default(),
+        Arc::new(StderrCheckpointObserver),
+    )?;
     let (setup_secret, setup_secret_value) = SetupSecret::generate(setup_ttl);
     let admin_service = AdminServiceImpl::new(control_service.clone(), setup_secret);
     let control_service = ControlServiceServer::with_interceptor(control_service, interceptor);
     let adapter_service = AdapterControlServiceImpl::new_with_decision_gate(
-        storage,
+        storage.clone(),
         authority_domain_id,
         adapter_evidence,
         decision_gate,
@@ -121,6 +126,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     };
+    let checkpoint = async move {
+        checkpoint_writer.run().await;
+        Err::<(), Box<dyn std::error::Error>>(
+            "session checkpoint writer terminated unexpectedly".into(),
+        )
+    };
     let network = async move {
         network
             .await
@@ -131,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     };
-    tokio::try_join!(completion, network, local_admin)?;
+    tokio::try_join!(completion, checkpoint, network, local_admin)?;
     Ok(())
 }
 

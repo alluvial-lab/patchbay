@@ -25,8 +25,8 @@ use patchbay_core::{
     security::events as security_events,
     session::SessionRegistry,
     storage::{
-        AuditRecordDraft, AuditedBatchAppend, DedupOutcome, RecordedEvent, RusqliteStorage, Storage,
-        StorageError, StoredSnapshot, TargetKey,
+        AuditRecordDraft, AuditedBatchAppend, CoreGenerationStore, DedupOutcome, RecordedEvent,
+        RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
     },
     target::TargetRegistry,
 };
@@ -76,6 +76,18 @@ impl BlockingReadStorage {
 
     fn release_blocked_read(&self) {
         self.release_read.notify_one();
+    }
+}
+
+impl CoreGenerationStore for BlockingReadStorage {
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> Result<Generation, StorageError> {
+        self.inner
+            .load_or_create_core_generation(authority_domain_id, candidate)
+            .await
     }
 }
 
@@ -160,6 +172,18 @@ impl FailPostCommitRegistrationFoldStorage {
 
     fn fail_next_batch_fold(&self) {
         self.fail_next_batch_result.store(true, Ordering::SeqCst);
+    }
+}
+
+impl CoreGenerationStore for FailPostCommitRegistrationFoldStorage {
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> Result<Generation, StorageError> {
+        self.inner
+            .load_or_create_core_generation(authority_domain_id, candidate)
+            .await
     }
 }
 
@@ -2672,7 +2696,7 @@ async fn attach_generation<S>(
     generation: u64,
 ) -> String
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     let mut registration = registration(domain);
     registration.adapter_generation = Some(Generation { value: generation });

@@ -1010,10 +1010,9 @@ async fn load_latest_snapshot_none_when_empty() {
 }
 
 #[tokio::test]
-async fn load_latest_snapshot_bounded() {
+async fn snapshot_writes_retain_only_the_latest_non_regressing_row() {
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
     let domain = test_domain();
-    // Append 3 events
     let mut lsns = vec![];
     for _ in 0..3 {
         let id = storage
@@ -1022,7 +1021,6 @@ async fn load_latest_snapshot_bounded() {
             .unwrap();
         lsns.push(id.lsn.as_ref().unwrap().value);
     }
-    // Write snapshots at LSN 1 and 3
     storage
         .write_snapshot(&domain, Lsn { value: lsns[0] }, vec![0x01])
         .await
@@ -1031,7 +1029,7 @@ async fn load_latest_snapshot_bounded() {
         .write_snapshot(&domain, Lsn { value: lsns[2] }, vec![0x03])
         .await
         .unwrap();
-    // load_latest(None) → LSN 3
+
     let snap = storage
         .load_latest_snapshot(&domain, None)
         .await
@@ -1039,14 +1037,25 @@ async fn load_latest_snapshot_bounded() {
         .unwrap();
     assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[2]);
     assert_eq!(snap.payload, vec![0x03]);
-    // load_latest(Some(2)) → LSN 1 (the latest <= 2)
-    let snap = storage
+    assert!(storage
         .load_latest_snapshot(&domain, Some(Lsn { value: lsns[1] }))
         .await
         .unwrap()
-        .unwrap();
-    assert_eq!(snap.event_id.lsn.as_ref().unwrap().value, lsns[0]);
-    assert_eq!(snap.payload, vec![0x01]);
+        .is_none());
+
+    let stale = storage
+        .write_snapshot(&domain, Lsn { value: lsns[0] }, vec![0xff])
+        .await;
+    assert!(matches!(stale, Err(StorageError::SnapshotStale(lsn)) if lsn == lsns[0]));
+    assert_eq!(
+        storage
+            .load_latest_snapshot(&domain, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .payload,
+        vec![0x03]
+    );
 }
 
 #[tokio::test]

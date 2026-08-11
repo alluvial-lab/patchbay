@@ -82,6 +82,21 @@ message SessionSnapshot {
   SecurityLockdownState lockdown = 7;
 }
 
+// Private persisted recovery payload. LoadSnapshot returns only `snapshot`;
+// tombstones remain projection-owned checkpoint state.
+message StoredSessionCheckpoint {
+  SessionSnapshot snapshot = 1;
+  repeated SessionCheckpointTombstone tombstones = 2;
+}
+
+message SessionCheckpointTombstone {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation generation = 4;
+  Lsn superseded_at_lsn = 5;
+}
+
 message ViewRevision {
   TargetScope target_scope = 1;
   Lsn revision_lsn = 2;

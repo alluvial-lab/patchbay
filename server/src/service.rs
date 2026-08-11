@@ -40,6 +40,7 @@ use tonic::{service::Interceptor, Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
+    checkpoint::{CheckpointObserver, SessionCheckpointPolicy, SessionCheckpointWriter},
     decision_gate::CoreDecisionGate,
     identity::issue_principal,
     issuer::MetadataIssuerContext,
@@ -231,6 +232,21 @@ where
     #[must_use]
     pub fn projection_state(&self) -> &ProjectionState {
         &self.state
+    }
+
+    pub fn session_checkpoint_writer(
+        &self,
+        policy: SessionCheckpointPolicy,
+        observer: Arc<dyn CheckpointObserver>,
+    ) -> Result<SessionCheckpointWriter<S>, &'static str> {
+        SessionCheckpointWriter::new(
+            self.storage.clone(),
+            self.state.clone(),
+            self.authority_domain_id.clone(),
+            self.clock.clone(),
+            policy,
+            observer,
+        )
     }
 }
 
@@ -740,7 +756,7 @@ where
                         return Ok(Response::new(LoadSnapshotResponse {
                             present: true,
                             event_id: Some(stored.event_id),
-                            snapshot_payload: snapshot.encode_to_vec(),
+                            snapshot_payload: snapshot.snapshot.encode_to_vec(),
                             view_kind: view_kind as i32,
                         }));
                     }
