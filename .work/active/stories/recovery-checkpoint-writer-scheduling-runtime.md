@@ -1,14 +1,14 @@
 ---
 id: recovery-checkpoint-writer-scheduling-runtime
 kind: story
-stage: implementing
+stage: done
 tags: [perf, protocol, storage]
 parent: recovery-checkpoint-writer
 depends_on: [recovery-checkpoint-writer-session-recovery-state]
 release_binding: null
 gate_origin: null
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 ---
 
 # Schedule and persist session checkpoints
@@ -27,11 +27,17 @@ Add the production event-gap writer, atomic latest-only storage behavior, retry 
 
 ## Acceptance evidence
 
-- [ ] Threshold comparison writes exactly when due and skips below the configured gap under a fixed clock.
-- [ ] Later appends during storage I/O do not alter the checkpoint's consistent prefix.
-- [ ] An injected first-write failure preserves the old checkpoint/log, is observed, and succeeds on retry.
-- [ ] Successful writes retain one row per domain, reject stale replacement, and create no LSN.
-- [ ] Crash/cancellation leaves either the prior or complete new checkpoint, never a partial authority source.
+- [x] Threshold comparison writes exactly when due and skips below the configured gap under a fixed clock.
+- [x] Later appends during storage I/O do not alter the checkpoint's consistent prefix.
+- [x] An injected first-write failure preserves the old checkpoint/log, is observed, and succeeds on retry.
+- [x] Successful writes retain one row per domain, reject stale replacement, and create no LSN.
+- [x] Crash/cancellation leaves either the prior or complete new checkpoint, never a partial authority source.
+
+## Implementation evidence
+
+- `server/src/checkpoint.rs` provides deterministic event-gap ticks, idle fast paths, forced repair, structured redacted failure classes, and capped retry; `main.rs` monitors the long-running task.
+- Encoding and SQLite I/O occur after releasing the shared decision gate. SQLite replaces the latest row atomically and rejects regression.
+- Scheduler tests cover due/skip, below-threshold incompatible repair, exact prior-row preservation on injected failure, observable retry, and successful advancement; storage tests cover latest-only/non-regressing rows.
 
 ## Ordering constraints
 
