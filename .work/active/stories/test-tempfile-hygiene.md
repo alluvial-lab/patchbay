@@ -106,3 +106,7 @@ termination, and only then cleans `target/test-tmp`. The executable
 Cargo nor its test child alive, and removes the scoped root. Shell syntax, the
 signal regression, focused SQLite storage test, cleanup assertion, and diff
 hygiene pass.
+
+## Root cause still open (2026-08-10)
+
+The wrapper shipped here is a real **mitigation** but is **opt-in**: it scopes temps to `target/test-tmp` only when tests run *through* `scripts/test-rust`. It does not cover direct `cargo test` / CI / worktree runs, and abnormal-termination residue still lands in `/tmp` when `TMPDIR` is unset (the `open_in_memory()` fix above prevents the *normal*-shutdown leak, not the abnormal-termination one). On 2026-08-10 the leak filled `/tmp` to 100% again and killed a drain run that had bypassed the wrapper. The **root-cause fix** — test-support-layer `TMPDIR` scoping that holds regardless of invocation — is tracked in `test-tempfile-root-cause-scoping`; land that before relying on test-run reliability.
