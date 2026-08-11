@@ -270,6 +270,7 @@ pub async fn recover_session_registry<S: Storage>(
     .await?;
     let checkpoint_lsn = recovery.start_lsn()?;
     let used_checkpoint = recovery.snapshot.is_some();
+    let checkpoint_was_rejected = recovery.checkpoint_rejected;
     let registry = recovery.snapshot.map_or_else(
         || SessionRegistry::new(authority_domain_id.clone()),
         |snapshot| Ok(snapshot.value.registry),
@@ -281,7 +282,7 @@ pub async fn recover_session_registry<S: Storage>(
                 checkpoint_lsn,
                 recovered_through_lsn,
                 replayed_event_count,
-                checkpoint_rejected: false,
+                checkpoint_rejected: checkpoint_was_rejected,
             })
         }
         Err(checkpoint_error) if used_checkpoint => {

@@ -39,10 +39,10 @@ fn runtime_session(id: &str) -> RuntimeSessionId {
     }
 }
 
-/// Keep the generated generation domain aligned with the small bounded domain
-/// in the session model (`GENERATIONS = 0..3`), with one extra bump boundary.
+/// Keep generated live generations positive. The formal model's generation 0
+/// is a no-live-session sentinel, not a valid wire or durable session identity.
 fn any_generation() -> impl Strategy<Value = Generation> {
-    (0u64..=4).prop_map(|value| Generation { value })
+    (1u64..=4).prop_map(|value| Generation { value })
 }
 
 fn any_connectivity_state() -> impl Strategy<Value = SessionConnectivityState> {
@@ -148,7 +148,7 @@ fn collision_keys() -> [OracleSessionKey; 4] {
 }
 
 fn any_multi_identity_sequence() -> impl Strategy<Value = Vec<(usize, u64)>> {
-    prop::collection::vec((0usize..4, 0u64..=4), 1..=20)
+    prop::collection::vec((0usize..4, 1u64..=4), 1..=20)
 }
 
 fn report_for_key(key: &OracleSessionKey, generation: u64) -> SessionReport {
@@ -646,7 +646,7 @@ proptest! {
     /// alter the live generation.
     #[test]
     fn equal_generation_is_noop_lower_is_rejected(
-        generation in 1u64..=4,
+        generation in 2u64..=4,
         connectivity in any_connectivity_state(),
         activity in any_activity_state(),
     ) {
@@ -683,7 +683,7 @@ proptest! {
     /// report for that generation is rejected and cannot mutate the live one.
     #[test]
     fn late_generation_is_inert(
-        start in 0u64..=3,
+        start in 1u64..=3,
         connectivity in any_connectivity_state(),
         activity in any_activity_state(),
     ) {
@@ -758,7 +758,7 @@ proptest! {
     /// queryable after later generations replace it.
     #[test]
     fn tombstones_retained(
-        start in 0u64..=1,
+        start in 1u64..=2,
         first_increment in 1u64..=2,
         second_increment in 1u64..=2,
     ) {

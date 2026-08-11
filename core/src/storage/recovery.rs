@@ -62,6 +62,9 @@ pub struct RecoveryState<T> {
     /// Events with `LSN > snapshot_lsn` (or all events if no compatible
     /// snapshot), in LSN order.
     pub tail: Vec<RecordedEvent>,
+    /// A stored row existed but failed framing, anchor, or caller semantic
+    /// validation and should be replaced as disposable derived data.
+    pub checkpoint_rejected: bool,
 }
 
 impl<T> RecoveryState<T> {
@@ -114,6 +117,7 @@ where
         .load_latest_snapshot(authority_domain_id, None)
         .await?;
 
+    let candidate_present = candidate.is_some();
     let snapshot = match candidate {
         Some(stored)
             if stored.event_id.authority_domain_id.as_ref() == Some(authority_domain_id)
@@ -144,5 +148,9 @@ where
             .lsn;
     }
 
-    Ok(RecoveryState { snapshot, tail })
+    Ok(RecoveryState {
+        checkpoint_rejected: candidate_present && snapshot.is_none(),
+        snapshot,
+        tail,
+    })
 }

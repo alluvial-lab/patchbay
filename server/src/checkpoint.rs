@@ -499,6 +499,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn incompatible_checkpoint_is_repaired_below_the_normal_gap_threshold() {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        append_events(&storage, 1).await;
+        storage
+            .write_snapshot(&domain(), Lsn { value: 1 }, b"legacy-format-one".to_vec())
+            .await
+            .unwrap();
+        let state = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
+        assert!(state.session_checkpoint_was_rejected());
+        let writer = SessionCheckpointWriter::new(
+            storage.clone(),
+            state,
+            domain(),
+            Arc::new(TestClock::new(prost_types::Timestamp {
+                seconds: 4,
+                nanos: 0,
+            })),
+            SessionCheckpointPolicy::default(),
+            Arc::new(RecordingObserver::default()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            writer.run_once().await.unwrap(),
+            CheckpointTickOutcome::Written {
+                prior_lsn: 0,
+                checkpoint_lsn: 1,
+            }
+        );
+        let stored = storage
+            .load_latest_snapshot(&domain(), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(decode_compatible_session_checkpoint(
+            &stored,
+            &domain(),
+            writer.state.core_generation(),
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
     async fn complete_checkpoint_round_trips_tombstones_source_cursor_and_tail() {
         let storage = RusqliteStorage::open_in_memory().unwrap();
         let cursor_one = SessionReportSourceCursor {
