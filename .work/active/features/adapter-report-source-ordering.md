@@ -1,7 +1,7 @@
 ---
 id: adapter-report-source-ordering
 kind: feature
-stage: review
+stage: done
 tags: [adapter, protocol]
 parent: null
 depends_on: []
@@ -399,4 +399,10 @@ npm --prefix contracts/ts run check:drift
 - Skipped/degraded: the delegated endpoint explicitly forbids nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking by policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection).
 
 ## Status (reconciled 2026-08-10)
-Current HEAD reconciliation is recorded above. The implementation in `078ccae` was rechecked against current HEAD: the only later source change in the affected Rust surfaces is the test-support crate hook in `server/src/lib.rs`; the domain-bound exact-envelope session replay, shared prefix validation, cancellation-safe aggregate publication, diagnostics replay fixes, and tag-11 generation-bump correlation remain preserved inputs. All four child checkpoints are done and the integrated feature is ready for thorough review.
+Current HEAD reconciliation is recorded above. The implementation in `078ccae` was rechecked against current HEAD: the only later source change in the affected Rust surfaces is the test-support crate hook in `server/src/lib.rs`; the domain-bound exact-envelope session replay, shared prefix validation, cancellation-safe aggregate publication, diagnostics replay fixes, and tag-11 generation-bump correlation remain preserved inputs. All four child checkpoints are done.
+
+## Thorough integrated review (2026-08-10)
+
+- Fresh-context pass attacked boundary validation, authenticated adapter-generation binding, non-increasing/equivocating revisions, runtime/adapter generation resets, append-before-fold atomicity, exact replay-envelope ownership, core-authored degradation cursor preservation, immutable Pi enqueue snapshots, and the formal/vector mutation oracles.
+- Adjudication found no receiver-confirmed material current-cycle blocker and no smaller surviving finding; the first independent pass was clean, so the thorough convergence condition was met without a fix loop.
+- Verification: all focused core/session/server/Pi tests passed; Quint parse/compile, named examples, temporal verification, model/vector promotion checks, generated drift, full `cargo test --workspace`, clippy with warnings denied, and `git diff --check` passed. Global `cargo fmt --all -- --check` remains red only on unrelated pre-existing unformatted Rust test files outside this feature's diff.
