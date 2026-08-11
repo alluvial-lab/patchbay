@@ -1,0 +1,8 @@
+# Scope all test tempfiles to a cleanable, gitignored workspace-local root,
+# regardless of how the test binary is invoked (direct `cargo test`, CI,
+# worktree, or scripts/test-rust). Covers EVERY test binary automatically —
+# including new test files — so the leaked-.tmp*-fills-/tmp (ENOSPC) failure
+# mode cannot recur. (The patchbay-test-support #[ctor] is belt-and-suspenders;
+# this [env] is the universal layer.) build.rs in core/server ensures the dir.
+[env]
+TMPDIR = { value = "target/test-tmp", relative = true, force = true }
