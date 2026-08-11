@@ -208,7 +208,7 @@ where
         .await
     }
 
-    #[cfg(feature = "conformance-fault-injection")]
+    #[cfg(any(test, feature = "conformance-fault-injection"))]
     #[doc(hidden)]
     pub async fn conformance_session_registry(&self) -> SessionRegistry {
         self.sessions.lock().await.clone()

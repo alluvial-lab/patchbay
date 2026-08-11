@@ -376,7 +376,10 @@ mod tests {
     use std::sync::{atomic::AtomicBool, Mutex as StdMutex};
 
     use patchbay_contracts::patchbay::{
-        AdapterId, EventId, Generation, IdempotencyKey, Observation, RuntimeSessionId,
+        resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
+        EventId, Generation, IdempotencyKey, Observation, PayloadContentType, PayloadEnvelope,
+        ResourceId, ResourceIdentity, ResourceKind, ResourceStateEvent, ResourceStateMutation,
+        ResourceStateUpsert, ResourceViewStateUpdate, RuntimeSessionId, SecurityLockdownEntered,
         SessionActivityState, SessionConnectivityState, SessionGenerationBumped, SessionRegistered,
         SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState,
         StoredEventKind, StoredEventPayload,
@@ -539,6 +542,234 @@ mod tests {
             writer.state.core_generation(),
         )
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn file_restart_recovers_both_session_consumers_and_full_replays_siblings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoint-restart.sqlite3");
+        let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let runtime_session_id = RuntimeSessionId {
+            value: "session-file".to_owned(),
+        };
+        let cursor_one = SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        };
+        storage
+            .append(
+                &domain(),
+                session_events::encode(&session_events::registered(
+                    domain(),
+                    SessionRegistered {
+                        adapter_id: Some(adapter_id.clone()),
+                        deployment_scope: "machine-a".to_owned(),
+                        runtime_session_id: Some(runtime_session_id.clone()),
+                        session_generation: Some(Generation { value: 1 }),
+                        initial_state: Some(SessionState {
+                            connectivity: SessionConnectivityState::Live as i32,
+                            activity: SessionActivityState::Idle as i32,
+                        }),
+                        project: "patchbay".to_owned(),
+                        cwd: "/work/patchbay".to_owned(),
+                        name: "file".to_owned(),
+                        model: "provider/a".to_owned(),
+                        source_cursor: Some(cursor_one),
+                        ..SessionRegistered::default()
+                    },
+                )),
+            )
+            .await
+            .unwrap();
+        let resource_identity = ResourceIdentity {
+            adapter_id: Some(adapter_id.clone()),
+            resource_kind: Some(ResourceKind {
+                value: "pool".to_owned(),
+            }),
+            resource_id: Some(ResourceId {
+                value: "pool-1".to_owned(),
+            }),
+        };
+        storage
+            .append(
+                &domain(),
+                patchbay_core::resource::events::encode(&ResourceStateEvent {
+                    authority_domain_id: Some(domain()),
+                    source_adapter_id: Some(adapter_id.clone()),
+                    source_adapter_generation: Some(Generation { value: 1 }),
+                    views: vec![ResourceViewStateUpdate {
+                        resource_kind: Some(ResourceKind {
+                            value: "pool".to_owned(),
+                        }),
+                        completeness: AdapterSnapshotSupport::Authoritative as i32,
+                    }],
+                    mutations: vec![ResourceStateMutation {
+                        identity: Some(resource_identity),
+                        from_revision_lsn: None,
+                        mutation: Some(resource_state_mutation::Mutation::Upsert(
+                            ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: vec![1],
+                                    content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: "pool.payload.v1".to_owned(),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: vec![2],
+                                    content_type: PayloadContentType::Json as i32,
+                                    schema_ref: "pool.projection.v1".to_owned(),
+                                }),
+                            },
+                        )),
+                    }],
+                    observed_at: Some(prost_types::Timestamp {
+                        seconds: 2,
+                        nanos: 0,
+                    }),
+                }),
+            )
+            .await
+            .unwrap();
+        storage
+            .append(
+                &domain(),
+                patchbay_core::security::events::encode(&patchbay_core::security::events::entered(
+                    domain(),
+                    SecurityLockdownEntered {
+                        reason_code: "checkpoint_restart".to_owned(),
+                        occurred_at: Some(prost_types::Timestamp {
+                            seconds: 3,
+                            nanos: 0,
+                        }),
+                        entered_by: Some(ActorEndpointRef {
+                            actor_id: Some(ActorId {
+                                value: "operator".to_owned(),
+                            }),
+                            ..ActorEndpointRef::default()
+                        }),
+                        invalidated_through_operator_session_generation: Some(Generation {
+                            value: 1,
+                        }),
+                        affected_runtime_session_count: 1,
+                    },
+                )),
+            )
+            .await
+            .unwrap();
+        let state = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
+        let writer = SessionCheckpointWriter::new(
+            storage.clone(),
+            state.clone(),
+            domain(),
+            Arc::new(TestClock::new(prost_types::Timestamp {
+                seconds: 4,
+                nanos: 0,
+            })),
+            SessionCheckpointPolicy {
+                events_per_checkpoint: NonZeroU64::new(1).unwrap(),
+                ..test_policy()
+            },
+            Arc::new(RecordingObserver::default()),
+        )
+        .unwrap();
+        assert!(matches!(
+            writer.run_once().await.unwrap(),
+            CheckpointTickOutcome::Written {
+                checkpoint_lsn: 3,
+                ..
+            }
+        ));
+        storage
+            .append(
+                &domain(),
+                session_events::encode(&session_events::report_applied(
+                    domain(),
+                    SessionReportApplied {
+                        report: Some(SessionReport {
+                            adapter_id: Some(adapter_id),
+                            deployment_scope: "machine-a".to_owned(),
+                            runtime_session_id: Some(runtime_session_id),
+                            session_generation: Some(Generation { value: 1 }),
+                            connectivity: SessionConnectivityState::Stale as i32,
+                            activity: SessionActivityState::Working as i32,
+                            project: "patchbay".to_owned(),
+                            cwd: "/work/patchbay".to_owned(),
+                            name: "file".to_owned(),
+                            model: "provider/b".to_owned(),
+                            source_cursor: Some(SessionReportSourceCursor {
+                                adapter_generation: Some(Generation { value: 1 }),
+                                revision: 2,
+                            }),
+                            ..SessionReport::default()
+                        }),
+                        previous_source_cursor: Some(cursor_one),
+                    },
+                )),
+            )
+            .await
+            .unwrap();
+        drop(writer);
+        drop(state);
+        drop(storage);
+
+        let reopened = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        let full = rebuild_sessions_from_log(&reopened, &domain())
+            .await
+            .unwrap();
+        let aggregate = ProjectionState::rebuild(&reopened, &domain())
+            .await
+            .unwrap();
+        assert_eq!(aggregate.session_recovery_checkpoint_lsn(), 3);
+        assert_eq!(aggregate.session_replayed_event_count(), 1);
+        let aggregate_snapshot = aggregate
+            .materialize_session_snapshot(
+                domain(),
+                prost_types::Timestamp {
+                    seconds: 4,
+                    nanos: 0,
+                },
+            )
+            .await;
+        assert_eq!(aggregate_snapshot.sessions.len(), 1);
+        assert_eq!(
+            aggregate_snapshot.sessions[0].last_source_cursor,
+            Some(SessionReportSourceCursor {
+                adapter_generation: Some(Generation { value: 1 }),
+                revision: 2,
+            })
+        );
+        let resource_snapshot = aggregate
+            .materialize_resource_snapshot(
+                domain(),
+                prost_types::Timestamp {
+                    seconds: 4,
+                    nanos: 0,
+                },
+            )
+            .await;
+        assert_eq!(resource_snapshot.resources.len(), 1);
+        assert_eq!(resource_snapshot.snapshot_lsn, Some(Lsn { value: 4 }));
+        assert!(aggregate.lockdown_state().await.active);
+
+        let adapter_service = crate::adapter_service::AdapterControlServiceImpl::new(
+            reopened,
+            domain(),
+            crate::adapter_service::AdapterEvidenceVerifier::new("evidence").unwrap(),
+        )
+        .await
+        .unwrap();
+        let adapter_sessions = adapter_service.conformance_session_registry().await;
+        assert_eq!(adapter_sessions.covered_through_lsn(), Some(3));
+        assert_eq!(
+            adapter_sessions.sessions().collect::<Vec<_>>(),
+            full.sessions().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            adapter_sessions.tombstones().collect::<Vec<_>>(),
+            full.tombstones().collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
@@ -877,6 +1108,29 @@ mod tests {
         };
         append_events(&storage, 2).await;
         let state = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
+        let guard = state.submit_guard().await;
+        let prior_payload = encode_stored_session_checkpoint(
+            &state
+                .materialize_session_checkpoint(
+                    domain(),
+                    prost_types::Timestamp {
+                        seconds: 4,
+                        nanos: 0,
+                    },
+                )
+                .await,
+        );
+        drop(guard);
+        inner
+            .write_snapshot(&domain(), Lsn { value: 2 }, prior_payload)
+            .await
+            .unwrap();
+        let prior = inner
+            .load_latest_snapshot(&domain(), None)
+            .await
+            .unwrap()
+            .unwrap();
+        append_events(&storage, 2).await;
         let observer = Arc::new(RecordingObserver::default());
         let writer = SessionCheckpointWriter::new(
             storage.clone(),
@@ -899,18 +1153,22 @@ mod tests {
                 .await
                 .unwrap()
                 .len(),
-            2
+            4
         );
-        assert!(inner
-            .load_latest_snapshot(&domain(), None)
-            .await
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            inner
+                .load_latest_snapshot(&domain(), None)
+                .await
+                .unwrap()
+                .unwrap(),
+            prior,
+            "a failed replacement must preserve the prior checkpoint byte-for-byte",
+        );
         assert_eq!(
             observer.failures.lock().unwrap().as_slice(),
             &[(
                 CheckpointFailureStage::Write,
-                Some(2),
+                Some(4),
                 1,
                 true,
                 "storage_transient",
@@ -919,8 +1177,8 @@ mod tests {
         assert_eq!(
             writer.run_once().await.unwrap(),
             CheckpointTickOutcome::Written {
-                prior_lsn: 0,
-                checkpoint_lsn: 2
+                prior_lsn: 2,
+                checkpoint_lsn: 4
             }
         );
         assert_eq!(
@@ -929,7 +1187,7 @@ mod tests {
                 .await
                 .unwrap()
                 .len(),
-            2
+            4
         );
         assert_eq!(
             inner
@@ -939,7 +1197,7 @@ mod tests {
                 .unwrap()
                 .event_id
                 .lsn,
-            Some(Lsn { value: 2 })
+            Some(Lsn { value: 4 })
         );
     }
 }

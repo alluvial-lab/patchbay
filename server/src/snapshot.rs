@@ -433,7 +433,10 @@ fn decode_session_checkpoint_envelope(encoded: &[u8]) -> Result<&[u8], SessionCh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patchbay_contracts::patchbay::{EventId, Lsn, ResourceSnapshot, SecurityLockdownState};
+    use patchbay_contracts::patchbay::{
+        AdapterId, EventId, Lsn, ResourceSnapshot, RuntimeSessionId, SecurityLockdownState,
+        Session, SessionReportSourceCursor, SessionState, TargetScope, ViewRevision,
+    };
 
     fn domain(value: &str) -> AuthorityDomainId {
         AuthorityDomainId {
@@ -474,6 +477,136 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.snapshot, valid_snapshot());
         assert_eq!(decoded.registry.covered_through_lsn(), Some(7));
+    }
+
+    #[test]
+    fn semantic_mutations_are_disposable_without_seeding_session_state() {
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let runtime_session_id = RuntimeSessionId {
+            value: "session-1".to_owned(),
+        };
+        let target = TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id.clone()),
+            session_generation: Some(Generation { value: 2 }),
+            ..TargetScope::default()
+        };
+        let session = Session {
+            authority_domain_id: Some(domain("main")),
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id.clone()),
+            session_generation: Some(Generation { value: 2 }),
+            project: "patchbay".to_owned(),
+            cwd: "/work/patchbay".to_owned(),
+            name: "main".to_owned(),
+            state: Some(SessionState {
+                connectivity: SessionConnectivityState::Live as i32,
+                activity: SessionActivityState::Idle as i32,
+            }),
+            last_authoritative_lsn: Some(Lsn { value: 7 }),
+            observed_at: None,
+            tombstoned: false,
+            superseded_at_lsn: None,
+            model: "provider/model".to_owned(),
+            last_source_cursor: Some(SessionReportSourceCursor {
+                adapter_generation: Some(Generation { value: 1 }),
+                revision: 2,
+            }),
+        };
+        let tombstone = SessionCheckpointTombstone {
+            adapter_id: Some(adapter_id),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id),
+            generation: Some(Generation { value: 1 }),
+            superseded_at_lsn: Some(Lsn { value: 4 }),
+        };
+        let complete = StoredSessionCheckpoint {
+            snapshot: Some(SessionSnapshot {
+                sessions: vec![session],
+                view_revisions: vec![ViewRevision {
+                    target_scope: Some(target),
+                    revision_lsn: Some(Lsn { value: 7 }),
+                }],
+                ..valid_snapshot()
+            }),
+            tombstones: vec![tombstone],
+        };
+        let stored = |candidate: StoredSessionCheckpoint| StoredSnapshot {
+            event_id: EventId {
+                authority_domain_id: Some(domain("main")),
+                lsn: Some(Lsn { value: 7 }),
+            },
+            payload: encode_stored_session_checkpoint(&candidate),
+        };
+        assert!(decode_compatible_session_checkpoint(
+            &stored(complete.clone()),
+            &domain("main"),
+            &Generation { value: 11 },
+        )
+        .is_ok());
+
+        let mut mutations = Vec::new();
+        let mut candidate = complete.clone();
+        let duplicate_session = candidate.snapshot.as_ref().unwrap().sessions[0].clone();
+        candidate
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .sessions
+            .push(duplicate_session);
+        mutations.push(candidate);
+        let mut candidate = complete.clone();
+        let duplicate_revision = candidate.snapshot.as_ref().unwrap().view_revisions[0].clone();
+        candidate
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .view_revisions
+            .push(duplicate_revision);
+        mutations.push(candidate);
+        let mut candidate = complete.clone();
+        candidate.snapshot.as_mut().unwrap().sessions[0].last_authoritative_lsn =
+            Some(Lsn { value: 8 });
+        mutations.push(candidate);
+        let mut candidate = complete.clone();
+        candidate.snapshot.as_mut().unwrap().sessions[0]
+            .last_source_cursor
+            .as_mut()
+            .unwrap()
+            .adapter_generation = Some(Generation { value: 0 });
+        mutations.push(candidate);
+        let mut candidate = complete.clone();
+        candidate.tombstones[0].generation = Some(Generation { value: 2 });
+        mutations.push(candidate);
+        let mut candidate = complete.clone();
+        candidate.tombstones[0].superseded_at_lsn = Some(Lsn { value: 8 });
+        mutations.push(candidate);
+        let mut candidate = complete;
+        candidate
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .lockdown
+            .as_mut()
+            .unwrap()
+            .reason_code = "inactive_but_populated".to_owned();
+        mutations.push(candidate);
+
+        for candidate in mutations {
+            assert_eq!(
+                decode_compatible_session_checkpoint(
+                    &stored(candidate),
+                    &domain("main"),
+                    &Generation { value: 11 },
+                ),
+                Err(SessionCheckpointRejection::Semantic),
+            );
+        }
     }
 
     #[test]
