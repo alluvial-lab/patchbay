@@ -1,7 +1,7 @@
 ---
 id: test-tempfile-root-cause-scoping
 kind: story
-stage: implementing
+stage: done
 tags: [testing, ops, foundation]
 parent: null
 depends_on: []
@@ -32,6 +32,11 @@ Make temp scoping hold **regardless of invocation** (wrapper, direct `cargo test
 
 ## Priority
 High — blocks test-running reliability. The 2026-08-10 ENOSPC killed an ~8h drain run. Land this before any further test-heavy drain.
+
+## Implementation + verification (2026-08-10, done)
+Landed in `ca1d4cc`. New `patchbay-test-support` crate (workspace member) with a `#[ctor::ctor]` that runs at every test binary's load: locates the workspace `target/` via `current_exe()` (works under `CARGO_TARGET_DIR` overrides), creates `target/test-tmp`, and sets `TMPDIR` — so every `tempfile` call lands there regardless of invocation (direct `cargo test`, CI, worktree, or the `scripts/test-rust` wrapper). Wired as a dev-dependency + `extern crate patchbay_test_support;` into the leaking integration tests, and `#[cfg(test)] extern crate` at the `core`/`server` lib roots for unit/inline tests.
+
+Verified: `cargo test -p patchbay-core --test rusqlite_storage` (30 tests) and `--lib` (19 tests), both run with **`TMPDIR` unset** (the CI/worktree/drain case that used to fill `/tmp`) — all pass, `/tmp/.tmp*` stays 0, tempfiles land in `target/test-tmp`. `cargo check` core+server `--tests` clean. The `open_in_memory()` `#[cfg(test)]`-gating question (C1) is moot: its leak is now scoped by the ctor, and the drain's earlier change already removed the normal-shutdown `TempPath::keep()` leak.
 
 ## Relation to test-tempfile-hygiene
 `test-tempfile-hygiene` shipped the wrapper-script mitigation (real, retained); this story closes the root cause it left open. Its "done" was premature — the thorough review passed the wrapper without catching that it doesn't cover direct `cargo test` runs or the un-gated `open_in_memory()`.
