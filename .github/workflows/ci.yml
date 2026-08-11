@@ -16,7 +16,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: contracts/ts/package-lock.json
+          cache-dependency-path: |
+            contracts/ts/package-lock.json
+            operator-domain/package-lock.json
+            web-cockpit/package-lock.json
 
       - name: Install Buf
         uses: bufbuild/buf-setup-action@v1
@@ -42,6 +45,19 @@ jobs:
       - name: Generated-code drift check
         working-directory: contracts/ts
         run: npm run check:drift
+
+      # The conformance-vector check drives a web-cockpit runner
+      # (`npm --prefix web-cockpit test`), which builds web-cockpit's types.
+      # web-cockpit depends on the built operator-domain `dist/` (gitignored, so
+      # it must be built here) and on contracts/ts (built above). Install both
+      # before the runner fires.
+      - name: Build operator-domain (web-cockpit file dependency)
+        working-directory: operator-domain
+        run: npm ci && npm run build
+
+      - name: Install web-cockpit dependencies (conformance runner)
+        working-directory: web-cockpit
+        run: npm ci
 
       - name: Protocol conformance vectors
         working-directory: contracts/ts
