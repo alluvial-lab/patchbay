@@ -1,14 +1,14 @@
 ---
 id: adapter-report-source-ordering-conformance
 kind: story
-stage: implementing
+stage: done
 tags: [verification, protocol]
 parent: adapter-report-source-ordering
 depends_on: [adapter-report-source-ordering-core-fence, adapter-report-source-ordering-pi-sequencer]
 release_binding: null
 gate_origin: null
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Promote source-ordering model and executable vector evidence
@@ -51,3 +51,10 @@ the integrated feature enters caller-selected `thorough` review.
 - The server runner already dispatches exact requested `rust-server` case ids and supports compiled conformance faults. This checkpoint adds one exact authenticated session-report case and a source-comparison fault without disturbing the token-commune mutation profile.
 - The model must use a separate environment-arrival pending phase and raw pending pre-state. Mutation evidence will weaken the apply comparison while leaving the oracle unchanged; a nonzero Quint counterexample exit is expected mutation success, not a tool failure.
 - Per project convention, implementation may establish green model/vector evidence but this `[verification]` child stays at `stage: review` for the independent deep lane rather than being self-closed.
+
+## Implementation and deep review (2026-08-10)
+
+- Landed in WIP commit `078ccae`: the trace-faithful Quint model and emitted TLA inspection artifact, promoted authenticated server vector, exact runner/mutation registration, bounded Rust property coverage, and generated verification traceability.
+- Completeness phase: focused core/server/Pi suites passed; Quint parse/compile and the delayed-report/mutant traces passed; `check-models.mjs`, `check-vectors.mjs`, and generated-contract drift passed. The real temporal check passed at the documented 10-step bound.
+- Adversarial phase: re-read the raw pending-evidence oracle and comparison-weakening model mutation, then exercised the production `accept-nonincreasing-session-revision` mutation through the exact server vector. The oracle remains independent of the production guard and the runner proves stale audit, no stale session append, durable watermark, snapshot state, hot/replay equality, and both generation resets.
+- Review disposition: no receiver-confirmed material blocker or smaller surviving finding. Global `cargo fmt --all -- --check` remains red because unrelated pre-existing test files are not formatted; this story changed none of those files and all in-scope diffs pass `git diff --check`.
