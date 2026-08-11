@@ -1,14 +1,14 @@
 ---
 id: recovery-checkpoint-writer
 kind: feature
-stage: implementing
+stage: review
 tags: [perf, protocol, foundation]
 parent: null
 depends_on: [snapshot-core-generation-semantics, replay-integrity-prefix-discipline, session-registry-replay-domain-soundness, adapter-report-source-ordering]
 release_binding: null
 gate_origin: null
 created: 2026-08-09
-updated: 2026-08-10
+updated: 2026-08-11
 ---
 
 # Recovery checkpoint writer + scheduling policy
@@ -245,11 +245,18 @@ where
 
 **Acceptance criteria**:
 
-- [ ] A real restart restores the same complete session projection from format 2 plus only the post-anchor tail, for both production session-registry consumers.
-- [ ] The same fixture proves load-bearing non-session projections still full-replay pre-checkpoint facts; no test or doc reports whole-core bounded recovery.
-- [ ] Crash/write-failure/retry evidence proves checkpoints affect cost only, never accepted-state durability, authority, log order, or service availability.
-- [ ] The promoted snapshot vector still runs with unchanged `SnapshotStaleRejected` classification; model metadata remains draft/stated-normative.
-- [ ] Foundation docs consistently state the committed narrow v0.1.0 behavior, reserved namespace/composite seams, and explicit rejection of checkpoint-as-authority.
+- [x] A real restart restores the same complete session projection from format 2 plus only the post-anchor tail, for both production session-registry consumers.
+- [x] The same fixture proves load-bearing non-session projections still full-replay pre-checkpoint facts; no test or doc reports whole-core bounded recovery.
+- [x] Crash/write-failure/retry evidence proves checkpoints affect cost only, never accepted-state durability, authority, log order, or service availability.
+- [x] The promoted snapshot vector still runs with unchanged `SnapshotStaleRejected` classification; model metadata remains draft/stated-normative.
+- [x] Foundation docs consistently state the committed narrow v0.1.0 behavior, reserved namespace/composite seams, and explicit rejection of checkpoint-as-authority.
+
+## Implementation record
+
+- Capability: highest (`openai-codex/gpt-5.6-sol`) for protocol, persistence, generated-contract, and recovery work.
+- Landed implementation: `09f36c2`; adversarial fixes: `24c3475`, `d45efe7`, `8f9e582`; central restart/failure/mutation evidence: `c0c238b`.
+- The final shape restores complete session state only, forces full replay and prompt repair for rejected or tail-inconsistent checkpoints, keeps sibling-owned state on full-log replay, and retains one atomic latest row without gating service availability.
+- Full workspace tests, warnings-denied Clippy, Quint compile, model/vector checks, TypeScript build, generated drift, and diff hygiene pass.
 
 ## Implementation Order
 
