@@ -1,7 +1,7 @@
 ---
 id: story-fix-grant-identity-index-bootstrap
 kind: story
-stage: review
+stage: done
 tags: [bug, storage, authority, ci]
 parent: null
 depends_on: []
@@ -52,3 +52,12 @@ Green CI. `typescript-suites` is the only failing job; resolving this makes CI f
 - **Regression evidence:** before the fix, `npm --prefix cli test` reproduced the exact `CorruptRecord` during the resource-projection restart. The new Rust test passed before the fixture edit, proving the clean production bootstrap writer was already consistent. After the fixture edit, both the focused real-core test and the full CLI suite pass.
 - **Four-step confirmation:** (1) `cargo test -p patchbay-core-server --test lockdown_recovery file_backed_bootstrap_grant_survives_storage_reopen -- --exact --nocapture` passes; (2) `cargo test --workspace` passes; (3) `npm --prefix cli test` re-runs the original core-start reproduction and passes all 46 unit cases plus the real-core resource projection; (4) `cargo clippy --workspace --all-targets -- -D warnings` passes, and startup no longer reports the grant-identity extra row while exact-resource query authority and authority-domain denial remain intact.
 - **Adjacent issues parked:** none. The strict recovery check remains unchanged; broadening recovery into silent index repair would weaken the intended corruption boundary and was intentionally rejected.
+
+## Review
+
+- **Mode:** bounded inline standalone-story review; effective weight `standard`. No independent, fresh-context, or cross-model reviewer ran, as required for a focused fix story.
+- **Verdict:** approve; no material findings, important follow-ups, or nits.
+- **Correctness:** the change fixes the actual divergent writer (the stopped-core test fixture), updates source and projection under one `BEGIN IMMEDIATE` transaction, checks both affected-row counts, and rolls back on any failure. It does not weaken startup corruption detection or alter production authority behavior.
+- **Tests:** the original failing real-core restart now passes end to end. The added Rust test covers the production bootstrap/reopen contract. Its pre-fix pass is explicitly retained as diagnosis rather than falsely presented as a red-green production-code regression: the production bootstrap writer was healthy, while the TypeScript seed rewrite was the failing regression.
+- **Security/design:** SQL values remain parameter-bound; no secret-bearing fields, public contracts, grant semantics, or foundation assertions change. The event log remains authoritative and the derived index remains fail-closed.
+- **Closure evidence:** `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `npm --prefix cli test` are green on commit `41948ed`'s implementation snapshot.
