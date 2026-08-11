@@ -1,14 +1,14 @@
 ---
 id: adapter-report-source-ordering
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: null
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Adapter report source-ordering (stale-report rollback prevention)
@@ -399,4 +399,4 @@ npm --prefix contracts/ts run check:drift
 - Skipped/degraded: the delegated endpoint explicitly forbids nested subagents and peeragent, so no independent design-time pass ran. This is non-blocking by policy. The effective implementation/feature/final completion review weight remains `thorough` (source: explicit operator selection).
 
 ## Status (reconciled 2026-08-10)
-Current HEAD reconciliation is recorded above. Implementation remains at `implementing`; the landed domain-bound exact-envelope session replay, shared prefix validation, cancellation-safe aggregate publication, diagnostics replay fixes, and tag-11 generation-bump correlation are preserved inputs rather than stale design assumptions.
+Current HEAD reconciliation is recorded above. The implementation in `078ccae` was rechecked against current HEAD: the only later source change in the affected Rust surfaces is the test-support crate hook in `server/src/lib.rs`; the domain-bound exact-envelope session replay, shared prefix validation, cancellation-safe aggregate publication, diagnostics replay fixes, and tag-11 generation-bump correlation remain preserved inputs. All four child checkpoints are done and the integrated feature is ready for thorough review.
