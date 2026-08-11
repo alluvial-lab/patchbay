@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate patchbay_test_support;
+
 pub mod adapter_service;
 pub mod admin_service;
 pub mod decision_gate;

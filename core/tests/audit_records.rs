@@ -1,3 +1,4 @@
+extern crate patchbay_test_support;
 use patchbay_contracts::patchbay::{
     ActorId, AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, EventId, Grant, GrantId,
     GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, ResourceId, ResourceIdentity,

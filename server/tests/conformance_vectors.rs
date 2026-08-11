@@ -1,3 +1,4 @@
+extern crate patchbay_test_support;
 use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
 
 use patchbay_contracts::patchbay::{

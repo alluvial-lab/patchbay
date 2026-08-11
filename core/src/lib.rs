@@ -7,6 +7,9 @@
 //! This crate is the v0.1.0 implementation of the coordination core defined
 //! in `docs/ARCHITECTURE.md` § "v0.1.0 component slice".
 
+#[cfg(test)]
+extern crate patchbay_test_support;
+
 pub mod acceptance;
 pub mod audit;
 pub mod adapter;

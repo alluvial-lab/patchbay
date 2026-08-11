@@ -7,6 +7,7 @@
 //! - snapshot + tail replay produces state identical to replaying from 0
 //! - incompatible typed checkpoints fall back to full replay from LSN 0
 
+extern crate patchbay_test_support;
 use patchbay_contracts::patchbay::{AuthorityDomainId, Lsn, StoredEventKind, StoredEventPayload};
 use patchbay_core::storage::{recover, RecoveryState, Storage, StoredSnapshot};
 

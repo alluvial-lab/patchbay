@@ -8,6 +8,7 @@
 //! - WAL concurrent reads while a write is in flight
 //! - append_dedup atomic check-and-register (the formal model's appliedKeys)
 
+extern crate patchbay_test_support;
 use std::path::Path;
 
 #[cfg(unix)]

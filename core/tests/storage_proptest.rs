@@ -68,6 +68,7 @@
 //! tests prove the properties *catch* the named bugs; shrinking kicks in
 //! transitively when the proptest runner hits the failure.
 
+extern crate patchbay_test_support;
 use std::sync::Arc;
 
 use patchbay_contracts::patchbay::{

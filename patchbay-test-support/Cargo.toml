@@ -1,0 +1,9 @@
+[package]
+name = "patchbay-test-support"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `#[ctor::ctor]` runs the scoping fn at binary load, before any test.
+ctor = "0.4"
