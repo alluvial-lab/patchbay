@@ -323,8 +323,9 @@ impl ProjectionState {
     ///
     /// The cursor lock is acquired before the session lock, matching
     /// `catch_up`, so the returned records and `snapshot_lsn` describe one
-    /// consistent projection prefix. Durable snapshot checkpointing remains a
-    /// separate, deferred concern.
+    /// consistent projection prefix. The production private checkpoint
+    /// materializer adds retained tombstones to this public snapshot shape;
+    /// callers that need recovery bytes use `materialize_session_checkpoint`.
     pub async fn materialize_session_snapshot(
         &self,
         authority_domain_id: AuthorityDomainId,
