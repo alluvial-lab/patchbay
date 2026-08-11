@@ -235,10 +235,22 @@ function replaceBootstrapGrantWithExactResourceGrant() {
       kind: StoredEventKind.GRANT,
       payload: toBinary(GrantSchema, grant),
     });
-    db.prepare("UPDATE events SET payload = ? WHERE lsn = ?").run(
-      Buffer.from(toBinary(StoredEventPayloadSchema, stored)),
-      rows[0].lsn,
-    );
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const eventUpdate = db.prepare("UPDATE events SET payload = ? WHERE lsn = ?").run(
+        Buffer.from(toBinary(StoredEventPayloadSchema, stored)),
+        rows[0].lsn,
+      );
+      const identityUpdate = db.prepare(
+        "UPDATE grant_identities SET grant_id = ? WHERE authority_domain_id = ? AND source_lsn = ?",
+      ).run("exact-pool-query", domainId, rows[0].lsn);
+      assert.equal(eventUpdate.changes, 1, "grant fixture must replace one authoritative event");
+      assert.equal(identityUpdate.changes, 1, "grant fixture must replace its derived identity row");
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   } finally {
     db.close();
   }

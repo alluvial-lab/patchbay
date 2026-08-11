@@ -17,6 +17,76 @@ const DOMAIN: &str = "default";
 const ACTOR: &str = "operator-primary";
 const PASSWORD_HASH: &str = "scrypt$BwcHBwcHBwcHBwcHBwcHBw$fsFQrJSo7EdHnhnfY0xMMJt9qNSBI2P-HkzGsCQBMakmW7BafHsr5ceNfZcDwG0PzpdzBilvkCaPNMMI6BEd3g";
 
+#[tokio::test]
+async fn file_backed_bootstrap_grant_survives_storage_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bootstrap-restart.sqlite3");
+    let authority_domain_id = AuthorityDomainId {
+        value: DOMAIN.to_owned(),
+    };
+    let storage = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    let control = ControlServiceImpl::new_with_security(
+        storage.clone(),
+        authority_domain_id.clone(),
+        std::time::Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+    )
+    .await
+    .unwrap();
+    let admin = AdminServiceImpl::new(
+        control.clone(),
+        SetupSecret::new(
+            "setup-secret".to_owned(),
+            std::time::Duration::from_secs(60),
+        ),
+    );
+    let grant_id = admin
+        .bootstrap_operator(Request::new(BootstrapRequest {
+            setup_secret: "setup-secret".to_owned(),
+            operator_actor_id: Some(ActorId {
+                value: ACTOR.to_owned(),
+            }),
+            password_hash: PASSWORD_HASH.to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(patchbay_contracts::patchbay::EndpointId {
+                    value: "cli".to_owned(),
+                }),
+                device_id: Some(patchbay_contracts::patchbay::DeviceId {
+                    value: "console".to_owned(),
+                }),
+                endpoint_generation: Some(patchbay_contracts::patchbay::Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .grant_id
+        .expect("bootstrap returns its durable grant identity");
+
+    drop(admin);
+    drop(control);
+    drop(storage);
+    tokio::task::yield_now().await;
+
+    let reopened = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    let restarted = ControlServiceImpl::new_with_security(
+        reopened,
+        authority_domain_id,
+        std::time::Duration::from_secs(3600),
+        LoginLimiter::default(),
+        Arc::new(StderrLoginAuditSink),
+    )
+    .await
+    .unwrap();
+    assert!(restarted.is_bootstrapped().await);
+    assert!(restarted
+        .projection_state()
+        .grant(&grant_id)
+        .await
+        .is_some());
+}
+
 fn issuer_headers(request: &mut Request<impl Sized>, session_id: &str, principal_id: &str, principal_secret: &str) {
     request.metadata_mut().insert("x-patchbay-principal-id", principal_id.parse().unwrap());
     request.metadata_mut().insert("x-patchbay-principal-secret", principal_secret.parse().unwrap());
