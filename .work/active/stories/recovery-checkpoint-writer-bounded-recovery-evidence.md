@@ -1,14 +1,14 @@
 ---
 id: recovery-checkpoint-writer-bounded-recovery-evidence
 kind: story
-stage: implementing
+stage: done
 tags: [verification, protocol, foundation]
 parent: recovery-checkpoint-writer
 depends_on: [recovery-checkpoint-writer-scheduling-runtime]
 release_binding: null
 gate_origin: null
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 ---
 
 # Prove the narrow recovery bound honestly
@@ -28,11 +28,17 @@ Prove real restart equivalence, crash-safe failure/retry, and both production se
 
 ## Acceptance evidence
 
-- [ ] Both production session registries restart to full-replay-equivalent state by applying only the post-anchor tail.
-- [ ] Pre-checkpoint sibling facts prove whole-core recovery remains full-log and no documentation claims otherwise.
-- [ ] Failure/crash evidence proves checkpointing changes cost only, never log order, accepted-state durability, authority, or serving availability.
-- [ ] Existing promoted vector and draft-model traceability remain green with unchanged assurance tiers.
-- [ ] Foundation docs use the committed/reserved/rejected vocabulary and state the scheduling qualification exactly.
+- [x] Both production session registries restart to full-replay-equivalent state by applying only the post-anchor tail.
+- [x] Pre-checkpoint sibling facts prove whole-core recovery remains full-log and no documentation claims otherwise.
+- [x] Failure/crash evidence proves checkpointing changes cost only, never log order, accepted-state durability, authority, or serving availability.
+- [x] Existing promoted vector and draft-model traceability remain green with unchanged assurance tiers.
+- [x] Foundation docs use the committed/reserved/rejected vocabulary and state the scheduling qualification exactly.
+
+## Implementation evidence
+
+- `checkpoint::tests::file_restart_recovers_both_session_consumers_and_full_replays_siblings` writes a real file-backed checkpoint, appends a tail, reopens storage, compares both production consumers with full replay, and proves pre-anchor resource/security facts survive sibling full replay.
+- Failure evidence preserves the prior checkpoint byte-for-byte and the complete log before retry advances the row. Semantic mutation and latest-only storage regressions are green.
+- Foundation docs, `snapshot_recovery.qnt`, and `snapshot-reconciliation.json` retain the narrow session-only/draft assurance posture. Quint compilation, model/vector registries, 22 implementation checks, and 38 mutation kills pass.
 
 ## Review and ordering
 
