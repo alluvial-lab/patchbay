@@ -1,7 +1,7 @@
 ---
 id: recovery-checkpoint-writer
 kind: feature
-stage: review
+stage: done
 tags: [perf, protocol, foundation]
 parent: null
 depends_on: [snapshot-core-generation-semantics, replay-integrity-prefix-discipline, session-registry-replay-domain-soundness, adapter-report-source-ordering]
@@ -330,10 +330,10 @@ npm --prefix contracts/ts run check:drift
 ## Other agent review
 
 - **Invoked because:** recovery scheduling/durability is protocol- and performance-bearing, and an incomplete checkpoint could silently hide authoritative history.
-- **Fixed/active blockers:** the design narrows the claim to complete session projection recovery, preserves tail validation and log fallback, includes tombstones/source cursors, rejects covered re-feed, makes storage replacement atomic, and declares the three overlapping active features as prerequisites.
-- **Parked:** whole-core composite/per-projection checkpointing, measured-cost scheduling, and formal promotion; each requires a separate scope/promotion act.
+- **Thorough convergence:** five fresh `openai-codex/gpt-5.6-sol` passes attacked checkpoint/tail disagreement, semantic completeness, all session consumers, decision-gate scope, idle cost, retry observability, zero generations, structural repair, and central file-backed evidence.
+- **Receiver-adjudicated fixes:** full-replay fallback plus forced replacement; stricter cursor/session/tombstone/lockdown semantics; diagnostics embedded-session seeding; idle fast paths; stable redacted failure classes; encoding outside the gate; positive-generation property domains; below-threshold incompatible repair; byte-exact prior-row preservation; semantic mutation matrix; file-backed dual-consumer restart with pre-anchor sibling facts.
+- **Final verdict:** `ready`, no material current-cycle blockers. Whole-core composite/per-projection checkpointing, measured-cost scheduling, formal promotion, and process-kill SQLite fault injection remain optional/reserved rather than current acceptance gaps.
 - **Rejected:** public-snapshot-only writing, whole-core claims, checkpoint-authoritative ordering, and checkpoint failure backpressure.
-- **Skipped/degraded:** the delegated endpoint explicitly prohibits nested agents and peer mechanisms, so no independent design-time pass ran. This is non-blocking by policy. Effective implementation/feature/final review weight remains `thorough` (source: explicit operator selection), and all future findings remain receiver-adjudicated proposals.
 
-## Status (wrapped 2026-08-10)
-Design is committed at `implementing`; implementation remains dependency-blocked on replay clean review plus unfinished session-registry and adapter-source-ordering features.
+## Status (closed 2026-08-11)
+Implemented, fully verified, and approved at `thorough` review weight. Session checkpointing is production-wired with honest session-only recovery scope; all three child checkpoints are done.
