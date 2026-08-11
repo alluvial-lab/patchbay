@@ -3,178 +3,178 @@
 /// Distinct protocol id spaces. These wrappers intentionally do not collapse to raw strings.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CommandId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MessageId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplyId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EventId {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ElicitationId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Lsn {
-    #[prost(uint64, tag = "1")]
+    #[prost(uint64, tag="1")]
     pub value: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ActorId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EndpointId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeviceId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RuntimeSessionId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 /// Adapter-local resource identifier. Routable identity also includes the
 /// owning adapter and adapter-owned resource kind.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 /// Open adapter-owned resource collection/type identifier. The adapter
 /// capability manifest owns the admitted set; the core does not enumerate it.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceKind {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceIdentity {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub resource_id: ::core::option::Option<ResourceId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub resource_kind: ::core::option::Option<ResourceKind>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AuthorityDomainId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperatorSessionId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscriptionId {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Generation {
-    #[prost(uint64, tag = "1")]
+    #[prost(uint64, tag="1")]
     pub value: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ActorEndpointRef {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub endpoint_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TargetScope {
-    #[prost(enumeration = "TargetScopeKind", tag = "1")]
+    #[prost(enumeration="TargetScopeKind", tag="1")]
     pub kind: i32,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub project_or_group: ::prost::alloc::string::String,
     /// Tag-preserved audit-only target for principal/endpoint/device records.
     /// Operational resource Operations and Grants must use `resource`.
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub legacy_audit_resource_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub resource: ::core::option::Option<ResourceIdentity>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TypedCorrelation {
-    #[prost(oneof = "typed_correlation::Ref", tags = "1, 2, 3, 4, 5")]
+    #[prost(oneof="typed_correlation::Ref", tags="1, 2, 3, 4, 5")]
     pub r#ref: ::core::option::Option<typed_correlation::Ref>,
 }
 /// Nested message and enum types in `TypedCorrelation`.
 pub mod typed_correlation {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Ref {
-        #[prost(message, tag = "1")]
+        #[prost(message, tag="1")]
         CommandId(super::CommandId),
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         MessageId(super::MessageId),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         ReplyId(super::ReplyId),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         EventId(super::EventId),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag="5")]
         ElicitationId(super::ElicitationId),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PayloadEnvelope {
-    #[prost(bytes = "vec", tag = "1")]
+    #[prost(bytes="vec", tag="1")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
-    #[prost(enumeration = "PayloadContentType", tag = "2")]
+    #[prost(enumeration="PayloadContentType", tag="2")]
     pub content_type: i32,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub schema_ref: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimeWindow {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub starts_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// A durably-recorded state-transition event in the authority-domain log.
@@ -183,9 +183,9 @@ pub struct TimeWindow {
 /// field storage inspects.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StoredEventPayload {
-    #[prost(enumeration = "StoredEventKind", tag = "1")]
+    #[prost(enumeration="StoredEventKind", tag="1")]
     pub kind: i32,
-    #[prost(bytes = "vec", tag = "2")]
+    #[prost(bytes="vec", tag="2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 /// An idempotency key for boundary deduplication. A key dedups only against
@@ -194,7 +194,7 @@ pub struct StoredEventPayload {
 /// handle — the formal model's `appliedKeys` set.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IdempotencyKey {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -380,51 +380,51 @@ impl StoredEventKind {
 /// adjacency) but the in-memory apply reads only to_state + failure_code.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandTransition {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command_id: ::core::option::Option<CommandId>,
     /// The state being transitioned INTO. One of OperationState (which refines
     /// CommandState per docs/PROTOCOL.md).
-    #[prost(enumeration = "OperationState", tag = "2")]
+    #[prost(enumeration="OperationState", tag="2")]
     pub to_state: i32,
     /// The state being transitioned FROM. For replay validation: applying a
     /// transition whose from_state doesn't match the current in-memory state
     /// indicates log corruption (Fail Fast).
-    #[prost(enumeration = "OperationState", tag = "3")]
+    #[prost(enumeration="OperationState", tag="3")]
     pub from_state: i32,
     /// Set on terminal transitions. UNSPECIFIED for non-terminal.
-    #[prost(enumeration = "FailureCode", tag = "4")]
+    #[prost(enumeration="FailureCode", tag="4")]
     pub failure_code: i32,
     /// When the transition was committed (durable-commit time).
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub committed_at: ::core::option::Option<::prost_types::Timestamp>,
     /// Links to the triggering Observation or response Operation, when there is
     /// one. Empty for core-triggered transitions (expired/cancelled/superseded).
-    #[prost(message, repeated, tag = "6")]
+    #[prost(message, repeated, tag="6")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Operation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub sender: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub recipient: ::core::option::Option<ActorEndpointRef>,
-    #[prost(enumeration = "OperationKind", tag = "5")]
+    #[prost(enumeration="OperationKind", tag="5")]
     pub kind: i32,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub idempotency_key: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(message, repeated, tag = "9")]
+    #[prost(message, repeated, tag="9")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub validity_window: ::core::option::Option<TimeWindow>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub submitted_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// A durable acceptance envelope. The ingress request remains a plain
@@ -432,33 +432,33 @@ pub struct Operation {
 /// authority decision succeeds.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AcceptedOperation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub authorizing_grant_id: ::core::option::Option<GrantId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubmissionResult {
-    #[prost(enumeration = "SubmissionOutcome", tag = "1")]
+    #[prost(enumeration="SubmissionOutcome", tag="1")]
     pub outcome: i32,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(enumeration = "OperationState", tag = "3")]
+    #[prost(enumeration="OperationState", tag="3")]
     pub operation_state: i32,
-    #[prost(enumeration = "FailureCode", tag = "4")]
+    #[prost(enumeration="FailureCode", tag="4")]
     pub failure_code: i32,
-    #[prost(string, tag = "5")]
+    #[prost(string, tag="5")]
     pub diagnostic_message: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub accepted_lsn: ::core::option::Option<Lsn>,
-    #[prost(bool, tag = "7")]
+    #[prost(bool, tag="7")]
     pub deduplicated: bool,
     /// The grant selected for an acceptance decision, or the matching grant
     /// explaining a typed denial.
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub decision_grant_id: ::core::option::Option<GrantId>,
     /// Bounded lower-snake-case decision vocabulary, distinct from FailureCode.
-    #[prost(string, tag = "9")]
+    #[prost(string, tag="9")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -711,87 +711,87 @@ impl FailureCode {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterCapability {
-    #[prost(enumeration = "OperationKind", repeated, tag = "1")]
+    #[prost(enumeration="OperationKind", repeated, tag="1")]
     pub supported_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(string, repeated, tag = "2")]
+    #[prost(string, repeated, tag="2")]
     pub supported_target_spec_shapes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub streaming_support: bool,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "4")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="4")]
     pub session_snapshot_support: i32,
-    #[prost(bool, tag = "5")]
+    #[prost(bool, tag="5")]
     pub cancellation_support: bool,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag="6")]
     pub session_replacement_support: bool,
-    #[prost(enumeration = "IdempotencyStrength", tag = "7")]
+    #[prost(enumeration="IdempotencyStrength", tag="7")]
     pub idempotency_strength: i32,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub attachment_method: ::core::option::Option<AttachmentMethod>,
-    #[prost(enumeration = "FailureCode", repeated, tag = "9")]
+    #[prost(enumeration="FailureCode", repeated, tag="9")]
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub diagnostic_reporting: ::core::option::Option<AdapterDiagnosticReportingCapability>,
-    #[prost(enumeration = "AdapterTargetCategory", repeated, tag = "11")]
+    #[prost(enumeration="AdapterTargetCategory", repeated, tag="11")]
     pub target_categories: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, repeated, tag = "12")]
+    #[prost(message, repeated, tag="12")]
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
 }
 /// A schema identity binding. Matching this descriptor does not establish that
 /// opaque payload bytes semantically conform to the named schema.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SchemaDescriptor {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub schema_ref: ::prost::alloc::string::String,
-    #[prost(enumeration = "PayloadContentType", tag = "2")]
+    #[prost(enumeration="PayloadContentType", tag="2")]
     pub content_type: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceProjectionContract {
-    #[prost(enumeration = "AdapterTargetCategory", tag = "1")]
+    #[prost(enumeration="AdapterTargetCategory", tag="1")]
     pub target_category: i32,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub payload_schema: ::core::option::Option<SchemaDescriptor>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub projection_schema: ::core::option::Option<SchemaDescriptor>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceCapability {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub resource_kind: ::core::option::Option<ResourceKind>,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="2")]
     pub snapshot_support: i32,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub projection_contract: ::core::option::Option<ResourceProjectionContract>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterDiagnosticReportingCapability {
-    #[prost(string, repeated, tag = "1")]
+    #[prost(string, repeated, tag="1")]
     pub diagnostic_codes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AttachmentMethod {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub kind: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", tag = "2")]
+    #[prost(bytes="vec", tag="2")]
     pub descriptor: ::prost::alloc::vec::Vec<u8>,
-    #[prost(enumeration = "PayloadContentType", tag = "3")]
+    #[prost(enumeration="PayloadContentType", tag="3")]
     pub descriptor_content_type: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterRegistration {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub capability: ::core::option::Option<AdapterCapability>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub attach_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub attached_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// Registry-owned adapter target families. Knowledge bundles are wire-present
@@ -895,114 +895,114 @@ impl AdapterSnapshotSupport {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Grant {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub subject_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub subject_endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(string, tag = "5")]
+    #[prost(string, tag="5")]
     pub subject_endpoint_class: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
+    #[prost(enumeration="OperationKind", repeated, tag="7")]
     pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub provenance: ::core::option::Option<GrantProvenance>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
+    #[prost(enumeration="GrantRevocationPolicy", tag="13")]
     pub revocation_policy: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantProvenance {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub created_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub created_by_operation_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub audit_id: ::core::option::Option<EventId>,
-    #[prost(string, tag = "4")]
+    #[prost(string, tag="4")]
     pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DescendantGrant {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub subject_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub subject_endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(string, tag = "5")]
+    #[prost(string, tag="5")]
     pub subject_endpoint_class: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub target_scope: ::core::option::Option<TargetScope>,
     /// Must explicitly enumerate existing-session OperationKinds only: instruct, cancel, interrupt, query,
     /// approval-response, elicitation-response, reconfigure, and session-management. Spawn and attach are excluded.
-    #[prost(enumeration = "OperationKind", repeated, tag = "7")]
+    #[prost(enumeration="OperationKind", repeated, tag="7")]
     pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub provenance: ::core::option::Option<DescendantGrantProvenance>,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "13")]
+    #[prost(enumeration="GrantRevocationPolicy", tag="13")]
     pub revocation_policy: i32,
-    #[prost(message, optional, tag = "14")]
+    #[prost(message, optional, tag="14")]
     pub audit_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DescendantGrantProvenance {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub spawn_operation_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub spawning_grant_id: ::core::option::Option<GrantId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantRevocationEffect {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(enumeration = "OperationState", tag = "2")]
+    #[prost(enumeration="OperationState", tag="2")]
     pub from_state: i32,
-    #[prost(enumeration = "OperationState", tag = "3")]
+    #[prost(enumeration="OperationState", tag="3")]
     pub to_state: i32,
-    #[prost(enumeration = "FailureCode", tag = "4")]
+    #[prost(enumeration="FailureCode", tag="4")]
     pub failure_code: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Revocation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub revoked_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub revoked_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub revocation_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "6")]
+    #[prost(enumeration="GrantRevocationPolicy", tag="6")]
     pub accepted_operation_policy: i32,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub reason: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub audit_id: ::core::option::Option<EventId>,
-    #[prost(message, repeated, tag = "9")]
+    #[prost(message, repeated, tag="9")]
     pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -1041,120 +1041,120 @@ impl GrantRevocationPolicy {
 /// is authority-domain keyed and folds into the security/session projections.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SecurityLockdownEvent {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "security_lockdown_event::Transition", tags = "2, 3")]
+    #[prost(oneof="security_lockdown_event::Transition", tags="2, 3")]
     pub transition: ::core::option::Option<security_lockdown_event::Transition>,
 }
 /// Nested message and enum types in `SecurityLockdownEvent`.
 pub mod security_lockdown_event {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Transition {
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         Entered(super::SecurityLockdownEntered),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Exited(super::SecurityLockdownExited),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SecurityLockdownEntered {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub entered_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub invalidated_through_operator_session_generation: ::core::option::Option<Generation>,
-    #[prost(uint32, tag = "5")]
+    #[prost(uint32, tag="5")]
     pub affected_runtime_session_count: u32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SecurityLockdownExited {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub entered_event_id: ::core::option::Option<EventId>,
-    #[prost(enumeration = "BootstrapChannelKind", tag = "4")]
+    #[prost(enumeration="BootstrapChannelKind", tag="4")]
     pub bootstrap_channel: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SecurityLockdownState {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub active: bool,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub entered_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub entered_by: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub entered_event_id: ::core::option::Option<EventId>,
 }
 /// Redacted security-screen summaries. These deliberately omit opaque session
 /// ids, credential hashes, provenance prose, and arbitrary metadata.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperatorSessionSummary {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub operator_session_generation: ::core::option::Option<Generation>,
-    #[prost(bool, tag = "5")]
+    #[prost(bool, tag="5")]
     pub active: bool,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag="6")]
     pub revoked: bool,
-    #[prost(bool, tag = "7")]
+    #[prost(bool, tag="7")]
     pub expired: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ControlSurfaceSummary {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub principal_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub endpoint_generation: ::core::option::Option<Generation>,
-    #[prost(bool, tag = "5")]
+    #[prost(bool, tag="5")]
     pub revoked: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantSummary {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub subject_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "OperationKind", repeated, tag = "4")]
+    #[prost(enumeration="OperationKind", repeated, tag="4")]
     pub allowed_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag="6")]
     pub revoked: bool,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "7")]
+    #[prost(enumeration="GrantRevocationPolicy", tag="7")]
     pub revocation_policy: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SecuritySnapshot {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub snapshot_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub lockdown: ::core::option::Option<SecurityLockdownState>,
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag="4")]
     pub operator_sessions: ::prost::alloc::vec::Vec<OperatorSessionSummary>,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub control_surfaces: ::prost::alloc::vec::Vec<ControlSurfaceSummary>,
-    #[prost(message, repeated, tag = "6")]
+    #[prost(message, repeated, tag="6")]
     pub grants: ::prost::alloc::vec::Vec<GrantSummary>,
 }
 /// The bootstrap channel is deliberately a separate trust boundary from
@@ -1188,44 +1188,44 @@ impl BootstrapChannelKind {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Session {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub name: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub state: ::core::option::Option<SessionState>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub last_authoritative_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(bool, tag = "12")]
+    #[prost(bool, tag="12")]
     pub tombstoned: bool,
-    #[prost(message, optional, tag = "13")]
+    #[prost(message, optional, tag="13")]
     pub superseded_at_lsn: ::core::option::Option<Lsn>,
     /// Current adapter-reported opaque provider/model id; empty means unavailable.
-    #[prost(string, tag = "14")]
+    #[prost(string, tag="14")]
     pub model: ::prost::alloc::string::String,
     /// Last accepted adapter-side report order, distinct from core LSN order.
-    #[prost(message, optional, tag = "15")]
+    #[prost(message, optional, tag="15")]
     pub last_source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionState {
-    #[prost(enumeration = "SessionConnectivityState", tag = "1")]
+    #[prost(enumeration="SessionConnectivityState", tag="1")]
     pub connectivity: i32,
-    #[prost(enumeration = "SessionActivityState", tag = "2")]
+    #[prost(enumeration="SessionActivityState", tag="2")]
     pub activity: i32,
 }
 /// Adapter-side order for full session reports. Revision is positive and
@@ -1233,84 +1233,84 @@ pub struct SessionState {
 /// session generation. Core LSN remains the durable arrival/commit order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionReportSourceCursor {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(uint64, tag = "2")]
+    #[prost(uint64, tag="2")]
     pub revision: u64,
 }
 /// One adapter-reported snapshot of every report-carried session field.
 /// Adapter ingress authenticates adapter_id and source_cursor before durability.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionReport {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
+    #[prost(enumeration="SessionConnectivityState", tag="5")]
     pub connectivity: i32,
-    #[prost(enumeration = "SessionActivityState", tag = "6")]
+    #[prost(enumeration="SessionActivityState", tag="6")]
     pub activity: i32,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "9")]
+    #[prost(string, tag="9")]
     pub name: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
-    #[prost(string, tag = "11")]
+    #[prost(string, tag="11")]
     pub model: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionSnapshot {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub snapshot_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub core_generation: ::core::option::Option<Generation>,
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag="4")]
     pub sessions: ::prost::alloc::vec::Vec<Session>,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub view_revisions: ::prost::alloc::vec::Vec<ViewRevision>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub materialized_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub lockdown: ::core::option::Option<SecurityLockdownState>,
 }
 /// Private persisted recovery payload. LoadSnapshot returns only `snapshot`;
 /// tombstones remain projection-owned checkpoint state.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoredSessionCheckpoint {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub snapshot: ::core::option::Option<SessionSnapshot>,
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag="2")]
     pub tombstones: ::prost::alloc::vec::Vec<SessionCheckpointTombstone>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionCheckpointTombstone {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub superseded_at_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ViewRevision {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub revision_lsn: ::core::option::Option<Lsn>,
 }
 /// A durable session-state delta event. One event per mutation kind. The payload
@@ -1318,163 +1318,163 @@ pub struct ViewRevision {
 /// projection folds them into in-memory state. Mirrors acceptance's CommandTransition.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionStateEvent {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "session_state_event::Mutation", tags = "2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof="session_state_event::Mutation", tags="2, 3, 4, 5, 6, 7, 8")]
     pub mutation: ::core::option::Option<session_state_event::Mutation>,
 }
 /// Nested message and enum types in `SessionStateEvent`.
 pub mod session_state_event {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Mutation {
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         Registered(super::SessionRegistered),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         GenerationBumped(super::SessionGenerationBumped),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         ConnectivityChanged(super::SessionConnectivityChanged),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag="5")]
         ActivityChanged(super::SessionActivityChanged),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag="6")]
         Relabeled(super::SessionRelabeled),
-        #[prost(message, tag = "7")]
+        #[prost(message, tag="7")]
         ModelChanged(super::SessionModelChanged),
-        #[prost(message, tag = "8")]
+        #[prost(message, tag="8")]
         ReportApplied(super::SessionReportApplied),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionRegistered {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub initial_state: ::core::option::Option<SessionState>,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub name: ::prost::alloc::string::String,
     /// Optional: the spawn Operation that created this session. Set when the
     /// adapter reports a session resulting from a spawn. Lets the authority
     /// descendant-grant reactor correlate the session to its spawn command.
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
-    #[prost(string, tag = "10")]
+    #[prost(string, tag="10")]
     pub model: ::prost::alloc::string::String,
     /// Absent only in legacy durable events written before source ordering.
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionGenerationBumped {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub from_generation: ::core::option::Option<Generation>,
     /// The prior generation is tombstoned at this event's LSN. The tombstone
     /// fact (generation N existed, superseded at LSN X) is retained indefinitely.
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub to_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub initial_state: ::core::option::Option<SessionState>,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "9")]
+    #[prost(string, tag="9")]
     pub name: ::prost::alloc::string::String,
-    #[prost(string, tag = "10")]
+    #[prost(string, tag="10")]
     pub model: ::prost::alloc::string::String,
     /// Optional: the spawn Operation that produced the replacement generation.
     /// Tag 11 follows the independently-added model field at tag 10; tags remain
     /// unique and existing wire identities are unchanged.
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub spawn_origin: ::core::option::Option<TypedCorrelation>,
     /// Absent only in legacy durable events written before source ordering.
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 /// Atomic equal-runtime-generation application of one complete adapter report.
 /// The prior cursor makes replay validate the exact projected pre-state.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionReportApplied {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub report: ::core::option::Option<SessionReport>,
     /// Absent only when the projected generation has no legacy source watermark.
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub previous_source_cursor: ::core::option::Option<SessionReportSourceCursor>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionConnectivityChanged {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "SessionConnectivityState", tag = "5")]
+    #[prost(enumeration="SessionConnectivityState", tag="5")]
     pub from: i32,
-    #[prost(enumeration = "SessionConnectivityState", tag = "6")]
+    #[prost(enumeration="SessionConnectivityState", tag="6")]
     pub to: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionActivityChanged {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "SessionActivityState", tag = "5")]
+    #[prost(enumeration="SessionActivityState", tag="5")]
     pub from: i32,
-    #[prost(enumeration = "SessionActivityState", tag = "6")]
+    #[prost(enumeration="SessionActivityState", tag="6")]
     pub to: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionRelabeled {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(string, tag = "5")]
+    #[prost(string, tag="5")]
     pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub cwd: ::prost::alloc::string::String,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionModelChanged {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub deployment_scope: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub session_generation: ::core::option::Option<Generation>,
-    #[prost(string, tag = "5")]
+    #[prost(string, tag="5")]
     pub from: ::prost::alloc::string::String,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub to: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -1549,79 +1549,79 @@ impl SessionActivityState {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Observation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub reply_id: ::core::option::Option<ReplyId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub sender: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub recipient: ::core::option::Option<ActorEndpointRef>,
-    #[prost(enumeration = "ObservationKind", tag = "6")]
+    #[prost(enumeration="ObservationKind", tag="6")]
     pub kind: i32,
-    #[prost(message, repeated, tag = "7")]
+    #[prost(message, repeated, tag="7")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "FailureCode", tag = "12")]
+    #[prost(enumeration="FailureCode", tag="12")]
     pub failure_code: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EndpointPresence {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(enumeration = "SessionConnectivityState", tag = "3")]
+    #[prost(enumeration="SessionConnectivityState", tag="3")]
     pub endpoint_availability: i32,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub last_authoritative_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ActorPresence {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(enumeration = "ActorPresenceState", tag = "2")]
+    #[prost(enumeration="ActorPresenceState", tag="2")]
     pub state: i32,
-    #[prost(message, repeated, tag = "3")]
+    #[prost(message, repeated, tag="3")]
     pub endpoints: ::prost::alloc::vec::Vec<EndpointPresence>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub revision_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ObservationSubscription {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub subscription_id: ::core::option::Option<SubscriptionId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub subscriber: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub authorized_filter: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "ObservationSubscriptionState", tag = "4")]
+    #[prost(enumeration="ObservationSubscriptionState", tag="4")]
     pub state: i32,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub cursor: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub last_delivered_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub audit_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AttentionRequired {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "AttentionRequiredState", tag = "2")]
+    #[prost(enumeration="AttentionRequiredState", tag="2")]
     pub state: i32,
-    #[prost(message, repeated, tag = "3")]
+    #[prost(message, repeated, tag="3")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub revision_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -1772,125 +1772,125 @@ impl AttentionRequiredState {
 /// revision, and terminal replacement semantics.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Resource {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub identity: ::core::option::Option<ResourceIdentity>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub resource_payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub projection_payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(enumeration = "ResourceFreshnessState", tag = "5")]
+    #[prost(enumeration="ResourceFreshnessState", tag="5")]
     pub freshness: i32,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub source_adapter_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub revision_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(bool, tag = "9")]
+    #[prost(bool, tag="9")]
     pub tombstoned: bool,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub tombstoned_at_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub replaced_by: ::core::option::Option<ResourceIdentity>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceViewRevision {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub resource_kind: ::core::option::Option<ResourceKind>,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "3")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="3")]
     pub completeness: i32,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub source_adapter_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub revision_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceSnapshot {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub snapshot_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub core_generation: ::core::option::Option<Generation>,
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag="4")]
     pub resources: ::prost::alloc::vec::Vec<Resource>,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub view_revisions: ::prost::alloc::vec::Vec<ResourceViewRevision>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub materialized_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// Authenticated adapter evidence. Snapshot reports reconcile complete or
 /// incomplete collection views; delta reports mutate only named resources.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceReport {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(oneof = "resource_report::Report", tags = "3, 4")]
+    #[prost(oneof="resource_report::Report", tags="3, 4")]
     pub report: ::core::option::Option<resource_report::Report>,
 }
 /// Nested message and enum types in `ResourceReport`.
 pub mod resource_report {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Report {
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Snapshot(super::ResourceSnapshotReport),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         Delta(super::ResourceDeltaReport),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceSnapshotReport {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub views: ::prost::alloc::vec::Vec<ResourceViewReport>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceDeltaReport {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub views: ::prost::alloc::vec::Vec<ResourceViewReport>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceViewReport {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub resource_kind: ::core::option::Option<ResourceKind>,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="2")]
     pub completeness: i32,
-    #[prost(message, repeated, tag = "3")]
+    #[prost(message, repeated, tag="3")]
     pub mutations: ::prost::alloc::vec::Vec<ResourceReportMutation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceReportMutation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub identity: ::core::option::Option<ResourceIdentity>,
-    #[prost(oneof = "resource_report_mutation::Mutation", tags = "2, 3, 4")]
+    #[prost(oneof="resource_report_mutation::Mutation", tags="2, 3, 4")]
     pub mutation: ::core::option::Option<resource_report_mutation::Mutation>,
 }
 /// Nested message and enum types in `ResourceReportMutation`.
 pub mod resource_report_mutation {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Mutation {
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         Upsert(super::ResourceStateUpsert),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Unknown(super::ResourceStateUnknown),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         Tombstone(super::ResourceStateTombstone),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceStateUpsert {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub resource_payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub projection_payload: ::core::option::Option<PayloadEnvelope>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1898,61 +1898,61 @@ pub struct ResourceStateUnknown {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceStateTombstone {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub replaced_by: ::core::option::Option<ResourceIdentity>,
 }
 /// Normalized durable payload for StoredEventKind::RESOURCE_STATE. The core
 /// assigns revisions from the enclosing durable event's LSN.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceStateEvent {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub source_adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub source_adapter_generation: ::core::option::Option<Generation>,
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag="4")]
     pub views: ::prost::alloc::vec::Vec<ResourceViewStateUpdate>,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub mutations: ::prost::alloc::vec::Vec<ResourceStateMutation>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceViewStateUpdate {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub resource_kind: ::core::option::Option<ResourceKind>,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "2")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="2")]
     pub completeness: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceStateMutation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub identity: ::core::option::Option<ResourceIdentity>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub from_revision_lsn: ::core::option::Option<Lsn>,
-    #[prost(oneof = "resource_state_mutation::Mutation", tags = "3, 4, 5, 6")]
+    #[prost(oneof="resource_state_mutation::Mutation", tags="3, 4, 5, 6")]
     pub mutation: ::core::option::Option<resource_state_mutation::Mutation>,
 }
 /// Nested message and enum types in `ResourceStateMutation`.
 pub mod resource_state_mutation {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Mutation {
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Upsert(super::ResourceStateUpsert),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         Unknown(super::ResourceStateUnknown),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag="5")]
         Tombstone(super::ResourceStateTombstone),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag="6")]
         FreshnessChanged(super::ResourceFreshnessChanged),
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceFreshnessChanged {
-    #[prost(enumeration = "ResourceFreshnessState", tag = "1")]
+    #[prost(enumeration="ResourceFreshnessState", tag="1")]
     pub from: i32,
-    #[prost(enumeration = "ResourceFreshnessState", tag = "2")]
+    #[prost(enumeration="ResourceFreshnessState", tag="2")]
     pub to: i32,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -1989,25 +1989,25 @@ impl ResourceFreshnessState {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AttachRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub registration: ::core::option::Option<AdapterRegistration>,
-    #[prost(bytes = "vec", tag = "2")]
+    #[prost(bytes="vec", tag="2")]
     pub attachment_evidence: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AttachResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub accepted: bool,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub attach_event_id: ::core::option::Option<EventId>,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub failure_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ObservationRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof = "observation_request::Observation", tags = "2, 3, 4")]
+    #[prost(oneof="observation_request::Observation", tags="2, 3, 4")]
     pub observation: ::core::option::Option<observation_request::Observation>,
 }
 /// Nested message and enum types in `ObservationRequest`.
@@ -2015,271 +2015,271 @@ pub mod observation_request {
     #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Observation {
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         SessionReport(super::SessionReport),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Event(super::Observation),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         ResourceReport(super::ResourceReport),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ObservationResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterDiagnosticReport {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(message, repeated, tag = "3")]
+    #[prost(message, repeated, tag="3")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "FailureCode", tag = "5")]
+    #[prost(enumeration="FailureCode", tag="5")]
     pub failure_code: i32,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub payload: ::core::option::Option<PayloadEnvelope>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterDiagnosticReportResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub accepted: bool,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub observation_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub audit_event_id: ::core::option::Option<EventId>,
-    #[prost(enumeration = "FailureCode", tag = "4")]
+    #[prost(enumeration="FailureCode", tag="4")]
     pub failure_code: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReceiveRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub cursor: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Delivery {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub delivery_event_id: ::core::option::Option<EventId>,
 }
 /// The core-owned durable operator authentication record. Password hashes use
 /// the v0.1.0 scrypt$<base64url-salt>$<base64url-hash> format.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperatorRecord {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub password_hash: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
 }
 /// Public identity requested when a control-surface process enrolls. The core
 /// generates the principal id and credential; callers cannot self-assert them.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PrincipalEnrollment {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub endpoint_generation: ::core::option::Option<Generation>,
 }
 /// Durable verifier-side principal record. Only a one-way credential hash is
 /// stored; the bearer credential is returned exactly once at enrollment.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ControlSurfacePrincipalRecord {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub principal_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub operator_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub endpoint_generation: ::core::option::Option<Generation>,
-    #[prost(bytes = "vec", tag = "6")]
+    #[prost(bytes="vec", tag="6")]
     pub credential_hash: ::prost::alloc::vec::Vec<u8>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
 }
 /// Secret-bearing enrollment result. Control surfaces store this outside the
 /// durable event/audit log and present it as transport metadata.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PrincipalCredential {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub principal_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub secret: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub operator_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub endpoint_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BootstrapRequest {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub setup_secret: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub operator_actor_id: ::core::option::Option<ActorId>,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub password_hash: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub principal: ::core::option::Option<PrincipalEnrollment>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BootstrapResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub session_id: ::core::option::Option<OperatorSessionId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub principal: ::core::option::Option<PrincipalCredential>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub operator_session_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExitSecurityLockdownRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExitSecurityLockdownResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub lockdown: ::core::option::Option<SecurityLockdownState>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub lockdown_event_id: ::core::option::Option<EventId>,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub already_inactive: bool,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub entered_event_id: ::core::option::Option<EventId>,
 }
 /// Durable source event that raises the operator-session generation fence for
 /// an operator. Session ids and other bearer material remain process-local.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperatorSessionRevocation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub operator_actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub invalidated_through_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub verified_revoker: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(string, tag = "6")]
+    #[prost(string, tag="6")]
     pub reason_code: ::prost::alloc::string::String,
 }
 /// Durable source event that permanently fences a principal, endpoint, or
 /// device identity until a future explicit restore operation is promoted.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ControlSurfaceRevocation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub verified_revoker: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(string, tag = "7")]
+    #[prost(string, tag="7")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(oneof = "control_surface_revocation::Target", tags = "2, 3, 4")]
+    #[prost(oneof="control_surface_revocation::Target", tags="2, 3, 4")]
     pub target: ::core::option::Option<control_surface_revocation::Target>,
 }
 /// Nested message and enum types in `ControlSurfaceRevocation`.
 pub mod control_surface_revocation {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Target {
-        #[prost(string, tag = "2")]
+        #[prost(string, tag="2")]
         PrincipalId(::prost::alloc::string::String),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         EndpointId(super::EndpointId),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         DeviceId(super::DeviceId),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterDiagnosticPayload {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub code: ::prost::alloc::string::String,
-    #[prost(enumeration = "AdapterDiagnosticSeverity", tag = "2")]
+    #[prost(enumeration="AdapterDiagnosticSeverity", tag="2")]
     pub severity: i32,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "OperationKind", tag = "4")]
+    #[prost(enumeration="OperationKind", tag="4")]
     pub operation_kind: i32,
-    #[prost(uint32, tag = "5")]
+    #[prost(uint32, tag="5")]
     pub count: u32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterDiagnosticDetail {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "AdapterDiagnosticSeverity", tag = "3")]
+    #[prost(enumeration="AdapterDiagnosticSeverity", tag="3")]
     pub severity: i32,
-    #[prost(enumeration = "OperationKind", tag = "4")]
+    #[prost(enumeration="OperationKind", tag="4")]
     pub operation_kind: i32,
-    #[prost(uint32, tag = "5")]
+    #[prost(uint32, tag="5")]
     pub count: u32,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub adapter_observed_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AuditRecord {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub audit_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(enumeration = "AuditEventKind", tag = "3")]
+    #[prost(enumeration="AuditEventKind", tag="3")]
     pub kind: i32,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub device_id: ::core::option::Option<DeviceId>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(bytes = "vec", tag = "7")]
+    #[prost(bytes="vec", tag="7")]
     pub operator_session_hash: ::prost::alloc::vec::Vec<u8>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "FailureCode", tag = "10")]
+    #[prost(enumeration="FailureCode", tag="10")]
     pub failure_code: i32,
-    #[prost(string, tag = "11")]
+    #[prost(string, tag="11")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(string, tag = "12")]
+    #[prost(string, tag="12")]
     pub correlation_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "13")]
+    #[prost(message, optional, tag="13")]
     pub source_event_id: ::core::option::Option<EventId>,
-    #[prost(string, tag = "14")]
+    #[prost(string, tag="14")]
     pub source_network: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "15")]
+    #[prost(message, optional, tag="15")]
     pub adapter_diagnostic: ::core::option::Option<AdapterDiagnosticDetail>,
-    #[prost(message, optional, tag = "16")]
+    #[prost(message, optional, tag="16")]
     pub grant_id: ::core::option::Option<GrantId>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DiagnosticsQuery {
-    #[prost(oneof = "diagnostics_query::Query", tags = "1, 2, 3")]
+    #[prost(oneof="diagnostics_query::Query", tags="1, 2, 3")]
     pub query: ::core::option::Option<diagnostics_query::Query>,
 }
 /// Nested message and enum types in `DiagnosticsQuery`.
@@ -2287,28 +2287,28 @@ pub mod diagnostics_query {
     #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Query {
-        #[prost(message, tag = "1")]
+        #[prost(message, tag="1")]
         Audit(super::AuditQuery),
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         Command(super::CommandInspectionQuery),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Adapters(super::AdapterStatusQuery),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDiagnosticsRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDiagnosticsResponse {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub submission: ::core::option::Option<SubmissionResult>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub result_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub as_of_lsn: ::core::option::Option<Lsn>,
-    #[prost(oneof = "query_diagnostics_response::Result", tags = "4, 5, 6")]
+    #[prost(oneof="query_diagnostics_response::Result", tags="4, 5, 6")]
     pub result: ::core::option::Option<query_diagnostics_response::Result>,
 }
 /// Nested message and enum types in `QueryDiagnosticsResponse`.
@@ -2316,198 +2316,198 @@ pub mod query_diagnostics_response {
     #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Result {
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         Audit(super::AuditPage),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag="5")]
         Command(super::CommandInspectionResult),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag="6")]
         Adapters(super::AdapterStatusPage),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AuditQuery {
-    #[prost(enumeration = "AuditEventKind", repeated, tag = "1")]
+    #[prost(enumeration="AuditEventKind", repeated, tag="1")]
     pub kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub actor_id: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(enumeration = "FailureCode", repeated, tag = "6")]
+    #[prost(enumeration="FailureCode", repeated, tag="6")]
     pub failure_codes: ::prost::alloc::vec::Vec<i32>,
-    #[prost(string, repeated, tag = "7")]
+    #[prost(string, repeated, tag="7")]
     pub reason_codes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub occurred_from_inclusive: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag="9")]
     pub occurred_before_exclusive: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub before_event_id: ::core::option::Option<EventId>,
-    #[prost(uint32, optional, tag = "11")]
+    #[prost(uint32, optional, tag="11")]
     pub limit: ::core::option::Option<u32>,
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub grant_id: ::core::option::Option<GrantId>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AuditPage {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub records: ::prost::alloc::vec::Vec<AuditRecord>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub next_before_event_id: ::core::option::Option<EventId>,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub has_more: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CommandInspectionQuery {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub audit_before_event_id: ::core::option::Option<EventId>,
-    #[prost(uint32, optional, tag = "3")]
+    #[prost(uint32, optional, tag="3")]
     pub audit_limit: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandSummary {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command_id: ::core::option::Option<CommandId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub sender: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub recipient: ::core::option::Option<ActorEndpointRef>,
-    #[prost(enumeration = "OperationKind", tag = "4")]
+    #[prost(enumeration="OperationKind", tag="4")]
     pub kind: i32,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub target_scope: ::core::option::Option<TargetScope>,
-    #[prost(message, repeated, tag = "6")]
+    #[prost(message, repeated, tag="6")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub validity_window: ::core::option::Option<TimeWindow>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub submitted_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandHistoryEntry {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub event_id: ::core::option::Option<EventId>,
-    #[prost(enumeration = "OperationState", tag = "2")]
+    #[prost(enumeration="OperationState", tag="2")]
     pub state: i32,
-    #[prost(enumeration = "FailureCode", tag = "3")]
+    #[prost(enumeration="FailureCode", tag="3")]
     pub failure_code: i32,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub occurred_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandInspection {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub command: ::core::option::Option<CommandSummary>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub accepted_event_id: ::core::option::Option<EventId>,
-    #[prost(enumeration = "OperationState", tag = "3")]
+    #[prost(enumeration="OperationState", tag="3")]
     pub current_state: i32,
-    #[prost(enumeration = "FailureCode", tag = "4")]
+    #[prost(enumeration="FailureCode", tag="4")]
     pub failure_code: i32,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub terminal_event_id: ::core::option::Option<EventId>,
-    #[prost(message, repeated, tag = "6")]
+    #[prost(message, repeated, tag="6")]
     pub history: ::prost::alloc::vec::Vec<CommandHistoryEntry>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub audit: ::core::option::Option<AuditPage>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandInspectionResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub found: bool,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub inspection: ::core::option::Option<CommandInspection>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatusQuery {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub adapter_ids: ::prost::alloc::vec::Vec<AdapterId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub after_adapter_id: ::prost::alloc::string::String,
-    #[prost(uint32, optional, tag = "3")]
+    #[prost(uint32, optional, tag="3")]
     pub limit: ::core::option::Option<u32>,
-    #[prost(uint32, optional, tag = "4")]
+    #[prost(uint32, optional, tag="4")]
     pub recent_diagnostic_limit: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterCapabilitySummary {
-    #[prost(enumeration = "OperationKind", repeated, tag = "1")]
+    #[prost(enumeration="OperationKind", repeated, tag="1")]
     pub supported_operation_kinds: ::prost::alloc::vec::Vec<i32>,
-    #[prost(string, repeated, tag = "2")]
+    #[prost(string, repeated, tag="2")]
     pub supported_target_spec_shapes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub streaming_support: bool,
-    #[prost(enumeration = "AdapterSnapshotSupport", tag = "4")]
+    #[prost(enumeration="AdapterSnapshotSupport", tag="4")]
     pub session_snapshot_support: i32,
-    #[prost(bool, tag = "5")]
+    #[prost(bool, tag="5")]
     pub cancellation_support: bool,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag="6")]
     pub session_replacement_support: bool,
-    #[prost(enumeration = "IdempotencyStrength", tag = "7")]
+    #[prost(enumeration="IdempotencyStrength", tag="7")]
     pub idempotency_strength: i32,
-    #[prost(string, tag = "8")]
+    #[prost(string, tag="8")]
     pub attachment_method_kind: ::prost::alloc::string::String,
-    #[prost(enumeration = "PayloadContentType", tag = "9")]
+    #[prost(enumeration="PayloadContentType", tag="9")]
     pub attachment_descriptor_content_type: i32,
-    #[prost(enumeration = "FailureCode", repeated, tag = "10")]
+    #[prost(enumeration="FailureCode", repeated, tag="10")]
     pub known_failure_modes: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag="11")]
     pub diagnostic_reporting: ::core::option::Option<AdapterDiagnosticReportingCapability>,
-    #[prost(enumeration = "AdapterTargetCategory", repeated, tag = "12")]
+    #[prost(enumeration="AdapterTargetCategory", repeated, tag="12")]
     pub target_categories: ::prost::alloc::vec::Vec<i32>,
-    #[prost(message, repeated, tag = "13")]
+    #[prost(message, repeated, tag="13")]
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub endpoint_id: ::core::option::Option<EndpointId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub adapter_generation: ::core::option::Option<Generation>,
-    #[prost(enumeration = "AdapterDiagnosticState", tag = "4")]
+    #[prost(enumeration="AdapterDiagnosticState", tag="4")]
     pub state: i32,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub attach_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub attached_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub capability: ::core::option::Option<AdapterCapabilitySummary>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub last_lifecycle_record: ::core::option::Option<AuditRecord>,
-    #[prost(uint32, tag = "9")]
+    #[prost(uint32, tag="9")]
     pub live_session_count: u32,
-    #[prost(uint32, tag = "10")]
+    #[prost(uint32, tag="10")]
     pub stale_session_count: u32,
-    #[prost(uint32, tag = "11")]
+    #[prost(uint32, tag="11")]
     pub offline_session_count: u32,
-    #[prost(uint32, tag = "12")]
+    #[prost(uint32, tag="12")]
     pub failed_session_count: u32,
-    #[prost(message, repeated, tag = "13")]
+    #[prost(message, repeated, tag="13")]
     pub recent_diagnostics: ::prost::alloc::vec::Vec<AuditRecord>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatusPage {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub adapters: ::prost::alloc::vec::Vec<AdapterStatus>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub next_after_adapter_id: ::prost::alloc::string::String,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub has_more: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DiagnosticsResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub as_of_lsn: ::core::option::Option<Lsn>,
-    #[prost(oneof = "diagnostics_result::Result", tags = "2, 3, 4")]
+    #[prost(oneof="diagnostics_result::Result", tags="2, 3, 4")]
     pub result: ::core::option::Option<diagnostics_result::Result>,
 }
 /// Nested message and enum types in `DiagnosticsResult`.
@@ -2515,11 +2515,11 @@ pub mod diagnostics_result {
     #[allow(clippy::large_enum_variant)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Result {
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         Audit(super::AuditPage),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag="3")]
         Command(super::CommandInspectionResult),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag="4")]
         Adapters(super::AdapterStatusPage),
     }
 }
@@ -2746,59 +2746,59 @@ impl AdapterDiagnosticState {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubmitRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub cursor: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeEvent {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub payload: ::core::option::Option<StoredEventPayload>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadSnapshotRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub at_or_before: ::core::option::Option<Lsn>,
-    #[prost(enumeration = "SnapshotViewKind", tag = "3")]
+    #[prost(enumeration="SnapshotViewKind", tag="3")]
     pub view_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadSnapshotResponse {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub present: bool,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub event_id: ::core::option::Option<EventId>,
-    #[prost(bytes = "vec", tag = "3")]
+    #[prost(bytes="vec", tag="3")]
     pub snapshot_payload: ::prost::alloc::vec::Vec<u8>,
-    #[prost(enumeration = "SnapshotViewKind", tag = "4")]
+    #[prost(enumeration="SnapshotViewKind", tag="4")]
     pub view_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VerifyOperatorPasswordRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operator_actor_id: ::core::option::Option<ActorId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub password: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub principal: ::core::option::Option<PrincipalEnrollment>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VerifyOperatorPasswordResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub operator_session_id: ::core::option::Option<OperatorSessionId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub principal: ::core::option::Option<PrincipalCredential>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub operator_session_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2806,130 +2806,130 @@ pub struct RevokeOperatorSessionRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeOperatorSessionResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub revoked: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeAllOperatorSessionsRequest {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeAllOperatorSessionsResult {
-    #[prost(uint32, tag = "1")]
+    #[prost(uint32, tag="1")]
     pub revoked_session_count: u32,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub invalidated_through_generation: ::core::option::Option<Generation>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub revocation_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeControlSurfacePrincipalRequest {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub principal_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeControlSurfaceEndpointRequest {
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub reason_code: ::prost::alloc::string::String,
-    #[prost(oneof = "revoke_control_surface_endpoint_request::Target", tags = "1, 2")]
+    #[prost(oneof="revoke_control_surface_endpoint_request::Target", tags="1, 2")]
     pub target: ::core::option::Option<revoke_control_surface_endpoint_request::Target>,
 }
 /// Nested message and enum types in `RevokeControlSurfaceEndpointRequest`.
 pub mod revoke_control_surface_endpoint_request {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Target {
-        #[prost(message, tag = "1")]
+        #[prost(message, tag="1")]
         EndpointId(super::EndpointId),
-        #[prost(message, tag = "2")]
+        #[prost(message, tag="2")]
         DeviceId(super::DeviceId),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeControlSurfaceResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub newly_revoked: bool,
-    #[prost(uint32, tag = "2")]
+    #[prost(uint32, tag="2")]
     pub revoked_principal_count: u32,
-    #[prost(uint32, tag = "3")]
+    #[prost(uint32, tag="3")]
     pub revoked_session_count: u32,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub revocation_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevokeGrantRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub grant_id: ::core::option::Option<GrantId>,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RevokeGrantResult {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub changed: bool,
-    #[prost(bool, tag = "2")]
+    #[prost(bool, tag="2")]
     pub already_revoked: bool,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub revocation_event_id: ::core::option::Option<EventId>,
-    #[prost(enumeration = "GrantRevocationPolicy", tag = "4")]
+    #[prost(enumeration="GrantRevocationPolicy", tag="4")]
     pub applied_policy: i32,
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag="5")]
     pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnterSecurityLockdownRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnterSecurityLockdownResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub lockdown: ::core::option::Option<SecurityLockdownState>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub lockdown_event_id: ::core::option::Option<EventId>,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub already_active: bool,
-    #[prost(uint32, tag = "4")]
+    #[prost(uint32, tag="4")]
     pub affected_runtime_session_count: u32,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub invalidated_through_operator_session_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadSecuritySnapshotRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadSecuritySnapshotResponse {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub snapshot: ::core::option::Option<SecuritySnapshot>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnrollControlSurfacePrincipalRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub principal: ::core::option::Option<PrincipalEnrollment>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnrollControlSurfacePrincipalResult {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub principal: ::core::option::Option<PrincipalCredential>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecordControlSurfaceAuditRequest {
-    #[prost(enumeration = "AuditEventKind", tag = "1")]
+    #[prost(enumeration="AuditEventKind", tag="1")]
     pub kind: i32,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub reason_code: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecordControlSurfaceAuditResponse {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub audit_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -2963,52 +2963,52 @@ impl SnapshotViewKind {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Elicitation {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub elicitation_id: ::core::option::Option<ElicitationId>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag="3")]
     pub opener: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub expected_responder_actor: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag="5")]
     pub response_contract: ::core::option::Option<ResponseContract>,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub target_context: ::core::option::Option<TargetScope>,
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag="7")]
     pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag="8")]
     pub cancellation_policy: ::core::option::Option<CancellationPolicy>,
-    #[prost(message, repeated, tag = "9")]
+    #[prost(message, repeated, tag="9")]
     pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag="10")]
     pub payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(enumeration = "ElicitationState", tag = "11")]
+    #[prost(enumeration="ElicitationState", tag="11")]
     pub state: i32,
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag="12")]
     pub recorded_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag = "13")]
+    #[prost(message, optional, tag="13")]
     pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResponseContract {
-    #[prost(enumeration = "ResponseContractKind", tag = "1")]
+    #[prost(enumeration="ResponseContractKind", tag="1")]
     pub contract_kind: i32,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub schema_ref: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag = "3")]
+    #[prost(string, repeated, tag="3")]
     pub ui_hints: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag="4")]
     pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
-    #[prost(enumeration = "InvalidResponsePolicy", tag = "5")]
+    #[prost(enumeration="InvalidResponsePolicy", tag="5")]
     pub invalid_response_policy: i32,
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag="6")]
     pub responder_policy: ::core::option::Option<ResponderPolicy>,
-    #[prost(enumeration = "ResponseSensitivity", tag = "7")]
+    #[prost(enumeration="ResponseSensitivity", tag="7")]
     pub sensitivity: i32,
     /// Typed contract body. Present for committed contract kinds with a typed
     /// shape; approval remains binary and carries no typed body in v0.1.0.
-    #[prost(oneof = "response_contract::ContractBody", tags = "8")]
+    #[prost(oneof="response_contract::ContractBody", tags="8")]
     pub contract_body: ::core::option::Option<response_contract::ContractBody>,
 }
 /// Nested message and enum types in `ResponseContract`.
@@ -3017,25 +3017,25 @@ pub mod response_contract {
     /// shape; approval remains binary and carries no typed body in v0.1.0.
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum ContractBody {
-        #[prost(message, tag = "8")]
+        #[prost(message, tag="8")]
         Question(super::QuestionContract),
     }
 }
 /// A selectable option within a question contract.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResponseOption {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub option_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub label: ::prost::alloc::string::String,
 }
 /// The typed contract body for a `question` contract kind. Each Elicitation is
 /// single-answer; grouped multi-question presentation is a surface concern.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuestionContract {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(message, repeated, tag="1")]
     pub options: ::prost::alloc::vec::Vec<ResponseOption>,
-    #[prost(bool, tag = "2")]
+    #[prost(bool, tag="2")]
     pub allow_free_text: bool,
 }
 /// The typed response payload carried by an ELICITATION_RESPONSE Operation.
@@ -3043,42 +3043,42 @@ pub struct QuestionContract {
 /// clarification is an optional supplementary answer-and field.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ElicitationResponsePayload {
-    #[prost(string, tag = "1")]
+    #[prost(string, tag="1")]
     pub selected_option_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub free_text: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub clarification: ::prost::alloc::string::String,
 }
 /// The typed response payload carried by an APPROVAL_RESPONSE Operation.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApprovalResponsePayload {
-    #[prost(enumeration = "ApprovalDecision", tag = "1")]
+    #[prost(enumeration="ApprovalDecision", tag="1")]
     pub decision: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimeoutPolicy {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag="2")]
     pub duration: ::core::option::Option<::prost_types::Duration>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancellationPolicy {
-    #[prost(bool, tag = "1")]
+    #[prost(bool, tag="1")]
     pub opener_may_withdraw: bool,
-    #[prost(bool, tag = "2")]
+    #[prost(bool, tag="2")]
     pub responder_may_decline: bool,
-    #[prost(bool, tag = "3")]
+    #[prost(bool, tag="3")]
     pub core_or_policy_may_cancel: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResponderPolicy {
-    #[prost(message, optional, tag = "1")]
+    #[prost(message, optional, tag="1")]
     pub expected_responder_actor: ::core::option::Option<ActorId>,
-    #[prost(string, tag = "2")]
+    #[prost(string, tag="2")]
     pub endpoint_class: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag="3")]
     pub fallback_policy: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
