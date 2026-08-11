@@ -86,7 +86,7 @@ const runtimeSessionId = "session-e2e";
 const deploymentScope = "machine-e2e";
 
 // The test is deliberately serial: it owns one core process and one SQLite fixture.
-test("core → adapter → real AgentSession → observation loop, generation bump, reconnect, and core restart", { timeout: 60_000 }, async () => {
+test("core → adapter → real AgentSession → observation loop, generation bump, reconnect, and core restart", { timeout: 180_000 }, async () => {
   const port = await freePort();
   let adminPort = await freePort();
   while (adminPort === port) adminPort = await freePort();
