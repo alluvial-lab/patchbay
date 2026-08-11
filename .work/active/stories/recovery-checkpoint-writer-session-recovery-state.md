@@ -1,14 +1,14 @@
 ---
 id: recovery-checkpoint-writer-session-recovery-state
 kind: story
-stage: implementing
+stage: done
 tags: [protocol, storage]
 parent: recovery-checkpoint-writer
 depends_on: [snapshot-core-generation-semantics, replay-integrity-prefix-discipline, session-registry-replay-domain-soundness, adapter-report-source-ordering]
 release_binding: null
 gate_origin: null
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 ---
 
 # Complete session recovery checkpoint
@@ -27,10 +27,16 @@ Make the existing private typed/versioned session slot a complete, compact recov
 
 ## Acceptance evidence
 
-- [ ] Format-2 checkpoint plus tail equals a fresh full-log session rebuild across live records, source cursors, tombstones, lockdown state, and revisions.
-- [ ] Control and adapter production session rebuilds apply only post-anchor tail events when compatible state exists.
-- [ ] Every framing/anchor/semantic mutation falls back to full replay without hiding a sibling projection's earlier events.
-- [ ] Checkpoint size does not contain the full covered event-equality ledger, and covered-prefix direct re-feed fails closed.
+- [x] Format-2 checkpoint plus tail equals a fresh full-log session rebuild across live records, source cursors, tombstones, lockdown state, and revisions.
+- [x] Control and adapter production session rebuilds apply only post-anchor tail events when compatible state exists.
+- [x] Every framing/anchor/semantic mutation falls back to full replay without hiding a sibling projection's earlier events.
+- [x] Checkpoint size does not contain the full covered event-equality ledger, and covered-prefix direct re-feed fails closed.
+
+## Implementation evidence
+
+- Generated format-2 `StoredSessionCheckpoint`/tombstone contracts and strict decoder/hydrator landed in `09f36c2`, hardened through `24c3475`, `d45efe7`, and `8f9e582`.
+- Both `ProjectionState` and `AdapterControlServiceImpl` use the shared checkpoint-plus-tail helper; checkpoint/tail disagreement and structurally rejected rows replay from zero and force replacement.
+- `checkpoint::tests::complete_checkpoint_round_trips_tombstones_source_cursor_and_tail`, `snapshot::tests::semantic_mutations_are_disposable_without_seeding_session_state`, and the file-backed dual-consumer restart fixture pass.
 
 ## Ordering constraints
 
