@@ -106,6 +106,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             contracts/ts/package-lock.json
+            operator-domain/package-lock.json
             web-server/package-lock.json
             web-cockpit/package-lock.json
             cli/package-lock.json
@@ -118,6 +119,12 @@ jobs:
 
       - name: Build generated TypeScript contracts
         working-directory: contracts/ts
+        run: npm ci && npm run build
+
+      # web-cockpit imports @patchbay/operator-domain (file dep); its dist/ is
+      # gitignored, so build it before web-cockpit's test compiles its types.
+      - name: Build operator-domain (web-cockpit file dependency)
+        working-directory: operator-domain
         run: npm ci && npm run build
 
       - name: Install web server dependencies
