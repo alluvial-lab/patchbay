@@ -260,6 +260,10 @@ fn malformed_owned_event_table_is_exactly_non_mutating() {
     cases.push(("missing generation", recorded(1, &source)));
 
     let mut source = registration();
+    registered_mutation(&mut source).session_generation = Some(Generation { value: 0 });
+    cases.push(("zero generation", recorded(1, &source)));
+
+    let mut source = registration();
     registered_mutation(&mut source).initial_state = None;
     cases.push(("missing initial state", recorded(1, &source)));
 
@@ -969,7 +973,7 @@ fn rejected_new_lsn_semantic_conflicts_are_non_mutating_and_do_not_claim_their_l
         Case {
             name: "generation bump with wrong from_generation",
             registry,
-            rejected: recorded(2, &generation_bump(0, 2)),
+            rejected: recorded(2, &generation_bump(3, 4)),
             corrected: recorded(2, &generation_bump(1, 2)),
         }
     };

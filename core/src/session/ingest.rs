@@ -358,9 +358,14 @@ pub(crate) fn validate_report(
             "session report runtime_session_id is empty".to_owned(),
         ));
     }
-    let session_generation = report.session_generation.ok_or_else(|| {
-        SessionError::CorruptRecord("session report is missing session_generation".to_owned())
-    })?;
+    let session_generation = report
+        .session_generation
+        .filter(|generation| generation.value > 0)
+        .ok_or_else(|| {
+            SessionError::CorruptRecord(
+                "session report is missing a positive session_generation".to_owned(),
+            )
+        })?;
     let connectivity = SessionConnectivityState::try_from(report.connectivity).map_err(|_| {
         SessionError::CorruptRecord(format!(
             "session report has unknown connectivity state {}",

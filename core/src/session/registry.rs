@@ -968,11 +968,14 @@ fn mutation_identity(
             "session {mutation_name} at LSN {event_lsn} has an empty runtime_session_id"
         )));
     }
-    let session_generation = generation.copied().ok_or_else(|| {
-        SessionError::CorruptRecord(format!(
-            "session {mutation_name} at LSN {event_lsn} is missing session_generation"
-        ))
-    })?;
+    let session_generation = generation
+        .copied()
+        .filter(|generation| generation.value > 0)
+        .ok_or_else(|| {
+            SessionError::CorruptRecord(format!(
+                "session {mutation_name} at LSN {event_lsn} is missing a positive session_generation"
+            ))
+        })?;
 
     Ok(SessionIdentity {
         adapter_id,

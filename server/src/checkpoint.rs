@@ -319,8 +319,8 @@ where
                 )
             })?
             .value;
-        let payload = encode_stored_session_checkpoint(&checkpoint);
         drop(decision_guard);
+        let payload = encode_stored_session_checkpoint(&checkpoint);
 
         self.storage
             .write_snapshot(
@@ -599,6 +599,23 @@ mod tests {
             crate::snapshot::decode_compatible_session_checkpoint(&stored, &domain(), &generation)
                 .unwrap();
         assert_eq!(compatible.registry.tombstones().count(), 1);
+        let mut zero_generation = compatible.snapshot.clone();
+        zero_generation.sessions[0].session_generation = Some(Generation { value: 0 });
+        let zero_generation_stored = StoredSnapshot {
+            event_id: stored.event_id.clone(),
+            payload: encode_stored_session_checkpoint(
+                &patchbay_contracts::patchbay::StoredSessionCheckpoint {
+                    snapshot: Some(zero_generation),
+                    tombstones: Vec::new(),
+                },
+            ),
+        };
+        assert!(crate::snapshot::decode_compatible_session_checkpoint(
+            &zero_generation_stored,
+            &domain(),
+            &generation,
+        )
+        .is_err());
         let live = compatible.registry.sessions().next().unwrap();
         assert_eq!(live.identity.session_generation, Generation { value: 2 });
         assert_eq!(live.last_source_cursor, Some(cursor_one));

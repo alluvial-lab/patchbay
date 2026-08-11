@@ -423,6 +423,10 @@ async fn malformed_report_fields_fail_before_append() {
     missing_adapter.adapter_id = None;
     invalid_reports.push(("adapter_id", missing_adapter));
 
+    let mut zero_session_generation = report(1, 4, 1);
+    zero_session_generation.session_generation = Some(Generation { value: 0 });
+    invalid_reports.push(("positive session_generation", zero_session_generation));
+
     let mut empty_runtime = report(1, 4, 1);
     empty_runtime
         .runtime_session_id
