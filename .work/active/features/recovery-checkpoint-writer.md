@@ -337,3 +337,9 @@ npm --prefix contracts/ts run check:drift
 
 ## Status (closed 2026-08-11)
 Implemented, fully verified, and approved at `thorough` review weight. Session checkpointing is production-wired with honest session-only recovery scope; all three child checkpoints are done.
+
+## Consolidated Phase-8 review (2026-08-11)
+
+- Reviewed together with `adapter-report-source-ordering`, whose durable cursor is part of the complete checkpoint contract.
+- The first consolidated pass found only two stale comments in the recovery materializer/full-replay oracle; `14de5af` fixed them. A fresh convergence pass returned `ready` with no material blocker.
+- Final combined verification covered workspace tests, warnings-denied Clippy, Pi tests, generated contract drift, Quint source-order proof/mutation and draft recovery compilation, model/vector checks (22 implementation checks; 38 mutation kills), and clean diff/worktree hygiene.

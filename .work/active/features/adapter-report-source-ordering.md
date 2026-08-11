@@ -406,3 +406,9 @@ Current HEAD reconciliation is recorded above. The implementation in `078ccae` w
 - Fresh-context pass attacked boundary validation, authenticated adapter-generation binding, non-increasing/equivocating revisions, runtime/adapter generation resets, append-before-fold atomicity, exact replay-envelope ownership, core-authored degradation cursor preservation, immutable Pi enqueue snapshots, and the formal/vector mutation oracles.
 - Adjudication found no receiver-confirmed material current-cycle blocker and no smaller surviving finding; the first independent pass was clean, so the thorough convergence condition was met without a fix loop.
 - Verification: all focused core/session/server/Pi tests passed; Quint parse/compile, named examples, temporal verification, model/vector promotion checks, generated drift, full `cargo test --workspace`, clippy with warnings denied, and `git diff --check` passed. Global `cargo fmt --all -- --check` remains red only on unrelated pre-existing unformatted Rust test files outside this feature's diff.
+
+## Consolidated Phase-8 review (2026-08-11)
+
+- Reviewed together with `recovery-checkpoint-writer` at `thorough` weight because `last_source_cursor` is load-bearing checkpoint state.
+- The first consolidated pass found only two stale recovery comments; `14de5af` corrected them. The convergence pass returned `ready` with no material blocker.
+- Cross-feature evidence confirms authenticated enqueue order → atomic durable report event → replay/snapshot cursor → validated format-2 checkpoint → tail-only session recovery without weakening log authority or sibling full replay.
