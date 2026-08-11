@@ -131,6 +131,8 @@ pub enum AdapterServiceConformanceFault {
     IgnoreEmptyPartialResourceReport,
     #[cfg(feature = "conformance-fault-injection")]
     KeepResourcesCurrentOnDisconnect,
+    #[cfg(feature = "conformance-fault-injection")]
+    AcceptNonIncreasingSessionRevision,
 }
 
 #[derive(Clone)]
@@ -200,6 +202,12 @@ where
             conformance_fault,
         )
         .await
+    }
+
+    #[cfg(feature = "conformance-fault-injection")]
+    #[doc(hidden)]
+    pub async fn conformance_session_registry(&self) -> SessionRegistry {
+        self.sessions.lock().await.clone()
     }
 
     async fn new_with_decision_gate_and_conformance_fault(
@@ -833,6 +841,48 @@ where
                 let rebuilt = session::rebuild_from_log(&self.storage, &domain)
                     .await
                     .map_err(map_session_error)?;
+                #[cfg(feature = "conformance-fault-injection")]
+                if self.conformance_fault
+                    == AdapterServiceConformanceFault::AcceptNonIncreasingSessionRevision
+                {
+                    // Deliberate compiled-graph mutant: when the production
+                    // comparison would reject a same-epoch revision, synthesize
+                    // an advancing cursor so the stale payload reaches the real
+                    // atomic fold. The vector's independent status/audit/state
+                    // oracle must detect the rollback.
+                    let forced_revision = report
+                        .adapter_id
+                        .as_ref()
+                        .zip(report.runtime_session_id.as_ref())
+                        .zip(report.session_generation.as_ref())
+                        .zip(report.source_cursor.as_ref())
+                        .and_then(
+                            |(((adapter_id, runtime_session_id), session_generation), cursor)| {
+                                rebuilt
+                                    .get_live_session(
+                                        adapter_id,
+                                        &report.deployment_scope,
+                                        runtime_session_id,
+                                    )
+                                    .filter(|live| {
+                                        live.identity.session_generation == *session_generation
+                                    })
+                                    .and_then(|live| live.last_source_cursor.as_ref())
+                                    .filter(|last| {
+                                        cursor.adapter_generation == last.adapter_generation
+                                            && cursor.revision <= last.revision
+                                    })
+                                    .and_then(|last| last.revision.checked_add(1))
+                            },
+                        );
+                    if let Some(revision) = forced_revision {
+                        report
+                            .source_cursor
+                            .as_mut()
+                            .expect("validated session source cursor")
+                            .revision = revision;
+                    }
+                }
                 let mut sessions = self.sessions.lock().await;
                 *sessions = rebuilt;
                 let result = match session::ingest_session_report(

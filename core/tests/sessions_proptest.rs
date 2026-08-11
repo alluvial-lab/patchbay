@@ -228,6 +228,148 @@ fn report_at(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceAttempt {
+    session_generation: u64,
+    adapter_generation: u64,
+    revision: u64,
+    model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceOracle {
+    session_generation: u64,
+    adapter_generation: u64,
+    revision: u64,
+    model: String,
+}
+
+fn any_source_attempt_sequence() -> impl Strategy<Value = Vec<SourceAttempt>> {
+    prop::collection::vec((1u64..=3, 1u64..=3, 1u64..=5, "[A-C]"), 1..=20).prop_map(|attempts| {
+        attempts
+            .into_iter()
+            .map(
+                |(session_generation, adapter_generation, revision, model)| SourceAttempt {
+                    session_generation,
+                    adapter_generation,
+                    revision,
+                    model,
+                },
+            )
+            .collect()
+    })
+}
+
+fn source_report(attempt: &SourceAttempt) -> SessionReport {
+    let mut report = report_at(
+        attempt.session_generation,
+        SessionConnectivityState::Live,
+        SessionActivityState::Idle,
+    );
+    report.model.clone_from(&attempt.model);
+    report.source_cursor = Some(SessionReportSourceCursor {
+        adapter_generation: Some(Generation {
+            value: attempt.adapter_generation,
+        }),
+        revision: attempt.revision,
+    });
+    report
+}
+
+fn source_oracle_accepts(live: Option<&SourceOracle>, attempt: &SourceAttempt) -> bool {
+    let Some(live) = live else {
+        return true;
+    };
+    attempt.session_generation > live.session_generation
+        || (attempt.session_generation == live.session_generation
+            && (attempt.adapter_generation > live.adapter_generation
+                || (attempt.adapter_generation == live.adapter_generation
+                    && attempt.revision > live.revision)))
+}
+
+fn source_mutant_accepts(live: Option<&SourceOracle>, attempt: &SourceAttempt) -> bool {
+    let Some(live) = live else {
+        return true;
+    };
+    attempt.session_generation > live.session_generation
+        || (attempt.session_generation == live.session_generation
+            && (attempt.adapter_generation > live.adapter_generation
+                || (attempt.adapter_generation == live.adapter_generation && attempt.revision > 0)))
+}
+
+fn source_oracle_state(attempt: &SourceAttempt) -> SourceOracle {
+    SourceOracle {
+        session_generation: attempt.session_generation,
+        adapter_generation: attempt.adapter_generation,
+        revision: attempt.revision,
+        model: attempt.model.clone(),
+    }
+}
+
+async fn run_source_ordering_check(attempts: &[SourceAttempt]) -> Result<(), String> {
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut registry = SessionRegistry::new(domain()).map_err(|error| error.to_string())?;
+    let mut oracle: Option<SourceOracle> = None;
+
+    for attempt in attempts {
+        let before = registry.clone();
+        let expected_acceptance = source_oracle_accepts(oracle.as_ref(), attempt);
+        let result = ingest_hot(&storage, &mut registry, source_report(attempt)).await;
+        if expected_acceptance {
+            if result.is_err() {
+                return Err(format!(
+                    "oracle-current report was rejected: {attempt:?}: {result:?}"
+                ));
+            }
+            oracle = Some(source_oracle_state(attempt));
+        } else {
+            if !matches!(
+                &result,
+                Err(SessionError::StaleGeneration { .. } | SessionError::StaleSourceCursor { .. })
+            ) {
+                return Err(format!(
+                    "oracle-stale report had wrong result: {attempt:?}: {result:?}"
+                ));
+            }
+            if registry != before {
+                return Err(format!(
+                    "oracle-stale report mutated the registry: {attempt:?}"
+                ));
+            }
+        }
+
+        let expected = oracle.as_ref().expect("the first attempt always registers");
+        let live = registry
+            .get_live_session(&adapter(), "local", &runtime_session("session-1"))
+            .ok_or("source-order projection lost the live session")?;
+        let cursor = live
+            .last_source_cursor
+            .as_ref()
+            .ok_or("accepted source-order report omitted its cursor")?;
+        if live.identity.session_generation.value != expected.session_generation
+            || cursor
+                .adapter_generation
+                .as_ref()
+                .map(|generation| generation.value)
+                != Some(expected.adapter_generation)
+            || cursor.revision != expected.revision
+            || live.model != expected.model
+        {
+            return Err(format!(
+                "production projection {live:?} disagreed with independent oracle {expected:?}"
+            ));
+        }
+    }
+
+    let rebuilt = rebuild_from_log(&storage, &domain())
+        .await
+        .map_err(|error| format!("source-order replay failed: {error}"))?;
+    if rebuilt != registry {
+        return Err("source-order hot registry differed from cold replay".to_owned());
+    }
+    Ok(())
+}
+
 fn live_generation(registry: &SessionRegistry) -> u64 {
     registry
         .get_live_session(&adapter(), "local", &runtime_session("session-1"))
@@ -467,6 +609,21 @@ proptest! {
         })?;
     }
 
+    /// SessionReportSourceOrdering implementation evidence: an independent raw
+    /// tuple oracle decides acceptance without calling the production comparator.
+    #[test]
+    fn session_report_source_ordering_matches_independent_oracle(
+        attempts in any_source_attempt_sequence(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            run_source_ordering_check(&attempts)
+                .await
+                .map_err(TestCaseError::fail)?;
+            Ok::<(), TestCaseError>(())
+        })?;
+    }
+
     /// SessionIdentityTuple / isolation implementation evidence: reports vary
     /// every canonical identity dimension across deliberate one-field
     /// collisions. The independent oracle checks only the addressed tuple,
@@ -668,6 +825,49 @@ proptest! {
 }
 
 // ===== Mutation discipline =====
+
+#[test]
+fn session_source_oracle_kills_positive_revision_comparison_mutant() {
+    let attempts = [
+        SourceAttempt {
+            session_generation: 1,
+            adapter_generation: 1,
+            revision: 1,
+            model: "A".to_owned(),
+        },
+        SourceAttempt {
+            session_generation: 1,
+            adapter_generation: 1,
+            revision: 3,
+            model: "B".to_owned(),
+        },
+        SourceAttempt {
+            session_generation: 1,
+            adapter_generation: 1,
+            revision: 2,
+            model: "A".to_owned(),
+        },
+    ];
+    let mut oracle = None;
+    let mut mutant = None;
+    for attempt in &attempts {
+        if source_oracle_accepts(oracle.as_ref(), attempt) {
+            oracle = Some(source_oracle_state(attempt));
+        }
+        if source_mutant_accepts(mutant.as_ref(), attempt) {
+            mutant = Some(source_oracle_state(attempt));
+        }
+    }
+
+    assert_eq!(oracle.as_ref().unwrap().model, "B");
+    assert_eq!(oracle.as_ref().unwrap().revision, 3);
+    assert_eq!(mutant.as_ref().unwrap().model, "A");
+    assert_eq!(mutant.as_ref().unwrap().revision, 2);
+    assert_ne!(
+        mutant, oracle,
+        "independent oracle failed to kill stale-guard mutant"
+    );
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FaultySessionKey {

@@ -22,14 +22,15 @@ const CHECKED_MODEL_PROPERTIES = [
   'GenerationMonotonic',
   'NoAcceptedToCompleted',
   'RevokedSessionCannotCommand',
+  'SessionReportSourceOrdering',
   'TerminalFinality',
 ];
 
-// Currently empty by docs/VERIFICATION.md: checked-model properties are not
-// checked-normative product semantics until they also have at least one promoted
-// conformance vector. The promoted-vector coverage gate (a) only fails for ids
-// listed here, not for every checked-model property.
-const CHECKED_NORMATIVE_PROPERTIES = [];
+// Checked-model properties become checked-normative only when a promoted
+// product-seam vector independently covers the same property.
+const CHECKED_NORMATIVE_PROPERTIES = [
+  'SessionReportSourceOrdering',
+];
 
 const STATED_NORMATIVE_PROPERTIES = [
   'ActorIdsUnique',
@@ -250,6 +251,43 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.expected_outcome?.fresh_replays_equal === true
       && vector.expected_outcome?.covered_prefix_replay_is_idempotent === true,
     'exact covered-record replay must be inert, while lower-generation, failed-replacement, and terminal candidates preserve the cursor-bearing projection and durable prefix',
+  ),
+  SessionReportSourceOrdering: (vector) => expectation(
+    JSON.stringify(vector.input?.primary_reports) === JSON.stringify([
+      { adapter_generation: 1, revision: 1, model: 'A' },
+      { adapter_generation: 1, revision: 3, model: 'B' },
+      { adapter_generation: 1, revision: 2, model: 'A' },
+    ])
+      && vector.input?.initial_attachment_generation === 1
+      && vector.input?.runtime_session_generation === 1
+      && vector.input?.adapter_generation_reset?.attachment_generation === 2
+      && vector.input?.adapter_generation_reset?.accepted_revision === 1
+      && vector.input?.adapter_generation_reset?.old_adapter_generation === 1
+      && vector.input?.runtime_generation_reset?.session_generation === 2
+      && vector.input?.runtime_generation_reset?.accepted_revision === 1
+      && vector.input?.runtime_generation_reset?.old_session_generation === 1
+      && JSON.stringify(vector.expected_outcome?.primary?.accepted_models) === JSON.stringify(['A', 'B'])
+      && vector.expected_outcome?.primary?.delayed_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.primary?.session_state_event_count === 2
+      && vector.expected_outcome?.primary?.audit_kind === 'AUDIT_EVENT_KIND_STALE_EVENT_IGNORED'
+      && vector.expected_outcome?.primary?.audit_failure_code === 'FAILURE_CODE_STALE_EVENT'
+      && vector.expected_outcome?.primary?.audit_reason_code === 'session_report_source_cursor_stale'
+      && vector.expected_outcome?.primary?.snapshot_model === 'B'
+      && vector.expected_outcome?.primary?.snapshot_adapter_generation === 1
+      && vector.expected_outcome?.primary?.snapshot_revision === 3
+      && vector.expected_outcome?.primary?.hot_equals_replay === true
+      && vector.expected_outcome?.adapter_generation_reset?.accepted_model === 'C'
+      && vector.expected_outcome?.adapter_generation_reset?.snapshot_adapter_generation === 2
+      && vector.expected_outcome?.adapter_generation_reset?.snapshot_revision === 1
+      && vector.expected_outcome?.adapter_generation_reset?.old_producer_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.adapter_generation_reset?.old_producer_mutated === false
+      && vector.expected_outcome?.runtime_generation_reset?.accepted_model === 'D'
+      && vector.expected_outcome?.runtime_generation_reset?.snapshot_session_generation === 2
+      && vector.expected_outcome?.runtime_generation_reset?.snapshot_adapter_generation === 2
+      && vector.expected_outcome?.runtime_generation_reset?.snapshot_revision === 1
+      && vector.expected_outcome?.runtime_generation_reset?.old_runtime_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.runtime_generation_reset?.old_runtime_mutated === false,
+    'A/r1 then B/r3 must fence delayed A/r2 with stale audit and B/r3 snapshot; only newer adapter/runtime generations reset revision',
   ),
   SnapshotStaleRejected: (vector) => everyExpectedCase(
     vector,
@@ -909,8 +947,8 @@ function validateEvidenceCounts(markdown, vectors, implementationExecuted, mutat
       ...validateAssertedCount(markdown, {
         label: 'token-commune mutation-witness count',
         pattern: /and kill\s+([a-z]+|\d+)\s+declared mutation witnesses\b/i,
-        derived: mutationsKilled.length,
-        source: 'exact mutation-kill reports',
+        derived: mutationsKilled.filter((id) => tokenVectorIds.has(id.split(':')[1])).length,
+        source: 'exact token-commune mutation-kill reports',
       }),
     );
   }

@@ -20,3 +20,11 @@ cc 2d1f74183877a94d91e50d86d6017bd192c315f6f304a8b9ec4aaa9bab3b2555 # shrinks to
 cc 41c23a4fd5860d29b9bb31dc3af5c8be392119ed413823e2563252f7ebffc12b # shrinks to n_events = 1
 cc 1d2429242461bbc6ec8d500bef80b5f8dff7fe280b9281879fe7057dc24b04bf # shrinks to n_events = 2, snap_lsn = 1
 cc 7a54d2dfa85010018f07a624a9d33b7dc04fcf6727f2fa11997c2e94f1a5acc1 # shrinks to n_events = 1, offset = 1
+cc fafec4fce1b75951394492bd38c9a77c0a329ea01295e240bcd0ec9bc79e2bc0 # shrinks to n_events = 1
+cc 6ffdd257f31950c7f33dd83dfcd0cd0277eaad25e5671c884aef443363731e0b # shrinks to n_events = 1
+cc 224e1d51d850c0b1651276eb2c5845dfcbcf2a16ba3b2b744adb9dc836854d3a # shrinks to n_events = 2, snap_lsn = 1
+cc ef33a4fd3adfc3a5124a00c650ac715a323c14a35aebdd4abba513a7332946e2 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc 87de6cdf2d118fe1a367ae0cf7cf1abab8eaafd05848b73936cdd67a1524d6ea # shrinks to cross_events = [(0, StoredEventPayload { kind: Operation, payload: [] })]
+cc 5987205b5d44ed19c3bb442765c7517ad97f808e19fae2a88787ddc41133b8f6 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }, StoredEventPayload { kind: Operation, payload: [] }], snap_after = 1
+cc 1fe9c4c4e405b97dfb0348f6607a261c58dcef28e27ccadf670c644fd29f1c57 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]
+cc 92e2553acb5f348890da08f3ed87754bb07de3adc018a8fb9bbc2e6b4a7ded61 # shrinks to events = [StoredEventPayload { kind: Operation, payload: [] }]

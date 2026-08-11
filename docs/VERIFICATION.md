@@ -26,15 +26,18 @@ Each required model area below is obligated at v0.1.0. Properties within each ar
 
 Current checked-model properties:
 
+(The list is the model-promoted floor; one property also clears the checked-normative vector gate.)
+
 - Operator intent delivery / lifecycle properties from `command_lifecycle.qnt`: `TerminalFinality`, `BoundaryDedup`, and `NoAcceptedToCompleted`.
 - Session-generation monotonicity from `session_generation.qnt`: `GenerationMonotonic`.
 - Browser session and CSRF boundary from `csrf_browser.qnt`: `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, and `browser_local_state_not_authority`.
+- Authenticated session-report source ordering from `session_report_source_ordering.qnt`: `SessionReportSourceOrdering` is model-promoted at the documented finite bound and also checked-normative through its promoted authenticated-server vector.
 
 The session/principal revocation model and its four vectors are present as draft artifacts. They remain **stated-normative** until the independent attempted-evidence formulas, mutation gates, and vector promotion review are completed; passing the current checker is not presented as checked-normative evidence.
 
 The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft properties/four draft vectors exercise rejection, replay persistence, stale-session dominance, operator-session invalidation, and bootstrap-only exit. They are **stated-normative**: Quint parses/compiles, model-promotion metadata checks, vector schema checks, and implementation tests pass, but no lockdown vector is promoted and no stronger checked-normative claim is made.
 
-**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. No properties are currently checked-normative because the promoted vectors trace only to stated-normative properties and do not overlap a checked-model property.
+**checked-normative** — must clear the model-promotion rule **and** have ≥1 promoted conformance vector tracing to the property before v0.1.0 treats the behavior as checked product semantics. `SessionReportSourceOrdering` is currently checked-normative: its trace-faithful Quint model passes to 10 steps, its comparison-weakening mutation produces a counterexample, and `session-report-source-ordering.json` executes the authenticated server ingress/replay/snapshot example. This bounded claim does not establish unbounded, multi-writer, or end-to-end adapter correctness.
 
 **stated-normative** — documented v0.1.0 obligation with a draft model, no model yet, or a reserved property whose obligation is not backed by a promoted model. These are product obligations but must not be claimed checked until promoted through the model gate and, for checked-normative product semantics, the vector gate. A property with a promoted model but no promoted conformance vector is **checked-model**, not stated-normative. Current stated-normative areas include:
 
@@ -44,7 +47,6 @@ The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft 
 - Subscription audit, cursor-replay authorization, and grant authorization: `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized`, and `SubscriptionGrantChecked` remain stated-normative until the model separates attempted audit/replay/actor/scope evidence from state written by the subscription actions.
 - Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
 - Session identity and stale-generation refinements: `SessionIdentityTuple`, `LabelsCannotOverrideIdentity`, and `LateGenerationInert` remain stated-normative until models represent per-session identity, target selection, and stale-event audit state.
-- Session-report source order: `SessionReportSourceOrdering` is a stated-normative obligation until a trace-faithful pending-report model, claim-breaking mutation, and promoted authenticated-ingress vector clear both promotion gates. The implementation must keep equal/lower producer cursors inert without confusing adapter source revision with core LSN order.
 - Elicitation lifecycle and timeout semantics: `ElicitationPendingFinality`, `ElicitationFirstAnswerWins`, `ElicitationCorrelationTyped`, `ElicitationInvalidResponseRejected`, `ElicitationStaleTargetInert`, `ElicitationWithdrawalFinality`, and `ElicitationTimeoutNeitherSuccessNorDenial` remain stated-normative until the model uses mutation-survivable independent attempted evidence and represents the timeout grant boundary.
 - Relational actor identity: `ActorIdsUnique` remains a stated-normative injectivity obligation; its retained Alloy fact-consequence check is only a structural regression test, not promoted assurance.
 - Crash recovery: no accepted command disappears silently after an ungraceful restart; idempotent log replay; snapshot checkpointing as recovery-cost bound.
@@ -188,7 +190,7 @@ Properties:
 - Commands bind to target session identity and generation. Session identity is the tuple adapter id + deployment scope + runtime session id + session generation; project, cwd, and name are metadata, not identity.
 - **LateGenerationInert**: events/replies binding to a tombstoned session generation are `stale_event` audit records; they do not mutate the live generation.
 - **GenerationMonotonic**: the checked temporal property proves that the live session generation never decreases. Strict-supersession (lower generations are rejected and equal generations do not replace the session) is enforced by the action guard, not established by this checked temporal property.
-- **SessionReportSourceOrdering** (stated-normative until promoted): for one runtime-session generation, an attempted report from an older adapter generation or with a revision not strictly greater than the last applied revision leaves every report-carried mutable value and the source watermark unchanged. A current newer adapter generation or newer runtime-session generation may establish a fresh positive local revision. The oracle must inspect pending environment evidence the apply action cannot rewrite.
+- **SessionReportSourceOrdering** (checked-normative at the documented finite model/vector bounds): for one runtime-session generation, an attempted report from an older adapter generation or with a revision not strictly greater than the last applied revision leaves every report-carried mutable value and the source watermark unchanged. A current newer adapter generation or newer runtime-session generation may establish a fresh positive local revision. The oracle inspects pending environment evidence the apply action cannot rewrite; the promoted vector checks authenticated ingress, stale audit, atomic durability, replay, and snapshot carriage.
 - Human-readable labels cannot override verified target identity.
 
 Normative source-order variables include the live runtime-session generation, live authenticated adapter generation, last applied source revision, mutable report value(s), and separately arrived pending report generation/adapter generation/revision/value. Core LSN remains a distinct durable-order variable and is not the source-order predicate.
@@ -342,12 +344,14 @@ the executable conformance evidence below.
 
 ### Operational-resource conformance evidence (implementation-checked)
 
-The resource-plane corpus promotes nine executable examples through the single
-`contracts/vectors/` registry. The umbrella checker runs twelve exact package
+The resource-plane corpus promotes ten executable examples through the single
+`contracts/vectors/` registry. The umbrella checker runs thirteen exact package
 checks across Rust core, Rust server, and web cockpit and rejects any promoted
 example whose expected outcome, runner registration, or reported execution id
-does not match. The shared session-shaped vectors retain their existing property
-classifications while adding resource refinements.
+does not match. The legacy corpus count includes the checked-normative
+session-report source-order vector alongside the shared session-shaped vectors
+that retain their existing property classifications while adding resource
+refinements.
 
 | Property id | Executable vectors | Property implementation | Mutation witness | Assurance tier |
 |---|---|---|---|---|
@@ -357,6 +361,7 @@ classifications while adding resource refinements.
 | `ResourceIdentityCollisionFenced` | `resource-identity-collision-fenced`; resource cases in `command-acceptance` and `failure-missing-grant` | exact grant/target acceptance plus generated adapter/kind/local-id containment and target-key checks | adapter-, kind-, and local-id-omitting comparisons failed | promoted vector + implementation-checked; not model-checked |
 | `ResourceCoreStateInjectionRejected` | `resource-core-state-injection-rejected` | generic Observation append plus durable discriminator replay against `ResourceRegistry` | Observation-payload dispatch to `ResourceStateEvent` failed on the forged state witness | promoted vector + implementation-checked; not model-checked |
 | `IdempotentLogReplay` | `resource-replay-prefix-idempotent` | generation-1 upsert, generation-2 atomic replacement, exact committed generation-1 re-feed, lower-generation next-event rejection, same-LSN sibling re-feed, a structurally valid failed replacement, and three terminal-mutation candidates against the production fold | moving covered-prefix classification after generation, installing either the applicable tombstone or view update from the failed replacement, permitting resurrection, or advancing the cursor on rejection violates the exact full-projection/prefix oracle | promoted vector + implementation-checked; formal model remains draft |
+| `SessionReportSourceOrdering` | `session-report-source-ordering` | authenticated `A/r1 → B/r3 → delayed A/r2`, stale audit/event-count oracle, snapshot carriage, exact hot/replay equality, and adapter/runtime generation resets | `accept-nonincreasing-session-revision` forwards the stale payload through the real atomic fold and fails the independent status/state oracle | checked-normative at the documented finite model/vector bounds |
 
 The covered-LSN fixture re-feeds the exact `RecordedEvent` previously read from
 the append-only store. Under the single-writer durable-log contract,
@@ -454,7 +459,7 @@ Reserve the following conformance-vector families. Each is draft until its refer
 - `subscription-audited`: subscription allow/deny decisions create security audit records without creating Operation records.
 - `subscription-cursor-replay-authorized`: reconnect replay by cursor returns only events within the authorized subscription filter.
 - `session-model-change-preserves-identity`: a `SessionModelChanged` mutation changes only opaque current-model metadata while retaining adapter id, deployment scope, runtime session id, and generation; it exercises `LabelsCannotOverrideIdentity` as a draft wire-shape example.
-- `session-report-source-ordering`: a current authenticated producer applies `A/r1`, then `B/r3`, then submits delayed `A/r2`; the last report is stale/audited and hot, replayed, and snapshotted state remains `B/r3`. This reservation promotes only after the matching model and mutation gate pass.
+- `session-report-source-ordering`: a current authenticated producer applies `A/r1`, then `B/r3`, then submits delayed `A/r2`; the last report is stale/audited and hot, replayed, and snapshotted state remains `B/r3`. The matching pending-evidence model, formal comparison mutation, authenticated-server vector, and compiled ingress mutation have passed, so this example is promoted at its documented bounds.
 
 Spawn capability-manifest idempotency-strength handling (`none` / `at-Patchbay-boundary` / `end-to-end`) is classified as adapter-contract/conformance-only for now, outside the current formal model scope. The core's boundary dedup remains covered by `command_lifecycle.qnt` (see § Idempotent retry above for the boundary-vs-end-to-end scope statement); adapter-side duplicate external process prevention is not claimed as a formal property until a future adapter contract model is scoped.
 
@@ -502,7 +507,7 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 16 properties with promoted vector coverage.
+Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 17 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
@@ -556,6 +561,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 | `RevokedSessionCannotCommand` | promoted | checked-model | specs/seed/csrf_browser.qnt | apalache | — | quint verify csrf_browser.qnt --invariant revoked_session_cannot_command --max-steps 12 | SECURITY.md and VERIFICATION.md require revoked or expired operator sessions to be rejected before issuing new commands |
 | `SenderMatchesClaim` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — not yet checked; promote when the dynamic CompoundIssuer binding is modeled> | RESERVED: sender == claimedSender is a DYNAMIC consistency property, not a relational one. In a static snapshot, sender and claimedSender are independent fields — nothing forces them equal except a fact, which makes the assert a tautology. The actual binding (an authenticated identity matches the self-asserted sender) is a CompoundIssuer-style verification action that belongs in authority.qnt (per the Alloy brief's caveat). Promote when that dynamic model exists. |
 | `SessionIdentityTuple` | draft | stated-normative | specs/seed/session_generation.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | session target identity is adapter id + deployment scope + runtime session id + generation, excluding project/cwd/name metadata |
+| `SessionReportSourceOrdering` | promoted | checked-normative | specs/seed/session_report_source_ordering.qnt | apalache-temporal | session-report-source-ordering | echo y \| quint verify session_report_source_ordering.qnt --temporal session_report_source_ordering --max-steps 10 | within one authenticated runtime-session producer epoch, an equal/lower source cursor or an old runtime/adapter generation leaves every report-carried value and the durable source watermark unchanged; newer runtime or adapter generations may establish a fresh positive revision |
 | `SnapshotConsistentPrefix` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | snapshot materialization reads a consistent durable-log prefix up to SnapshotLSN and does not include events beyond it |
 | `SnapshotCrossDomainRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | applied snapshots do not change authority when origin domain or core generation differs |
 | `SnapshotStaleRejected` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | snapshot-reconciliation | <TBD — not yet checked; promote in a follow-on item> | stale snapshots (LSN < SnapshotRevision) do not replace the current authoritative core view |
@@ -584,7 +590,7 @@ Summary: 53 modeled properties (8 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 53 vector(s), 16 promoted vector(s), 0 checked-normative properties requiring promoted-vector coverage. Current checked-normative coverage gate is empty by design.
+Summary: 54 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -638,6 +644,7 @@ Summary: 53 vector(s), 16 promoted vector(s), 0 checked-normative properties req
 | `RevokedSessionCannotCommand` | checked-model | — | — |
 | `SenderMatchesClaim` | stated-normative | — | — |
 | `SessionIdentityTuple` | stated-normative | — | — |
+| `SessionReportSourceOrdering` | checked-normative | [session-report-source-ordering](../contracts/vectors/session-report-source-ordering.json) (promoted) | patchbay.AuditRecord.failure_code<br>patchbay.AuditRecord.kind<br>patchbay.AuditRecord.reason_code<br>patchbay.Session.last_source_cursor<br>patchbay.Session.model<br>patchbay.SessionReport.adapter_id<br>patchbay.SessionReport.deployment_scope<br>patchbay.SessionReport.model<br>patchbay.SessionReport.runtime_session_id<br>patchbay.SessionReport.session_generation<br>patchbay.SessionReport.source_cursor<br>patchbay.SessionReportApplied.previous_source_cursor<br>patchbay.SessionReportApplied.report<br>patchbay.SessionReportSourceCursor.adapter_generation<br>patchbay.SessionReportSourceCursor.revision<br>patchbay.SessionSnapshot.sessions<br>patchbay.SessionStateEvent.report_applied |
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.core_generation<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn<br>patchbay.SessionSnapshot.core_generation |
@@ -680,15 +687,16 @@ Draft models may explore ideas without becoming product commitments.
 
 The v0.1.0 seed formal models live under `specs/seed/`. Each model carries its promotion metadata as inline `@promotion` comment blocks (one per checked/draft property) — the machine-readable source `contracts/scripts/check-models.mjs` reads to generate the model-promotion traceability table. The product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field. The property-id vocabulary established by the seed is the Single Source of Truth that `.proto` contracts, conformance vectors, and implementation all derive from.
 
-### Checked-model (model promoted; awaiting conformance vectors)
+### Model-promoted (checked-model floor; checked-normative where vector-covered)
 
-These checked-model properties are **unaffected** by the O/O/E vocabulary roll-forward and apply to `OperationState` by equivalence for the listed properties only. They are not checked-normative until at least one conformance vector tracing to each property is promoted. No checked-normative property exists yet in this repository because the promoted vectors trace only to stated-normative properties and do not overlap a checked-model property.
+These model-promoted properties are **unaffected** by the O/O/E vocabulary roll-forward. The command properties apply to `OperationState` by equivalence for the listed properties only. A property remains checked-model until at least one tracing conformance vector is promoted; `SessionReportSourceOrdering` is the current checked-normative exception because its authenticated-server vector also cleared that gate.
 
 | Model | Language | Properties checked | Backend |
 |---|---|---|---|
 | `specs/seed/command_lifecycle.qnt` | Quint | `BoundaryDedup` (invariant); `TerminalFinality`, `NoAcceptedToCompleted` (temporal) — apply to `OperationState` by refinement equivalence | Apalache + Apalache-temporal |
 | `specs/seed/session_generation.qnt` | Quint | `GenerationMonotonic` (temporal) | Apalache-temporal |
 | `specs/seed/csrf_browser.qnt` | Quint | `CsrfRejectsUnauthenticated`, `CsrfRejectsMissingProof`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority` (invariants) | Apalache |
+| `specs/seed/session_report_source_ordering.qnt` | Quint | `SessionReportSourceOrdering` (temporal; checked-normative with `session-report-source-ordering`) | Apalache-temporal |
 
 Each checked Quint model also commits a generated `*.emitted.tla` inspection artifact (via `quint compile --target tlaplus`); these are generated, never hand-edited, and are NOT an independent re-check lane (they `EXTENDS ... Apalache, Variants` and need the Apalache jar on the classpath — same toolchain reached via Quint).
 
@@ -709,7 +717,7 @@ The `OperationState` ⇿ `CommandState` refinement mapping (see `OperationState`
 
 `TimeoutNeitherSuccessNorDenial` is a reserved property-id for a future transport/failure-vocabulary model (not in `command_lifecycle.qnt` — it concerns the submission/transport layer, not command-lifecycle state). `ElicitationTimeoutNeitherSuccessNorDenial` is the Elicitation-specific stated-normative obligation with no executable property formula; its removed formula checked answer/decline fields but did not model grant state.
 
-The Elicitation lifecycle, subscription, spawn-authority, descendant-grant, response-correlation, and command-lifecycle durability/retry properties are all stated-normative with no executable formula: their seed formulas either did not model the claimed failure boundary or inspected state recorded by the accepting action rather than independent attempted evidence (not mutation-survivable oracles). They are not checked-normative product semantics; the v1 formal gate owns their genuine formulas. The eight retained promoted properties (`TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`, `GenerationMonotonic`, `CsrfRejectsMissingProof`, `CsrfRejectsUnauthenticated`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority`) are checked-model only and are not checked-normative product semantics until corresponding conformance vectors are promoted.
+The Elicitation lifecycle, subscription, spawn-authority, descendant-grant, response-correlation, and command-lifecycle durability/retry properties are all stated-normative with no executable formula: their seed formulas either did not model the claimed failure boundary or inspected state recorded by the accepting action rather than independent attempted evidence (not mutation-survivable oracles). They are not checked-normative product semantics; the v1 formal gate owns their genuine formulas. The eight retained promoted properties (`TerminalFinality`, `BoundaryDedup`, `NoAcceptedToCompleted`, `GenerationMonotonic`, `CsrfRejectsMissingProof`, `CsrfRejectsUnauthenticated`, `RevokedSessionCannotCommand`, `browser_local_state_not_authority`) remain checked-model only until corresponding conformance vectors are promoted. `SessionReportSourceOrdering` separately clears both gates and is checked-normative only at its documented finite scope.
 
 ### Toolchain note (implementation discovery)
 

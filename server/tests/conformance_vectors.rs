@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
 
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration, AuditEventKind,
+    AuditRecord,
     AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuthorityDomainId, CommandId,
     DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
     GrantRevocationPolicy, LoadSnapshotRequest, Lsn, Observation, ObservationKind,
@@ -11,14 +12,15 @@ use patchbay_contracts::patchbay::{
     ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
     ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
     ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
+    SessionConnectivityState, SessionRegistered, SessionReport, SessionReportSourceCursor,
+    SessionSnapshot, SessionState, SnapshotViewKind,
     StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope,
     TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest, ViewRevision,
 };
 use patchbay_core::{
     authority::events as authority_events,
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
-    session::events as session_events,
+    session::{self, events as session_events},
     storage::{CoreGenerationStore, RusqliteStorage, Storage},
     time::TestClock,
 };
@@ -104,6 +106,13 @@ fn boolean(value: &Value, pointer: &str) -> Result<bool, String> {
     value.pointer(pointer).and_then(Value::as_bool).ok_or_else(|| format!("missing boolean field {pointer}"))
 }
 
+fn unsigned(value: &Value, pointer: &str) -> Result<u64, String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing unsigned field {pointer}"))
+}
+
 fn tuple(value: &Value, pointer: &str) -> Result<ResourceIdentity, String> {
     let values = value.pointer(pointer).and_then(Value::as_array).ok_or_else(|| format!("missing identity tuple {pointer}"))?;
     if values.len() != 3 { return Err(format!("identity tuple {pointer} must have three fields")); }
@@ -137,6 +146,31 @@ fn registration(domain: &AuthorityDomainId, adapter_id: &AdapterId, kind: &Resou
                     }),
                 }),
             }],
+            ..AdapterCapability::default()
+        }),
+        ..AdapterRegistration::default()
+    }
+}
+
+fn session_registration(
+    domain: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    generation: u64,
+) -> AdapterRegistration {
+    AdapterRegistration {
+        adapter_id: Some(adapter_id.clone()),
+        endpoint_id: Some(EndpointId {
+            value: format!("{}-endpoint", adapter_id.value),
+        }),
+        authority_domain_id: Some(domain.clone()),
+        adapter_generation: Some(Generation { value: generation }),
+        capability: Some(AdapterCapability {
+            supported_operation_kinds: vec![OperationKind::Instruct as i32],
+            streaming_support: true,
+            session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+            cancellation_support: true,
+            session_replacement_support: true,
+            target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
             ..AdapterCapability::default()
         }),
         ..AdapterRegistration::default()
@@ -1503,6 +1537,623 @@ impl MutationExecutionError {
     }
 }
 
+struct SessionReportValues<'a> {
+    session_generation: u64,
+    adapter_generation: u64,
+    revision: u64,
+    model: &'a str,
+}
+
+fn session_report_request(
+    domain: &AuthorityDomainId,
+    adapter: &AdapterId,
+    deployment_scope: &str,
+    runtime_session_id: &RuntimeSessionId,
+    values: SessionReportValues<'_>,
+) -> ObservationRequest {
+    ObservationRequest {
+        authority_domain_id: Some(domain.clone()),
+        observation: Some(observation_request::Observation::SessionReport(
+            SessionReport {
+                adapter_id: Some(adapter.clone()),
+                deployment_scope: deployment_scope.to_owned(),
+                runtime_session_id: Some(runtime_session_id.clone()),
+                session_generation: Some(Generation {
+                    value: values.session_generation,
+                }),
+                connectivity: SessionConnectivityState::Live as i32,
+                activity: SessionActivityState::Idle as i32,
+                project: "conformance".to_owned(),
+                cwd: "/conformance".to_owned(),
+                name: "source-ordering".to_owned(),
+                model: values.model.to_owned(),
+                spawn_origin: None,
+                source_cursor: Some(SessionReportSourceCursor {
+                    adapter_generation: Some(Generation {
+                        value: values.adapter_generation,
+                    }),
+                    revision: values.revision,
+                }),
+            },
+        )),
+    }
+}
+
+async fn attach_session_adapter(
+    service: &AdapterControlServiceImpl<RusqliteStorage>,
+    domain: &AuthorityDomainId,
+    adapter: &AdapterId,
+    generation: u64,
+) -> Result<String, MutationExecutionError> {
+    let response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(session_registration(domain, adapter, generation)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    attachment_token(&response).map_err(MutationExecutionError::harness)
+}
+
+async fn materialized_session_snapshot(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+) -> Result<SessionSnapshot, MutationExecutionError> {
+    let state = ProjectionState::rebuild(storage, domain)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    Ok(state
+        .materialize_session_snapshot(
+            domain.clone(),
+            Timestamp {
+                seconds: 200,
+                nanos: 0,
+            },
+        )
+        .await)
+}
+
+fn session_state_event_count(events: &[patchbay_core::storage::RecordedEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
+        .count()
+}
+
+struct ExpectedSessionSnapshot<'a> {
+    session_generation: u64,
+    adapter_generation: u64,
+    revision: u64,
+    model: &'a str,
+}
+
+fn assert_session_snapshot(
+    snapshot: &SessionSnapshot,
+    adapter: &AdapterId,
+    deployment_scope: &str,
+    runtime_session_id: &RuntimeSessionId,
+    expected: ExpectedSessionSnapshot<'_>,
+) -> Result<(), MutationExecutionError> {
+    let session = snapshot
+        .sessions
+        .iter()
+        .find(|session| {
+            session.adapter_id.as_ref() == Some(adapter)
+                && session.deployment_scope == deployment_scope
+                && session.runtime_session_id.as_ref() == Some(runtime_session_id)
+        })
+        .ok_or_else(|| MutationExecutionError::oracle("session snapshot omitted target"))?;
+    if session
+        .session_generation
+        .as_ref()
+        .map(|generation| generation.value)
+        != Some(expected.session_generation)
+        || session.model != expected.model
+        || session
+            .last_source_cursor
+            .as_ref()
+            .and_then(|cursor| cursor.adapter_generation.as_ref())
+            .map(|generation| generation.value)
+            != Some(expected.adapter_generation)
+        || session
+            .last_source_cursor
+            .as_ref()
+            .map(|cursor| cursor.revision)
+            != Some(expected.revision)
+    {
+        return Err(MutationExecutionError::oracle(format!(
+            "session snapshot disagreed with expected {}/{}:{}: {session:?}",
+            expected.model, expected.adapter_generation, expected.revision
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "conformance-fault-injection")]
+async fn assert_session_hot_equals_replay(
+    service: &AdapterControlServiceImpl<RusqliteStorage>,
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+) -> Result<(), MutationExecutionError> {
+    let hot = service.conformance_session_registry().await;
+    let replay = session::rebuild_from_log(storage, domain)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    if hot != replay {
+        return Err(MutationExecutionError::oracle(
+            "authenticated service session projection differed from fresh replay",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "conformance-fault-injection"))]
+async fn assert_session_hot_equals_replay(
+    _service: &AdapterControlServiceImpl<RusqliteStorage>,
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+) -> Result<(), MutationExecutionError> {
+    let first = session::rebuild_from_log(storage, domain)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let second = session::rebuild_from_log(storage, domain)
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    if first != second {
+        return Err(MutationExecutionError::oracle(
+            "fresh session replays disagreed",
+        ));
+    }
+    Ok(())
+}
+
+async fn run_session_report_source_trace(
+    vector: &ConformanceVector,
+    storage: &RusqliteStorage,
+    service: &AdapterControlServiceImpl<RusqliteStorage>,
+) -> Result<(), MutationExecutionError> {
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")
+            .map_err(MutationExecutionError::harness)?
+            .to_owned(),
+    };
+    let adapter = AdapterId {
+        value: string(&vector.input, "/adapter_id")
+            .map_err(MutationExecutionError::harness)?
+            .to_owned(),
+    };
+    let deployment_scope =
+        string(&vector.input, "/deployment_scope").map_err(MutationExecutionError::harness)?;
+    let runtime_session_id = RuntimeSessionId {
+        value: string(&vector.input, "/runtime_session_id")
+            .map_err(MutationExecutionError::harness)?
+            .to_owned(),
+    };
+    let runtime_generation = unsigned(&vector.input, "/runtime_session_generation")
+        .map_err(MutationExecutionError::harness)?;
+    let initial_adapter_generation = unsigned(&vector.input, "/initial_attachment_generation")
+        .map_err(MutationExecutionError::harness)?;
+    let token =
+        attach_session_adapter(service, &domain, &adapter, initial_adapter_generation).await?;
+
+    for index in 0..2 {
+        let pointer = format!("/primary_reports/{index}");
+        service
+            .ingest_observation(
+                authenticated(
+                    session_report_request(
+                        &domain,
+                        &adapter,
+                        deployment_scope,
+                        &runtime_session_id,
+                        SessionReportValues {
+                            session_generation: runtime_generation,
+                            adapter_generation: unsigned(
+                                &vector.input,
+                                &format!("{pointer}/adapter_generation"),
+                            )
+                            .map_err(MutationExecutionError::harness)?,
+                            revision: unsigned(&vector.input, &format!("{pointer}/revision"))
+                                .map_err(MutationExecutionError::harness)?,
+                            model: string(&vector.input, &format!("{pointer}/model"))
+                                .map_err(MutationExecutionError::harness)?,
+                        },
+                    ),
+                    &adapter.value,
+                    &token,
+                )
+                .map_err(MutationExecutionError::harness)?,
+            )
+            .await
+            .map_err(|error| {
+                MutationExecutionError::harness(format!(
+                    "current source report {index} failed: {error}"
+                ))
+            })?;
+    }
+
+    let before_stale = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let stale_pointer = "/primary_reports/2";
+    let stale = service
+        .ingest_observation(
+            authenticated(
+                session_report_request(
+                    &domain,
+                    &adapter,
+                    deployment_scope,
+                    &runtime_session_id,
+                    SessionReportValues {
+                        session_generation: runtime_generation,
+                        adapter_generation: unsigned(
+                            &vector.input,
+                            &format!("{stale_pointer}/adapter_generation"),
+                        )
+                        .map_err(MutationExecutionError::harness)?,
+                        revision: unsigned(&vector.input, &format!("{stale_pointer}/revision"))
+                            .map_err(MutationExecutionError::harness)?,
+                        model: string(&vector.input, &format!("{stale_pointer}/model"))
+                            .map_err(MutationExecutionError::harness)?,
+                    },
+                ),
+                &adapter.value,
+                &token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await;
+    match stale {
+        Err(status) if status.code() == Code::FailedPrecondition => {}
+        Err(status) => {
+            return Err(MutationExecutionError::oracle(format!(
+                "delayed report returned {:?}, expected FAILED_PRECONDITION",
+                status.code()
+            )));
+        }
+        Ok(_) => {
+            return Err(MutationExecutionError::oracle(
+                "delayed non-increasing report was accepted",
+            ));
+        }
+    }
+    if string(&vector.expected_outcome, "/primary/delayed_status")
+        .map_err(MutationExecutionError::harness)?
+        != "FAILED_PRECONDITION"
+    {
+        return Err(MutationExecutionError::harness(
+            "vector expected stale status is not FAILED_PRECONDITION",
+        ));
+    }
+
+    let after_stale = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let expected_session_events = unsigned(
+        &vector.expected_outcome,
+        "/primary/session_state_event_count",
+    )
+    .map_err(MutationExecutionError::harness)? as usize;
+    if session_state_event_count(&before_stale) != expected_session_events
+        || session_state_event_count(&after_stale) != expected_session_events
+    {
+        return Err(MutationExecutionError::oracle(
+            "delayed report changed the session-state event count",
+        ));
+    }
+    let stale_audit = after_stale
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::AuditRecord as i32)
+        .filter_map(|event| AuditRecord::decode(event.payload.payload.as_slice()).ok())
+        .find(|audit| audit.reason_code == "session_report_source_cursor_stale")
+        .ok_or_else(|| MutationExecutionError::oracle("stale source audit was not durable"))?;
+    if stale_audit.kind != AuditEventKind::StaleEventIgnored as i32
+        || stale_audit.failure_code != FailureCode::StaleEvent as i32
+        || string(&vector.expected_outcome, "/primary/audit_kind")
+            .map_err(MutationExecutionError::harness)?
+            != "AUDIT_EVENT_KIND_STALE_EVENT_IGNORED"
+        || string(&vector.expected_outcome, "/primary/audit_failure_code")
+            .map_err(MutationExecutionError::harness)?
+            != "FAILURE_CODE_STALE_EVENT"
+        || string(&vector.expected_outcome, "/primary/audit_reason_code")
+            .map_err(MutationExecutionError::harness)?
+            != stale_audit.reason_code
+    {
+        return Err(MutationExecutionError::oracle(
+            "stale source audit disagreed with the vector",
+        ));
+    }
+
+    let primary_snapshot = materialized_session_snapshot(storage, &domain).await?;
+    assert_session_snapshot(
+        &primary_snapshot,
+        &adapter,
+        deployment_scope,
+        &runtime_session_id,
+        ExpectedSessionSnapshot {
+            session_generation: runtime_generation,
+            adapter_generation: unsigned(
+                &vector.expected_outcome,
+                "/primary/snapshot_adapter_generation",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            revision: unsigned(&vector.expected_outcome, "/primary/snapshot_revision")
+                .map_err(MutationExecutionError::harness)?,
+            model: string(&vector.expected_outcome, "/primary/snapshot_model")
+                .map_err(MutationExecutionError::harness)?,
+        },
+    )?;
+    if !boolean(&vector.expected_outcome, "/primary/hot_equals_replay")
+        .map_err(MutationExecutionError::harness)?
+    {
+        return Err(MutationExecutionError::harness(
+            "vector does not require hot/replay equality",
+        ));
+    }
+    assert_session_hot_equals_replay(service, storage, &domain).await?;
+
+    let replacement_generation = unsigned(
+        &vector.input,
+        "/adapter_generation_reset/attachment_generation",
+    )
+    .map_err(MutationExecutionError::harness)?;
+    let replacement_token =
+        attach_session_adapter(service, &domain, &adapter, replacement_generation).await?;
+    service
+        .ingest_observation(
+            authenticated(
+                session_report_request(
+                    &domain,
+                    &adapter,
+                    deployment_scope,
+                    &runtime_session_id,
+                    SessionReportValues {
+                        session_generation: runtime_generation,
+                        adapter_generation: replacement_generation,
+                        revision: unsigned(
+                            &vector.input,
+                            "/adapter_generation_reset/accepted_revision",
+                        )
+                        .map_err(MutationExecutionError::harness)?,
+                        model: string(&vector.input, "/adapter_generation_reset/accepted_model")
+                            .map_err(MutationExecutionError::harness)?,
+                    },
+                ),
+                &adapter.value,
+                &replacement_token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let before_old_producer = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let old_producer = service
+        .ingest_observation(
+            authenticated(
+                session_report_request(
+                    &domain,
+                    &adapter,
+                    deployment_scope,
+                    &runtime_session_id,
+                    SessionReportValues {
+                        session_generation: runtime_generation,
+                        adapter_generation: unsigned(
+                            &vector.input,
+                            "/adapter_generation_reset/old_adapter_generation",
+                        )
+                        .map_err(MutationExecutionError::harness)?,
+                        revision: unsigned(&vector.input, "/adapter_generation_reset/old_revision")
+                            .map_err(MutationExecutionError::harness)?,
+                        model: string(&vector.input, "/adapter_generation_reset/old_model")
+                            .map_err(MutationExecutionError::harness)?,
+                    },
+                ),
+                &adapter.value,
+                &replacement_token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await;
+    if !matches!(old_producer, Err(ref status) if status.code() == Code::FailedPrecondition)
+        || string(
+            &vector.expected_outcome,
+            "/adapter_generation_reset/old_producer_status",
+        )
+        .map_err(MutationExecutionError::harness)?
+            != "FAILED_PRECONDITION"
+    {
+        return Err(MutationExecutionError::oracle(
+            "old adapter producer was not fenced",
+        ));
+    }
+    let after_old_producer = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    if session_state_event_count(&before_old_producer)
+        != session_state_event_count(&after_old_producer)
+        || boolean(
+            &vector.expected_outcome,
+            "/adapter_generation_reset/old_producer_mutated",
+        )
+        .map_err(MutationExecutionError::harness)?
+    {
+        return Err(MutationExecutionError::oracle(
+            "old adapter producer changed session state",
+        ));
+    }
+    assert_session_snapshot(
+        &materialized_session_snapshot(storage, &domain).await?,
+        &adapter,
+        deployment_scope,
+        &runtime_session_id,
+        ExpectedSessionSnapshot {
+            session_generation: runtime_generation,
+            adapter_generation: unsigned(
+                &vector.expected_outcome,
+                "/adapter_generation_reset/snapshot_adapter_generation",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            revision: unsigned(
+                &vector.expected_outcome,
+                "/adapter_generation_reset/snapshot_revision",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            model: string(
+                &vector.expected_outcome,
+                "/adapter_generation_reset/accepted_model",
+            )
+            .map_err(MutationExecutionError::harness)?,
+        },
+    )?;
+
+    let new_runtime_generation = unsigned(
+        &vector.input,
+        "/runtime_generation_reset/session_generation",
+    )
+    .map_err(MutationExecutionError::harness)?;
+    service
+        .ingest_observation(
+            authenticated(
+                session_report_request(
+                    &domain,
+                    &adapter,
+                    deployment_scope,
+                    &runtime_session_id,
+                    SessionReportValues {
+                        session_generation: new_runtime_generation,
+                        adapter_generation: replacement_generation,
+                        revision: unsigned(
+                            &vector.input,
+                            "/runtime_generation_reset/accepted_revision",
+                        )
+                        .map_err(MutationExecutionError::harness)?,
+                        model: string(&vector.input, "/runtime_generation_reset/accepted_model")
+                            .map_err(MutationExecutionError::harness)?,
+                    },
+                ),
+                &adapter.value,
+                &replacement_token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let before_old_runtime = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    let old_runtime = service
+        .ingest_observation(
+            authenticated(
+                session_report_request(
+                    &domain,
+                    &adapter,
+                    deployment_scope,
+                    &runtime_session_id,
+                    SessionReportValues {
+                        session_generation: unsigned(
+                            &vector.input,
+                            "/runtime_generation_reset/old_session_generation",
+                        )
+                        .map_err(MutationExecutionError::harness)?,
+                        adapter_generation: replacement_generation,
+                        revision: unsigned(&vector.input, "/runtime_generation_reset/old_revision")
+                            .map_err(MutationExecutionError::harness)?,
+                        model: string(&vector.input, "/runtime_generation_reset/old_model")
+                            .map_err(MutationExecutionError::harness)?,
+                    },
+                ),
+                &adapter.value,
+                &replacement_token,
+            )
+            .map_err(MutationExecutionError::harness)?,
+        )
+        .await;
+    if !matches!(old_runtime, Err(ref status) if status.code() == Code::FailedPrecondition)
+        || string(
+            &vector.expected_outcome,
+            "/runtime_generation_reset/old_runtime_status",
+        )
+        .map_err(MutationExecutionError::harness)?
+            != "FAILED_PRECONDITION"
+    {
+        return Err(MutationExecutionError::oracle(
+            "old runtime generation was not fenced",
+        ));
+    }
+    let after_old_runtime = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .map_err(MutationExecutionError::harness)?;
+    if session_state_event_count(&before_old_runtime)
+        != session_state_event_count(&after_old_runtime)
+        || boolean(
+            &vector.expected_outcome,
+            "/runtime_generation_reset/old_runtime_mutated",
+        )
+        .map_err(MutationExecutionError::harness)?
+    {
+        return Err(MutationExecutionError::oracle(
+            "old runtime generation changed session state",
+        ));
+    }
+    assert_session_snapshot(
+        &materialized_session_snapshot(storage, &domain).await?,
+        &adapter,
+        deployment_scope,
+        &runtime_session_id,
+        ExpectedSessionSnapshot {
+            session_generation: unsigned(
+                &vector.expected_outcome,
+                "/runtime_generation_reset/snapshot_session_generation",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            adapter_generation: unsigned(
+                &vector.expected_outcome,
+                "/runtime_generation_reset/snapshot_adapter_generation",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            revision: unsigned(
+                &vector.expected_outcome,
+                "/runtime_generation_reset/snapshot_revision",
+            )
+            .map_err(MutationExecutionError::harness)?,
+            model: string(
+                &vector.expected_outcome,
+                "/runtime_generation_reset/accepted_model",
+            )
+            .map_err(MutationExecutionError::harness)?,
+        },
+    )?;
+    assert_session_hot_equals_replay(service, storage, &domain).await
+}
+
+async fn session_report_source_ordering(vector: &ConformanceVector) -> Result<(), String> {
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain,
+        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+    )
+    .await?;
+    run_session_report_source_trace(vector, &storage, &service)
+        .await
+        .map_err(|error| match error {
+            MutationExecutionError::Harness(message) | MutationExecutionError::Oracle(message) => {
+                message
+            }
+        })
+}
+
 fn resource_upsert(identity: ResourceIdentity, kind: &ResourceKind) -> ResourceReportMutation {
     ResourceReportMutation {
         identity: Some(identity),
@@ -1818,6 +2469,47 @@ async fn run_token_degradation_trace(vector: &ConformanceVector) -> Result<(), S
 }
 
 #[cfg(feature = "conformance-fault-injection")]
+async fn kill_session_source_ordering_mutation(
+    vector: &ConformanceVector,
+    mutation_id: &str,
+) -> Result<(), String> {
+    if mutation_id != "accept-nonincreasing-session-revision" {
+        return Err(format!(
+            "unhandled session source-order mutation {mutation_id}"
+        ));
+    }
+    session_report_source_ordering(vector).await?;
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let service = AdapterControlServiceImpl::new_with_conformance_fault(
+        storage.clone(),
+        domain,
+        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        AdapterServiceConformanceFault::AcceptNonIncreasingSessionRevision,
+    )
+    .await?;
+    match run_session_report_source_trace(vector, &storage, &service).await {
+        Err(MutationExecutionError::Oracle(_)) => Ok(()),
+        Err(MutationExecutionError::Harness(error)) => Err(format!(
+            "session source-order mutation {mutation_id} had a harness failure: {error}"
+        )),
+        Ok(()) => Err(format!(
+            "session source-order mutation {mutation_id} survived the authenticated ingress oracle"
+        )),
+    }
+}
+
+#[cfg(not(feature = "conformance-fault-injection"))]
+async fn kill_session_source_ordering_mutation(
+    _vector: &ConformanceVector,
+    _mutation_id: &str,
+) -> Result<(), String> {
+    Err("Rust mutation witnesses require conformance-fault-injection".into())
+}
+
+#[cfg(feature = "conformance-fault-injection")]
 async fn kill_degradation_mutation(
     vector: &ConformanceVector,
     mutation_id: &str,
@@ -1985,6 +2677,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "resource_disconnect_degrades_snapshot" => disconnect_degrades_snapshot(vector).await,
         "token_commune_degradation_projection" => run_token_degradation_trace(vector).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
+        "session_report_source_ordering" => session_report_source_ordering(vector).await,
         "resource_observation_source_binding" | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
     }
@@ -2013,6 +2706,8 @@ async fn conformance_vector_runner() {
             "unregistered requested mutation {}:{}", request.vector_id, request.mutation_id);
         let result = if vector.property_id == "TokenCommuneDegradationHonesty" {
             kill_degradation_mutation(vector, &request.mutation_id).await
+        } else if vector.property_id == "SessionReportSourceOrdering" {
+            kill_session_source_ordering_mutation(vector, &request.mutation_id).await
         } else {
             kill_source_ingress_mutation(vector, &request.mutation_id).await
         };
