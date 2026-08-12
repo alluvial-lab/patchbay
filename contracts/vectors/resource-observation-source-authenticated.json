@@ -13,7 +13,7 @@
     "patchbay.TargetScope.resource",
     "patchbay.StoredEventPayload.kind"
   ],
-  "description": "Only a current authenticated adapter attachment may append a resource Observation for a target it owns; payload sender/grant claims remain non-authoritative evidence.",
+  "description": "Only a current authenticated adapter attachment may append a resource Observation for a target it owns; conflicting sender claims reject, while opaque payload grant claims remain non-authoritative evidence.",
   "input": {
     "authority_domain_id": "auth-main",
     "authenticated_adapter_id": "token-commune",

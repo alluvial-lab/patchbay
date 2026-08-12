@@ -1,7 +1,7 @@
 ---
 id: gate-security-forged-audit-sender
 kind: story
-stage: review
+stage: done
 tags: [security]
 parent: null
 depends_on: []
@@ -75,3 +75,14 @@ Extend the promoted resource/source-authentication conformance runner through pr
 - **Original symptom:** conflicting actor, endpoint, device, and endpoint-generation claims now fail before any Observation append; absent or matching partial claims are replaced with the authenticated adapter actor and registered endpoint before persistence.
 - **Ruled out:** no storage schema or `AuditedStorage` behavior change was needed; `server/src/main.rs` already composes the audited decorator, and canonicalizing the durable source at authenticated ingress protects every downstream audit builder.
 - **Adjacent issues parked:** none.
+
+## Review (2026-08-12)
+
+**Verdict**: Approve with comments
+
+**Blockers**: none
+**Important**: none
+**Nits**: clarified the promoted resource-observation vector description so it states that conflicting sender claims reject rather than remain evidence; the vector checker stayed green.
+**Rejected**: none
+
+**Notes**: Bounded inline standalone-story review; no independent, fresh-context, or cross-model reviewer ran. Correctness review traced authentication, current-attachment lookup, sender conflict validation, canonical replacement, persistence, and audit-draft derivation. Security review confirmed all four sender dimensions fail closed when unverified and that the shared decision gate prevents attachment replacement races. Tests exercise forged actor, endpoint, and device values and the valid no-claim path; the helper also rejects unverified endpoint generation. The change intentionally hardens adapter ingress without changing Protobuf or storage schemas. Foundation documents already require sender identity to come from verified connection context, so no assertion rolled forward. Naming/comments, test integrity, and the adjusted spawn fixture were reviewed; no material findings remain. Per operator instruction, this done release-gate story remains in `.work/active/stories/` for release-deploy rather than being archived.
