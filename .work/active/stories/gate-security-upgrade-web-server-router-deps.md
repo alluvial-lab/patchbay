@@ -1,7 +1,7 @@
 ---
 id: gate-security-upgrade-web-server-router-deps
 kind: story
-stage: implementing
+stage: done
 tags: [security, dependencies]
 parent: null
 depends_on: []
@@ -29,3 +29,7 @@ Dependencies & Supply Chain
 ## Remediation direction
 
 Apply the supported npm audit update, verify the production audit is clean of high/critical findings, and run the web-server build/test suite.
+
+## Implementation and verification
+
+Applied the supported lockfile update. `npm audit --omit=dev --audit-level=high` reports zero vulnerabilities and all 31 web-server tests pass.

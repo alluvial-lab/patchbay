@@ -14,8 +14,7 @@ import {
   SessionConnectivityState,
 } from "@patchbay/contracts";
 import {
-  AuthStorage,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -120,12 +119,9 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
       return fauxAssistantMessage("model switch completed");
     },
   ]);
-  const authStorage = AuthStorage.inMemory({
-    [provider]: { type: "api_key", key: "test-key" },
-  });
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
   const baseModel = faux.getModel();
-  modelRegistry.registerProvider(provider, {
+  modelRuntime.registerProvider(provider, {
     name: "Patchbay model-switch provider",
     apiKey: "test-key",
     baseUrl: "http://localhost:0",
@@ -147,7 +143,7 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     ...configured,
     model: `${provider}/model-a`,
     sessionOptions: {
-      modelRegistry,
+      modelRuntime,
       sessionManager: SessionManager.inMemory(configured.cwd),
       settingsManager: SettingsManager.inMemory(),
       noTools: "all",

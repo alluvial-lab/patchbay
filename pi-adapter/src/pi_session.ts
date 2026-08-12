@@ -1,6 +1,6 @@
 import { OperationKind, type Operation } from "@patchbay/contracts";
 import {
-  createAgentSession,
+  createAgentSessionFromServices,
   createAgentSessionRuntime,
   createAgentSessionServices,
   getAgentDir,
@@ -95,38 +95,31 @@ export class PiSession {
       sessionManager,
       sessionStartEvent,
     }) => {
-      const services = await createAgentSessionServices({
+      const discoveredServices = await createAgentSessionServices({
         cwd,
         agentDir: runtimeAgentDir,
-        ...(fixed.authStorage ? { authStorage: fixed.authStorage } : {}),
         ...(fixed.settingsManager ? { settingsManager: fixed.settingsManager } : {}),
-        ...(fixed.modelRegistry ? { modelRegistry: fixed.modelRegistry } : {}),
+        ...(fixed.modelRuntime ? { modelRuntime: fixed.modelRuntime } : {}),
       });
-      const model = options.model ? findModel(services.modelRegistry, options.model) : undefined;
+      const services = fixed.resourceLoader
+        ? { ...discoveredServices, resourceLoader: fixed.resourceLoader }
+        : discoveredServices;
+      const model = options.model ? findModel(services.modelRuntime, options.model) : undefined;
       if (options.model && !model) throw new Error(`Pi model is unavailable: ${options.model}`);
-      const created = await createAgentSession({
-        ...fixed,
-        cwd,
-        agentDir: runtimeAgentDir,
-        authStorage: fixed.authStorage ?? services.authStorage,
-        settingsManager: fixed.settingsManager ?? services.settingsManager,
-        modelRegistry: fixed.modelRegistry ?? services.modelRegistry,
-        resourceLoader: fixed.resourceLoader ?? services.resourceLoader,
+      const created = await createAgentSessionFromServices({
+        services,
         sessionManager,
         ...(sessionStartEvent ? { sessionStartEvent } : {}),
         ...(model ? { model } : {}),
+        ...(fixed.thinkingLevel ? { thinkingLevel: fixed.thinkingLevel } : {}),
+        ...(fixed.scopedModels ? { scopedModels: fixed.scopedModels } : {}),
+        ...(fixed.tools ? { tools: fixed.tools } : {}),
+        ...(fixed.excludeTools ? { excludeTools: fixed.excludeTools } : {}),
+        ...(fixed.noTools ? { noTools: fixed.noTools } : {}),
+        ...(fixed.customTools ? { customTools: fixed.customTools } : {}),
       });
       if (options.name) created.session.setSessionName(options.name);
-      return {
-        ...created,
-        services: {
-          ...services,
-          settingsManager: created.session.settingsManager,
-          modelRegistry: created.session.modelRegistry,
-          resourceLoader: created.session.resourceLoader,
-        },
-        diagnostics: services.diagnostics,
-      };
+      return { ...created, services, diagnostics: services.diagnostics };
     };
     const sessionManager = fixed.sessionManager ?? SessionManager.create(options.cwd);
     const runtime = await createAgentSessionRuntime(createRuntime, {
@@ -262,7 +255,7 @@ export class PiSession {
 
   async setModel(provider: string, modelId: string): Promise<void> {
     const session = this.#runtime.session;
-    const model = session.modelRegistry.find(provider, modelId);
+    const model = session.modelRuntime.getModel(provider, modelId);
     if (!model) throw new Error(`Pi model is unavailable: ${provider}/${modelId}`);
     await session.setModel(model);
     this.#emitModelChange(`${provider}/${modelId}`);
@@ -273,7 +266,7 @@ export class PiSession {
   }
 
   getAvailableModels(): PiModel[] {
-    return this.#runtime.session.modelRegistry.getAll().map((model) => ({
+    return this.#runtime.session.modelRuntime.getModels().map((model) => ({
       provider: model.provider,
       id: model.id,
       name: model.name,
@@ -414,12 +407,12 @@ export class PiSession {
 }
 
 function findModel(
-  registry: AgentSession["modelRegistry"],
+  runtime: AgentSession["modelRuntime"],
   requested: string,
-): ReturnType<AgentSession["modelRegistry"]["find"]> {
+): ReturnType<AgentSession["modelRuntime"]["getModel"]> {
   const slash = requested.indexOf("/");
-  if (slash >= 1) return registry.find(requested.slice(0, slash), requested.slice(slash + 1));
-  return registry.getAll().find((model) => model.id === requested);
+  if (slash >= 1) return runtime.getModel(requested.slice(0, slash), requested.slice(slash + 1));
+  return runtime.getModels().find((model) => model.id === requested);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

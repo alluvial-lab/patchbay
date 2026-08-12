@@ -4,8 +4,7 @@ import { create } from "@bufbuild/protobuf";
 import { OperationKind, OperationSchema, type Operation } from "@patchbay/contracts";
 import {
   AgentSession,
-  AuthStorage,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSessionEvent,
@@ -32,12 +31,9 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     fauxAssistantMessage("approval was enforced", { timestamp: 11 }),
   ]);
 
-  const authStorage = AuthStorage.inMemory({
-    [provider]: { type: "api_key", key: "test-key" },
-  });
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
   const model = faux.getModel();
-  modelRegistry.registerProvider(provider, {
+  modelRuntime.registerProvider(provider, {
     name: "Patchbay test provider",
     apiKey: "test-key",
     baseUrl: "http://localhost:0",
@@ -70,7 +66,7 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     runtimeSessionId: "runtime-1",
     model: `${provider}/${model.id}`,
     sessionOptions: {
-      modelRegistry,
+      modelRuntime,
       sessionManager: SessionManager.inMemory(cwd),
       settingsManager: SettingsManager.inMemory(),
       tools: ["read"],

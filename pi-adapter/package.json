@@ -15,11 +15,11 @@
     "@bufbuild/protobuf": "^2.12.1",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
-    "@earendil-works/pi-coding-agent": "0.80.7",
+    "@earendil-works/pi-coding-agent": "0.84.1",
     "@patchbay/contracts": "file:../contracts/ts"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.80.7",
+    "@earendil-works/pi-ai": "0.84.1",
     "@types/node": "24.12.4",
     "typescript": "5.9.3"
   }

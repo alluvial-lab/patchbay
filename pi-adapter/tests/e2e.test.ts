@@ -62,8 +62,7 @@ import {
   type StoredEventPayload,
 } from "@patchbay/contracts";
 import {
-  AuthStorage,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -607,10 +606,9 @@ function createSessionFixture(generation: number, seedSnapshot = false) {
       return session;
     },
     create: async (configured: PreprovisionedSession) => {
-      const auth = AuthStorage.inMemory({ [provider]: { type: "api_key", key: "test" } });
-      const registry = ModelRegistry.inMemory(auth);
+      const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
       const model = faux.getModel();
-      registry.registerProvider(provider, {
+      modelRuntime.registerProvider(provider, {
         name: provider,
         apiKey: "test",
         baseUrl: "http://localhost:0",
@@ -642,7 +640,7 @@ function createSessionFixture(generation: number, seedSnapshot = false) {
         ...configured,
         model: `${provider}/${model.id}`,
         sessionOptions: {
-          modelRegistry: registry,
+          modelRuntime,
           sessionManager,
           settingsManager: SettingsManager.inMemory(),
           noTools: "all",

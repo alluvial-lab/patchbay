@@ -1,7 +1,7 @@
 ---
 id: gate-security-upgrade-pi-sdk-vulnerable-transitives
 kind: story
-stage: implementing
+stage: done
 tags: [security, dependencies]
 parent: null
 depends_on: []
@@ -29,3 +29,7 @@ Dependencies & Supply Chain
 ## Remediation direction
 
 Upgrade the aligned Pi SDK packages to 0.84.1, regenerate the lockfile, verify the audit is clean of high/critical findings, and run the Pi adapter build/test suite.
+
+## Implementation and verification
+
+Upgraded both aligned Pi SDK packages to 0.84.1 and migrated the adapter from the retired `AuthStorage`/session `ModelRegistry` surface to `ModelRuntime` plus `createAgentSessionFromServices`. `npm audit --omit=dev --audit-level=high` reports zero vulnerabilities; all 29 Pi adapter tests pass.
