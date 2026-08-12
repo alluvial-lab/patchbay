@@ -1,7 +1,7 @@
 ---
 id: gate-security-token-commune-http-credentials
 kind: story
-stage: review
+stage: done
 tags: [security]
 parent: null
 depends_on: []
@@ -66,3 +66,14 @@ Use one shared gateway URL guard at both configuration ingress and direct client
 - **Full confirmation:** `npm test` passed 62/62, including the real gateway/core flow. This command rebuilt the operator domain, web cockpit types, and token-commune adapter.
 - **Original symptom:** LAN, container-network, and remote plaintext gateway URLs now fail before credential application; the existing loopback HTTP development path remains valid.
 - **Adjacent issues parked:** none.
+
+## Review (2026-08-12)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: none
+**Rejected**: none
+
+**Notes**: Bounded inline standalone-story review; no independent, fresh-context, or cross-model reviewer ran. Correctness review confirmed the shared guard covers both configuration and direct client construction, HTTPS remains valid, and the loopback-only HTTP exception matches the documented development path. Security review found no hostname-prefix bypass or credential-bearing error path. Regression coverage exercises LAN, container-network, remote, IPv4 loopback, IPv6 loopback, and localhost cases. Tests, design alignment, intentional config hardening, foundation-doc alignment, naming, and comments were reviewed; no material findings remain. Per operator instruction, this done release-gate story remains in `.work/active/stories/` for release-deploy rather than being archived.
