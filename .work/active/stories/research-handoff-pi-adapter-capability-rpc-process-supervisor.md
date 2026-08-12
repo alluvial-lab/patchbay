@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [adapter, protocol, security]
 parent: research-handoff-pi-adapter-capability
-depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-spawn-restart-continuation-orchestration, research-handoff-spawn-idempotency-duplicate-handling, deployment-authority-workspace-scoped-revocable-keys]
+depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-idempotency-duplicate-handling, research-handoff-spawn-restart-continuation-orchestration, deployment-authority-workspace-scoped-revocable-keys]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -12,36 +12,85 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Per-generation Pi RPC process supervisor
+# Claim-aware Pi RPC process supervisor and effect journal
+
+## Redesign disposition
+
+Rewritten to consume the redesigned spawn contracts and the new control/session-integrity checkpoint. The supervisor no longer assumes every Pi `sessionFile` exists, no longer verifies cwd through generic RPC, and no longer reports a successor current/live directly.
 
 ## Checkpoint
 
-Replace the production in-process SDK execution path with one supervised `pi --mode rpc` child per managed runtime generation while retaining the SDK `ModelRuntime` seam for deterministic unit fixtures. The adapter consumes the core-prepared generation claim; it never allocates `current + 1`.
-
-For continuation, the supervisor serializes by logical target, stops delivery to the prior generation, aborts and waits for `agent_settled` when work is active, preserves and verifies the exact persisted JSONL path, terminates the process group, respawns with the explicit session path, reconciles before reporting live, and reports the exact claim/status. It never uses reload as a runtime upgrade and never auto-restarts after crash.
+Replace the production embedded SDK lifecycle with one supervised `pi --mode rpc` child per managed runtime generation. Consume the core-prepared logical target, exact claim, compound continuation provenance, pending-replacement fence, crash/effect vocabulary, and staged-successor/promotion envelopes. Journal launch responsibility and identity around the external-effect boundary. Never allocate `current + 1`, release a claim from command terminality, publish ordinary successor output before promotion, or auto-relaunch an ambiguous generation.
 
 ## Design
 
 **Files**
-- New `pi-adapter/src/rpc_client.ts` — strict bounded LF-delimited JSONL request/event client; correlated responses and asynchronous notifications remain distinct.
-- New `pi-adapter/src/pi_process.ts` — injected process-launch/terminate port using an absolute executable, argv array, sanitized environment, process groups, and bounded TERM→KILL escalation.
-- New `pi-adapter/src/session_file.ts` — canonical allowed-root and JSONL-header verifier returning an opaque integrity seal; paths never enter forwarded diagnostics.
-- New `pi-adapter/src/spawn_supervisor.ts` — sole fresh/continuation owner and per-logical-target mutex.
-- `pi-adapter/src/pi_session.ts`, `session_registry.ts`, `delivery.ts`, `main.ts`, and `core_client.ts` — bind a generation-scoped RPC runtime, consume generated spawn claims/target specs, report exact crash/connectivity evidence, and remove adapter-owned generation increments.
-- New `contracts/proto/patchbay/pi_adapter.proto` — generated Pi target spec and typed reconfigure/reload payloads.
+- New `pi-adapter/src/rpc_client.ts` — strict bounded LF JSONL, unique request ids, response/event separation, extension-error tracking, bounded stderr, and EOF/process correlation.
+- New `pi-adapter/src/pi_process.ts` — absolute executable/argv, sanitized environment, process group, injected launch/TERM→KILL port, and exact process-exit evidence.
+- New `pi-adapter/src/spawn_journal.ts` — 0600 atomic claim/phase/launch-nonce/external-identity journal used only as evidence, not generation authority.
+- New `pi-adapter/src/runtime_action_gate.ts` — one per-runtime/target mutex and delivery/action fence shared by continuation and reload.
+- New `pi-adapter/src/spawn_supervisor.ts` — fresh/continuation orchestration and exact generated evidence reporting.
+- `pi-adapter/src/{pi_session,session_registry,delivery,main,core_client}.ts` — bind RPC runtime, remove production SDK replacement/generation allocation, fence callbacks by attachment/process/generation tokens, and wait for core promotion.
+- `contracts/proto/patchbay/pi_adapter.proto` — generated target spec and adapter-specific result details only; shared claim/effect/promotion types are imported from the spawn contract leaves.
 
-Crash evidence maps narrowly: unexpected nonzero/signal process exit → connectivity `failed` and activity `unknown`; RPC loss without conclusive process exit → `stale`/`unknown`; expected clean exit or confirmed normal exit → `offline`/`unknown`. None changes generation. Running work without a proved terminal outcome becomes `failed(execution_outcome_unknown)`; accepted/delivered work follows the core generation-transition policy and is never executed by the fenced child.
+```ts
+export interface SpawnSupervisor {
+  spawnFresh(operation: Operation, claim: SpawnGenerationClaim): Promise<StagedPiSuccessor>;
+  continueGeneration(
+    operation: Operation,
+    claim: SpawnGenerationClaim,
+    prior: RuntimeGenerationRef,
+  ): Promise<StagedPiSuccessor>;
+}
+
+export interface SpawnEffectJournal {
+  beginClaim(record: PiSpawnClaimJournalRecord): Promise<void>;
+  recordPhase(record: PiSpawnPhaseRecord): Promise<void>;
+  recordExternalIdentity(record: PiExternalIdentityRecord): Promise<void>;
+  reconcile(claimOperationId: string): Promise<PiSpawnJournalState | undefined>;
+}
+```
+
+Fixed continuation sequence:
+
+1. Under the target/action gate, validate generated Pi target spec, exact `N→N+1` claim, both continuation provenance ids, adapter-local project/deployment authority, journal state, and local continuity reverse binding.
+2. Journal the claim and random launch nonce before assuming delivery/launch responsibility; activate the local side of the core pending-replacement fence so N receives no new work.
+3. Inspect activity. If work is active, send abort, await acknowledgement and `agent_settled` within the configured bound, flush adapter Observations, and report unproved work effects as `execution_outcome_unknown`.
+4. Perform the current challenged control handshake and strict materialization/tree validation. For `require_resume`, `memory_only`/invalid fails before successor launch. N remains alive/settled so the adapter can report renewed N evidence; only core evidence rules may release the claim/fence.
+5. Seal materialized N, terminate the process group with TERM→KILL, fence every old callback/handle/stdout subscription, and revalidate the same seal before launch.
+6. Record `launch_attempted`, then spawn through an injected process port. Normal resume uses exact `--session <canonical path>`. Only explicit `allow_new_context` may omit it and later report `new_context`.
+7. Verify command discovery, challenged control handshake, canonical cwd, session path/id, post-launch strict tree/sealed-prefix integrity, and current process token. `get_state`/`get_session_stats` only cross-check their actual fields.
+8. Ask the cursor child to stage a full/suffix projection under the verified Pi continuity key; emit no ordinary transcript while the successor is only claimed.
+9. Report exact `SpawnExecutionPhase`, `ExternalEffectDisposition`, successor SessionReport/readiness digest, and successful Result. These are staging evidence, not current state or terminal completion.
+10. Wait for `SpawnPromotionCommitted`. Only then allow the cursor child to publish the replacement/current suffix, commit cursor state, open ordinary delivery, and report current connectivity/activity.
+
+Fresh spawn uses the same launch journal, handshake, staging, promotion wait, and post-promotion publication. A new context may remain `memory_only`; that limits future resume/reload/cursor durability but does not by itself falsify current process liveness.
+
+Failure mapping is closed:
+
+- before successor launch with exact supervisor/journal proof: `proved_none` candidate for core validation;
+- after launch attempt without known identity: `may_exist` and poison;
+- known child/session identity: `identified` for exact-claim reconciliation;
+- unexpected signal/nonzero exit: connectivity `failed`, activity `unknown`;
+- RPC/framing/pipe loss without conclusive exit: `stale`, activity `unknown`;
+- expected/confirmed clean exit: `offline`, activity `unknown`;
+- no crash/detach/clean exit allocates a generation or triggers automatic restart.
+
+## Fixture boundary
+
+Production implements `ManagedPiRuntimePort` only with RPC. Tests may use `AgentSessionRuntimeFixture`, named for the runtime port it substitutes. Its constructor requires an injected offline `ModelRuntime`, resource loader, session manager, and model catalog/auth stubs. Ambient credential/model discovery is forbidden.
 
 ## Acceptance evidence
 
-- [ ] Fresh spawn launches one child and reports core-claimed generation `1`; continuation launches only exact `N+1` from the accepted claim.
-- [ ] The managed continuation path uses canonical `--session <path>`; `--continue` is allowed only after proving one unambiguous candidate and verifying the resulting exact path/id.
-- [ ] Active work is aborted/quiesced with a bounded wait; unresolved effects are reported unknown before forced termination.
-- [ ] A changed/missing/truncated/wrong-id/wrong-cwd session file blocks respawn and cannot be logged raw.
-- [ ] Old child callbacks, stdout, process handles, and delivery paths are inert after fencing; new live state appears only after reconciliation.
-- [ ] Explicit crash, unexplained transport loss, and clean exit produce `failed`, `stale`, and `offline` respectively without generation allocation or automatic restart.
-- [ ] SDK `ModelRuntime` remains a test fixture seam, not a second production lifecycle implementation.
+- [ ] Fresh generation `1` and continuation exact `N+1` come only from the accepted core claim; production contains no managed `current + 1` path.
+- [ ] Both continuation Grant provenance records and the pending-replacement fence are carried/validated; adapter-local project authority cannot replace either core Grant.
+- [ ] `require_resume` cannot terminate/launch from a memory-only or invalid session; explicit new context never reports `resumed`.
+- [ ] Wrong cwd/path/id, incomplete tree, changed seal, old callback, or stale process/attachment token cannot stage success.
+- [ ] Journal-before-launch and identity-after-handshake crash prefixes map to the exact shared effect disposition; ambiguity poisons and never auto-relaunches.
+- [ ] Successor transcript/status output remains staged/quarantined until core promotion; SessionReport is the only claimed-successor ingress used.
+- [ ] Explicit crash, unexplained transport loss, and clean exit map to failed/stale/offline without generation mutation.
+- [ ] Production never instantiates SDK lifecycle; `AgentSessionRuntimeFixture` is fully offline/injected and a mutation consulting ambient credentials/catalog fails.
 
 ## Ordering constraint
 
-Consumes spawn continuation, duplicate/journal, and adapter-owned project/deployment resolution contracts; the manifest declaration must exist before this substrate advertises itself.
+Consumes all spawn contract leaves it implements (identity, continuation, claim/fence, crash/effect, runtime evidence/promotion) plus duplicate reconciliation, generic restart orchestration, deployment authority, and Pi control/session integrity. Cursor publication remains a downstream Pi checkpoint.

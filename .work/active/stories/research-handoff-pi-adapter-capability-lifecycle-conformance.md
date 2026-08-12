@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [adapter, verification]
 parent: research-handoff-pi-adapter-capability
-depends_on: [research-handoff-pi-adapter-capability-cursor-replay-resync, research-handoff-pi-adapter-capability-resource-reload-rehydration, research-handoff-spawn-stale-event-fencing]
+depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-pi-adapter-capability-cursor-replay-resync, research-handoff-pi-adapter-capability-resource-reload-rehydration, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-stale-event-fencing, research-handoff-spawn-completion-promotion-driver, research-handoff-spawn-reconnect-cursor-reconcile]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -12,29 +12,65 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Integrated Pi lifecycle and manifest conformance
+# Integrated Pi lifecycle, profile, and replacement conformance
+
+## Redesign disposition
+
+Rewritten to gate Pi declaration activation on the resolved cwd/materialization/tree/cursor/reload contracts and the core's staged-successor/quarantine/promotion path.
 
 ## Checkpoint
 
-Bind the generated manifest, spawn continuation, process supervisor, cursor recovery, reload boundary, crash vocabulary, and stale-generation fence into implementation-backed v1 evidence. Use real Pi RPC child processes for lifecycle boundaries and deterministic fakes only for isolated parser/failure injection.
+Bind the opaque generated Pi profile, challenged control handshake, conditional materialization, strict session tree, claim-aware supervisor/journal, Pi-session-scoped authoritative cursor replacement, idle-only reload, core stale fence, and atomic promotion into implementation-backed v1 evidence. Use real Pi RPC children for process/file/extension boundaries and deterministic injected fixtures only for isolated failure control.
+
+Do not call this evidence model-checked, checked-normative, or release-verified unless separate promotion gates actually clear.
 
 ## Design
 
 **Files**
-- New `pi-adapter/tests/rpc_client.test.ts`, `spawn_supervisor.test.ts`, `cursor_reconcile.test.ts`, and `reload.test.ts` — focused boundary/regression tests.
-- `pi-adapter/tests/e2e.test.ts` — real core + real Pi RPC fresh spawn, continuation, crash, reconnect, full resync, reload, and runtime-upgrade traces with post-test process cleanup.
-- `contracts/vectors/` and vector runner registries — Pi refinements for `spawn-continuation`, `restart-native-resume`, `restart-shape-only`, `reconnect-after-stream-loss`, `cursor-gap-repair`, `manifest-overclaim`, and stale-generation evidence.
-- `docs/VERIFICATION.md` and traceability generation — implementation-checked wording only unless a separately promoted formal property/vector clears its gate.
+- `pi-adapter/tests/{rpc_client,control_handshake,session_file,spawn_supervisor,cursor_reconcile,reload}.test.ts` — focused contract/regression/mutation tests.
+- `pi-adapter/tests/e2e.test.ts` — real core + real Pi RPC child lifecycle using offline materialized fixtures/control commands.
+- `operator-domain` / cockpit tests — exact replacement fold removes omitted Pi persisted entries and remains idempotent on same epoch.
+- `contracts/vectors/` and registered runners — Pi refinements for `spawn-continuation`, `restart-native-resume`, `restart-shape-only`, `cursor-gap-repair`, `duplicate-native-reference`, `manifest-overclaim`, `reload-active-rejected`, `session-tree-corrupt`, and stale-generation/quarantine behavior.
+- `docs/VERIFICATION.md` traceability updates generated only by the established scripts.
+
+The real-process harness creates two kinds of sessions without ambient credentials:
+
+1. fresh unmaterialized Pi sessions used for handshake/materialization-unavailable behavior;
+2. prebuilt current-version materialized JSONL fixtures containing valid assistant history, used for resume/reload/tree/cursor tests.
+
+Control extension commands execute without an LLM turn. SDK-isolated tests use `AgentSessionRuntimeFixture` with a fully injected offline `ModelRuntime`, resource loader, session manager, and catalog/auth stubs. A test that succeeds only because a developer has credentials/models is invalid.
+
+The exact Pi manifest is activated only at this checkpoint. Activation proves the configured build contains the supervisor, control extension, strict validator, effect journal, authoritative replacement consumer, reload gate, and matching conformance version. Generic assurance dimensions come from `capability-manifest-durability-and-reconciliation-depth`; missing/uncertain evidence stays false/unknown.
 
 ## Acceptance evidence
 
-- [ ] The full manifest is emitted, validated, replayed, and rendered without becoming an authority/delivery gate.
-- [ ] Fresh generation `1`, exact continuation `N→N+1`, descendant authority, and old-generation inertness hold through real process termination/restart.
-- [ ] Cursor loss/full resync, crash-after-effect, corrupt session path, and reload-vs-runtime-upgrade mutations are killed.
-- [ ] Explicit crash=`failed`, unexplained RPC loss=`stale`, and clean exit=`offline`; activity is `unknown` unless current evidence proves otherwise.
-- [ ] Every test awaits child exit, observation flush, cursor/journal durability, and core terminal state; no late async error or orphan process can pass after assertions.
-- [ ] Assurance prose says implementation-checked, not model-checked/release-verified, unless promotion evidence actually exists.
+- [ ] Generic RPC path/id cannot clear cwd proof; exact challenged current-extension marker can, and wrong cwd/nonce/epoch/source fails.
+- [ ] Fresh path-without-file remains memory-only: it may become a promoted current new context, but resume/reload/restart-stable cursor stay unavailable.
+- [ ] Malformed interior line, duplicate id, orphan/broken parent, multiple root, unsupported entry, truncated frame, symlink/root escape, inode swap, and raw-vs-RPC mismatch all block `resumed`.
+- [ ] Exact continuation stages, remains non-current, then promotes only through `SpawnPromotionCommitted`; old-generation callbacks/output become quarantine and never transcript/current state.
+- [ ] Launch-effect ambiguity poisons the exact claim and does not launch another child; known identity reconciles only to the original claim/logical target.
+- [ ] Unknown cursor full replacement deletes an omitted stale projected entry in the real consuming fold; same-epoch retry is inert; cursor never leads projection.
+- [ ] N+1 resumed against the same verified Pi session loads N's cursor; a second logical target/native identity collision rejects.
+- [ ] Busy/unmaterialized reload rejects before effect; valid reload needs materialized request+completion, new handshake, rebind, and reconcile. Arbitrary dependency/runtime changes require process replacement.
+- [ ] The core manifest contains no Pi resource vocabulary; the opaque Pi profile and generic assurance fields are emitted/validated/replayed/rendered without becoming authority.
+- [ ] `AgentSessionRuntimeFixture` is the only SDK lifecycle test seam and all model/catalog/auth services are injected offline.
+- [ ] Every test awaits process-group exit, Observation/journal/cursor durability, expected promotion/poison, and late async completion; no orphan/error can pass after assertions.
+- [ ] Assurance prose says implementation-checked only unless independent formal/vector promotion exists.
+
+## Required mutation witnesses
+
+- trust `get_state` as cwd proof;
+- treat non-empty `sessionFile` or in-memory custom marker as durable;
+- skip malformed raw line / overwrite duplicate id / allow orphan root;
+- publish claimed-successor transcript before promotion;
+- key cursor by Patchbay generation;
+- unknown-cursor upsert instead of exact replacement;
+- commit cursor before core replacement acknowledgement;
+- invoke reload while streaming/compacting/queued or complete on marker alone;
+- treat arbitrary dependency `/dist` as reloadable;
+- emit full Pi manifest without sibling assurance or mechanism evidence;
+- instantiate ambient `ModelRuntime`/credential/catalog behavior in lifecycle tests.
 
 ## Ordering constraint
 
-Final checkpoint after manifest, supervisor, cursor, reload, and core stale-event fencing.
+Final Pi checkpoint after every Pi mechanism plus the spawn runtime-evidence contract, shared stale fence, atomic completion/promotion driver, and reconnect convergence. Green evidence enables manifest activation and feature review; it does not bypass the spawn feature's own review/assurance gates.

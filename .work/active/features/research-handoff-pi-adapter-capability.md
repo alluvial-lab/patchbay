@@ -4,7 +4,7 @@ kind: feature
 stage: implementing
 tags: [adapter, v1]
 parent: epic-public-product-contract
-depends_on: [research-handoff-spawn]
+depends_on: [research-handoff-spawn, capability-manifest-durability-and-reconciliation-depth]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -15,426 +15,359 @@ updated: 2026-08-12
 
 # Pi adapter capability surface for v1 (spawn/restart/reload + manifest)
 
-## Brief and grounded contract
+## Redesign status and review authority
 
-Implement the Pi edge of `research-handoff-spawn` without moving Pi concepts into the core. A successful fresh spawn consumes the core-prepared stable logical target and generation `1`. An intentional restart is a new accepted `spawn` Operation with a new command id/idempotency key and a typed continuation payload naming the exact prior runtime generation. The core owns identity, authority, monotonic claims, tombstones, stale-event fencing, completion, and descendant grants. This feature owns how the Pi adapter realizes the external continuation.
+This body supersedes the first 2026-08-12 design. The consolidated five-reviewer gate at `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md` found the prior spawn/Pi stride unsafe to implement. The redesigned `research-handoff-spawn` feature now owns the six shared contract leaves. This redesign consumes those leaves and closes Pi-side BLOCKER 6 (authoritative cursor replacement), BLOCKER 9 (unimplementable cwd proof), BLOCKER 10 (false durable-JSONL premise), and every Pi-adapter MATERIAL finding.
 
-Research grounding is `.research/analysis/campaigns/v1-control-plane-and-spawn/`, especially `specialists/pi-adapter-probe.md` plus attestations `pi-rpc`, `pi-sessions`, `pi-extensions`, `pi-loader`, and `pi-sdk`:
+The earlier untraceable “five-BLOCKER” review is not evidence for this redesign. The cited consolidated review is the current gate. The disposition matrix below links each assigned finding to a concrete checkpoint.
 
-- Pi RPC `get_entries(since)` is authoritative append order for persisted session entries and the current `leafId`; entry ids are stable cursors, including pre-compaction and abandoned branches. Unknown cursors fail explicitly.
-- Live RPC events are notifications, not one universal total order. Parallel tool updates can interleave and completion order differs from assistant source order; finalized message/session entries are the repair source.
-- `/reload`/`ctx.reload()` refreshes extension entrypoints and resources in the current process. It does not replace the running Pi executable/runtime package graph.
-- Continuation preserves the selected JSONL session tree and persisted custom entries, not arbitrary subscriptions, extension variables, loader cache, handles, or external process state.
-- Pi has no process-restart RPC. The adapter must quiesce, terminate, verify the persisted session, respawn, rebind, and reconcile.
+## Brief
 
-The current adapter embeds `AgentSessionRuntime`, preprovisions sessions, lets `PiSession.newSession()` allocate `current + 1`, treats an unknown local entry cursor as a full result, and excludes `spawn`. Those choices are replaced for managed v1 runtimes; `ModelRuntime` remains useful for deterministic test fixtures, not as a second production lifecycle.
+Implement the Pi reference adapter for managed fresh spawn, typed spawn continuation, reconnect, and bounded resource reload without importing Pi vocabulary into Patchbay core semantics. The production substrate is one supervised `pi --mode rpc` subprocess per managed runtime generation. Core supplies the accepted logical target, exact generation claim, compound continuation provenance, pending-replacement fence, crash/effect vocabulary, successor staging, and authority-bearing promotion. The Pi adapter supplies an honest external-effect journal, process lifecycle, a control-extension handshake, strict session-tree validation, conditional persistence proof, Pi-session-scoped cursor state, authoritative transcript-projection replacement, and a reload action whose scope matches what Pi actually reloads.
 
-**Dispatch rationale:** direct-read only. The relevant Pi adapter, generated manifest, resolved spawn stories, research facet, and source attestations form a bounded surface. This delegated lane cannot fan out; no exploratory or advisory subagent was silently substituted. The pre-mortem below is inline as requested.
+A Pi process may be live before its new session file exists. Such a runtime may be reported as a current new context after core promotion, but it is **not resumable, sealable, restart-stable, or reload-marker-durable** until a materialized file passes the adapter's strict validator. `resumed` is reserved for an exact selected session whose complete persisted tree and post-launch continuity proof pass.
+
+## Grounding and current-code constraints
+
+- Research source: `.research/analysis/campaigns/v1-control-plane-and-spawn/specialists/pi-adapter-probe.md`, especially persisted-entry replay, partial live-event order, session continuation, reload, and process replacement. Relevant attestations are `[pi-rpc]{1,4,5,6,7,8,9}`, `[pi-sessions]{2,3}`, `[pi-extensions]{1,3,4,5,7,8}`, `[pi-loader]{1,2,3,4,5}`, and `[pi-sdk]{1}`.
+- `get_state` and `get_session_stats` expose `sessionFile` and `sessionId`, but no cwd (`[pi-rpc]{9}` and installed `docs/rpc.md`). They are supplemental identity checks, not cwd proof.
+- Pi extension commands execute immediately even while streaming, and the RPC `prompt` response says only that the command was handled. Extension-handler errors become events rather than a failed correlated response. A positive control proof therefore requires an exact challenge marker, not `success: true`.
+- `ctx.reload()` tears down/recreates the extension runtime and enumerated resources in-process; its caller remains an old frame. Loader evidence supports re-reading entrypoints with a cleared factory cache, but not arbitrary transitive dependency graphs, running Pi package aliases, compiled `/dist`, native modules, or the executable (`[pi-extensions]{5}`, `[pi-loader]{2,3,4,5}`).
+- Pi defers creation of a new session JSONL until an assistant message exists. `dist/core/session-manager.js:724-736` keeps pre-assistant entries in memory, even when `sessionFile` is non-empty. The adapter has no attested flush RPC and must not invent one.
+- Pi does not fail closed on full tree integrity: its parser skips malformed interior lines, its id map overwrites duplicate ids, and `getTree()` promotes orphaned entries to roots (`dist/core/session-manager.js:88-104,671-680,983-1012`). Header/inode/trailing-LF checks alone cannot substantiate `resumed`.
+- Current `pi-adapter/src/pi_session.ts` embeds `AgentSessionRuntime`, allocates `current + 1`, and turns unknown `since` into a full result. Managed production replaces those behaviors. An SDK-backed `AgentSessionRuntimeFixture` remains test-only, with `ModelRuntime` and model/catalog/auth behavior fully injected and offline.
+- Current transcript Observations append to the durable core log and the cockpit folds them incrementally. Therefore adapter-local full-fetch upsert is insufficient: unknown-cursor repair needs an adapter-specific authoritative replacement envelope whose consuming projection deletes omitted Pi-derived entries while immutable audit history remains.
+- The redesigned spawn cursor leaf scopes external continuity by verified external identity, not Patchbay generation. The Pi implementation uses verified Pi session identity and retains a reverse binding to one logical target.
+
+**Dispatch rationale:** direct-read redesign. The current gate already contains five independent fresh-context reviews, and this delegated lane cannot spawn without tripping the recursion guard. No required fan-out was silently replaced. The forced-adversary pre-mortem is run inline below.
 
 ## Work-nature test
 
-**Non-zero design surface; full feature-design lane.** This feature chooses a production substrate, process and file-integrity boundaries, continuation ordering, crash evidence, cursor-loss recovery, reload semantics, generated public capability shape, and cross-feature ownership. These are externally visible and expensive to reverse at v1; this is not transcription or config-as-prose.
+**Non-zero design surface; full feature-design lane.** This redesign changes process/session proof, availability claims, opaque manifest shape, reload admission, external cursor authority, transcript replacement, crash evidence, and implementation dependency edges. No UI mock is required: the existing Operation/failure/stale presentation remains the surface, and the Pi profile appears through existing adapter diagnostics.
 
 ## Design decisions
 
-- **Production substrate: one Pi RPC subprocess per managed runtime generation.** The TypeScript adapter remains the supervisor and Patchbay client; each generation is an isolated `pi --mode rpc` child. This gives an actual per-target terminate/respawn upgrade boundary and the source-attested `get_entries` failure semantics. The SDK `AgentSessionRuntime`/`ModelRuntime` path remains only behind injected unit-test fixtures.
-- **Continuation selects an exact persisted session.** Before termination, the adapter obtains `sessionFile`/`sessionId`, seals the canonical allowed-root file/header identity, and after termination verifies it again. Managed continuation uses `--session <canonical-path>`. `--continue` is permitted only if a selector proves one unambiguous candidate and the child handshake returns the exact expected path/id; it is never the normal managed-restart path.
-- **Resume is fail-closed by default.** `PiSpawnTargetSpec.continuation_mode=require_resume` refuses a missing/corrupt/mismatched JSONL file. `allow_new_context` is an explicit adapter-owned target-spec choice and reports `new_context`; it never masquerades as `resumed`. `unknown` is used only when the new process/generation can be identified but persisted-context continuity cannot be proved.
-- **Quiesce is bounded and honest.** The supervisor fences new generation-N delivery, sends RPC `abort` for active work, waits a configured bound for `agent_settled`, flushes observations/cursor state, then terminates TERM→KILL. Any running Operation without a proved terminal outcome becomes `failed(execution_outcome_unknown)`; accepted/delivered work follows the core's generation-transition policy and is never executed by the fenced child.
-- **Crash state follows evidence, not inference.** Unexpected signal/nonzero child exit is explicit `failed`; loss of RPC framing/pipe without conclusive exit is `stale`; expected clean shutdown or confirmed clean exit is `offline`. Activity becomes `unknown` unless current evidence proves otherwise. Crash, disconnect, and clean exit never allocate a generation or auto-restart.
-- **Cursor commit follows durable handling.** A Pi entry cursor is committed only after deterministic projection and core acknowledgement. Unknown cursor is a typed error followed by explicit full replay; it is never normalized to an empty suffix or silently treated as current.
-- **Live events preserve partial-order honesty.** The adapter may forward transient deltas for responsiveness and serialize the bytes it actually received, but does not claim that arrival order is source authority. `entry_appended` wakes persisted-entry reconciliation; finalized entry/message evidence repairs transient state.
-- **Reload is a resource refresh, not a restart alias.** A typed Pi `reconfigure.reload_resources` action invokes an adapter extension command that performs `await ctx.reload(); return`. Success requires a persisted request/completion marker observed after `session_start(reason=reload)`. Runtime/package upgrades are rejected on this path and require a new spawn continuation.
-- **The capability manifest is generated, complete, and advisory.** A runtime-session profile declares mechanisms plus typed limitations. It can guide UX and diagnostics but never replaces grants, core delivery, authenticated reports, or the adapter's delivery result.
-- **Project/cwd remains adapter-owned.** `PiSpawnTargetSpec` names a configured `project_ref`; the adapter resolves it to canonical cwd, trust/resource roots, session directory, executable, and launch policy. Raw cwd/labels never become core identity or grant authority.
-- **Sibling capability-depth ownership stays separate.** This feature owns the Pi mechanism profile and its concrete limits. `capability-manifest-durability-and-reconciliation-depth` later adds cross-adapter assurance strength (dedup/continuation proof/cursor/generation-fence/reconciliation depth) without re-declaring these nine mechanisms.
+### 1. Cwd proof comes from the adapter control extension, not generic RPC state
+
+Every managed child loads one adapter-owned `patchbay-control` extension. After launch the supervisor first confirms the extension command is present through `get_commands`, then submits a random challenge to `/patchbay-control-handshake`. The extension appends a bounded `patchbay.control.handshake.v1` custom entry containing the challenge, the supervisor-provided launch nonce, initialized `ctx.cwd`, `sessionManager.getSessionId()`, `getSessionFile()`, and an extension-instance epoch. The supervisor finds that exact marker through `get_entries`, compares its path/id with `get_state`/`get_session_stats`, and compares its cwd with the adapter-resolved canonical project cwd.
+
+The generic RPCs still prove only what they expose: current Pi session path/id and activity flags. The extension marker is the cwd evidence. A prompt `success: true`, an extension event without the exact challenge/launch nonce, or a path/id-only response is not a handshake. Raw cwd/session paths remain adapter-local and are redacted from core Observations, audits, and diagnostics.
+
+This is process-correlated evidence from the authenticated/current adapter, not cryptographic proof against a dishonest child or adapter. That trust limit matches the spawn contract.
+
+### 2. Session persistence is an explicit conditional state
+
+`PiSessionMaterialization` has three outcomes:
+
+- `memory_only` — Pi reports a path/id, but there is no regular non-empty file containing the current session tree;
+- `materialized` — a safely opened regular file under the configured root passes full framing, header, entry-shape, id/reference/tree, and RPC/tree equality checks and yields a seal;
+- `invalid` — a file exists but any required check fails.
+
+There is no inferred or synthetic flush. A managed fresh child may be staged/promoted with `new_context` while `memory_only`, but the adapter keeps restart-stable cursor and reload-continuity capabilities unavailable. `require_resume` continuation fails before successor launch when no materialized seal can be obtained after bounded quiescence. It emits exact pre-launch no-successor-effect evidence and re-establishes N's settled/current evidence so the core can decide whether to release the claim/fence. An explicit `allow_new_context` continuation may intentionally replace with a fresh session and reports only `new_context`.
+
+Reload also requires `materialized`: request/completion custom entries are not called persisted proof while Pi is retaining them in memory.
+
+### 3. `resumed` requires strict adapter validation because Pi loading is permissive
+
+The adapter's `PiSessionTreeValidator` safely opens the selected file without following a symlink, checks allowed-root containment and regular-file identity, requires final LF framing, parses every non-empty line, requires exactly one first header with the supported version and expected session id, validates the closed supported entry family and required fields, rejects duplicate/empty ids, validates every parent/reference, requires exactly one tree root when entries exist, and rejects cycles/orphans/self-parenting. It compares raw parsed entries with `get_entries()` rather than assuming Pi's parser failed closed.
+
+A pre-stop `MaterializedSessionSeal` records canonical local path, root id, session id, device/inode, size, content/tree digest, exact ordered entry ids, and sealed leaf. Cwd is deliberately not in this seal: actual initialized cwd is verified through the control handshake. After launch, the same physical/header identity and sealed entry prefix must remain intact; bounded startup/control entries may extend the valid tree. The new challenge marker must be the current leaf, and the raw file, RPC entries, and marker must agree before `resumed` can be reported.
+
+### 4. Cursor scope is verified Pi continuity, never Patchbay generation
+
+The adapter derives one local `PiSessionContinuityKey` from adapter/deployment identity, verified Pi session id, configured session-root id, and canonical root-relative session path. Its wire/external cursor scope uses a bounded opaque digest; raw paths do not leave the adapter. N+1 loads N's cursor when it resumes the same verified Pi session. A reverse index prevents the same Pi continuity key from binding to two logical targets.
+
+An unmaterialized session may use a volatile in-process cursor for responsiveness, but no restart-stable cursor claim is emitted until materialization and a full authoritative replacement commit.
+
+### 5. Unknown cursor performs authoritative projection replacement
+
+Known cursor reconciliation may send an idempotent suffix batch keyed by stable Pi entry identities. Unknown cursor reconciliation does not clear or upsert the old view. It:
+
+1. holds the existing projection stale;
+2. fetches the complete current Pi entry set and leaf;
+3. validates the complete tree and exact continuity identity;
+4. builds a staged replacement epoch with the exact Pi-derived presentation set;
+5. sends one generated Pi authoritative-replacement envelope through the core's opaque Observation path and awaits durable acknowledgement;
+6. atomically installs local `{exact projection, leaf, cursor, epoch}` using compare-and-swap + temp-file fsync/rename.
+
+The known Pi compositor in the shared operator domain treats the replacement envelope as one semantic fold: all prior Pi-persisted projection members in that continuity scope are replaced, so omitted stale members disappear; immutable source/audit events remain in the log. Retrying the same epoch with identical content is inert; conflicting content for one epoch fails closed. A crash before core acknowledgement leaves the old stale projection/cursor. A crash after acknowledgement but before local commit resends the same replacement and then commits locally; it never advances the cursor first.
+
+For a claimed successor, replacement is validated and staged adapter-locally but no ordinary transcript Observation is emitted while the core disposition is `ClaimedSuccessor`. Its digest enters successor evidence. After atomic promotion makes N+1 current, the adapter publishes the replacement envelope, commits the cursor, then reports `live`. This consumes the spawn quarantine/promotion contract instead of bypassing it.
+
+### 6. Reload rejects active work and has a narrower evidence-backed scope
+
+Reload uses a per-runtime exclusive action gate. While holding it, the adapter fences new delivery and requires all of the following before invoking the extension command: no in-flight adapter delivery or direct RPC action, `get_state.isStreaming=false`, `isCompacting=false`, `pendingMessageCount=0`, and either no activity-start in the current process incarnation or a tracked `agent_settled` epoch newer than the last start/retry/compaction activity. Because the managed child has one stdin owner, the gate closes the check-to-command race. Busy reload is rejected before effect with a bounded retryable reason; it does not abort operator work.
+
+The Pi profile describes reloadable scope as **the loaded extension entrypoint plus the resource paths Pi enumerates on reload**. Skills, prompts, themes, and context files remain Pi-profile values, not core fields. Arbitrary imported extension dependency graphs, Pi/runtime package aliases, compiled `/dist`, native dependencies, and the executable require spawn continuation/process replacement. Unknown scope is unsupported rather than overclaimed.
+
+On an idle materialized session the control extension appends an exact request marker, calls `await ctx.reload(); return`, and the new instance appends the matching completion marker from `session_start(reason=reload)`. The adapter requires both markers to be materialized, re-runs the challenge handshake against the new extension epoch, rebinds subscriptions, and completes cursor reconciliation before reporting reload success. A marker alone proves neither quiescence nor complete rehydration.
+
+### 7. Pi vocabulary lives in a generated opaque Pi profile
+
+The generic `AdapterCapability` retains only core behavior branches (target categories, supported Operations/shapes, snapshot tier, streaming/cancellation/replacement booleans, idempotency, attachment, known failures, diagnostic reporting, and the durability/reconciliation fields owned by `capability-manifest-durability-and-reconciliation-depth`). It gains at most one bounded opaque generated-profile envelope with schema descriptor and bytes; core validates framing/size but does not interpret Pi fields.
+
+`contracts/proto/patchbay/pi_adapter.proto` owns `PiRuntimeProfile`: RPC mechanism, live-event caveats, session materialization condition, cursor mechanism, control-extension proof, reloadable Pi entrypoint/resource kinds, and process-replacement exclusions. Cwd, project trust, extensions, skills, prompts, themes, and context files are Pi-specific enum/field values inside that profile, not mandatory core manifest fields.
+
+The profile-contract checkpoint does not advertise support by itself. The final conformance checkpoint activates the Pi declaration only after the supervisor, session validator, cursor replacement, and reload mechanisms pass. The feature and profile story depend on `capability-manifest-durability-and-reconciliation-depth`; every generic assurance field is populated from that generated contract and unknown/uncertain values remain false/unknown. No “complete manifest” claim is made before that dependency lands.
+
+### 8. The SDK fixture is named for the runtime port, not the model service
+
+Production has one implementation of `ManagedPiRuntimePort`: the RPC child. Unit tests may use `AgentSessionRuntimeFixture`, an implementation of that same port backed by Pi's SDK. Its constructor requires a fully injected offline `ModelRuntime`, resource loader, session manager, and model/catalog fixtures. Tests never call ambient credential discovery or treat `ModelRuntime` as the lifecycle under test.
 
 ## Architectural options
 
-### Option A — Keep all managed sessions embedded in the adapter process
+### Option A — Keep generic RPC/file metadata as the proof
 
-Extend current `AgentSessionRuntime` and `ModelRuntime` use, replace sessions in-process, and restart the whole adapter for package upgrades. This preserves typed APIs and requires the least immediate rewrite, but one target cannot cross the reliable process-upgrade boundary without replacing every colocated runtime and adapter attachment. It also makes crash/process evidence less isolated. **Rejected for production; retained for deterministic tests.**
+Use `get_state`/`get_session_stats`, inode/header checks, and marker presence. This cannot verify initialized cwd, accepts Pi's permissive tree loading, and mistakes in-memory markers for durability. **Rejected by BLOCKERs 9–10 and the tree-validation MATERIAL.**
 
-### Option B — Supervise a Pi RPC child per managed generation
+### Option B — Patch Pi with a new flush/cwd RPC before Patchbay work
 
-The adapter owns process groups, JSONL framing, exact session selection, lifecycle evidence, and persisted-entry reconciliation. Each target can be quiesced/replaced independently; runtime/package updates load in a fresh child; malformed transport or child exit has an observable boundary. This adds a strict RPC client and process tests, but aligns most directly with the grounded contract and current Remote-Pi supervisory precedent. **Chosen.**
+An upstream `flush_session` plus cwd-bearing state response could simplify the edge. Current Pi exposes neither contract; requiring a fork would block the v1 reference adapter and still would not solve cursor replacement or arbitrary reload dependencies. **Reserved as a future simplification, not a v1 premise.**
 
-### Option C — Hybrid production: SDK for ordinary delivery, RPC only for restart
+### Option C — Control-extension proof + conditional materialization + authoritative projection replacement
 
-Keep the embedded runtime live, then translate to an RPC child only at upgrade/restart. This appears incremental but creates two production event/cursor/reload implementations and makes a single manifest unable to state which guarantees apply at a given moment. The transition itself becomes the least-tested lifecycle. **Rejected.**
+Use official extension/custom-entry and RPC mechanisms, make absent durability unavailable, validate the raw tree strictly, and publish one exact-set replacement envelope after current-generation fencing. This adds an adapter-owned control bridge and local journal/store, but every claimed guarantee has an observable current Pi mechanism. **Chosen.**
 
-## Trickiest unit first: continuation transaction across process and persisted session
+## Trickiest unit first: continuation readiness across three authorities
 
-The risky unit is not `spawn()`; it is the ordered handoff from a fenced generation N to a verified and reconciled generation N+1 without claiming continuity too early.
+The hardest unit is the transition from a fenced N process to a successor that is ready to stage but is not yet current. It spans core claim authority, Pi process/session evidence, and the external projection cursor without allowing one to impersonate another.
 
 ```ts
-export interface RuntimeGenerationKey {
-  authorityDomainId: string;
-  logicalTargetId: string;
-  runtimeSessionId: string;
-  generation: bigint;
+export interface PiSessionContinuityKey {
+  readonly adapterId: string;
+  readonly deploymentScope: string;
+  readonly piSessionId: string;
+  readonly sessionRootId: string;
+  readonly rootRelativePath: string; // adapter-local; never diagnostics/wire
 }
 
-export interface SessionFileSeal {
-  canonicalPath: string;
-  sessionId: string;
-  cwd: string;
-  device: bigint;
-  inode: bigint;
-  minimumSize: bigint;
-}
+export type PiSessionMaterialization =
+  | { readonly kind: "memory_only"; readonly sessionId: string; readonly declaredPath: string }
+  | { readonly kind: "materialized"; readonly seal: MaterializedSessionSeal }
+  | { readonly kind: "invalid"; readonly reason: PiSessionIntegrityFailure };
 
-export interface PiProcessPort {
+export interface ManagedPiRuntimePort {
   launch(spec: PiLaunchSpec): Promise<PiRpcRuntime>;
+  handshake(runtime: PiRpcRuntime, challenge: PiHandshakeChallenge): Promise<PiControlHandshake>;
   terminate(runtime: PiRpcRuntime, policy: TerminationPolicy): Promise<ProcessExit>;
 }
 
-export interface SpawnSupervisor {
-  spawnFresh(operation: Operation, claim: SpawnGenerationClaim): Promise<SpawnedRuntime>;
-  continueGeneration(
-    operation: Operation,
-    claim: SpawnGenerationClaim,
-    prior: RuntimeGenerationRef,
-  ): Promise<SpawnedRuntime & { continuationStatus: ContinuationStatus }>;
+export interface PiAuthoritativeReconciler {
+  reconcileCurrent(scope: ExternalCursorScope, runtime: PiRpcRuntime): Promise<CommittedPiProjection>;
+  stageClaimedSuccessor(scope: ExternalCursorScope, runtime: PiRpcRuntime): Promise<StagedPiProjection>;
+  publishAfterPromotion(staged: StagedPiProjection): Promise<CommittedPiProjection>;
 }
 ```
 
 Continuation order is fixed:
 
-1. Under a per-logical-target mutex, validate the accepted Operation/claim, generated Pi target spec, configured project/deployment authority, and adapter spawn journal. The claimed generation must be exact `N+1`.
-2. Fence new delivery to N and capture the current child identity, Pi `get_session_stats`, cursor record, and pre-stop `SessionFileSeal`.
-3. If active, send `abort`, await correlated acknowledgement and `agent_settled` within the configured quiesce bound, flush observations, and report any known terminal effects. Unproved running work is `execution_outcome_unknown`.
-4. Close stdin/request graceful shutdown, then apply TERM→KILL escalation to the whole child process group. Late stdout/events are generation-token fenced.
-5. Re-verify the same canonical regular JSONL file: allowed root, header/session id/cwd, device/inode, non-truncation, and complete LF framing. A mismatch fails before launch and never logs the path.
-6. Launch a new child with an absolute executable and argv array (`--mode rpc`, exact cwd/session directory, adapter control extension, and normally `--session <canonical path>`); no shell interpolation or payload-supplied flags.
-7. Handshake with `get_session_stats`/`get_state`; verify exact path/id/cwd and bind the core-claimed generation. If an explicitly allowed fresh fallback was taken, report `new_context`.
-8. Rebind subscriptions and run Pi entry reconciliation. Keep connectivity/activity stale/unknown until both handshake and reconciliation succeed.
-9. Report the exact logical-target generation advance, continuation reference/status, source cursor, then the successful spawn Result. The core completion owner issues descendant authority and terminalizes last.
+1. Under the target mutex, validate the generated Pi target spec, accepted exact claim/compound provenance, adapter-local deployment authority, and spawn journal; journal the exact claim/launch nonce before external effect.
+2. Consume the core pending-replacement fence and close the local runtime action/delivery gate for N.
+3. Quiesce N: abort only if required, await correlated acknowledgement and `agent_settled`, flush adapter Observations, and report unresolved running effects as `execution_outcome_unknown`.
+4. Run the current control handshake and materialization validator **after settle and before termination**. `require_resume` with `memory_only`/`invalid` stops here; no successor is launched and N remains a process the adapter can re-establish as settled/current evidence.
+5. Seal the fully validated file and cursor/projection state, terminate the old process group with bounded TERM→KILL, then revalidate the seal before launch.
+6. Launch via absolute executable/argv/sanitized environment, normally with exact `--session <canonical path>`. `allow_new_context` omits the resume selector and can report only `new_context`.
+7. Verify `get_commands`, perform the challenged control-extension handshake, compare actual cwd with configured cwd and path/id with generic RPC, and validate the post-launch raw tree plus exact sealed prefix. Generic RPC alone cannot clear this gate.
+8. Stage an authoritative cursor/projection reconcile under the verified Pi continuity key. A claimed successor emits no ordinary transcript evidence yet.
+9. Report exact execution phase/effect evidence and the successor SessionReport/readiness digest. Core stages it; successful Result remains non-terminal evidence.
+10. After `SpawnPromotionCommitted`, publish the exact replacement/suffix as current, atomically commit local cursor state, then report fresh `live/idle|working` state. The core promotion driver remains the only authority/completion owner.
 
-Failure before external launch is an ordinary execution failure with N fenced/failed/offline according to evidence. Failure after launch but before durable external identity/proof is `execution_outcome_unknown` and follows the spawn journal policy; the supervisor does not launch again automatically.
-
-## Minimum generated capability manifest
-
-`contracts/proto/patchbay/adapter.proto` adds one required runtime-session profile when `target_categories` includes `runtime_session`; adapter-owned mechanism ids are bounded identifiers, while values that affect generic presentation/reconciliation use enums/booleans.
-
-```proto
-message RuntimeSessionCapability {
-  TransportCapability transport = 1;
-  PromptingCapability prompting = 2;
-  EventCapability events = 3;
-  CursorReplayCapability cursor_replay = 4;
-  SessionPersistenceCapability session_persistence = 5;
-  SessionReplacementCapability session_replacement = 6;
-  ReloadCapability reload = 7;
-  ResourceScopeCapability resource_scope = 8;
-  StateRehydrationCapability state_rehydration = 9;
-}
-
-message TransportCapability {
-  string mechanism = 1;              // bounded adapter-owned id
-  bool process_isolation = 2;
-}
-message PromptingCapability {
-  bool prompt = 1;
-  bool steering_queue = 2;
-  bool follow_up_queue = 3;
-}
-enum EventOrderingGuarantee {
-  EVENT_ORDERING_GUARANTEE_UNSPECIFIED = 0;
-  EVENT_ORDERING_GUARANTEE_TOTAL = 1;
-  EVENT_ORDERING_GUARANTEE_PARTIAL = 2;
-  EVENT_ORDERING_GUARANTEE_NONE = 3;
-}
-message EventCapability {
-  bool streaming = 1;
-  EventOrderingGuarantee ordering = 2;
-  bool parallel_tool_interleaving = 3;
-  bool finalized_message_authoritative = 4;
-}
-enum UnknownCursorBehavior {
-  UNKNOWN_CURSOR_BEHAVIOR_UNSPECIFIED = 0;
-  UNKNOWN_CURSOR_BEHAVIOR_REJECT = 1;
-}
-enum CursorRecoveryMode {
-  CURSOR_RECOVERY_MODE_UNSPECIFIED = 0;
-  CURSOR_RECOVERY_MODE_FULL_REPLAY = 1;
-  CURSOR_RECOVERY_MODE_MANUAL = 2;
-  CURSOR_RECOVERY_MODE_NONE = 3;
-}
-message CursorReplayCapability {
-  string mechanism = 1;
-  bool persisted_entries_only = 2;
-  bool stable_across_process_restart = 3;
-  bool returns_current_leaf = 4;
-  UnknownCursorBehavior unknown_cursor = 5;
-  CursorRecoveryMode recovery = 6;
-}
-message SessionPersistenceCapability {
-  string mechanism = 1;
-  bool tree_and_branches = 2;
-  bool pre_compaction_history = 3;
-  bool custom_entries = 4;
-  bool process_state_preserved = 5;
-}
-enum SessionReplacementMechanism {
-  SESSION_REPLACEMENT_MECHANISM_UNSPECIFIED = 0;
-  SESSION_REPLACEMENT_MECHANISM_IN_PROCESS = 1;
-  SESSION_REPLACEMENT_MECHANISM_SUPERVISED_PROCESS = 2;
-}
-message SessionReplacementCapability {
-  SessionReplacementMechanism mechanism = 1;
-  bool explicit_session_selection = 2;
-  bool continuation_status_reported = 3;
-}
-enum ReloadScope {
-  RELOAD_SCOPE_UNSPECIFIED = 0;
-  RELOAD_SCOPE_EXTENSION_RESOURCES = 1;
-  RELOAD_SCOPE_RUNTIME_PACKAGE_GRAPH = 2;
-}
-message ReloadCapability {
-  ReloadScope scope = 1;
-  bool runtime_upgrade_requires_process_replacement = 2;
-}
-message ResourceScopeCapability {
-  bool cwd = 1;
-  bool project_trust = 2;
-  bool extensions = 3;
-  bool skills = 4;
-  bool prompts = 5;
-  bool themes = 6;
-  bool context_files = 7;
-}
-enum StateRehydrationMode {
-  STATE_REHYDRATION_MODE_UNSPECIFIED = 0;
-  STATE_REHYDRATION_MODE_PERSISTED_ONLY = 1;
-  STATE_REHYDRATION_MODE_FULL_RUNTIME = 2;
-  STATE_REHYDRATION_MODE_NONE = 3;
-}
-message StateRehydrationCapability {
-  StateRehydrationMode mode = 1;
-  bool requires_resubscribe = 2;
-  bool adapter_journal = 3;
-}
-```
-
-The Pi v1 manifest declares:
-
-| Dimension | Pi declaration |
-|---|---|
-| transport | `mechanism=pi-rpc-jsonl`, `process_isolation=true` |
-| prompting | prompt + steering + follow-up queues |
-| events | streaming, `partial`, parallel-tool interleaving, finalized message authoritative |
-| cursor replay | `pi-session-entry-id`, persisted entries only, restart-stable, returns leaf, unknown=`reject`, recovery=`full_replay` |
-| session persistence | `pi-jsonl-session-tree`, tree/branches + pre-compaction + custom entries; process state not preserved |
-| session replacement | supervised process, explicit session selection, continuation status reported |
-| reload | extension resources only; runtime upgrade requires process replacement |
-| resource scope | cwd, project trust, extensions, skills, prompts, themes, context files |
-| state rehydration | persisted only, re-subscribe required, adapter journal present |
-
-Existing top-level declarations remain: `target_categories=[runtime_session]`, `session_snapshot_support=partial`, `session_replacement_support=true`, `idempotency_strength=at_patchbay_boundary`, and supported Operations include `spawn` only when the supervisor/project resolver/journal are configured. Fresh attach rejects an incomplete runtime profile. Real durable pre-profile registrations are replay-normalized once to unknown/false values and cannot be used to advertise support until the adapter redeclares. The summary contract embeds this generated profile rather than hand-copying its fields.
+Any ambiguity after launch poisons the claim; the supervisor never auto-launches another child for that generation.
 
 ## Implementation units and child checkpoints
 
-### Unit 1 — Generated runtime capability profile
+### Unit 1 — Opaque profile contract and conservative declaration gate
 
 **Story:** `research-handoff-pi-adapter-capability-manifest-profile`
 
-**Files:** `contracts/proto/patchbay/{adapter,diagnostics}.proto`, `core/src/adapter/{capability,mod}.rs`, `core/src/diagnostics/mod.rs`, `pi-adapter/src/core_client.ts`, diagnostic consumers, and rolling docs.
+**Files:** `contracts/proto/patchbay/{adapter,pi_adapter,diagnostics}.proto`, `core/src/adapter/{capability,mod}.rs`, `core/src/diagnostics/mod.rs`, `pi-adapter/src/core_client.ts`, generated artifacts, and rolling adapter docs.
 
-- Add the minimum profile above, complete fresh-attach validation, replay-only conservative legacy normalization, and the exact Pi declaration.
-- Preserve capability-not-authority and capability-not-delivery semantics.
-- Leave the additive assurance-strength seam to `capability-manifest-durability-and-reconciliation-depth`.
+Define one generic opaque adapter-profile carriage and the generated Pi profile. Consume the sibling durability/reconciliation contract; uncertain fields remain false/unknown. Do not activate full Pi support until final conformance.
 
-### Unit 2 — RPC child and continuation supervisor
+### Unit 2 — Control handshake, materialization, and strict tree integrity
+
+**Story:** `research-handoff-pi-adapter-capability-control-session-integrity`
+
+**Files:** new `pi-adapter/extensions/patchbay-control.ts`; new `pi-adapter/src/{control_handshake,session_file}.ts`; `contracts/proto/patchbay/pi_adapter.proto`; focused fixtures/tests.
+
+Own BLOCKERs 9–10 directly: challenged cwd/session proof, conditional materialization, safe file opening, complete parse/tree/reference validation, raw-vs-RPC comparison, exact pre/post seal, and redaction.
+
+### Unit 3 — Claim-aware RPC process supervisor and effect journal
 
 **Story:** `research-handoff-pi-adapter-capability-rpc-process-supervisor`
 
-**Files:** new `pi-adapter/src/{rpc_client,pi_process,session_file,spawn_supervisor}.ts`, `contracts/proto/patchbay/pi_adapter.proto`, and `pi-adapter/src/{pi_session,session_registry,delivery,main,core_client}.ts`.
+**Files:** new `pi-adapter/src/{rpc_client,pi_process,spawn_journal,spawn_supervisor,runtime_action_gate}.ts`; `pi-adapter/src/{pi_session,session_registry,delivery,main,core_client}.ts`; generated Pi target/evidence payloads.
 
-```ts
-export type PiRpcRecord = PiRpcResponse | PiRpcEvent;
-export interface PiRpcClient {
-  request<T>(command: PiRpcCommand<T>, signal?: AbortSignal): Promise<T>;
-  subscribe(listener: (event: PiRpcEvent) => void): () => void;
-  waitForExit(): Promise<ProcessExit>;
-}
-```
+Consume logical identity, continuation authority, claim/fence, crash/effect, runtime-evidence/promotion, duplicate reconciliation, generic restart orchestration, and deployment authority. Production has one RPC lifecycle and no adapter-owned generation increment.
 
-- Enforce strict LF JSONL, maximum record size, unique request ids, fail-closed malformed stdout, bounded stderr, and generation-local subscriptions.
-- Resolve `PiSpawnTargetSpec.project_ref` through adapter configuration; never pass payload paths/argv/env through unchecked.
-- Implement the fixed continuation transaction and evidence-specific crash mapping.
-
-### Unit 3 — Cursor replay and full resync
+### Unit 4 — Pi-session-scoped authoritative cursor replacement
 
 **Story:** `research-handoff-pi-adapter-capability-cursor-replay-resync`
 
-**Files:** new `pi-adapter/src/{cursor_store,entry_reconciler}.ts`, `pi-adapter/src/{rpc_client,pi_session,spawn_supervisor,transcript_projection,main}.ts`, core transcript dedup/reconciliation seams, and vectors.
+**Files:** new `pi-adapter/src/{cursor_store,entry_reconciler,pi_projection}.ts`; generated Pi projection envelopes; `operator-domain/src/reconciliation/external_cursor.ts`; known Pi compositor/fold; transcript ingress/presentation vectors.
 
-```ts
-export interface PiEntryCursorRecord {
-  logicalTargetId: string;
-  generation: bigint;
-  piSessionId: string;
-  sessionFileIdentity: string;
-  entryId?: string;
-  leafId?: string;
-}
-export interface PiEntryCursorStore {
-  load(key: RuntimeGenerationKey): Promise<PiEntryCursorRecord | undefined>;
-  commit(record: PiEntryCursorRecord): Promise<void>;
-  clear(key: RuntimeGenerationKey): Promise<void>;
-}
-export type PiCursorReconcile =
-  | { kind: "suffix"; processed: number; leafId: string | null }
-  | { kind: "full-resync"; processed: number; leafId: string | null };
-```
+Implement the spawn cursor leaf: generation-stable verified continuity key, reverse logical-target binding, known suffix idempotency, unknown exact-set/tree staging, one authoritative replacement event, omitted-entry deletion, and atomic local epoch/cursor install only after durable core acknowledgement.
 
-- Atomically store 0600 cursor state under an adapter-local data root.
-- Await core ingestion before each cursor advance. Deterministic entry identities make replay after response loss inert.
-- On unknown cursor, keep stale, fetch all entries, reconcile, then install the new cursor/leaf. Never clear first and claim an empty/current view.
-
-### Unit 4 — Reload bridge and persisted rehydration
+### Unit 5 — Idle-only bounded reload and rehydration
 
 **Story:** `research-handoff-pi-adapter-capability-resource-reload-rehydration`
 
-**Files:** new `pi-adapter/extensions/patchbay-control.ts`, new `pi-adapter/src/reload_controller.ts`, `contracts/proto/patchbay/pi_adapter.proto`, and `pi-adapter/src/{delivery,entry_reconciler,spawn_supervisor,core_client}.ts`.
+**Files:** `pi-adapter/extensions/patchbay-control.ts`; new `pi-adapter/src/reload_controller.ts`; `runtime_action_gate.ts`; `entry_reconciler.ts`; `spawn_supervisor.ts`; generated Pi reconfigure payloads and docs.
 
-```ts
-export interface ReloadController {
-  reloadResources(operation: Operation, runtime: PiRpcRuntime): Promise<void>;
-}
-```
+Reject active/queued/compacting reload before effect, require materialized request/completion markers, re-handshake/reconcile after reload, and distinguish entrypoint/enumerated-resource refresh from process-replacement-only dependency/runtime updates.
 
-- The extension records a request marker keyed from the Patchbay command id, calls `await ctx.reload(); return`, and the newly bound instance records completion from `session_start(reason=reload)`.
-- The controller treats the RPC prompt response only as receipt; persisted completion plus reconciliation establishes success.
-- Rebind subscriptions and extension state from persisted custom entries/journal. No generation bump and no runtime-upgrade claim.
-
-### Unit 5 — Integrated lifecycle conformance
+### Unit 6 — Integrated Pi lifecycle and mutation-sensitive conformance
 
 **Story:** `research-handoff-pi-adapter-capability-lifecycle-conformance`
 
-**Files:** Pi focused tests, real-process `pi-adapter/tests/e2e.test.ts`, vector registry/runners, and `docs/VERIFICATION.md` traceability.
+**Files:** focused Pi tests, real-process `pi-adapter/tests/e2e.test.ts`, generated vector envelopes/runners, shared operator-domain tests, and `docs/VERIFICATION.md` traceability.
 
-- Exercise real child spawn/restart/reload/exit while fakes inject malformed framing, response loss, path corruption, and unknown cursors.
-- Await process cleanup, observation flush, journal/cursor durability, and core terminal state so late async failures cannot pass.
-- Claim implementation-checked evidence only unless separate formal/vector promotion clears its gate.
+Activate the exact Pi manifest only after all mechanisms pass. Exercise the full core promotion/quarantine path and label evidence implementation-checked only.
 
-## Implementation order and dependency graph
+## Validated implementation order
 
 ```text
-research-handoff-spawn-restart-continuation-orchestration
-  └─ research-handoff-pi-adapter-capability-manifest-profile
-       └─ research-handoff-pi-adapter-capability-rpc-process-supervisor
-            ├─ consumes research-handoff-spawn-idempotency-duplicate-handling
-            ├─ consumes deployment-authority-workspace-scoped-revocable-keys
-            └─ research-handoff-pi-adapter-capability-cursor-replay-resync
-                 ├─ consumes research-handoff-spawn-reconnect-cursor-reconcile
-                 └─ research-handoff-pi-adapter-capability-resource-reload-rehydration
-                      └─ research-handoff-pi-adapter-capability-lifecycle-conformance
-                           └─ also consumes research-handoff-spawn-stale-event-fencing
+spawn logical-target + continuation contract leaves
+  └─ Pi control/session-integrity
+       └─ claim/crash/runtime-evidence leaves + spawn orchestration
+            └─ Pi RPC supervisor/journal
+                 └─ spawn cursor-replacement leaf + reconnect contract
+                      └─ Pi authoritative cursor replacement
+
+capability durability/reconciliation-depth
+  └─ Pi opaque profile contract
+
+Pi profile + supervisor + cursor replacement
+  └─ idle-only reload/rehydration
+       └─ integrated lifecycle conformance + manifest activation
 ```
 
-One feature owner remains the baseline. The stories are contract/lifecycle/evidence checkpoints with distinct acceptance, not one-worker-per-package assignments.
+The six shared spawn leaves are consumed where implemented rather than redefined. The profile sibling is an explicit feature dependency. The graph has no edge from a spawn-side contract/operation back into a Pi child.
+
+## Cross-feature dependency edges
+
+| Pi item | Required upstream items | Contract consumed |
+|---|---|---|
+| feature | `research-handoff-spawn`; `capability-manifest-durability-and-reconciliation-depth` | complete spawn lifecycle plus complete generic assurance registry |
+| manifest profile | capability-depth sibling; `research-handoff-spawn-continuation-payload-authority-contract` | generic assurance fields and generated target-spec carriage |
+| control/session integrity | logical-target identity leaf; continuation payload/authority leaf | exact external/Pi binding and resume intent |
+| RPC supervisor | identity; continuation; claim/fence; crash/effect; runtime-evidence/promotion leaves; duplicate reconciliation; restart orchestration; deployment authority | concrete Pi implementation of five spawn leaves and their operational policy |
+| cursor replacement | identity; cursor authoritative-replacement; runtime-evidence/promotion leaves; reconnect convergence | verified continuity scope, exact-set replacement, claimed-successor publication fence |
+| lifecycle conformance | runtime-evidence/promotion leaf; stale-event fence; completion/promotion driver; reconnect convergence | integrated staging/quarantine/promotion/replay evidence |
+
+The validated active-substrate dependency walk has no missing edge target and no cycle.
+
+## Failure and availability matrix
+
+| Evidence/state | Resume claim | Cursor/reload availability | Spawn claim outcome |
+|---|---|---|---|
+| path/id reported; file absent/empty before assistant | never `resumed`; fresh is `new_context` | volatile reconcile only; reload unavailable | require-resume fails pre-launch with exact no-successor-effect evidence |
+| file exists but framing/tree/RPC equality fails | none | neither cursor commit nor reload | invalid pre-launch fails closed; post-launch ambiguity poisons |
+| materialized valid N, no successor launch | no change | N cursor remains current/stale by evidence | exact pre-launch proof may release only through core contract |
+| successor launched, handshake missing/mismatched | none | no publish/commit | effect may exist; poison/reconcile |
+| handshake valid, replacement staged, not promoted | `resumed` evidence may be staged but not public current state | replacement remains staged; no ordinary Observation | claim active/poisoned by later evidence |
+| promotion committed | status from staged evidence becomes authoritative | publish replacement, commit cursor, then report live | promoted |
+| reload requested while busy/unmaterialized | no generation/context change | no marker or reload effect | reconfigure rejected/failed with bounded retryable reason |
+| reload markers + re-handshake + reconcile succeed | unchanged | same cursor scope, advanced epoch | reconfigure may complete; no generation bump |
 
 ## Simplification and cleanup
 
-- Remove production `PiSession.newSession()` generation allocation; every managed generation comes from an accepted core claim.
-- Replace production in-process `AgentSessionRuntime` replacement with one RPC subprocess lifecycle. Retain SDK/`ModelRuntime` only as an injected test fixture and delete duplicate production behavior.
-- Replace the current `getEntries(since)` behavior that returns the full set on an unknown cursor with a typed failure and one explicit full-resync state machine.
-- Consolidate process creation, termination, crash classification, path verification, and continuation in `SpawnSupervisor`; do not scatter child-process calls through delivery/session code.
-- Consolidate Pi capability declarations in `piCapabilityManifest()` from generated fields; diagnostics and surfaces consume the projection rather than re-listing it.
-- Replace touched ad-hoc reload/model reconfigure payload parsing with generated Pi adapter payloads where the new `pi_adapter.proto` boundary overlaps; do not create a parallel hand-written DTO.
-- Roll `docs/ADAPTER-PI.md` forward: its current “`--continue` does not bump generation,” “spawn unsupported,” SDK-internal replacement, and reload-out-of-scope claims contradict the resolved v1 lifecycle.
-- Do not add `restarting`, `reloading`, `continued`, or `crashed` protocol states. Reuse Operation state, continuation status, connectivity/activity axes, and failure vocabulary.
+- Delete production `PiSession.newSession()` generation allocation and in-process session replacement. Core claims are the only managed generation source.
+- Keep one production `ManagedPiRuntimePort` implementation (RPC). Retain one explicitly named `AgentSessionRuntimeFixture`; delete duplicate production SDK lifecycle behavior and ambient model/catalog/credential setup from lifecycle tests.
+- Replace unknown-cursor-as-full-success with a typed error and one replacement state machine; do not keep a compatibility upsert path.
+- Consolidate safe open, materialization, tree validation, seal, and raw-vs-RPC checks in `session_file.ts`; no scattered path/header checks.
+- Consolidate runtime serialization in one action gate used by spawn, delivery, reload, compaction/retry observation, and termination.
+- Keep Pi-specific profile vocabulary generated in `pi_adapter.proto`; do not add cwd/trust/extensions/skills/themes/context-file booleans to the core manifest.
+- Do not add a second durable authority store. Adapter journal/cursor files are external-effect/reconciliation evidence; core Operation/log state remains authority.
+- No `restarting`, `reloading`, `continued`, `materialized`, or `crashed` core protocol state is added. These are Pi profile/evidence details mapped to existing Operation/session/failure semantics.
 
 ## Testing and assurance
 
-Smallest useful risk-based surface:
+- **Control proof:** generic RPC path/id without a challenge marker cannot pass; wrong cwd, stale launch nonce, wrong extension epoch/source path, swallowed extension error, marker-only response, and old-child callback all fail.
+- **Materialization:** fresh path with no file, user/custom entries without assistant, first assistant flush, abort before assistant, and later materialization transition. No test calls an invented flush or spends real model credentials.
+- **Tree integrity:** malformed interior JSON, duplicate ids, missing/forward/self parents, multiple roots, broken label/compaction references, unsupported version/type, truncation, symlink/root escape, inode swap, and raw-vs-RPC mismatch all block `resumed`.
+- **Continuation:** idle materialized resume, active abort/settle then seal, memory-only `require_resume`, explicit `allow_new_context`, TERM→KILL, launch-before-journal mutation, handshake loss, and candidate crash before promotion.
+- **Cursor replacement:** known suffix response loss; N→N+1 same Pi session loads N cursor; different Pi identity rejects; unknown cursor exact replacement removes an omitted old projected entry; candidate replacement remains staged until promotion; core-ack/local-commit crash is idempotent.
+- **Reload:** streaming, compacting, queued, auto-retry, direct-RPC-busy, and unmaterialized requests reject before marker/effect; entrypoint/enumerated resource refresh succeeds only after materialized completion + new handshake + reconcile; transitive dependency and Pi `/dist` changes remain old until process replacement.
+- **Manifest honesty:** Pi vocabulary exists only in the generated opaque profile; sibling assurance fields are complete and uncertain false; activation fails if any claimed mechanism/conformance evidence is absent.
+- **Fixture boundary:** `AgentSessionRuntimeFixture` receives an injected offline `ModelRuntime` and resource/session services; a mutation that consults ambient credentials/catalog fails.
+- **Real process:** use valid prebuilt materialized fixtures and extension commands so process/continuation/reload tests remain offline. Every test awaits child/process-group exit, journal/cursor fsync, Observation acknowledgement, promotion or expected poison, and late async completion.
+- **Assurance labels:** green package/E2E/vector evidence is implementation-checked. Formal/release promotion remains separate and must use genuine attempted evidence/mutation-sensitive oracles.
 
-- **Generated interface:** Buf generation/drift and Rust/TypeScript builds protect the public profile, Pi payloads, required presence, and summary carriage.
-- **Manifest boundary:** fresh missing/unknown/overclaim declarations reject; replay-only legacy normalization is conservative; `spawn` support toggles only with a configured supervisor. Protects capability honesty without making it authority.
-- **RPC framing:** split/multiple UTF-8 chunks, CRLF tolerance only as documented, oversized/malformed lines, response/event interleaving, duplicate ids, stderr noise, and EOF. Protects the process trust boundary.
-- **Continuation integration:** fresh generation 1, idle resume, active abort/settle, TERM→KILL timeout, exact session-id/path restore, explicit new-context fallback, and effect-before-report loss. Protects continuity and duplicate honesty.
-- **File-integrity regression:** symlink/root escape, header mismatch, cwd mismatch, truncation, inode replacement, missing trailing LF, and path redaction. Protects wrong-session continuation.
-- **Cursor reconciliation:** known suffix, cursor response loss, unknown cursor full replay, empty session, branch/leaf change, pre-compaction/abandoned entries, and duplicate replay. Protects cursor honesty.
-- **Partial-order events:** interleaved parallel tool notifications plus authoritative finalized message/session entry. Protects against treating live arrival as total source order.
-- **Reload boundary:** extension/skill/prompt/theme/context change becomes visible after persisted reload completion; Pi/runtime package change remains old until process continuation. Protects reload-vs-restart honesty.
-- **Crash vocabulary:** explicit signal/nonzero exit, orphaned RPC with child status unknown, and expected clean exit map to failed/stale/offline with activity unknown and no generation change.
-- **Real-process E2E:** run core + adapter + Pi RPC child; assert no orphan child, unhandled async failure, raw session path/credential diagnostic, or early successful spawn/reload completion.
-- **Test removal:** retire same-process `newSession()` production expectations and tests that accept unknown cursor as implicit full success. Keep SDK tests only where they exercise projection/fixture behavior shared with the RPC port.
+## Adversarial pre-mortem
 
-## Pre-mortem and risks
+### Forced adversary — BLOCKER 9: fake cwd proof
 
-### 1. Cursor dishonesty
+**Attack:** launch Pi in the wrong directory while returning the expected `sessionFile/sessionId`; let `get_state`/`get_session_stats` clear the old “cwd handshake.”
 
-**Failure:** the adapter treats an unknown cursor or a quiet live stream as “caught up,” or commits before the core accepted an entry. The cockpit looks current while transcript/leaf state is missing.
+**Defense:** those RPCs never clear cwd. The exact current control extension must append the challenged marker containing `ctx.cwd` and the launch nonce; the adapter compares its canonical cwd to the configured project resolution and cross-checks session path/id. Missing/stale/swallowed command evidence fails.
 
-**Mitigation:** typed unknown-cursor failure; explicit stale full-resync mode; commit-after-core-ack per entry; deterministic duplicate-inert projection; live notifications only wake reconciliation. Mutation tests remove each guard.
+**Fallback:** terminate or quarantine the candidate, poison if launch effect is ambiguous, keep N current/stale/offline by evidence, and never report `resumed` or N+1 live.
 
-**Fallback:** clear only the generation-scoped staged cursor after recording bounded resync evidence, replay the entire verified session file, and remain stale/unknown. Never fabricate an empty suffix or live state.
+### Forced adversary — BLOCKER 10: path exists only in memory
 
-### 2. Session-path corruption or wrong-session continuation
+**Attack:** create a fresh Pi session, append a control/reload custom entry before any assistant message, then seal a nonexistent file or call the in-memory marker durable.
 
-**Failure:** a stale path, symlink escape, truncated file, changed header, or ambiguous `--continue` resumes a different conversation under the claimed logical target.
+**Defense:** materialization is determined by safe file existence + complete raw validation + RPC equality, never by non-empty `sessionFile` or marker presence. `require_resume` and reload are unavailable in `memory_only`; fresh spawn may claim only current new context, not restart-stable persistence.
 
-**Mitigation:** configured root/project resolver; pre/post `SessionFileSeal`; bounded JSONL header and LF validation; exact post-launch `get_session_stats`; no raw path in diagnostics; default `require_resume`.
+**Fallback:** leave the current process running and report the capability unavailable, or use an explicitly authorized `allow_new_context` continuation. No hidden model prompt is sent merely to force persistence.
 
-**Fallback:** do not respawn/report N+1. Fail the spawn and leave the logical target failed/stale for operator reconciliation. Only an explicit `allow_new_context` Operation may produce `new_context`.
+### Forced adversary — BLOCKER 6: stale projection survives full fetch
 
-### 3. Reload mistaken for restart
+**Attack:** truncate/switch/corrupt external continuity so the old projection contains entry X, then return a full set omitting X; an upsert-only resync leaves X visible forever.
 
-**Failure:** a successful extension reload is displayed as a Pi/runtime upgrade, but the child still holds the old installed package graph.
+**Defense:** unknown cursor stages one exact set/tree and publishes one replacement epoch. The consuming projection deletes every prior Pi-persisted member in scope not present in the new set, and cursor/leaf/epoch install only after durable acknowledgement. Generation changes do not change the cursor key when verified Pi continuity is unchanged.
 
-**Mitigation:** separate typed reload action and manifest scope; persisted reload completion marker; package-upgrade requests reject on reload; conformance test changes both extension and runtime-package code and proves only process replacement loads the latter.
+**Fallback:** retain the old view marked stale, keep the new set staged, and retry the same epoch. Never clear first, install a cursor first, or report live.
 
-**Fallback:** keep the current generation and report reload failure/unsupported. The operator submits a new spawn continuation for the upgrade.
+### Additional material adversaries
 
-### 4. SDK/RPC semantic split
+- **Reload races streaming:** Pi extension commands execute immediately during streaming. The exclusive runtime gate + settled/state/queue checks reject before invoking the command.
+- **Pi parser silently repairs corruption:** malformed lines, duplicate ids, and orphan roots can survive Pi loading. The adapter validates raw bytes and compares the exact RPC set; Pi's permissive load is not the oracle.
+- **Reload overclaims dependency updates:** a transitive import or runtime alias stays old. The profile declares only entrypoint/enumerated resources reloadable; unknown/arbitrary dependencies require process replacement.
+- **Manifest overclaim:** Pi advertises restart-stable cursor/resume before materialization or before the assurance sibling lands. Declaration activation is gated on conformance and the explicit sibling dependency; uncertainty is false/unknown.
+- **Fixture invokes credentials:** an SDK test accidentally exercises model discovery/auth and passes only on a developer host. The named runtime fixture requires fully injected offline services.
 
-**Failure:** SDK tests pass while production RPC diverges on cursor failure, prompt acknowledgement, replacement, or event ordering.
+### Riskiest assumption and safe fallback
 
-**Mitigation:** one production `PiRuntimePort` implementation (RPC); SDK only deterministic fixture; real-process lifecycle E2E; manifest says RPC, never “SDK or RPC.”
+The riskiest assumption is that a custom-entry challenge plus exact raw/RPC tree comparison is sufficient to correlate the running Pi child with the intended cwd/session without a native cwd RPC. This remains bounded by the authenticated-adapter/Pi-child honesty assumption. If the control extension cannot reliably emit and recover the marker, managed `spawn`/continuation support is undeclared and delivery returns `unsupported_command`; attach/read-only behavior remains available.
 
-**Fallback:** disable managed spawn/reload declaration and return `unsupported_command`; keep attach/read-only behavior rather than silently falling back to embedded production semantics.
+The second riskiest boundary is authoritative replacement through an opaque core Observation. If the shared operator-domain fold cannot install an exact replacement atomically, implementation must stop and extend that consumer port. It must not fall back to upsert-only replay.
 
-### 5. Effect-before-proof during continuation
+## Review traceability
 
-**Failure:** a new child/session exists, but the adapter crashes before journaling/reporting identity. Automatic retry creates a second child.
-
-**Mitigation:** consume the spawn journal/claim contract, journal before external launch and immediately after identity handshake, classify ambiguity as `execution_outcome_unknown`, and never auto-relaunch an ambiguous claim.
-
-**Fallback:** require operator reconciliation/new intentional Operation; keep idempotency strength `at_patchbay_boundary`.
-
-### 6. Quiesce never settles or late output crosses generations
-
-**Failure:** abort hangs, termination leaks a descendant process, or buffered stdout from N mutates N+1.
-
-**Mitigation:** per-target fence before abort, bounded `agent_settled` wait, process-group TERM→KILL, binding-local generation tokens, shared core stale fence, and tests that emit after replacement.
-
-**Fallback:** fail/unknown the affected work, mark N failed, and do not report N+1 until the old process group is conclusively gone and reconciliation succeeds.
-
-### Riskiest assumption and least-certain boundary
-
-The riskiest assumption is that Pi's persisted JSONL path/id plus append-order entries are sufficient to prove transcript continuation without claiming runtime-state continuation. Research supports the persisted layer but not arbitrary extension or external side effects. The design therefore reports only `resumed/new_context/unknown`, keeps snapshot tier partial, and makes state rehydration persisted-only.
-
-The least-certain implementation boundary is the adapter reload bridge in RPC mode: built-in interactive `/reload` is not a general RPC command, so success must be established through the extension command's persisted request/new-instance completion protocol. If real Pi cannot produce that trace reliably, reload support remains undeclared/unsupported; process continuation still provides the reliable upgrade path.
+| Assigned review finding | Resolution | Owning checkpoint(s) |
+|---|---|---|
+| BLOCKER 6 cursor replacement | verified Pi continuity key; staged exact-set/tree; one replacement epoch deleting omissions; cursor after core ack | cursor-replay-resync; lifecycle conformance |
+| BLOCKER 9 cwd RPC proof impossible | challenged control-extension marker reports `ctx.cwd`; RPC verifies only path/id/activity | control-session-integrity; supervisor |
+| BLOCKER 10 deferred JSONL materialization | explicit memory-only/materialized/invalid states; no invented flush; resume/reload conditional | control-session-integrity; supervisor; reload |
+| Pi vocabulary in core manifest | generic opaque profile carriage; all Pi resource vocabulary generated in `pi_adapter.proto` | manifest-profile |
+| reload not fenced | exclusive action gate; settled/stream/compaction/queue/outstanding checks; reject before effect | reload-rehydration |
+| seal does not validate tree | strict every-line/schema/id/reference/tree/raw-vs-RPC validation | control-session-integrity |
+| manifest “complete” overclaim | feature/story depend on capability-depth sibling; uncertainty false; activation only after conformance | manifest-profile; lifecycle conformance |
+| reload scope broader than evidence | entrypoint + enumerated resources only; arbitrary deps/runtime `/dist` require process replacement | manifest-profile; reload-rehydration |
+| generation-scoped cursor | verified Pi session continuity key, reverse logical-target binding, N cursor reused by N+1 | cursor-replay-resync |
+| `ModelRuntime` fixture naming | `AgentSessionRuntimeFixture` implements runtime port; fully injected offline `ModelRuntime` | supervisor; lifecycle conformance |
 
 ## UI fallback / Mockups
 
-No net-new screen or navigation flow. Spawn/restart actions are owned by the resolved spawn feature and reuse existing Operation delivery/failure presentation. Reload is a Pi-supported reconfigure action in the existing session-detail action surface; manifest details use existing adapter diagnostics. This is minor composition, so feature-level mockups are skipped.
+No net-new screen or journey. Spawn/restart/reload remain existing Operation actions. Memory-only resume unavailability, busy reload, reconciliation stale state, and ambiguous execution use canonical failure/retry/stale presentation. The opaque Pi profile is rendered through the existing adapter diagnostics composition. Feature-level mockups are skipped.
 
 ## Extension pressure classification
 
-- **Committed v1.0.0:** RPC subprocess production substrate; one child per managed generation; exact generation-1/continuation claim consumption; bounded quiesce/terminate/verify/respawn/reconcile; explicit failed/stale/offline crash evidence; persisted entry cursor/full resync; extension-resource-only reload; minimum generated runtime profile; adapter-owned project/cwd resolution; partial snapshot and persisted-only rehydration honesty.
-- **Reserved seams:** alternate adapter substrates (including a future SDK-isolated worker) selected by a future manifest declaration; stronger end-to-end spawn idempotency; automatic crash policy; heartbeat/freshness deadlines; Windows/non-POSIX process fencing; full semantic validation of extension custom state; richer cross-adapter durability/reconciliation strength in `capability-manifest-durability-and-reconciliation-depth`; core `ProjectRef`; HA/process-incarnation fencing.
-- **Explicitly rejected for this v1 feature:** two production substrates behind one declaration; adapter-local generation allocation; automatic restart on crash; ambiguous `--continue`; reload as runtime/package upgrade; cursor fallback presented as an empty suffix; RPC live events as a universal total order; arbitrary process-state restoration; raw cwd/path as core identity/authority; capability declarations as grant or delivery authority.
+- **Committed v1.0.0:** supervised Pi RPC child; generated control extension; challenge-based cwd/session handshake; conditional session materialization; strict tree validation before `resumed`; explicit `new_context`; exact core claim/effect/promotion consumption; Pi-session-scoped cursor; exact-set authoritative replacement; idle-only materialized reload of entrypoint/enumerated resources; generated opaque Pi profile; offline runtime fixture; implementation-backed conformance.
+- **Reserved seams:** native Pi cwd/flush/restart RPCs; stronger child attestation; Windows/non-POSIX process fencing; alternate production substrate declared by a future profile; semantic validation of arbitrary extension custom data; automatic crash/restart policy; heartbeat; richer automatic reconciliation; core `ProjectRef`; arbitrary dependency hot-swap if Pi later documents it.
+- **Explicitly rejected for this v1 feature:** cwd proof from `get_state`/`get_session_stats`; sealing a missing/empty deferred session file; forcing a hidden LLM turn to create durability; treating Pi load success as full tree validity; generation-keyed native cursor; unknown-cursor upsert; ordinary successor transcript before promotion; reload while active; reload as arbitrary dependency/runtime-package upgrade; mandatory Pi resource fields in core; production SDK fallback; capability as authority.
 
-The parked multi-human, mesh, desktop, and skin ideas do not become requirements. Generated adapter declarations, logical-target qualification, and surface-neutral canonical states preserve their seams.
+The parked multi-human, mesh, desktop, and skin ideas remain pressure-test inputs only. Authority-domain-qualified logical identity, generated opaque profiles, and surface-neutral state/failure presentation preserve those seams.
 
 ## Child stories
 
-- `research-handoff-pi-adapter-capability-manifest-profile` — `depends_on: [research-handoff-spawn-restart-continuation-orchestration]`
-- `research-handoff-pi-adapter-capability-rpc-process-supervisor` — `depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-spawn-restart-continuation-orchestration, research-handoff-spawn-idempotency-duplicate-handling, deployment-authority-workspace-scoped-revocable-keys]`
-- `research-handoff-pi-adapter-capability-cursor-replay-resync` — `depends_on: [research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-spawn-reconnect-cursor-reconcile]`
-- `research-handoff-pi-adapter-capability-resource-reload-rehydration` — `depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-pi-adapter-capability-cursor-replay-resync]`
-- `research-handoff-pi-adapter-capability-lifecycle-conformance` — `depends_on: [research-handoff-pi-adapter-capability-cursor-replay-resync, research-handoff-pi-adapter-capability-resource-reload-rehydration, research-handoff-spawn-stale-event-fencing]`
+The child files carry authoritative dependency metadata.
+
+- `research-handoff-pi-adapter-capability-manifest-profile`
+- `research-handoff-pi-adapter-capability-control-session-integrity`
+- `research-handoff-pi-adapter-capability-rpc-process-supervisor`
+- `research-handoff-pi-adapter-capability-cursor-replay-resync`
+- `research-handoff-pi-adapter-capability-resource-reload-rehydration`
+- `research-handoff-pi-adapter-capability-lifecycle-conformance`
