@@ -1,7 +1,7 @@
 ---
 id: release-v0.2.1
 kind: release
-stage: quality-gate
+stage: released
 tags: []
 parent: null
 depends_on: []
@@ -28,3 +28,19 @@ Security patch following the retroactive deep scan of v0.2.0. Closes the 1 High 
 - **gate-patterns** (2026-08-12): 0
 
 Park policy: park low/medium; **0 critical / 0 high → ship unblocked.** Unlike v0.2.0, these gates ran the real top-level scanner fan-out (not a delegated inline fallback).
+
+## Shipped
+
+Bodies live in git history (delete-refs); `git show 3100627:<path>` recovers any pruned body.
+
+| id | kind | archived_atop | git ref |
+|----|------|---------------|---------|
+| gate-security-adapter-attachment-secret-scoping | story | — | 3100627 |
+| gate-security-token-commune-http-credentials | story | — | 3100627 |
+| gate-security-forged-audit-sender | story | — | 3100627 |
+
+- **Shipped:** 2026-08-12
+- **Mapping:** tag-based (annotated tag `v0.2.1` pushed)
+- **Items shipped:** 3
+- **Gate totals:** security 0C/0H/1M(parked) · tests 2M(parked) · cruft 0 · docs 5 (2 fixed at ship, 3 parked) · patterns 0
+- **Breaking change:** `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` (JSON per-adapter map) replaces the core's shared `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` — see RUNBOOK migration note.
