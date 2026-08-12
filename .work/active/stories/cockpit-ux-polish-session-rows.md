@@ -4,7 +4,7 @@ kind: story
 stage: done
 parent: cockpit-ux-polish
 depends_on: [cockpit-ux-polish-visual-contract]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-10
 updated: 2026-08-10

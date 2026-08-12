@@ -5,7 +5,7 @@ stage: done
 tags: [verification, protocol, security]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-vector-execution-bridge]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-04
 updated: 2026-08-04

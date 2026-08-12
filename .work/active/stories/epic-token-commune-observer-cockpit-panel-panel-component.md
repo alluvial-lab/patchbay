@@ -5,7 +5,7 @@ stage: done
 tags: [ux]
 parent: epic-token-commune-observer-cockpit-panel
 depends_on: [epic-token-commune-observer-cockpit-panel-cockpit-integration]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-07
 updated: 2026-08-08

@@ -5,7 +5,7 @@ stage: done
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane-resource-identity
 depends_on: [epic-agent-operations-resource-plane-resource-identity-typed-resource-identity]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-03
 updated: 2026-08-04

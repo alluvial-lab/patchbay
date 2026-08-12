@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, protocol]
 parent: epic-token-commune-observer-snapshot-mapping
 depends_on: [epic-token-commune-observer-snapshot-mapping-provider-pool-projection]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-07
 updated: 2026-08-07

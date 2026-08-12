@@ -5,7 +5,7 @@ stage: done
 tags: [verification, protocol]
 parent: adapter-report-source-ordering
 depends_on: [adapter-report-source-ordering-core-fence, adapter-report-source-ordering-pi-sequencer]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-09
 updated: 2026-08-10

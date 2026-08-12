@@ -5,7 +5,7 @@ stage: done
 tags: [security, foundation]
 parent: epic-revocation-lifecycle
 depends_on: []
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-27
 updated: 2026-07-27

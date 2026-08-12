@@ -5,7 +5,7 @@ stage: done
 tags: [verification, protocol]
 parent: replay-integrity-prefix-discipline
 depends_on: [replay-integrity-prefix-discipline-shared-replay-boundary]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-09
 updated: 2026-08-10

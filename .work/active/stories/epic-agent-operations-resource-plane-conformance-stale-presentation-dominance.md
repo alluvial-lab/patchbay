@@ -5,7 +5,7 @@ stage: done
 tags: [verification, protocol]
 parent: epic-agent-operations-resource-plane-conformance
 depends_on: [epic-agent-operations-resource-plane-conformance-durability-reconnect-honesty]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-04
 updated: 2026-08-04

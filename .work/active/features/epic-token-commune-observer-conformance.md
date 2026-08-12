@@ -9,7 +9,7 @@ depends_on:
   - epic-token-commune-observer-snapshot-mapping
   - epic-token-commune-observer-polling-ingestion
   - epic-token-commune-observer-cockpit-panel
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-05
 updated: 2026-08-08

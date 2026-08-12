@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, ux]
 parent: epic-token-commune-observer
 depends_on: [epic-token-commune-observer-snapshot-mapping, epic-token-commune-observer-polling-ingestion]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-05
 updated: 2026-08-08

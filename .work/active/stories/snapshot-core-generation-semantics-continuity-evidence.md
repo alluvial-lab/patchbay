@@ -5,7 +5,7 @@ stage: done
 tags: [verification, protocol, foundation]
 parent: snapshot-core-generation-semantics
 depends_on: [snapshot-core-generation-semantics-snapshot-compatibility]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-10
 updated: 2026-08-10

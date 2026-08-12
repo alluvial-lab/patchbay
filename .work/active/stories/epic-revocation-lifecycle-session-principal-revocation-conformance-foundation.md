@@ -5,7 +5,7 @@ stage: done
 tags: [security, foundation, verification]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: [epic-revocation-lifecycle-session-principal-revocation-web-session-plane, epic-revocation-lifecycle-session-principal-revocation-cli-controls]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-27
 updated: 2026-07-27

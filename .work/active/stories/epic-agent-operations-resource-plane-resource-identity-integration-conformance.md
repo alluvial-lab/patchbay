@@ -5,7 +5,7 @@ stage: done
 tags: [foundation, protocol, security, testing]
 parent: epic-agent-operations-resource-plane-resource-identity
 depends_on: [epic-agent-operations-resource-plane-resource-identity-polymorphic-target-resolution, epic-agent-operations-resource-plane-resource-identity-resource-authority-containment]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-03
 updated: 2026-08-04

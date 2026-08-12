@@ -5,7 +5,7 @@ stage: done
 tags: [security]
 parent: epic-revocation-lifecycle-session-principal-revocation
 depends_on: [epic-revocation-lifecycle-session-principal-revocation-core-state]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-27
 updated: 2026-07-27

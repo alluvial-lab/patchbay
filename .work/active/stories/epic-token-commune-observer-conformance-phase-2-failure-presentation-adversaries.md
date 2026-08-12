@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, verification, ux]
 parent: epic-token-commune-observer-conformance
 depends_on: [epic-token-commune-observer-conformance-phase-2-security-adversaries]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-08
 updated: 2026-08-08

@@ -5,7 +5,7 @@ stage: done
 tags: [security, foundation]
 parent: authority-writer-correctness
 depends_on: [authority-writer-correctness-atomic-storage]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-10
 updated: 2026-08-10

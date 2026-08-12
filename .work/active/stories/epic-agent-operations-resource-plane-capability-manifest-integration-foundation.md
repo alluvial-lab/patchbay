@@ -5,7 +5,7 @@ stage: done
 tags: [foundation, protocol, adapter]
 parent: epic-agent-operations-resource-plane-capability-manifest
 depends_on: [epic-agent-operations-resource-plane-capability-manifest-core-admission]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-04
 updated: 2026-08-04

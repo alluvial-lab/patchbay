@@ -5,7 +5,7 @@ stage: done
 tags: [observability, dogfooding, adapter]
 parent: epic-observability-dogfooding-cockpit-diagnostics
 depends_on: [epic-observability-dogfooding-cockpit-diagnostics-contract-ingestion]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-25
 updated: 2026-07-25

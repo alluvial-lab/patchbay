@@ -5,7 +5,7 @@ stage: done
 tags: [foundation, protocol, storage]
 parent: epic-agent-operations-resource-plane
 depends_on: [epic-agent-operations-resource-plane-resource-identity]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-30
 updated: 2026-08-04

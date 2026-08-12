@@ -5,7 +5,7 @@ stage: done
 tags: [adapter, protocol, ux, integration]
 parent: null
 depends_on: [epic-agent-operations-resource-plane]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-07-26
 updated: 2026-07-26

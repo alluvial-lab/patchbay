@@ -5,7 +5,7 @@ stage: done
 tags: [security]
 parent: authority-descendant-grant-completion
 depends_on: [authority-descendant-grant-completion-crash-safe-writer]
-release_binding: null
+release_binding: v0.2.0
 gate_origin: null
 created: 2026-08-10
 updated: 2026-08-10
