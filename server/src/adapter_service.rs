@@ -8,9 +8,9 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
-    AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport,
-    AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode, Generation,
-    ObservationRequest, ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
+    ActorEndpointRef, ActorId, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
+    AdapterSnapshotSupport, AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode,
+    Generation, Observation, ObservationRequest, ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
@@ -1080,7 +1080,7 @@ where
                 .map_err(map_resource_error)?;
                 Some(result.event_id)
             }
-            Some(observation_request::Observation::Event(observation)) => {
+            Some(observation_request::Observation::Event(mut observation)) => {
                 if observation.authority_domain_id.as_ref() != Some(&domain) {
                     return Err(Status::invalid_argument(
                         "observation authority domain does not match request",
@@ -1093,6 +1093,27 @@ where
                         .and_then(target_adapter_id),
                     &authenticated_adapter,
                 )?;
+                let canonical_sender = {
+                    let adapters = self.adapters.lock().await;
+                    let registration = &adapters
+                        .get(&authenticated_adapter)
+                        .ok_or_else(|| {
+                            Status::unauthenticated(
+                                "adapter attachment is not current; reattach required",
+                            )
+                        })?
+                        .registration;
+                    ActorEndpointRef {
+                        actor_id: Some(ActorId {
+                            value: authenticated_adapter.value.clone(),
+                        }),
+                        endpoint_id: Some(registration.endpoint_id.clone().ok_or_else(|| {
+                            Status::internal("attached adapter has no registered endpoint")
+                        })?),
+                        ..ActorEndpointRef::default()
+                    }
+                };
+                canonicalize_observation_sender(&mut observation, canonical_sender)?;
                 if adapter::is_adapter_registration(&observation) {
                     return Err(Status::invalid_argument(
                         "adapter registration is accepted only through Attach",
@@ -1447,6 +1468,33 @@ fn require_same_adapter(actual: Option<&AdapterId>, expected: &AdapterId) -> Res
         ));
     }
     Ok(())
+}
+
+fn canonicalize_observation_sender(
+    observation: &mut Observation,
+    canonical: ActorEndpointRef,
+) -> Result<(), Status> {
+    if observation.sender.as_ref().is_some_and(|claimed| {
+        claim_conflicts(&claimed.actor_id, &canonical.actor_id)
+            || claim_conflicts(&claimed.endpoint_id, &canonical.endpoint_id)
+            || claim_conflicts(&claimed.device_id, &canonical.device_id)
+            || claim_conflicts(
+                &claimed.endpoint_generation,
+                &canonical.endpoint_generation,
+            )
+    }) {
+        return Err(Status::permission_denied(
+            "observation sender does not match authenticated adapter attachment",
+        ));
+    }
+    observation.sender = Some(canonical);
+    Ok(())
+}
+
+fn claim_conflicts<T: PartialEq>(claimed: &Option<T>, verified: &Option<T>) -> bool {
+    claimed
+        .as_ref()
+        .is_some_and(|value| verified.as_ref() != Some(value))
 }
 
 fn session_result_event_id(

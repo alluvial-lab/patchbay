@@ -22,7 +22,7 @@ use patchbay_core::{
     authority::events as authority_events,
     resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
     session::{self, events as session_events},
-    storage::{CoreGenerationStore, RusqliteStorage, Storage},
+    storage::{audit_draft_for_source, AuditedStorage, CoreGenerationStore, RusqliteStorage, Storage},
     time::TestClock,
 };
 use patchbay_core_server::{
@@ -210,16 +210,18 @@ fn authenticated_control<T>(message: T, actor_id: &str, session_id: &str, princi
     Ok(request)
 }
 
-fn observation(vector: &ConformanceVector, domain: &AuthorityDomainId, identity: ResourceIdentity) -> Result<ObservationRequest, String> {
+fn observation(
+    vector: &ConformanceVector,
+    domain: &AuthorityDomainId,
+    identity: ResourceIdentity,
+    sender: Option<ActorEndpointRef>,
+) -> Result<ObservationRequest, String> {
     let payload_claim = vector.input.pointer("/payload_claim").ok_or("missing payload claim")?;
     Ok(ObservationRequest {
         authority_domain_id: Some(domain.clone()),
         observation: Some(observation_request::Observation::Event(Observation {
             authority_domain_id: Some(domain.clone()),
-            sender: Some(ActorEndpointRef {
-                actor_id: Some(ActorId { value: string(&vector.input, "/forged_sender_actor")?.to_owned() }),
-                ..ActorEndpointRef::default()
-            }),
+            sender,
             kind: ObservationKind::Event as i32,
             target_scope: Some(TargetScope {
                 kind: TargetScopeKind::Resource as i32,
@@ -1444,7 +1446,8 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     let kind = exact.resource_kind.clone().ok_or("target identity missing kind")?;
     if exact.adapter_id.as_ref() != Some(&adapter_id) { return Err("target must belong to authenticated adapter".to_owned()); }
 
-    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let inner = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let storage = AuditedStorage::new(inner.clone());
     let service = AdapterControlServiceImpl::new(
         storage.clone(), domain.clone(), evidence_verifier(&adapter_id)?,
     ).await.map_err(|error| error.to_string())?;
@@ -1460,11 +1463,11 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
     let current_token = attachment_token(&current)?;
     let before = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
 
-    let missing = service.ingest_observation(Request::new(observation(vector, &domain, exact.clone())?)).await.expect_err("missing channel evidence must reject");
+    let missing = service.ingest_observation(Request::new(observation(vector, &domain, exact.clone(), None)?)).await.expect_err("missing channel evidence must reject");
     if missing.code() != Code::Unauthenticated || string(&vector.expected_outcome, "/unauthenticated/status")? != "UNAUTHENTICATED" {
         return Err("missing attachment did not reject unauthenticated".to_owned());
     }
-    let stale = service.ingest_observation(authenticated(observation(vector, &domain, exact.clone())?, &adapter_id.value, &old_token)?).await.expect_err("stale token must reject");
+    let stale = service.ingest_observation(authenticated(observation(vector, &domain, exact.clone(), None)?, &adapter_id.value, &old_token)?).await.expect_err("stale token must reject");
     if stale.code() != Code::Unauthenticated || string(&vector.expected_outcome, "/stale_token/status")? != "UNAUTHENTICATED" {
         return Err("stale attachment token did not reject unauthenticated".to_owned());
     }
@@ -1496,18 +1499,97 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
             return Err("stale report generation was not fenced before resource append".to_owned());
         }
     }
-    let cross = service.ingest_observation(authenticated(observation(vector, &domain, tuple(&vector.input, "/cross_adapter_target")?)?, &adapter_id.value, &current_token)?).await.expect_err("cross-adapter target must reject");
+    let cross = service.ingest_observation(authenticated(observation(vector, &domain, tuple(&vector.input, "/cross_adapter_target")?, None)?, &adapter_id.value, &current_token)?).await.expect_err("cross-adapter target must reject");
     if cross.code() != Code::PermissionDenied || string(&vector.expected_outcome, "/cross_adapter_target/status")? != "PERMISSION_DENIED" {
         return Err("cross-adapter resource Observation was not fenced".to_owned());
     }
-    service.ingest_observation(authenticated(observation(vector, &domain, exact)?, &adapter_id.value, &current_token)?)
+
+    let forged_senders = [
+        (
+            "actor",
+            ActorEndpointRef {
+                actor_id: Some(ActorId {
+                    value: string(&vector.input, "/forged_sender_actor")?.to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            },
+        ),
+        (
+            "endpoint",
+            ActorEndpointRef {
+                endpoint_id: Some(EndpointId {
+                    value: string(&vector.input, "/forged_sender_endpoint")?.to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            },
+        ),
+        (
+            "device",
+            ActorEndpointRef {
+                device_id: Some(DeviceId {
+                    value: string(&vector.input, "/forged_sender_device")?.to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            },
+        ),
+    ];
+    for (claim, sender) in forged_senders {
+        let rejected = service
+            .ingest_observation(authenticated(
+                observation(vector, &domain, exact.clone(), Some(sender))?,
+                &adapter_id.value,
+                &current_token,
+            )?)
+            .await
+            .expect_err("conflicting sender claim must reject");
+        if rejected.code() != Code::PermissionDenied
+            || string(
+                &vector.expected_outcome,
+                &format!("/forged_sender_claims/{claim}/status"),
+            )? != "PERMISSION_DENIED"
+            || boolean(
+                &vector.expected_outcome,
+                &format!("/forged_sender_claims/{claim}/observation_appended"),
+            )?
+        {
+            return Err(format!("forged {claim} sender claim was not rejected"));
+        }
+        let after_rejection = storage
+            .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+            .await
+            .map_err(|error| error.to_string())?;
+        if after_rejection.len() != before.len() {
+            return Err(format!("forged {claim} sender claim appended durable state"));
+        }
+    }
+
+    service.ingest_observation(authenticated(observation(vector, &domain, exact, None)?, &adapter_id.value, &current_token)?)
         .await.map_err(|error| error.to_string())?;
     let after = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
     let appended = &after[before.len()..];
+    let source = appended
+        .iter()
+        .find(|event| event.payload.kind == StoredEventKind::Observation as i32)
+        .ok_or("authenticated Observation source was not appended")?;
+    let stored_observation = Observation::decode(source.payload.payload.as_slice())
+        .map_err(|error| error.to_string())?;
+    let stored_sender = stored_observation.sender.as_ref().ok_or("stored Observation has no canonical sender")?;
+    let audit = audit_draft_for_source(&source.payload).map_err(|error| error.to_string())?;
+    let expected_endpoint = EndpointId { value: format!("{}-endpoint", adapter_id.value) };
     if appended.len() != 1
-        || appended[0].payload.kind != StoredEventKind::Observation as i32
+        || stored_sender.actor_id.as_ref() != Some(&ActorId { value: adapter_id.value.clone() })
+        || stored_sender.endpoint_id.as_ref() != Some(&expected_endpoint)
+        || stored_sender.device_id.is_some()
+        || stored_sender.endpoint_generation.is_some()
+        || audit.actor_id != stored_sender.actor_id
+        || audit.endpoint_id != stored_sender.endpoint_id
+        || audit.device_id.is_some()
         || !boolean(&vector.expected_outcome, "/authenticated_owner/observation_appended")?
+        || !boolean(&vector.expected_outcome, "/authenticated_owner/audit_attribution_canonical")?
         || string(&vector.expected_outcome, "/authenticated_owner/stored_event_kind")? != "STORED_EVENT_KIND_OBSERVATION"
+        || string(&vector.expected_outcome, "/authenticated_owner/canonical_actor_id")? != adapter_id.value
+        || string(&vector.expected_outcome, "/authenticated_owner/canonical_endpoint_id")? != expected_endpoint.value
+        || boolean(&vector.expected_outcome, "/authenticated_owner/device_id_present")?
         || boolean(&vector.expected_outcome, "/unauthenticated/observation_appended")?
         || boolean(&vector.expected_outcome, "/stale_token/observation_appended")?
         || boolean(&vector.expected_outcome, "/cross_adapter_target/observation_appended")?
@@ -1516,7 +1598,7 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
         || boolean(&vector.expected_outcome, "/forged_claim/operation_created")?
         || after.iter().any(|event| matches!(StoredEventKind::try_from(event.payload.kind).ok(), Some(StoredEventKind::Grant | StoredEventKind::Operation | StoredEventKind::ResourceState)))
     {
-        return Err("authenticated Observation source/isolation result disagrees with vector".to_owned());
+        return Err("authenticated Observation source/audit attribution disagrees with vector".to_owned());
     }
     Ok(())
 }

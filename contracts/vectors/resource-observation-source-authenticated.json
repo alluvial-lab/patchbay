@@ -21,17 +21,31 @@
     "target_identity": ["token-commune", "provider_pool", "shared"],
     "cross_adapter_target": ["other-adapter", "provider_pool", "shared"],
     "forged_sender_actor": "operator-admin",
+    "forged_sender_endpoint": "operator-web-endpoint",
+    "forged_sender_device": "operator-laptop",
     "payload_claim": {
       "grant_id": "forged-grant",
       "operation_kind": "OPERATION_KIND_SESSION_MANAGEMENT"
     }
   },
   "expected_outcome": {
-    "authenticated_owner": { "observation_appended": true, "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION" },
+    "authenticated_owner": {
+      "observation_appended": true,
+      "audit_attribution_canonical": true,
+      "stored_event_kind": "STORED_EVENT_KIND_OBSERVATION",
+      "canonical_actor_id": "token-commune",
+      "canonical_endpoint_id": "token-commune-endpoint",
+      "device_id_present": false
+    },
     "unauthenticated": { "observation_appended": false, "status": "UNAUTHENTICATED" },
     "stale_token": { "observation_appended": false, "status": "UNAUTHENTICATED" },
     "cross_adapter_target": { "observation_appended": false, "status": "PERMISSION_DENIED" },
+    "forged_sender_claims": {
+      "actor": { "observation_appended": false, "status": "PERMISSION_DENIED" },
+      "endpoint": { "observation_appended": false, "status": "PERMISSION_DENIED" },
+      "device": { "observation_appended": false, "status": "PERMISSION_DENIED" }
+    },
     "forged_claim": { "authority_changed": false, "resource_state_changed": false, "operation_created": false }
   },
-  "invariant_check": "ResourceObservationSourceAuthenticated: verified current channel and exact adapter ownership bind the evidence source; sender/payload claims cannot create authority or core state."
+  "invariant_check": "ResourceObservationSourceAuthenticated: verified current channel, registered endpoint, and exact adapter ownership bind both durable source and audit attribution; conflicting actor, endpoint, or device claims reject before append."
 }

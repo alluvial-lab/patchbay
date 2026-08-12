@@ -629,12 +629,6 @@ where
                 authority_domain_id: Some(domain()),
                 observation: Some(observation_request::Observation::Event(Observation {
                     authority_domain_id: Some(domain()),
-                    sender: Some(ActorEndpointRef {
-                        actor_id: Some(ActorId {
-                            value: "spoofed-payload-actor".to_owned(),
-                        }),
-                        ..ActorEndpointRef::default()
-                    }),
                     kind: ObservationKind::Result as i32,
                     correlations: vec![correlation(), correlation()],
                     target_scope: Some(adapter_scope()),

@@ -1,7 +1,7 @@
 ---
 id: gate-security-forged-audit-sender
 kind: story
-stage: drafting
+stage: review
 tags: [security]
 parent: null
 depends_on: []
@@ -50,3 +50,28 @@ Thus an authenticated adapter can submit an otherwise valid event, acknowledgeme
 
 ## Remediation direction
 Derive observation audit attribution from the authenticated attachment context. Canonicalize the sender to the adapter actor and registered endpoint before persistence, or pass verified identity separately to the audit builder. Reject conflicting payload sender claims and add conformance coverage for forged actor, endpoint, and device values.
+
+## Symptom
+An authenticated adapter could submit a generic Observation whose target belonged to that adapter but whose sender named the operator or another endpoint/device; production audited storage then persisted those unverified sender fields as durable audit attribution.
+
+## Root cause
+Generic Observation ingress authenticated the attachment and fenced the target adapter, but passed `observation.sender` unchanged to storage. `AuditedStorage` correctly derived its audit draft from the persisted source, so the missing canonicalization at ingress made attacker-controlled identity look verified.
+
+## Fix approach
+At generic Observation ingress, obtain the canonical adapter actor and registered endpoint from the current authenticated attachment. Reject any provided actor, endpoint, device, or endpoint-generation claim that conflicts with or exceeds those verified facts, then replace the payload sender with the canonical attachment identity before any acceptance or acknowledgement append.
+
+## Regression test
+Extend the promoted resource/source-authentication conformance runner through production `AuditedStorage`: forged actor, endpoint, and device claims must each return `PERMISSION_DENIED` without appending state, while an unclaimed sender is canonicalized in the durable Observation and the production audit-draft builder derives the registered adapter actor and endpoint from that source.
+
+## Implementation notes
+
+- **Execution capability:** direct inline implementation; the security boundary and its promoted conformance runner were localized and did not require delegated exploration.
+- **Files changed:** `server/src/adapter_service.rs` canonicalizes generic Observation senders from the current attachment; the two promoted source-authentication vectors and `server/tests/conformance_vectors.rs` cover forged dimensions and canonical audit attribution; `server/tests/spawn_completion.rs` now omits the intentionally forged success sender because such claims correctly reject at ingress.
+- **Reproduction:** the strengthened conformance runner initially failed because a forged actor claim returned a successful `ObservationResult` and appended the Observation.
+- **Focused confirmation:** the Rust server conformance runner passed both affected promoted source-binding vectors, including actor/endpoint/device rejection and canonical source/audit-draft attribution.
+- **Vector confirmation:** `node contracts/scripts/check-vectors.mjs` passed all 54 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- **Workspace confirmation:** `cargo test --workspace` passed after updating the old spawn fixture to the new reject-conflicts contract.
+- **Lint confirmation:** `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- **Original symptom:** conflicting actor, endpoint, device, and endpoint-generation claims now fail before any Observation append; absent or matching partial claims are replaced with the authenticated adapter actor and registered endpoint before persistence.
+- **Ruled out:** no storage schema or `AuditedStorage` behavior change was needed; `server/src/main.rs` already composes the audited decorator, and canonicalizing the durable source at authenticated ingress protects every downstream audit builder.
+- **Adjacent issues parked:** none.
