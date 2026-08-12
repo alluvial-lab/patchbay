@@ -49,12 +49,9 @@ const adapter = new AdapterProcess({
     },
   ],
   createSession: async (configured) => {
-    const auth = codingAgent.AuthStorage.inMemory({
-      [provider]: { type: "api_key", key: "walking-skeleton" },
-    });
-    const registry = codingAgent.ModelRegistry.inMemory(auth);
+    const modelRuntime = await codingAgent.ModelRuntime.create({ refreshOnCreate: false });
     const model = faux.getModel();
-    registry.registerProvider(provider, {
+    modelRuntime.registerProvider(provider, {
       name: "Patchbay walking-skeleton provider",
       apiKey: "walking-skeleton",
       baseUrl: "http://localhost:0",
@@ -78,7 +75,7 @@ const adapter = new AdapterProcess({
       ...configured,
       model: `${provider}/${model.id}`,
       sessionOptions: {
-        modelRegistry: registry,
+        modelRuntime,
         sessionManager: codingAgent.SessionManager.inMemory(repoRoot),
         settingsManager: codingAgent.SettingsManager.inMemory(),
         noTools: "all",

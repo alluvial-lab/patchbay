@@ -32,4 +32,4 @@ Upgrade the aligned Pi SDK packages to 0.84.1, regenerate the lockfile, verify t
 
 ## Implementation and verification
 
-Upgraded both aligned Pi SDK packages to 0.84.1 and migrated the adapter from the retired `AuthStorage`/session `ModelRegistry` surface to `ModelRuntime` plus `createAgentSessionFromServices`. `npm audit --omit=dev --audit-level=high` reports zero vulnerabilities; all 29 Pi adapter tests pass.
+Upgraded both aligned Pi SDK packages to 0.84.1 and migrated the adapter from the retired `AuthStorage`/session `ModelRegistry` surface to `ModelRuntime` plus `createAgentSessionFromServices`. `npm audit --omit=dev --audit-level=high` reports zero vulnerabilities; all 29 Pi adapter tests and the separate-process walking-skeleton E2E pass. The E2E Pi fixture was migrated to the same `ModelRuntime` surface after the first E2E run exposed its retired `AuthStorage` setup.
