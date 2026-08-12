@@ -1,30 +1,65 @@
 ---
 id: fleet-spawn-target-resolution
 kind: story
-stage: drafting
+stage: implementing
 tags: [adapter, protocol]
 parent: research-handoff-spawn
 depends_on: []
 release_binding: null
 gate_origin: null
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-12
 ---
 
-# OperationKind-aware target resolution (fleet spawn path)
+# OperationKind-aware spawn target resolution
 
-Child of spawn — OperationKind-aware target resolution for the fleet spawn path.
+## Checkpoint
 
-## Source
-Authority design review (R5 decision, revision 2). The existing `SessionRegistry`-backed `TargetResolver` rejects fleet spawn targets.
+Make the acceptance boundary bind a `spawn` to one canonical attached adapter and prepare its typed lifecycle claim before durable acceptance. The historical story id says `fleet`, but the committed v1 path is **not** fleet selection: `TargetScopeKind::Adapter` is the only admitted spawn target. Fleet-supervisor and authority-domain selection stay reserved; broadcast is rejected.
 
-## Finding
-After the grant check, the acceptance `submit` pipeline always calls `TargetResolver::resolve`. The existing `SessionRegistry` impl requires `adapter_id` + `runtime_session_id` (an existing session). A fleet/supervisor spawn Operation targets a scope where the session does NOT yet exist (the spawn creates it), so `resolve` returns `TargetNotFound`. **Authority can correctly authorize a fleet spawn and acceptance still rejects it at target resolution.**
+The current `TargetRegistry` already dispatches by `OperationKind` and resolves an attached adapter. This checkpoint preserves that implementation, removes stale fleet wording, and extends the boundary so a typed fresh/continuation `SpawnRequest` is validated with the target rather than decoded later by delivery code.
 
-This is an acceptance/sessions gap, not authority's: target resolution needs to be OperationKind-aware. Spawn needs a fleet/supervisor resolution path that does not require an existing runtime session (it targets the fleet, not a session); existing-session operations continue through `SessionRegistry`.
+## Design
 
-## Direction
-Add OperationKind-aware target resolution: a `TargetResolver` (or a dispatching resolver) that routes `Spawn` to a fleet/supervisor resolution path (succeeds for valid fleet scopes) and other kinds to the existing `SessionRegistry` path. Scope as an acceptance or sessions feature. Until this lands, the spawn end-to-end path is blocked (authority's GrantCheck + grant model are still valuable and testable independently).
+**Files**
+- `contracts/proto/patchbay/operations.proto` — generated `SpawnRequest`, `FreshSpawn`, `SpawnContinuation`, `SpawnTargetSpec`, and `SpawnGenerationClaim` wire contracts.
+- `core/src/acceptance/ports.rs` — change the resolver input from detached kind/scope fields to the complete validated Operation and return the prepared spawn claim with the adapter binding.
+- `core/src/target.rs` — enforce the OperationKind × TargetScopeKind matrix and delegate continuation lookup to the logical-target projection.
+- `core/src/acceptance/pipeline.rs` — validate the generated spawn envelope before grant/target stateful work and persist the resolver-produced claim in `AcceptedOperation`.
+- `server/src/state.rs` — catch up the target/logical-target projection while holding the shared `CoreDecisionGate` before resolving and accepting.
+- `core/tests/resource_resolver.rs` and `core/tests/acceptance_pipeline.rs` — exact target matrix and pre-append rejection evidence.
 
-## Priority
-Required for the spawn end-to-end path to work. Not blocking for the authority feature's GrantCheck/grant-model/proptests, but blocking for the vertical-slice descendant-grant reactor to be exercised live. Should land before v0.1.0 ships if spawn is in v0.1.0 scope (SPEC.md line 76 confirms fleet spawn authority IS in v0.1.0 scope).
+```rust
+pub trait TargetResolver: Send + Sync {
+    fn resolve(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        operation: &Operation,
+    ) -> impl Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
+}
+
+pub enum TargetBinding {
+    SpawnAdapter {
+        adapter_id: AdapterId,
+        claim: SpawnGenerationClaim,
+    },
+    RuntimeSession { /* existing exact identity */ },
+    Resource(ResourceIdentity),
+    AuthorityDomain(AuthorityDomainId),
+}
+```
+
+For a fresh spawn, the core derives a distinct typed `LogicalTargetId` from the accepted creation `CommandId` and claims generation `1`. For continuation, the payload must name the current logical target and exact prior runtime-generation reference; the resolver prepares exactly `expected_generation + 1`. The adapter-specific `target_spec.shape` remains open and adapter-enforced at delivery.
+
+## Acceptance evidence
+
+- [ ] A canonical attached-adapter `spawn` resolves and returns `TargetBinding::SpawnAdapter` with a prepared generation claim.
+- [ ] Runtime-session, operational-resource, fleet-supervisor, authority-domain, malformed, and mixed spawn scopes reject before the accepted Operation append.
+- [ ] Existing-session and resource Operations still use their existing resolvers.
+- [ ] An unknown/reserved OperationKind rejects before grant evaluation; an adapter-unsupported target-spec shape remains an accepted delivery-layer `unsupported_command`.
+- [ ] Restart/fresh payload malformation and generation overflow reject before durable acceptance.
+- [ ] Ordinary core restart replay keeps a durably registered adapter spawn-resolvable but does not fabricate a live attachment channel.
+
+## Ordering constraint
+
+This is the first checkpoint. Logical-target registration and every continuation claim depend on one unambiguous adapter-scoped acceptance path.
