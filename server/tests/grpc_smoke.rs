@@ -839,7 +839,7 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
     let adapter_service = AdapterControlServiceImpl::new(
         server.storage.clone(),
         domain(),
-        AdapterEvidenceVerifier::new("resource-evidence").unwrap(),
+        AdapterEvidenceVerifier::new([("resource-adapter", "resource-evidence")]).unwrap(),
     )
     .await
     .unwrap();

@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::AuthorityDomainId;
 use patchbay_core::{
@@ -35,11 +35,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secret = env::var("PATCHBAY_CORE_SECRET")
         .map_err(|_| "PATCHBAY_CORE_SECRET is required; refusing to start without it")?;
     let interceptor = CoreSecretInterceptor::new(secret)?;
-    let adapter_evidence = AdapterEvidenceVerifier::new(
-        env::var("PATCHBAY_ADAPTER_ATTACHMENT_SECRET").map_err(|_| {
-            "PATCHBAY_ADAPTER_ATTACHMENT_SECRET is required; refusing to start without an adapter trust root"
+    let adapter_credentials: HashMap<String, String> = serde_json::from_str(
+        &env::var("PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS").map_err(|_| {
+            "PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS is required; refusing to start without per-adapter trust roots"
         })?,
-    )?;
+    )
+    .map_err(|error| {
+        format!(
+            "PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS must be a JSON object mapping adapter ids to credentials: {error}"
+        )
+    })?;
+    let adapter_evidence = AdapterEvidenceVerifier::new(adapter_credentials)?;
 
     let address = local_network_address(
         &env::var("PATCHBAY_BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_owned()),

@@ -52,27 +52,65 @@ pub const ADAPTER_ATTACHMENT_TOKEN_HEADER: &str = "x-patchbay-adapter-attachment
 
 #[derive(Clone)]
 pub struct AdapterEvidenceVerifier {
-    expected: Arc<[u8]>,
+    expected_by_adapter: Arc<HashMap<AdapterId, Arc<[u8]>>>,
 }
 
 impl AdapterEvidenceVerifier {
-    pub fn new(evidence: impl Into<String>) -> Result<Self, String> {
-        let evidence = evidence.into();
-        if evidence.is_empty() {
-            return Err(
-                "PATCHBAY_ADAPTER_ATTACHMENT_SECRET must be configured and non-empty".into(),
+    pub fn new<I, K, V>(credentials: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let mut expected_by_adapter: HashMap<AdapterId, Arc<[u8]>> = HashMap::new();
+        for (adapter_id, evidence) in credentials {
+            let adapter_id = adapter_id.into();
+            let evidence = evidence.into();
+            if adapter_id.is_empty() {
+                return Err("adapter attachment credential id must not be empty".into());
+            }
+            if evidence.is_empty() {
+                return Err(format!(
+                    "adapter attachment credential for {adapter_id:?} must not be empty"
+                ));
+            }
+            if !evidence.is_ascii() {
+                return Err(format!(
+                    "adapter attachment credential for {adapter_id:?} must be ASCII"
+                ));
+            }
+            if expected_by_adapter
+                .values()
+                .any(|expected| constant_time_eq(evidence.as_bytes(), expected))
+            {
+                return Err("adapter attachment credentials must be unique per adapter".into());
+            }
+            let replaced = expected_by_adapter.insert(
+                AdapterId {
+                    value: adapter_id.clone(),
+                },
+                Arc::from(evidence.into_bytes()),
             );
+            if replaced.is_some() {
+                return Err(format!(
+                    "adapter attachment credential id {adapter_id:?} is duplicated"
+                ));
+            }
         }
-        if !evidence.is_ascii() {
-            return Err("PATCHBAY_ADAPTER_ATTACHMENT_SECRET must be ASCII".into());
+        if expected_by_adapter.is_empty() {
+            return Err("at least one adapter attachment credential must be configured".into());
         }
         Ok(Self {
-            expected: evidence.into_bytes().into(),
+            expected_by_adapter: Arc::new(expected_by_adapter),
         })
     }
 
-    fn verify_attach(&self, evidence: &[u8]) -> Result<(), Status> {
-        if constant_time_eq(evidence, &self.expected) {
+    fn verify_attach(&self, adapter_id: &AdapterId, evidence: &[u8]) -> Result<(), Status> {
+        let valid = self
+            .expected_by_adapter
+            .get(adapter_id)
+            .is_some_and(|expected| constant_time_eq(evidence, expected));
+        if valid {
             Ok(())
         } else {
             Err(Status::unauthenticated(
@@ -82,16 +120,6 @@ impl AdapterEvidenceVerifier {
     }
 
     fn verify_request<T>(&self, request: &Request<T>) -> Result<AdapterId, Status> {
-        let evidence = request
-            .metadata()
-            .get(ADAPTER_EVIDENCE_HEADER)
-            .map(|value| value.as_encoded_bytes())
-            .ok_or_else(|| Status::unauthenticated("missing adapter attachment evidence"))?;
-        if !constant_time_eq(evidence, &self.expected) {
-            return Err(Status::unauthenticated(
-                "invalid adapter attachment evidence",
-            ));
-        }
         let adapter_id = request
             .metadata()
             .get(ADAPTER_ID_HEADER)
@@ -101,9 +129,16 @@ impl AdapterEvidenceVerifier {
         if adapter_id.is_empty() {
             return Err(Status::unauthenticated("adapter id must not be empty"));
         }
-        Ok(AdapterId {
+        let adapter_id = AdapterId {
             value: adapter_id.to_owned(),
-        })
+        };
+        let evidence = request
+            .metadata()
+            .get(ADAPTER_EVIDENCE_HEADER)
+            .map(|value| value.as_encoded_bytes())
+            .ok_or_else(|| Status::unauthenticated("missing adapter attachment evidence"))?;
+        self.verify_attach(&adapter_id, evidence)?;
+        Ok(adapter_id)
     }
 }
 
@@ -636,18 +671,22 @@ where
         request: Request<AttachRequest>,
     ) -> Result<Response<AttachResult>, Status> {
         let request = request.into_inner();
-        self.evidence.verify_attach(&request.attachment_evidence)?;
         let registration = request
             .registration
             .ok_or_else(|| Status::invalid_argument("attach request is missing registration"))?;
-        let domain = registration.authority_domain_id.as_ref().ok_or_else(|| {
-            Status::invalid_argument("registration is missing authority_domain_id")
-        })?;
-        self.require_domain(domain)?;
         let adapter_id = registration
             .adapter_id
             .clone()
             .ok_or_else(|| Status::invalid_argument("registration is missing adapter_id"))?;
+        // The registration identity is an untrusted claim until its own
+        // configured credential verifies. Only then may its generation replace
+        // that adapter's durable registration and process-local token.
+        self.evidence
+            .verify_attach(&adapter_id, &request.attachment_evidence)?;
+        let domain = registration.authority_domain_id.as_ref().ok_or_else(|| {
+            Status::invalid_argument("registration is missing authority_domain_id")
+        })?;
+        self.require_domain(domain)?;
         let attachment_token = random_token();
         let attachment_token_hash = hash_principal_credential(&attachment_token);
         // Registration, token replacement, and every adapter decision are

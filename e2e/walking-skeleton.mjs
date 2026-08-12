@@ -212,7 +212,7 @@ function spawnCoreProcess() {
     env: {
       ...process.env,
       PATCHBAY_CORE_SECRET: coreSecret,
-      PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterSecret,
+      PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS: JSON.stringify({ pi: adapterSecret }),
       PATCHBAY_AUTHORITY_DOMAIN_ID: authorityDomainId,
       PATCHBAY_BIND_ADDR: `127.0.0.1:${corePort}`,
       PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,

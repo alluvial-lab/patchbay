@@ -19,7 +19,8 @@ surfaces (browser cockpit + CLI).
 | Variable | Process | Required | Purpose |
 |---|---|---|---|
 | `PATCHBAY_CORE_SECRET` | core, web-server, CLI | yes | Shared secret authenticating control surfaces as principals to the core (`x-patchbay-core-secret`). |
-| `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` | core, pi-adapter | yes | Adapter trust root for `AdapterControlService.Attach`. |
+| `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` | core | yes | JSON object mapping each adapter id to its independently provisioned `AdapterControlService.Attach` credential, for example `{"pi":"...","token-commune":"..."}`. Credentials must be non-empty ASCII and distinct per adapter. |
+| `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` | pi-adapter, token-commune-adapter | yes | This adapter process's credential; it must match only its own id in the core's credential map. |
 | `PATCHBAY_ADAPTER_LOG` | pi-adapter | no (default `$XDG_STATE_HOME/patchbay/adapter.log` when set and absolute, else `~/.local/state/patchbay/adapter.log`) | Durable adapter diagnostics log path. |
 | `PATCHBAY_AUTHORITY_DOMAIN_ID` | all | no (default `default`) | The authority domain. All processes must agree; the core rejects mismatches. |
 | `PATCHBAY_BIND_ADDR` | core | no | Network listener for `ControlService` + `AdapterControlService`. |
@@ -48,7 +49,7 @@ surfaces (browser cockpit + CLI).
    the operator record + authority grant + first principal). A second bootstrap
    is rejected (first-run-only). Do not put either secret in CLI arguments.
 3. **Pi adapter** — `pi-adapter`, pointed at the core (`PATCHBAY_CORE_ADDR`)
-   with the attachment secret.
+   with the per-adapter attachment credential mapped to `pi` in the core.
 4. **Web server** — `patchbay-web-server`, pointed at the core. It serves the
    cockpit assets and templates the configured authority domain into the page.
 5. **Surfaces** — open the cockpit in a browser (it now has a login form;

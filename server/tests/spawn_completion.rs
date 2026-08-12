@@ -1163,7 +1163,7 @@ async fn run_live_adapter_case(
     let service = AdapterControlServiceImpl::new_with_decision_gate(
         storage.clone(),
         domain(),
-        AdapterEvidenceVerifier::new("adapter-test-secret").unwrap(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
         gate.clone(),
     )
     .await
@@ -1361,7 +1361,7 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     let adapter_service = AdapterControlServiceImpl::new_with_decision_gate(
         storage.clone(),
         domain(),
-        AdapterEvidenceVerifier::new("adapter-test-secret").unwrap(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
         gate.clone(),
     )
     .await

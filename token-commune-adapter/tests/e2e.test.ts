@@ -38,6 +38,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const encoder = new TextEncoder();
 const coreSecret = "token-commune-e2e-core-secret";
 const adapterEvidence = "token-commune-e2e-attachment-secret";
+const otherAdapterEvidence = "other-token-observer-e2e-attachment-secret";
 const gatewayKey = "token-commune-e2e-member-key";
 const domainId = "token-commune-e2e";
 const operatorId = "operator-e2e";
@@ -308,7 +309,7 @@ test("real gateway/core flow preserves PARTIAL, reconnect, source fencing, and m
 
     const otherClient = new PatchbayCoreClient({
       coreAddress: baseUrl, adapterId: "other-token-observer", authorityDomainId: domainId,
-      attachmentEvidence: adapterEvidence,
+      attachmentEvidence: otherAdapterEvidence,
     });
     await otherClient.attach(1);
     const beforeFence = await readAfter(control, 0n);
@@ -692,7 +693,11 @@ function startCore(port: number, adminPort: number, databasePath: string): Child
   return spawn(join(repoRoot, "target/debug/patchbay-core-server"), [], {
     cwd: repoRoot,
     env: {
-      ...process.env, PATCHBAY_CORE_SECRET: coreSecret, PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterEvidence,
+      ...process.env, PATCHBAY_CORE_SECRET: coreSecret,
+      PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS: JSON.stringify({
+        "token-commune": adapterEvidence,
+        "other-token-observer": otherAdapterEvidence,
+      }),
       PATCHBAY_BIND_ADDR: `127.0.0.1:${port}`, PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
       PATCHBAY_DB_PATH: databasePath, PATCHBAY_AUTHORITY_DOMAIN_ID: domainId,
     },

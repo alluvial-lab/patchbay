@@ -21,7 +21,7 @@ const core = spawn(`${repo}target/debug/patchbay-core-server`, [], {
   env: {
     ...process.env,
     PATCHBAY_CORE_SECRET: coreSecret,
-    PATCHBAY_ADAPTER_ATTACHMENT_SECRET: "smoke-adapter-secret",
+    PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS: '{"pi":"smoke-adapter-secret"}',
     PATCHBAY_BIND_ADDR: "127.0.0.1:50059",
     PATCHBAY_ADMIN_BIND_ADDR: "127.0.0.1:50060",
     PATCHBAY_DB_PATH: database,

@@ -756,7 +756,7 @@ mod tests {
         let adapter_service = crate::adapter_service::AdapterControlServiceImpl::new(
             reopened,
             domain(),
-            crate::adapter_service::AdapterEvidenceVerifier::new("evidence").unwrap(),
+            crate::adapter_service::AdapterEvidenceVerifier::new([("pi", "evidence")]).unwrap(),
         )
         .await
         .unwrap();

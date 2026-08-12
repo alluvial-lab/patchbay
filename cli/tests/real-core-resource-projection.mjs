@@ -352,7 +352,7 @@ async function startCore(expectSetupSecret) {
     env: {
       ...process.env,
       PATCHBAY_CORE_SECRET: coreSecret,
-      PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterSecret,
+      PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS: JSON.stringify({ [adapterId]: adapterSecret }),
       PATCHBAY_BIND_ADDR: `127.0.0.1:${corePort}`,
       PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
       PATCHBAY_DB_PATH: database,

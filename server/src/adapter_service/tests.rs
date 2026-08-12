@@ -306,7 +306,7 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -341,7 +341,7 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
     let rejected_service = AdapterControlServiceImpl::new(
         rejected_storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -393,7 +393,7 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -562,7 +562,7 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -827,7 +827,7 @@ async fn same_generation_manifest_redeclaration_atomically_degrades_affected_res
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -969,7 +969,7 @@ async fn committed_registration_with_failed_projection_fences_prior_attachment()
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1075,7 +1075,7 @@ async fn newer_generation_attachment_degrades_cached_resources_without_a_report(
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1150,7 +1150,7 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1292,7 +1292,7 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1459,7 +1459,7 @@ async fn authenticated_resource_result_cannot_cross_kind_or_id_within_one_adapte
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1546,7 +1546,7 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1640,7 +1640,7 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1713,7 +1713,7 @@ async fn concurrent_increasing_model_reports_leave_a_replayable_log() {
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1802,7 +1802,7 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1893,6 +1893,136 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
 }
 
 #[tokio::test]
+async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
+    const VICTIM_EVIDENCE: &str = "token-commune-test-secret";
+
+    assert!(
+        AdapterEvidenceVerifier::new([
+            (adapter_id().value, EVIDENCE),
+            ("token-commune".to_owned(), EVIDENCE),
+        ])
+        .is_err(),
+        "the core must reject a shared credential across adapter identities"
+    );
+
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        AdapterEvidenceVerifier::new([
+            (adapter_id().value, EVIDENCE),
+            ("token-commune".to_owned(), VICTIM_EVIDENCE),
+        ])
+        .expect("valid per-adapter evidence"),
+    )
+    .await
+    .expect("service initializes");
+    let victim_id = AdapterId {
+        value: "token-commune".into(),
+    };
+
+    let mut victim_registration = registration(domain.clone());
+    victim_registration.adapter_id = Some(victim_id.clone());
+    victim_registration.endpoint_id = Some(EndpointId {
+        value: "token-commune-endpoint".into(),
+    });
+    let victim_attachment = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(victim_registration.clone()),
+            attachment_evidence: VICTIM_EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("victim adapter attaches");
+    let victim_token = attachment_token(&victim_attachment);
+    let attacker_token = attach_generation(&service, domain.clone(), 1).await;
+
+    victim_registration.adapter_generation = Some(Generation { value: u64::MAX });
+    let forged_attach = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(victim_registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect_err("one adapter's credential cannot replace another adapter");
+    assert_eq!(forged_attach.code(), tonic::Code::Unauthenticated);
+
+    let mut victim_report = session_report(SessionConnectivityState::Live);
+    victim_report.adapter_id = Some(victim_id.clone());
+    service
+        .ingest_observation(authenticated_as_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    victim_report.clone(),
+                )),
+            },
+            &victim_id,
+            VICTIM_EVIDENCE,
+            &victim_token,
+        ))
+        .await
+        .expect("rejected replacement leaves the victim's ingestion channel current");
+
+    victim_report.source_cursor.as_mut().unwrap().revision = 2;
+    let forged_ingest = service
+        .ingest_observation(authenticated_as_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(victim_report)),
+            },
+            &victim_id,
+            EVIDENCE,
+            &attacker_token,
+        ))
+        .await
+        .expect_err("one adapter's attachment cannot ingest as another adapter");
+    assert_eq!(forged_ingest.code(), tonic::Code::Unauthenticated);
+
+    let forged_subscription = service
+        .receive_deliveries(authenticated_as_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(victim_id.clone()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &victim_id,
+            EVIDENCE,
+            &attacker_token,
+        ))
+        .await
+        .err()
+        .expect("one adapter's attachment cannot subscribe as another adapter");
+    assert_eq!(forged_subscription.code(), tonic::Code::Unauthenticated);
+
+    let _victim_subscription = service
+        .receive_deliveries(authenticated_as_with_attachment_token(
+            ReceiveRequest {
+                adapter_id: Some(victim_id.clone()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &victim_id,
+            VICTIM_EVIDENCE,
+            &victim_token,
+        ))
+        .await
+        .expect("rejected replacement leaves the victim's subscription current");
+
+    let durable = adapter::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("rejected forgery leaves adapter registration replayable");
+    assert_eq!(
+        durable
+            .get(&victim_id)
+            .and_then(|record| record.registration.adapter_generation)
+            .map(|generation| generation.value),
+        Some(1),
+        "forged maximal generation must not fence legitimate reattachment"
+    );
+}
+
+#[tokio::test]
 async fn newer_attachment_fences_stale_adapter_process() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
@@ -1901,7 +2031,7 @@ async fn newer_attachment_fences_stale_adapter_process() {
     let service = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -1941,7 +2071,7 @@ async fn stale_attachment_is_rejected_before_observation_or_diagnostic_decision(
     let service = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -2003,7 +2133,7 @@ async fn rebuilt_core_forgets_attachment_tokens_until_adapter_reattaches() {
     let after_restart = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service rebuilds");
@@ -2166,7 +2296,7 @@ async fn deferred_spawn_success_suppresses_redelivery_after_restart_and_reattach
     let restarted = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("adapter service rebuilds from the durable result");
@@ -2502,7 +2632,7 @@ async fn attached_service(
     let service = AdapterControlServiceImpl::new(
         storage,
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).expect("valid evidence"),
+        evidence_verifier(),
     )
     .await
     .expect("service initializes");
@@ -2684,6 +2814,11 @@ fn adapter_id() -> AdapterId {
     AdapterId { value: "pi".into() }
 }
 
+fn evidence_verifier() -> AdapterEvidenceVerifier {
+    AdapterEvidenceVerifier::new([(adapter_id().value, EVIDENCE)])
+        .expect("valid per-adapter evidence")
+}
+
 fn runtime_session_id() -> RuntimeSessionId {
     RuntimeSessionId {
         value: "session-1".into(),
@@ -2730,12 +2865,32 @@ fn authenticated_with_attachment_token<T>(message: T, attachment_token: &str) ->
 }
 
 fn authenticated<T>(message: T) -> Request<T> {
+    authenticated_as(message, &adapter_id(), EVIDENCE)
+}
+
+fn authenticated_as_with_attachment_token<T>(
+    message: T,
+    adapter_id: &AdapterId,
+    evidence: &str,
+    attachment_token: &str,
+) -> Request<T> {
+    let mut request = authenticated_as(message, adapter_id, evidence);
+    request.metadata_mut().insert(
+        ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        attachment_token.parse().expect("metadata"),
+    );
+    request
+}
+
+fn authenticated_as<T>(message: T, adapter_id: &AdapterId, evidence: &str) -> Request<T> {
     let mut request = Request::new(message);
-    request
-        .metadata_mut()
-        .insert(ADAPTER_ID_HEADER, "pi".parse().expect("metadata"));
-    request
-        .metadata_mut()
-        .insert(ADAPTER_EVIDENCE_HEADER, EVIDENCE.parse().expect("metadata"));
+    request.metadata_mut().insert(
+        ADAPTER_ID_HEADER,
+        adapter_id.value.parse().expect("metadata"),
+    );
+    request.metadata_mut().insert(
+        ADAPTER_EVIDENCE_HEADER,
+        evidence.parse().expect("metadata"),
+    );
     request
 }

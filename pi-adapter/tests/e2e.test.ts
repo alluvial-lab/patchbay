@@ -666,7 +666,7 @@ function startCore(port: number, adminPort: number, databasePath: string): Child
     env: {
       ...process.env,
       PATCHBAY_CORE_SECRET: coreSecret,
-      PATCHBAY_ADAPTER_ATTACHMENT_SECRET: adapterEvidence,
+      PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS: JSON.stringify({ [adapterId]: adapterEvidence }),
       PATCHBAY_BIND_ADDR: `127.0.0.1:${port}`,
       PATCHBAY_ADMIN_BIND_ADDR: `127.0.0.1:${adminPort}`,
       PATCHBAY_DB_PATH: databasePath,

@@ -47,6 +47,11 @@ use patchbay_core_server::adapter_service::AdapterServiceConformanceFault;
 
 const RUNNER: &str = "rust-server";
 const EVIDENCE: &str = "conformance-adapter-evidence";
+
+fn evidence_verifier(adapter_id: &AdapterId) -> Result<AdapterEvidenceVerifier, String> {
+    AdapterEvidenceVerifier::new([(adapter_id.value.clone(), EVIDENCE)])
+}
+
 const OPERATOR_ACTOR: &str = "conformance-operator";
 const OPERATOR_PASSWORD: &str = "correct-password";
 
@@ -820,7 +825,7 @@ async fn disconnect_degrades_snapshot(vector: &ConformanceVector) -> Result<(), 
     let projection = vector.input.pointer("/current_projection").ok_or("missing projection")?;
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     let service = AdapterControlServiceImpl::new(
-        storage.clone(), domain.clone(), AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        storage.clone(), domain.clone(), evidence_verifier(&adapter_id)?,
     ).await?;
     let attached = service.attach(Request::new(AttachRequest {
         registration: Some(registration(&domain, &adapter_id, &kind, generation)),
@@ -1441,7 +1446,7 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
 
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     let service = AdapterControlServiceImpl::new(
-        storage.clone(), domain.clone(), AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        storage.clone(), domain.clone(), evidence_verifier(&adapter_id)?,
     ).await.map_err(|error| error.to_string())?;
     let old = service.attach(Request::new(AttachRequest {
         registration: Some(registration(&domain, &adapter_id, &kind, generation - 1)),
@@ -2134,10 +2139,13 @@ async fn session_report_source_ordering(vector: &ConformanceVector) -> Result<()
         value: string(&vector.input, "/authority_domain_id")?.to_owned(),
     };
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let adapter = AdapterId {
+        value: string(&vector.input, "/adapter_id")?.to_owned(),
+    };
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain,
-        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        evidence_verifier(&adapter)?,
     )
     .await?;
     run_session_report_source_trace(vector, &storage, &service)
@@ -2451,7 +2459,7 @@ async fn run_token_degradation_trace(vector: &ConformanceVector) -> Result<(), S
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain,
-        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        evidence_verifier(&AdapterId { value: "token-commune".into() })?,
     )
     .await?;
     run_token_degradation_trace_with_service(vector, &storage, &service)
@@ -2478,10 +2486,13 @@ async fn kill_session_source_ordering_mutation(
         value: string(&vector.input, "/authority_domain_id")?.to_owned(),
     };
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let adapter = AdapterId {
+        value: string(&vector.input, "/adapter_id")?.to_owned(),
+    };
     let service = AdapterControlServiceImpl::new_with_conformance_fault(
         storage.clone(),
         domain,
-        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        evidence_verifier(&adapter)?,
         AdapterServiceConformanceFault::AcceptNonIncreasingSessionRevision,
     )
     .await?;
@@ -2526,7 +2537,7 @@ async fn kill_degradation_mutation(
     let service = AdapterControlServiceImpl::new_with_conformance_fault(
         storage.clone(),
         domain,
-        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        evidence_verifier(&AdapterId { value: "token-commune".into() })?,
         fault,
     )
     .await?;
@@ -2585,7 +2596,7 @@ async fn kill_source_ingress_mutation(
     let service = AdapterControlServiceImpl::new_with_conformance_fault(
         storage.clone(),
         domain.clone(),
-        AdapterEvidenceVerifier::new(EVIDENCE).map_err(|error| error.to_string())?,
+        evidence_verifier(&adapter)?,
         fault,
     )
     .await?;
