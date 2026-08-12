@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.0
+
+### Features
+
+- **Revocation lifecycle** — added durable grant expiry/revocation, operator-session generation fences, principal/endpoint/device controls, all-session revocation, and restart-stable security lockdown with explicit bootstrap-channel recovery.
+- **Operational-resource plane** — introduced typed `(adapter, kind, resource)` identity, exact resource authority, capability-manifest admission, authenticated resource reporting, replay/snapshot materialization, resource-targeted Operations, and cockpit composition alongside sessions.
+- **token-commune observer** — added a materially distinct resource adapter with gateway attachment diagnostics, polling/dedup/reconnect handling, provider-pool/member/draw projections, CLI/cockpit views, degradation honesty, and executable cross-layer conformance evidence.
+- **Core diagnostics dogfooding** — added durable redacted audit and command-inspection projections, principal-gated diagnostic queries, adapter diagnostic forwarding, and cockpit/CLI operational views.
+- **Recovery checkpointing** — added scheduled, crash-safe session checkpoints with rejection repair, bounded fallback, generation validation, and file-backed restart evidence.
+- **Adapter report ordering** — whole-session reports now carry authenticated producer-generation/revision cursors; stale or reordered reports are fenced before durable mutation and replay restores the watermark.
+- **Authority completion** — made descendant-grant issuance crash-safe and idempotent, completed live spawn composition, and made matching-grant selection deterministic and auditable.
+
+### Fixes
+
+- Repaired session replay-domain binding, shared replay-prefix validation, resource reconciliation prefix handling, and durable snapshot generation/compatibility semantics.
+- Fixed authority-writer atomicity/retry evidence and rebuilt missing grant-identity index rows during bootstrap so seeded grants remain writable and selectable after restart.
+- Fixed expired-session startup, exact resource-grant selection in CLI submissions, chat activity state, tool-call argument previews, cockpit render amplification, and scroll anchoring.
+- Scoped every Rust test tempfile under `target/test-tmp` at process load and through Cargo environment configuration, eliminating `/tmp` leakage across binaries and newly added tests.
+
+### Security
+
+- Upgraded the Pi SDK/runtime dependency chain and Fastify routing transitive dependencies past high-severity Undici, brace-expansion, fast-uri, and find-my-way advisories; migrated the Pi adapter to the current `ModelRuntime` SDK surface.
+- Added source-authenticated report ordering, exact resource-source containment, revocation controls, and lockdown adversaries to the executable security conformance profile.
+
+### Documentation
+
+- Rolled protocol, security, verification, architecture, UX, and operator guidance forward for revocation, resource identities/state, source cursors, diagnostics, token-commune behavior, recovery checkpoints, and extension-seam classifications.
+
+### Internal
+
+- Expanded generated-contract drift checks, shared conformance runners, mutation-accounting guards, real-core E2E coverage, and CI coverage for all TypeScript consumers.
+
 ## v0.1.0 (2026-07-24)
 
 Initial-operator walking skeleton: one operator controls Pi-backed agent
