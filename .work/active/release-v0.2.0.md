@@ -156,4 +156,10 @@ updated: 2026-08-11
 
 ## Gate runs
 
-Pending Phase 4 gate execution.
+- **gate-security** (2026-08-11) — 3 findings (2 high, 1 medium); scanner-agent path unavailable in this sub-agent harness, so the documented inline fallback was used. High findings are bound for focused remediation; medium finding `gate-security-upgrade-dompurify` is parked unbound per operator policy.
+
+### Binding-consistency guard
+
+- Mode: `warn` (default)
+- Epic cohesion: `phased` (default)
+- Result: 0 conflicts, 0 incomplete parent/child bindings.
