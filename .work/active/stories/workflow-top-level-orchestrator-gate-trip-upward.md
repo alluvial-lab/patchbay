@@ -1,7 +1,7 @@
 ---
 id: workflow-top-level-orchestrator-gate-trip-upward
 kind: story
-stage: drafting
+stage: done
 tags: [workflow, infra, security]
 parent: null
 depends_on: []
@@ -39,3 +39,8 @@ It runs at every child session's creation, after extensions bind. So a spawned s
 
 ## Why it matters
 The v0.2.0 retroactive scan (run top-level) found 1 High + 2 Medium security findings the inline gate missed — including a shared attachment secret that lets one adapter assume another's identity. Silent inline fallback would have shipped that undetected.
+
+## Resolution (2026-08-12)
+- **Patchbay convention ENACTED:** `AGENTS.md` now carries a "Workflow execution (harness discipline)" section — orchestrator/release agents run top-level; a sub-agent blocked on a spawn trips upward, not inline.
+- **Demonstrated working:** the v0.2.1 release ran its 5 gates from the top level (real scanner fan-out, 0 critical/high) — exactly the rigor v0.2.0's delegated run lacked.
+- **Upstream recommendation (NOT actionable from this repo):** the agile-workflow gate skills (and `autopilot`/`implement-orchestrator`/`bug-scan`/etc.) live in the external skills repo (`~/.pi/agent/git/github.com/nklisch/skills`). Changing their "scanner unavailable → run inline" fallback to trip-upward is a recommendation for that repo, tracked here as the principle; it's not closeable from patchbay. File/PR it upstream when maintaining the skills.
