@@ -2,9 +2,9 @@
 id: research-handoff-spawn-logical-target-registration
 kind: story
 stage: implementing
-tags: [adapter, protocol]
+tags: [adapter, protocol, security]
 parent: research-handoff-spawn
-depends_on: [fleet-spawn-target-resolution]
+depends_on: [spawn-delivery-atomic-claim-idempotency-generation]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -12,64 +12,44 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Stable logical-target registration
+# Claimed-successor staging and external-runtime reservation
+
+## Redesign disposition
+
+Rewritten. The old direct “report registers generation 1/current” behavior is superseded. Managed fresh/continuation reports stage candidate evidence only; promotion owns the first live/current mutation.
 
 ## Checkpoint
 
-Introduce the durable identity an operator controls across runtime replacement. A logical target is not a process, Pi session file, cwd, project, or label. It is authority-domain scoped, bound to one adapter/deployment in v1, and points to exactly one current runtime generation plus retained prior-generation facts.
+Classify the first exact managed successor report through the shared runtime-generation classifier. A legitimate fresh generation-1 or exact `N+1` report returns `ClaimedSuccessor` when its current authenticated attachment, spawn Operation id, durable claim, logical target, expected prior, adapter/deployment, runtime id, and claimed generation all agree.
 
-Fresh spawned targets start at generation `1`; zero remains the Protobuf/unspecified sentinel and is invalid. For a fresh spawn, the core derives the typed logical-target id from the creation command identity and persists the prepared claim in the accepted Operation. The adapter must echo that claim in its correlated session report; the target becomes registered only after the report is durable.
+The report then reserves the exact external-runtime reverse-index key and appends `SpawnSuccessorEvidenceStaged`. It does not register the successor as current, tombstone N, issue authority, or complete the command.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/common.proto` — `LogicalTargetId` and `RuntimeGenerationRef` wrappers; add logical target to runtime-session `TargetScope`.
-- `contracts/proto/patchbay/operations.proto` — `SpawnGenerationClaim` carried by `AcceptedOperation`/`SubmissionResult`.
-- `contracts/proto/patchbay/sessions.proto` — logical target, creating/current spawn operation, continuation reference/status fields on report/event/snapshot records.
-- `core/src/session/logical_target.rs` (new) — primary target record/key/index validation.
-- `core/src/session/registry.rs` — make the logical target the stable live slot and keep an exact runtime-generation reverse index for routing and stale correlation.
-- `core/src/session/ingest.rs` — correlate fresh registration with the exact accepted spawn claim before append.
-- `core/src/target.rs` — resolve runtime targets by the complete logical + runtime-generation identity.
-- `web-cockpit/src/domain/model.ts`, `web-cockpit/src/ui/session-list.ts`, and `cli/src/commands/sessions.ts` — carry/display logical target before intent; labels remain metadata.
+- `core/src/session/{logical_target,spawn_claim,ingest}.rs` — exact classifier, ownership reservation, staged-evidence plan/fold.
+- `server/src/adapter_service.rs` — authenticate attachment, catch up under gate, append staged evidence.
+- Session ingress/replay/reverse-index tests.
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogicalTargetRecord {
-    pub logical_target_id: LogicalTargetId,
-    pub adapter_id: AdapterId,
-    pub deployment_scope: String,
-    pub current: RuntimeGenerationRef,
-    pub origin_spawn_operation_id: Option<CommandId>,
-    pub current_spawn_operation_id: Option<CommandId>,
-    pub continuation_of: Option<RuntimeGenerationRef>,
-    pub continuation_status: ContinuationStatus,
-    pub last_authoritative_lsn: u64,
-}
-
-impl SessionRegistry {
-    pub fn get_logical_target(
-        &self,
-        id: &LogicalTargetId,
-    ) -> Option<&LogicalTargetRecord>;
-
-    pub fn resolve_runtime_generation(
-        &self,
-        reference: &RuntimeGenerationRef,
-    ) -> RuntimeGenerationDisposition<'_>;
-}
+pub fn classify_runtime_candidate(
+    targets: &LogicalTargetRegistry,
+    claims: &SpawnClaimRegistry,
+    candidate: &RuntimeEvidenceCandidate,
+) -> Result<RuntimeGenerationDisposition, SessionError>;
 ```
 
-The v1 logical target cannot migrate between adapters or deployment scopes. Cross-adapter target migration is a reserved seam requiring an explicit protocol ceremony; it must not happen by metadata edits.
+`ClaimedSuccessor` is not available to ordinary output/status/transcript/ack/Elicitation ingress. Only a SessionReport correlated to the creating claim can route to staging. Pre-provisioned discovery remains an explicit non-managed registration path using the identity contract and cannot consume a managed claim.
 
 ## Acceptance evidence
 
-- [ ] Fresh spawn success creates one logical target with generation `1`, exact spawn provenance, and an exact current runtime reference.
-- [ ] Generation `0`, empty ids, uncorrelated reports, cross-adapter/deployment claims, and duplicate logical-target registration reject before mutation.
-- [ ] Exact durable replay reconstructs the same registry and reverse index; conflicting reuse of an event id or logical id fails closed.
-- [ ] Pre-provisioned/discovered sessions use an explicit adapter-reported logical target registration path and cannot collide with a spawned target.
-- [ ] Project/cwd/name/model updates do not change logical identity or generation.
-- [ ] Session snapshots and both operator surfaces show logical target plus current runtime generation before an Operation is submitted.
+- [ ] A first fresh generation-1 report and legitimate exact N+1 report stage successfully rather than classifying `Unknown`.
+- [ ] Wrong Operation, prior, generation, logical target, adapter/deployment, attachment, or claim fails without staging/current mutation.
+- [ ] Staging reserves one exact external-runtime key; a second logical target receives `duplicate-native-reference` and cannot stage.
+- [ ] Staged report remains non-live/non-current through hot fold, replay, snapshot, and core restart.
+- [ ] Result-first and report-first orders converge to the same staged readiness facts.
+- [ ] No SessionReport-specific bypass avoids the shared classifier.
 
 ## Ordering constraint
 
-Depends on the canonical adapter-scoped spawn acceptance path. Every later lifecycle checkpoint consumes this registry.
+Depends on an atomically accepted exclusive claim/fence. Duplicate reconciliation and promotion folds consume staged evidence.

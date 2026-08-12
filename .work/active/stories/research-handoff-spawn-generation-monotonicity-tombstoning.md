@@ -2,7 +2,7 @@
 id: research-handoff-spawn-generation-monotonicity-tombstoning
 kind: story
 stage: implementing
-tags: [protocol, verification]
+tags: [protocol, verification, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration]
 release_binding: null
@@ -12,53 +12,39 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Generation monotonicity and atomic tombstoning
+# Atomic promotion fold, exact generations, and tombstones
+
+## Redesign disposition
+
+Rewritten. The old adapter report-driven generation advance is superseded. Only `SpawnPromotionCommitted` can publish a managed generation.
 
 ## Checkpoint
 
-Make replacement a single durable transition: the exact current runtime generation is tombstoned and the next claimed generation becomes current in the same log event/fold. Restart may change `runtime_session_id`; logical-target identity is the stable slot. There is never a state where both generations are live, and reconnect/crash cannot allocate a generation.
+Implement each projection's fail-closed fold of the single promotion event. For fresh spawn, validate `∅→1`. For continuation, validate exact current `N→N+1`, exact accepted/staged claim, external-runtime reservation, and exact prior. The same event tombstones N, installs N+1 current, consumes the claim/fence, installs descendant authority, and completes the Operation according to projection ownership.
 
-Initial spawned generation is `1`. A managed continuation must advance by exactly one (`N → N+1`) and match a durable accepted claim. Equal reports are source-order updates/no-ops; lower reports are stale; an unclaimed greater report for a spawn-managed target is rejected. Adapter-discovered targets retain an explicit authenticated replacement path, but the core still never invents their generation.
+There is no state in which N+1 is current without descendant authority. Staged candidates remain non-live. Runtime session id may change; logical target remains stable.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/sessions.proto` — replace the same-runtime-id-only bump shape with `LogicalTargetGenerationAdvanced { logical_target_id, from, to, spawn_operation_id, continuation_status, ... }`.
-- `core/src/session/events.rs` and `core/src/session/ingest.rs` — derive one event from the accepted claim and authenticated report.
-- `core/src/session/registry.rs` and `core/src/session/logical_target.rs` — validate exact pre-state, install tombstone + next current record atomically, retain reverse-index history.
-- `core/src/acceptance/index.rs` — identify nonterminal commands bound to the retired runtime generation.
-- `server/src/adapter_service.rs` — under `CoreDecisionGate`, append the generation event and required old-generation command/Elicitation effects as one audited decision batch before publishing the new live generation.
-- `specs/seed/session_generation.qnt` — model attempted claims/reports independently and promote genuine monotonic/exclusivity/stale properties through the v1 assurance lane.
-- `core/tests/sessions_registry.rs`, `core/tests/sessions_ingest.rs`, and `core/tests/sessions_proptest.rs` — traces with changing runtime ids, gaps, replay, and failed pre-state.
+- `core/src/session/{events,registry,logical_target,spawn_claim,replay}.rs` — session/claim promotion fold.
+- `core/src/authority/{events,projection,replay}.rs` — descendant authority fold.
+- `core/src/acceptance/{index,replay,transitions}.rs` — completed command fold.
+- `server/src/{checkpoint,snapshot}.rs` — promotion-aware recovery state.
+- `specs/seed/session_generation.qnt` plus conformance/property tests.
 
-```rust
-pub struct GenerationAdvance {
-    pub logical_target_id: LogicalTargetId,
-    pub from: RuntimeGenerationRef,
-    pub to: RuntimeGenerationRef,
-    pub spawn_operation_id: CommandId,
-    pub continuation_status: ContinuationStatus,
-}
-
-pub fn plan_generation_advance(
-    registry: &SessionRegistry,
-    claims: &SpawnClaimRegistry,
-    report: &SessionReport,
-) -> Result<GenerationAdvance, SessionError>;
-```
-
-When the old generation is retired, accepted-but-undelivered commands become `superseded`; delivered/running commands become `failed(execution_outcome_unknown)`; pending Elicitations bound to it become `stale`. Those effects are durable and ordered with the replacement so delivery cannot leak across generations.
+Each projection independently validates the promotion event against its pre-state. Unknown/malformed event shape, missing claim/stage/Grant, wrong transition, duplicate runtime ownership, or conflicting replay fails before any installed mutation.
 
 ## Acceptance evidence
 
-- [ ] Fresh managed registration accepts only generation `1`; managed continuation accepts only exact `N → N+1` from its claim.
-- [ ] Runtime-session id may change while logical-target id remains stable.
-- [ ] Tombstone and next-current installation are atomic and replay-identical; no observer under the decision gate sees two live generations.
-- [ ] Equal/lower/unclaimed-greater reports do not advance the live generation and emit bounded stale/mismatch evidence.
-- [ ] Old accepted commands are superseded, old delivered/running commands fail with outcome ambiguity, and old Elicitations become stale before new-generation control is exposed.
-- [ ] Overflow, missing pre-state, duplicate transition, and conflicting replay leave the complete projection unchanged.
-- [ ] The formal property and executable vector fail when strict advance, exact pre-state, or atomic tombstone installation is mutated away.
+- [ ] Managed current state changes only through promotion, never a raw/staged report.
+- [ ] Fresh accepts only generation 1; continuation accepts only exact N+1 with changing runtime id allowed.
+- [ ] N tombstone and N+1 current/authority/completion become observable only from one complete promotion event.
+- [ ] Promotion permanently consumes the claim and replacement fence while retaining exact provenance/tombstone/reverse-index history.
+- [ ] Equal/lower/unclaimed-greater evidence cannot promote.
+- [ ] Replay/checkpoint produce the exact same logical targets, claims, Grant, command state, and tombstones.
+- [ ] Formal/model and executable mutations catch missing strict advance, exact pre-state, uniqueness, or authority-bearing atomicity.
 
 ## Ordering constraint
 
-Depends on stable logical-target registration. Stale-event ingress and continuation claiming rely on this transition.
+Consumes staged claimed-successor evidence. The stale fence implements every ingress against this finalized projection before completion is enabled.

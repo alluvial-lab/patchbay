@@ -12,55 +12,48 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Fence stale-generation events at every adapter ingress
+# Shared runtime-generation fence and durable evidence quarantine
+
+## Redesign disposition
+
+Rewritten. The old design appended a raw Observation plus separate stale audit and lacked `ClaimedSuccessor`. Both shapes are superseded.
 
 ## Checkpoint
 
-Close the review's BLOCKER 3: a stale runtime generation must be inert at the adapter trust boundary, not merely rejected by `SessionRegistry` reports. Today a generic Observation can exactly match its old command target and still advance command state after that target was tombstoned. Every runtime-targeted SessionReport, Observation, result, delivery acknowledgement, transcript event, and Elicitation mutation must consult the same reconciled generation disposition before durable mutation.
+Route every runtime-targeted adapter ingress through one reconciled classifier: SessionReport, Observation/Result, delivery acknowledgement, transcript/status/delta, and Elicitation mutation. `Current` continues through normal checks. `ClaimedSuccessor` is valid only for exact managed successor SessionReport staging. `Tombstoned`, `Unknown`, and `IdentityMismatch` reject or persist a self-contained `QuarantinedRuntimeEvidence` outer event with an atomic audit.
 
-The outpost_pi harvest field-corrobates this risk: an old action killed its successor after consulting mutable current state rather than an incarnation token.
+No normal projection may dispatch the nested quarantined candidate as an Observation or other authoritative event during hot fold or replay.
 
 ## Design
 
 **Files**
-- `core/src/session/logical_target.rs` — one `RuntimeGenerationDisposition` classifier: `Current`, `Tombstoned`, `Unknown`, `IdentityMismatch`.
-- `core/src/acceptance/ports.rs` — consumer-owned `RuntimeGenerationFence` port.
-- `core/src/acceptance/observation.rs` — consult the fence before appending a state-changing candidate; stale evidence appends only the raw Observation + `stale_event` audit as one decision and emits no command transition.
-- `core/src/adapter/mod.rs` — apply the same fence to delivery acknowledgements.
-- `core/src/acceptance/elicitation.rs` — stale target terminalizes/keeps inert according to the canonical Elicitation rule.
-- `server/src/adapter_service.rs` — rebuild/fold the fence projection under the authenticated attachment and shared decision gate before every runtime-targeted branch.
-- `pi-adapter/src/pi_session.ts` — retain binding-local generation tokens so callbacks from disposed/replaced Pi runtime objects never emit current-generation reports.
-- `core/tests/acceptance_observation.rs`, `server/tests/trust_boundary.rs`, and `pi-adapter/tests/e2e.test.ts` — old-generation mutations across every ingress family.
+- `core/src/session/logical_target.rs` — shared classifier implementation.
+- `core/src/acceptance/{ports,observation,elicitation}.rs`, `core/src/adapter/mod.rs` — consumer-owned fence port at every ingress.
+- `server/src/adapter_service.rs` — authenticated source + gate catch-up + atomic quarantine/audit append.
+- Transcript/ack/Elicitation paths and enumerate-first tests.
 
 ```rust
-pub enum RuntimeGenerationDisposition {
-    Current,
-    Tombstoned { superseded_at_lsn: u64 },
-    Unknown,
-    IdentityMismatch,
-}
-
 pub trait RuntimeGenerationFence: Send + Sync {
     fn classify(
         &self,
         domain: &AuthorityDomainId,
-        target: &TargetScope,
+        candidate: &RuntimeEvidenceCandidate,
     ) -> Result<RuntimeGenerationDisposition, SessionError>;
 }
 ```
 
-A stale event remains durable audit/reconciliation evidence but cannot mutate the current session, a command, an Elicitation, transcript projection, or authority. `stale_event` is not a new session state. Unknown/malformed target identity fails closed rather than being normalized to current.
+Quarantine carries the original typed candidate, exact classified/current/claim context, attachment source, and canonical reason. It is durable diagnostics/audit evidence only. It never becomes a command transition, completion fact, transcript entry, Elicitation response, session mutation, or authority input.
 
 ## Acceptance evidence
 
-- [ ] A generation-N result arriving after N+1 is current produces `stale_event` evidence and no command transition, even when it exactly matches the original command target.
-- [ ] Stale delivery acknowledgements, transcript events, session reports, Elicitation responses, and generic status/delta events are equally inert.
-- [ ] A current-generation event still follows source-order, target, command-terminal, and authority checks; the fence does not bypass those boundaries.
-- [ ] A replaced adapter token/stream epoch and an old runtime-generation token each independently reject the event.
-- [ ] Replay and snapshots retain the tombstone and cannot resurrect stale event effects.
-- [ ] An enumerate-first test fails if any runtime-targeted adapter ingress omits the shared fence.
-- [ ] A mutation that accepts the old generation fails the v1 `LateGenerationInert` model/vector evidence.
+- [ ] Legitimate first successor report stages through `ClaimedSuccessor` without a bypass.
+- [ ] Generation-N evidence after N+1 promotion yields quarantine/stale audit and no live mutation.
+- [ ] Stale ack/result/transcript/status/Elicitation/report candidates are equally inert.
+- [ ] Hot fold and replay see only the outer quarantine kind; a nested raw Observation cannot reach normal projections.
+- [ ] Current evidence still obeys source order, terminal finality, correlation, and authority; classifier success bypasses none.
+- [ ] Replaced adapter token/epoch and runtime generation independently fence evidence.
+- [ ] Enumeration test fails when any runtime ingress lacks the port or dispatches quarantine incorrectly.
 
 ## Ordering constraint
 
-Depends on atomic generation advance/tombstones. Restart orchestration must not ship until this ingress inventory is complete.
+Depends on the exact promotion/tombstone projection. Completion is blocked until the ingress inventory is complete.

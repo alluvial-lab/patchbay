@@ -2,64 +2,61 @@
 id: fleet-spawn-target-resolution
 kind: story
 stage: implementing
-tags: [adapter, protocol]
+tags: [adapter, protocol, security]
 parent: research-handoff-spawn
-depends_on: []
+depends_on: [research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract]
 release_binding: null
 gate_origin: null
 created: 2026-08-08
 updated: 2026-08-12
 ---
 
-# OperationKind-aware spawn target resolution
+# Operation-aware spawn target and compound authority resolution
+
+## Redesign disposition
+
+Rewritten after the 2026-08-12 adversarial review. The historical `fleet` id is retained for reference stability, but this checkpoint does not select a fleet. It consumes all early contract leaves rather than defining logical-target, claim, or continuation types downstream.
 
 ## Checkpoint
 
-Make the acceptance boundary bind a `spawn` to one canonical attached adapter and prepare its typed lifecycle claim before durable acceptance. The historical story id says `fleet`, but the committed v1 path is **not** fleet selection: `TargetScopeKind::Adapter` is the only admitted spawn target. Fleet-supervisor and authority-domain selection stay reserved; broadcast is rejected.
+Resolve a `spawn` against one canonical attached adapter. Fresh spawn selects one live adapter-scoped `spawn` Grant. Continuation additionally resolves the exact current prior generation and selects a live exact-generation `session-management` Grant for the same verified subject/endpoint/domain, using the same sampled decision time under `CoreDecisionGate`.
 
-The current `TargetRegistry` already dispatches by `OperationKind` and resolves an attached adapter. This checkpoint preserves that implementation, removes stale fleet wording, and extends the boundary so a typed fresh/continuation `SpawnRequest` is validated with the target rather than decoded later by delivery code.
+Both selected Grant ids and the exact prior are returned for the accepted envelope. Adapter spawn authority alone never authorizes continuation. Runtime-session/resource/fleet/authority-domain spawn targets reject before durable acceptance; broadcast remains excluded.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/operations.proto` — generated `SpawnRequest`, `FreshSpawn`, `SpawnContinuation`, `SpawnTargetSpec`, and `SpawnGenerationClaim` wire contracts.
-- `core/src/acceptance/ports.rs` — change the resolver input from detached kind/scope fields to the complete validated Operation and return the prepared spawn claim with the adapter binding.
-- `core/src/target.rs` — enforce the OperationKind × TargetScopeKind matrix and delegate continuation lookup to the logical-target projection.
-- `core/src/acceptance/pipeline.rs` — validate the generated spawn envelope before grant/target stateful work and persist the resolver-produced claim in `AcceptedOperation`.
-- `server/src/state.rs` — catch up the target/logical-target projection while holding the shared `CoreDecisionGate` before resolving and accepting.
-- `core/tests/resource_resolver.rs` and `core/tests/acceptance_pipeline.rs` — exact target matrix and pre-append rejection evidence.
+- `core/src/acceptance/ports.rs` — operation-aware target/authority result port.
+- `core/src/target.rs` — one explicit adapter target plus exact-prior lookup.
+- `core/src/authority/check.rs` — deterministic two-Grant compound selection/rejection.
+- `core/src/acceptance/pipeline.rs` — validate generated payload and persist resolver-produced provenance.
+- `server/src/{state,service}.rs` — catch up target/claim/authority projections under one gate before decision.
+- Acceptance/authority/resolver tests.
 
 ```rust
-pub trait TargetResolver: Send + Sync {
-    fn resolve(
-        &self,
-        authority_domain_id: &AuthorityDomainId,
-        operation: &Operation,
-    ) -> impl Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
-}
-
 pub enum TargetBinding {
     SpawnAdapter {
         adapter_id: AdapterId,
         claim: SpawnGenerationClaim,
+        continuation_authority: Option<ContinuationAuthorityProvenance>,
     },
-    RuntimeSession { /* existing exact identity */ },
+    RuntimeSession { /* existing exact target */ },
     Resource(ResourceIdentity),
     AuthorityDomain(AuthorityDomainId),
 }
 ```
 
-For a fresh spawn, the core derives a distinct typed `LogicalTargetId` from the accepted creation `CommandId` and claims generation `1`. For continuation, the payload must name the current logical target and exact prior runtime-generation reference; the resolver prepares exactly `expected_generation + 1`. The adapter-specific `target_spec.shape` remains open and adapter-enforced at delivery.
+For continuation, acceptance fails if the payload prior is not the exact current generation, if an active/poisoned claim already consumes N+1, or if either Grant is missing/revoked/expired/mismatched. Promotion later rechecks the exact replacement Grant's liveness; no other Grant id may silently replace accepted provenance.
 
 ## Acceptance evidence
 
-- [ ] A canonical attached-adapter `spawn` resolves and returns `TargetBinding::SpawnAdapter` with a prepared generation claim.
-- [ ] Runtime-session, operational-resource, fleet-supervisor, authority-domain, malformed, and mixed spawn scopes reject before the accepted Operation append.
-- [ ] Existing-session and resource Operations still use their existing resolvers.
-- [ ] An unknown/reserved OperationKind rejects before grant evaluation; an adapter-unsupported target-spec shape remains an accepted delivery-layer `unsupported_command`.
-- [ ] Restart/fresh payload malformation and generation overflow reject before durable acceptance.
-- [ ] Ordinary core restart replay keeps a durably registered adapter spawn-resolvable but does not fabricate a live attachment channel.
+- [ ] Fresh spawn resolves with one adapter-spawn Grant and generation-1 claim.
+- [ ] Continuation resolves only with adapter-spawn + exact-prior session-management Grants for one verified subject/endpoint/domain.
+- [ ] Missing/revoked/expired/wrong-generation replacement Grant rejects before accepted append/delivery.
+- [ ] Runtime/resource/fleet/domain/malformed/mixed spawn targets reject before acceptance; unsupported adapter shape remains delivery-layer `unsupported_command`.
+- [ ] Restart replay preserves durable adapter routing eligibility without fabricating a live attachment.
+- [ ] Mutations accepting continuation on the broad spawn Grant alone or substituting another replacement Grant fail.
 
 ## Ordering constraint
 
-This is the first checkpoint. Logical-target registration and every continuation claim depend on one unambiguous adapter-scoped acceptance path.
+Begins only after every contract leaf is available: the promotion-contract dependency brings the identity, continuation, claim, and crash-evidence leaves; the cursor leaf completes the parallel shared-contract layer.

@@ -15,330 +15,455 @@ updated: 2026-08-12
 
 # Spawn — logical target + generation lifecycle (v1 must)
 
+## Redesign status and authority
+
+This body supersedes the 2026-08-12 first design. The consolidated five-reviewer gate at `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md` found that design **not safe to implement**. This redesign treats that review as the binding current gate and resolves its spawn-side BLOCKERs 1–5, 7, and 8 plus the spawn-side MATERIAL findings. Pi-only BLOCKERs 9–10 and the Pi-only MATERIALs remain for the immediately following redesign of `research-handoff-pi-adapter-capability`; this feature defines only the clean shared contracts that redesign must consume.
+
+The earlier, incompletely retained “five-BLOCKER” review is not counted as evidence. Its BLOCKERs 1–2 cannot be reconstructed from the repository, so its claimed closure is withdrawn. The current five-reviewer review is the traceable re-run/superseding gate; the disposition matrix below links every current spawn-side finding to a design section and child checkpoint.
+
 ## Brief
 
-Wire Patchbay's committed `spawn` OperationKind and restart-as-spawn-continuation so the operator can spawn and restart Pi agents from Patchbay instead of herdr. A successful fresh spawn creates one stable logical target and runtime generation `1`. Restart is a new accepted `spawn` Operation that claims the next generation on that same logical target, references the exact prior runtime generation, and leaves the prior generation tombstoned before the replacement can be presented as live.
+Wire Patchbay's committed `spawn` OperationKind and restart-as-spawn-continuation so the operator can spawn and restart Pi agents from Patchbay instead of herdr. A successful fresh spawn creates one stable logical target and runtime generation `1`. An intentional restart is a new `spawn` Operation with a new command id/key, an exact prior-generation reference, and a core-prepared `N+1` claim.
 
-The core owns durable Operation state, logical identity, authority, claim exclusivity, generation monotonicity, tombstones, and stale-event fencing. The adapter owns target-spec interpretation, external process/session creation, quiesce/terminate/respawn, Pi native-session continuation, adapter-local cursor reconciliation, and honest continuation proof.
+The core owns durable Operation state, logical identity, compound continuation authority, exclusive claim/fence state, generation monotonicity, external-runtime uniqueness, tombstones, quarantined stale evidence, staged successor evidence, atomic authority-bearing promotion, and claim reconciliation. The adapter owns target-spec interpretation, external process/session creation, quiesce/terminate/respawn, native continuation, external-effect evidence, and honest reconciliation within an explicitly stated trust boundary.
 
-Project/cwd remains adapter-owned in v1: core `spawn` carries an opaque typed `target_spec`; there is no universal `Project`/`Workspace` entity and cwd/project/name never become routing or grant identity.
+Project/cwd remains adapter-owned in v1. Core `spawn` carries an opaque typed `target_spec`; project, cwd, Pi session path, and labels are never logical identity, routing authority, or Grant scope.
 
 ## Grounding and current-code constraints
 
-- Research: `.research/analysis/campaigns/v1-control-plane-and-spawn/parent.md`, especially `spawn-lifecycle` and `pi-adapter-probe`, separates persisted logical context from live runtime and bounds Pi `get_entries(since)` to persisted-entry reconciliation.
-- Field corroboration: `.research/analysis/campaigns/outpost-pi-pitfall-harvest/parent.md` records old-action-kills-successor and non-exclusive-claim failures that directly corroborate the spawn review's stale-generation and exclusive-claim blockers; its descendant-authority comparison is explicitly analogous, not direct field evidence.
-- Durable truth: `docs/PROTOCOL.md` and `docs/ARCHITECTURE.md` require accepted-before-delivery, one authority-domain LSN order, derived snapshots, source-authenticated adapter reports, and no remembered-stream authority.
-- Authority: `core/src/authority/spawn_tail.rs` and `server/src/spawn_completion.rs` already defer spawn terminal success until the exact accepted grant, delivered/running lifecycle, successful result, correlated session fact, completion audit, and descendant grant are durable. The redesign extends that fold; it does not bypass or replace it.
-- Acceptance: `core/src/acceptance/pipeline.rs` validates → authorizes → resolves → atomically deduplicates/appends. `core/src/target.rs` already implements the committed adapter-scoped spawn target, despite the staged child's stale fleet wording.
-- Sessions: `core/src/session/registry.rs` requires positive generations and atomically tombstones a same-runtime-id generation bump, but its stable slot is still `(adapter, deployment, runtime_session_id)` and cannot represent a continuation whose external runtime id changes.
-- Ingress gap: `core/src/acceptance/observation.rs` checks an Observation against its command's original target but does not consult the live/tombstoned session projection, so an old-generation result can still mutate command state after replacement.
-- Pi gap: `pi-adapter/src/delivery.ts` rejects `spawn`; `pi-adapter/src/main.ts` only preprovisions sessions; `PiSession` already uses positive generation `1` and binding-local callbacks, but its `newSession()` chooses the next generation inside the adapter instead of consuming a core claim.
+- The design consumes `.research/analysis/campaigns/v1-control-plane-and-spawn/parent.md` and its `spawn-lifecycle` / `pi-adapter-probe` facets. The research supports separating persisted logical context from live runtime, explicit continuation status, persisted-entry cursor repair, and process replacement as the Pi runtime-package upgrade boundary; the exact Patchbay contracts below are `{extends}` design, not claims about Pi.
+- `.research/analysis/campaigns/outpost-pi-pitfall-harvest/parent.md` independently corroborates old-incarnation callbacks killing a successor and non-exclusive claims creating multiple consumers. Its keyring comparison is an analogous authority warning only, not direct descendant-grant evidence.
+- `docs/ARCHITECTURE.md` and `docs/PROTOCOL.md` require accepted-before-delivery, one authority-domain LSN order, derived projections, source-authenticated reports, and no remembered-stream authority.
+- `docs/SECURITY.md` requires deny-by-default grants, exact runtime-generation targeting, revocation, durable provenance, and authenticated adapter ingress. A source-authenticated report is still a trust assumption about the current adapter's correctness; authentication does not prove a dishonest or buggy adapter told the truth about external effects.
+- Existing `core/src/authority/spawn_tail.rs` and `server/src/spawn_completion.rs` already own grant-before-completed behavior, but their staged audit → grant → completion prefixes predate logical-target promotion. They must be migrated, not bypassed.
+- Existing `core/src/session/registry.rs` keys the live slot by adapter/deployment/runtime id and advances on an adapter report. Managed spawn must instead stage a claimed successor and publish it only through one promotion decision.
+- Existing `core/src/acceptance/observation.rs` can persist a raw stale Observation before a separate audit. The redesign forbids that replay shape: quarantined evidence is an outer durable event kind that no normal projection dispatches as an Observation.
 
-**Dispatch rationale:** direct-read only. The relevant paths and prior five-BLOCKER fresh-context design review were already concrete; spawning another explorer would duplicate evidence. The prior review supplies the independent advisory pass, and this design explicitly answers its lifecycle blockers.
+**Dispatch rationale:** direct-read redesign. The current gate already contains five independent fresh-context reviews. This delegated lane cannot spawn further agents without violating the recursion guard, so no required fan-out was silently degraded; the adversarial pre-mortem is run inline below as the user directed.
 
 ## Work-nature test
 
-**Non-zero design surface; full feature-design lane.** This work chooses identity, state-machine, authority, concurrency, error, reconnect, and wire-contract semantics. It is not transcription/config-as-prose. The three open forks materially affect public v1 protocol semantics and are resolved below. The previously decided adapter-owned project/cwd seam is retained rather than re-opened.
+**Non-zero design surface; full feature-design lane.** This redesign changes a public authority contract, claim state machine, crash/retry semantics, replay envelope, promotion atomicity, runtime-identity uniqueness, cursor replacement contract, and implementation dependency graph. It is not a prose-only mapping. No UI mock is required because the surface reuses existing spawn/restart actions and canonical Operation/failure presentation.
 
 ## Design decisions
 
-### Fork resolutions
+### 1. Continuation has compound authority, durably preserved
 
-- **Initial generation: `1`.** Generation zero remains the generated-contract `UNSPECIFIED`/invalid sentinel. Existing `SessionRegistry`, checkpoint validation, session-report ingress, and `PiSession` all require a positive generation, and the formal generation vocabulary already treats positive values as real incarnations. Choosing `0` would require a second validity rule at every boundary and make missing/zero evidence ambiguous. This is evidence-decided, not operator-level.
-- **Restart shape: a new `spawn` Operation with a typed continuation payload.** Every intentional restart receives a new command id and idempotency key, preserving accepted-intent accountability and first-terminal semantics. The payload's `SpawnContinuation` names the exact logical target and prior runtime generation; the prepared accepted claim names exactly the next generation. No new `restart` OperationKind is added, and restart is not hidden inside generic `session-management`. “New Operation” and “typed continuation” are complementary: the former is lifecycle identity; the latter is the spawn intent variant.
-- **Crash state: explicit crash → session connectivity `failed`; activity `unknown`.** `failed` already means an explicit adapter/session error preventing reliable control. `stale` is reserved for loss of sufficiently fresh authority (including unexplained stream loss), and `offline` for authoritative clean/unavailable endpoint evidence. “Unavailable” is not a session-connectivity registry member and therefore is not introduced as a new state. A crash never increments generation, tombstones the target, or auto-restarts it. Running work resolves to `failed(execution_outcome_unknown)` when outcome is unprovable.
+Fresh spawn still requires one live adapter-scoped Grant allowing `spawn`. Continuation requires **both**, evaluated under the same `CoreDecisionGate` and one sampled decision time:
 
-### Additional binding decisions
+1. the live adapter-scoped `spawn` Grant selected by the normal deterministic Grant rule; and
+2. a live Grant for the same verified subject/endpoint and authority domain, scoped to the **exact prior runtime generation**, allowing `session-management` as the replacement authority.
 
-- **Logical target is stable identity; runtime id may change.** V1 binds a logical target to one authority domain, adapter, and deployment scope. Cross-adapter/deployment migration is reserved. Runtime session id belongs to a generation reference and can change on `new_context` continuation.
-- **Core prepares generations; adapter reports exact claims.** A fresh accepted spawn prepares generation `1`; a continuation prepares exact `N+1`. The adapter cannot infer or allocate another number. An authenticated report becomes authoritative only when it echoes the accepted claim and exact spawn Operation provenance.
-- **Accepted Operation is the exclusive generation claim.** No second mutable claim store or checkpoint becomes authority. A claim projection folds accepted spawn envelopes and terminal/generation events from the durable log. The shared `CoreDecisionGate` covers catch-up, claimability check, and accepted append.
-- **Authority precedes public completion.** The existing completion driver remains the sole terminal-success owner. It issues a new generation-scoped descendant grant for a successful continuation before committing `completed`; the prior generation's descendant grant remains independently revocable/auditable and does not silently authorize the replacement.
-- **No silent liveness inference.** Endpoint detach does not retire or increment a generation. Adapter stream loss degrades to stale. Explicit process crash reports failed. Reconnect must reconcile core LSN state and adapter-native Pi entry state before live presentation.
-- **Adapter-owned deployment authority stays subordinate.** An optional opaque `deployment_authority_ref` may let the Pi adapter resolve a local expiring/revocable launch credential. It never becomes a core Workspace, a bearer payload, or a substitute for Patchbay Grants.
+The accepted envelope persists both selected Grant ids plus the exact prior reference. `authorizing_grant_id` remains the adapter-spawn grant; `ContinuationAuthorityProvenance` records the exact-generation replacement Grant. The descendant Grant provenance records both. A broad adapter spawn Grant cannot replace a protected target, and revoking the prior generation's session-management Grant prevents a later continuation from reviving it.
+
+Because promotion creates future authority, the exact-prior replacement Grant must also remain live at promotion. Revocation/expiry before promotion suppresses descendant issuance and promotion even if generic already-accepted work might otherwise continue. Reauthorization cannot silently substitute another Grant id into the accepted provenance; reconciliation requires an explicit, audited operator action or target abandonment.
+
+### 2. A successor is staged; one promotion decision makes it current
+
+A managed fresh/successor `SessionReport` never directly mutates `SessionRegistry`. It becomes `SpawnSuccessorEvidenceStaged` only after exact claim/provenance classification. A successful Result is also evidence, not completion. The prior generation remains the current logical-target record (possibly offline/failed/stale and delivery-fenced) while the candidate is staged.
+
+`SpawnPromotionCommitted` is one semantic durable decision consumed by authority, session, claim, and command projections. It contains or exactly references all required facts: accepted compound provenance, valid delivered/running lifecycle, successful Result, staged successor report, external-runtime uniqueness reservation, exact `N→N+1` (or fresh `∅→1`), completion audit linkage, and the new generation-scoped descendant Grant. The storage port atomically writes the promotion source and its audit, assigning/stamping both event ids inside one transaction. Replay sees neither or the complete promotion decision; no raw prefix can publish N+1 without authority.
+
+The authority fold validates/installs descendant authority before the session fold exposes current/live state and before the command fold exposes `completed`. All folds consume the same event. Readers under the decision gate therefore observe either the pre-promotion state or the complete authority-bearing promotion.
+
+### 3. Terminal command state does not by itself release a claim
+
+`SpawnClaimDisposition` is independent from `CommandState`:
+
+- `active` — accepted and exclusive; continuation also activates the delivery fence on N;
+- `released_no_external_effect` — reusable only after a durable closed-vocabulary proof that no external effect occurred;
+- `poisoned_pending_reconciliation` — an effect may exist, so the generation remains exclusively consumed;
+- `promoted` — permanently consumed by the promotion;
+- `target_abandoned` — permanently consumed and the logical target is durably retired.
+
+`failed`, `cancelled`, or `expired` does **not** release a claim. Delivered cancellation/expiry, `execution_outcome_unknown`, launch-attempted loss, or any ambiguous external-effect evidence poisons it. A poisoned claim can later be promoted by reconciling the exact external runtime, or released only if later durable evidence proves no external effect. Otherwise the operator abandons the target. A retry with a new command/key cannot claim the same generation while the record is active or poisoned.
+
+Closed no-effect proofs include: an atomic core-side terminal/fence decision before any durable delivery offer; an authenticated current-adapter refusal explicitly made before delivery responsibility; or current-adapter supervisor/journal evidence for the exact claim proving failure before external launch. The implementation must not infer “not delivered” merely from absence of a `delivered` acknowledgement.
+
+### 4. The shared fence recognizes an exact claimed successor
+
+`RuntimeGenerationDisposition` becomes:
+
+- `Current`;
+- `ClaimedSuccessor { claim_operation_id, expected_prior, claimed_generation }`;
+- `Tombstoned { superseded_at_lsn }`;
+- `Unknown`;
+- `IdentityMismatch`.
+
+`ClaimedSuccessor` is returned only for a current authenticated adapter report whose exact Operation id, claim, logical target, expected prior (`None` for fresh), adapter/deployment, and claimed generation match the durable active claim. That disposition routes the report to staging; it does not make the successor current and does not authorize ordinary candidate output. All other ingress uses the same classifier. There is no SessionReport-specific bypass around the fence.
+
+### 5. Stale evidence is durably quarantined, not stored as an Observation
+
+Tombstoned/unknown/mismatched runtime evidence that merits retention is persisted as a self-contained outer `QuarantinedRuntimeEvidence` event containing the original candidate in a generated admitted-family `oneof`, classified target, current/tombstone/claim context, reason, and source attachment evidence. Unknown/untyped candidate families reject rather than entering an opaque payload escape hatch. Its audit is committed atomically with that envelope. Normal Observation, transcript, Elicitation, command, session, completion, and authority projections dispatch only on the outer stored kind and never unwrap it as authoritative evidence.
+
+A claimed-successor report is similarly persisted as the dedicated staged-evidence event. Thus replay never applies a raw Observation and only later discovers a stale audit.
+
+### 6. External runtime references have one logical owner
+
+The logical-target projection owns a reverse index from exact `(authority_domain_id, adapter_id, deployment_scope, runtime_session_id, generation)` to `logical_target_id`. Staging reserves the exact key; duplicate ownership fails before promotion and emits the `duplicate-native-reference` outcome/vector. Tombstones retain the reservation for audit and late-event correlation. Adapter-specific stronger native-continuity uniqueness (for example, one Pi persisted session selected by two differently numbered Patchbay generations) remains an adapter conformance obligation and may not weaken this core floor.
+
+### 7. A pending continuation fences generation-N delivery
+
+Acceptance of a continuation claim atomically creates a durable pending-replacement fence for the exact prior generation. The accepted-continuation decision carries the complete precomputed effects for already accepted N work, so claim/fence visibility cannot race separate supersession writes. New N-bound Operations reject before acceptance with canonical `superseded` plus reason `replacement_pending`; they are not held in an invisible queue. Previously accepted but not yet offered work is durably superseded by that decision. Delivered/running work is explicitly marked for quiesce/outcome reconciliation and cannot be redelivered after the fence. Exact retries still reconcile to their existing records.
+
+The fence remains while the claim is active or poisoned. It clears only on durable no-effect release (after current-N liveness is re-established), promotion, or target abandonment.
+
+### 8. Cursor loss requires authoritative projection replacement
+
+The spawn-side cursor leaf defines an adapter-neutral `ExternalCursorScope` keyed by verified external continuity identity, **not Patchbay generation**. For Pi this will be the verified Pi session identity; the following Pi redesign chooses its exact local representation.
+
+A known cursor may apply a suffix. An unknown cursor begins a staged replacement epoch: fetch/validate the complete external set/tree, build a replacement projection, compare exact membership/identity, and atomically install `{projection, leaf, cursor, epoch}`. Upserting a full fetch into an old projection is forbidden because omitted stale entries would survive. No cursor/leaf becomes current before the replacement projection commits.
+
+### 9. Authenticated exact-claim evidence has a stated trust boundary
+
+Patchbay proves that a report came through the current authenticated adapter attachment and exactly correlates to a durable claim. This prevents cross-operation, cross-generation, and stale-attachment confusion. It does **not** cryptographically prove the adapter observed the external runtime honestly. The reference adapter must therefore use a durable journal/supervisor, exact external identity, and mutation-sensitive conformance evidence. A malicious or sufficiently buggy authenticated adapter remains outside the core proof boundary and is handled by revocation/diagnostics, not by overstating “authenticated exact claim” as external truth.
 
 ## Architectural options
 
-### Option A — Treat `runtime_session_id` as the logical target
+### Option A — Promote on SessionReport, repair authority afterward
 
-Keep the current `SessionRegistry` key and bump generation in place. This minimizes code, but it fails the grounded `new_context` case where continuation legitimately creates a different Pi/external session id. It also leaves the operator's stable target coupled to an adapter-native runtime identifier. **Rejected.**
+Closest to the current registry. It leaves the reviewed crash window: N+1 can be current while its creating Operation failed or its descendant Grant is absent. **Rejected.**
 
-### Option B — Make logical target the primary session-registry slot, with runtime-generation reverse index
+### Option B — Separate session/grant/command events in an atomic batch
 
-Add a generated `LogicalTargetId`; store one current `RuntimeGenerationRef` plus retained tombstones under it; index exact runtime generations for routing/correlation. Fold the same durable session events into both views inside one registry. Accepted spawn envelopes carry the prepared claim. This requires a deliberate contract/projection migration but keeps one durable truth and supports changing runtime ids. **Chosen.**
+A transaction prevents crash truncation, but independent event kinds still expose intermediate LSN prefixes to projections and require every reader to understand batch boundaries. **Rejected** in favor of one semantic replay unit.
 
-### Option C — Let each adapter own logical identity and report whichever generation is current
+### Option C — Stage all successor evidence and commit one cross-projection promotion event
 
-This is smallest at the core, but it makes the adapter authoritative for merge/replacement and cannot prevent two continuation attempts from both creating runtimes. It reproduces the non-exclusive-generation-claim blocker and weakens wrong-session protection. **Rejected.**
+Claims, reports, Results, and crash evidence remain durable without being live authority. One `SpawnPromotionCommitted` event installs descendant authority, exact generation transition, claim consumption, and completion together. This minimizes authoritative states and makes replay atomicity structural. **Chosen.**
 
-## Core contract
+## Contract leaves (must land before operations)
 
-`contracts/proto/patchbay/common.proto` adds distinct wrappers and qualifies runtime targets with logical identity:
+### Leaf 1 — Logical-target and external-runtime identity
+
+**Story:** `research-handoff-spawn-logical-target-identity-contract`
+
+**Files:** `contracts/proto/patchbay/{common,sessions}.proto`, new `core/src/session/logical_target.rs`, session projection/replay/checkpoint tests.
 
 ```proto
 message LogicalTargetId { string value = 1; }
-
+message ExternalRuntimeRef {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation generation = 4;
+}
 message RuntimeGenerationRef {
   LogicalTargetId logical_target_id = 1;
-  RuntimeSessionId runtime_session_id = 2;
-  Generation generation = 3;
+  ExternalRuntimeRef external_runtime = 2;
 }
 ```
 
-`contracts/proto/patchbay/operations.proto` owns the core-readable outer spawn envelope while leaving the target body adapter-owned:
+Defines positive-generation validation, stable logical identity, current/tombstone/reserved-candidate identity slots, and the external-runtime reverse index without importing downstream claim/evidence types or accepting any Operation.
+
+### Leaf 2 — Continuation payload and compound authority provenance
+
+**Story:** `research-handoff-spawn-continuation-payload-authority-contract`
+
+**Files:** `contracts/proto/patchbay/{operations,authority}.proto`, acceptance validation tests.
 
 ```proto
 message SpawnRequest {
-  oneof intent {
-    FreshSpawn fresh = 1;
-    SpawnContinuation continuation = 2;
-  }
+  oneof intent { FreshSpawn fresh = 1; SpawnContinuation continuation = 2; }
   SpawnTargetSpec target_spec = 3;
 }
-message FreshSpawn {}
 message SpawnContinuation { RuntimeGenerationRef prior = 1; }
-message SpawnTargetSpec {
-  string shape = 1;
-  PayloadEnvelope adapter_payload = 2;
-  string deployment_authority_ref = 3;
-}
-message SpawnGenerationClaim {
-  LogicalTargetId logical_target_id = 1;
-  RuntimeGenerationRef expected = 2; // absent for fresh
-  Generation claimed_generation = 3; // 1 or expected + 1
-  CommandId spawn_operation_id = 4;
+message ContinuationAuthorityProvenance {
+  RuntimeGenerationRef exact_prior = 1;
+  GrantId replacement_grant_id = 2;
+  OperationKind replacement_authority_kind = 3; // session-management
 }
 ```
 
-The payload envelope itself must be generated Protobuf with the spawn schema. Core validates presence, exact typed continuation references, positive/overflow rules, and bounded opaque fields; it does **not** decide whether `target_spec.shape` is supported. The adapter reports unsupported shapes after acceptance as `unsupported_command`.
+Defines one generated payload and durable two-Grant provenance carriage; the downstream claim leaf adds the claim/effect fields to the accepted envelope, and this leaf performs no target resolution.
 
-`AcceptedOperation`, `SubmissionResult`, and adapter `Delivery` carry the prepared `SpawnGenerationClaim`. An exact retry returns the persisted claim rather than a newly prepared value.
+### Leaf 3 — Claim registry and pending-replacement fence
 
-`contracts/proto/patchbay/sessions.proto` adds logical target/provenance to reports, events, and snapshots and replaces the same-runtime-only generation bump with an exact from/to advance:
+**Story:** `research-handoff-spawn-claim-registry-contract`
 
-```proto
-enum ContinuationStatus {
-  CONTINUATION_STATUS_UNSPECIFIED = 0;
-  CONTINUATION_STATUS_RESUMED = 1;
-  CONTINUATION_STATUS_NEW_CONTEXT = 2;
-  CONTINUATION_STATUS_UNKNOWN = 3;
-}
+**Files:** generated claim/event contracts, new `core/src/session/spawn_claim.rs`, replay/checkpoint/property tests.
 
-message LogicalTargetGenerationAdvanced {
-  LogicalTargetId logical_target_id = 1;
-  RuntimeGenerationRef from = 2;
-  RuntimeGenerationRef to = 3;
-  CommandId spawn_operation_id = 4;
-  ContinuationStatus continuation_status = 5;
-  SessionState initial_state = 6;
-  SessionReportSourceCursor source_cursor = 7;
-  // report-carried metadata follows; metadata is not identity
+```rust
+pub struct SpawnClaimRecord {
+    pub claim: SpawnGenerationClaim,
+    pub accepted_lsn: u64,
+    pub compound_authority: Option<ContinuationAuthorityProvenance>,
+    pub disposition: SpawnClaimDisposition,
+    pub pending_replacement: Option<RuntimeGenerationRef>,
 }
 ```
 
-Fresh registration and continuation advance carry exact accepted-spawn provenance. Legacy/preprovisioned discovery remains an explicit authenticated registration path, not an implicit continuation.
+Defines the exclusive key, disposition transitions, no-effect release rule, poison/reconciliation, delivery-fence query, and the accepted-continuation decision's explicit prior-work effects without delivering a spawn.
 
-## Trickiest unit first: exclusive claim → report → authority completion
+### Leaf 4 — Cursor authoritative-replacement contract
 
-The load-bearing path crosses three independently arriving durable facts: accepted spawn/claim, successful result, and authenticated session registration/advance. The implementation must tolerate either result/report order without allowing any one fact to terminalize success or grant authority.
+**Story:** `research-handoff-spawn-cursor-authoritative-replacement-contract`
 
-1. Under `CoreDecisionGate`, submission catches up the claim/target/command projections.
-2. Target resolution validates adapter scope and prepares a fresh or exact continuation claim.
-3. Grant check authorizes adapter-scoped `spawn`; acceptance durably appends the Operation + claim before delivery.
-4. Delivery carries that exact claim. The Pi adapter journals receipt before external create/continue.
-5. Session report ingress authenticates adapter attachment/source cursor and requires exact claim/provenance. For continuation it appends one atomic generation-advance/tombstone decision.
-6. Successful Result remains deferred evidence. It cannot itself complete or redeliver.
-7. `SpawnCompletionDriver` folds the complete prefix, verifies accepted grant/sender/target/claim, delivered/running, result, and registration/advance, then writes completion audit → new descendant grant → completed transition.
-8. Crash-prefix repair uses the same fold before listeners bind.
+**Files:** `contracts/proto/patchbay/adapter.proto`, new `operator-domain/src/reconciliation/external_cursor.ts` consuming generated types, contract tests.
 
-A failure at any step leaves an explicit accepted/failed/unknown record. There is no in-memory latch and no auto-allocation fallback.
+```ts
+export interface AuthoritativeCursorReplacement<Scope, Entry, Cursor, Leaf> {
+  reconcileKnown(scope: Scope, cursor: Cursor): Promise<readonly Entry[]>;
+  stageReplacement(scope: Scope): Promise<{ entries: readonly Entry[]; leaf: Leaf }>;
+  commitReplacement(scope: Scope, replacement: ProjectionReplacement<Entry, Cursor, Leaf>): Promise<void>;
+}
+```
 
-## Implementation units and child checkpoints
+Defines scope-by-verified-external-identity and atomic exact-set replacement; Pi supplies the implementation in its redesign.
 
-### Unit 1 — Operation-aware adapter target and typed claim preparation
+### Leaf 5 — Spawn execution/crash evidence
 
-**Story:** `fleet-spawn-target-resolution`
+**Story:** `research-handoff-spawn-crash-external-effect-evidence-contract`
 
-**Files:** `contracts/proto/patchbay/operations.proto`, `core/src/acceptance/ports.rs`, `core/src/target.rs`, `core/src/acceptance/pipeline.rs`, `server/src/state.rs`.
+**Files:** `contracts/proto/patchbay/adapter_control.proto`, generated event contracts, core validation/fold tests.
 
-- Preserve committed explicit attached-adapter resolution; correct the historical fleet wording.
-- Resolve using the complete Operation so fresh/continuation payload and target are one boundary decision.
-- Reject incompatible target kinds before durable acceptance; never broadcast.
+Defines `SpawnExecutionPhase`, `ExternalEffectDisposition`, exact claim correlation, optional bounded external identity, and closed `NoExternalEffectProof` variants. This is the only input allowed to release or poison a claim after delivery begins.
 
-### Unit 2 — Stable logical-target registration
+### Leaf 6 — Runtime evidence and promotion envelopes
 
-**Story:** `research-handoff-spawn-logical-target-registration`
+**Story:** `research-handoff-spawn-runtime-evidence-promotion-contract`
 
-**Files:** `contracts/proto/patchbay/{common,sessions}.proto`, new `core/src/session/logical_target.rs`, `core/src/session/{registry,ingest}.rs`, `core/src/target.rs`, operator model/display files.
+**Files:** `contracts/proto/patchbay/{common,observations,sessions,authority}.proto`, stored-event registry, storage port contract tests.
 
-- Re-key the live slot by logical target; retain exact runtime-generation reverse index.
-- Fresh spawn registers generation `1` only after exact claim-correlated report.
-- Carry logical/current identity through snapshots and target-before-intent surfaces.
+Defines `RuntimeGenerationDisposition`, `QuarantinedRuntimeEvidence`, `SpawnSuccessorEvidenceStaged`, and `SpawnPromotionCommitted`, including one atomic audited promotion append. No operation may consume these shapes before this leaf lands.
 
-### Unit 3 — Exact monotonic advance and tombstones
+## Operational implementation units
 
-**Story:** `research-handoff-spawn-generation-monotonicity-tombstoning`
+### Unit 1 — Operation-aware target resolution and compound Grant decision
 
-**Files:** `contracts/proto/patchbay/sessions.proto`, `core/src/session/{events,ingest,registry,logical_target}.rs`, `server/src/adapter_service.rs`, `specs/seed/session_generation.qnt`.
+**Story:** `fleet-spawn-target-resolution` (historical id retained; body rewritten)
 
-- Require exact managed `N → N+1`, allow runtime id change, install tombstone/current atomically.
-- Resolve old accepted work explicitly and preserve replay/checkpoint semantics.
+**Files:** `core/src/acceptance/{ports,pipeline}.rs`, `core/src/target.rs`, `core/src/authority/check.rs`, `server/src/{state,service}.rs`.
 
-### Unit 4 — Stale-event fence inventory
+Resolve one explicit attached adapter. Fresh requires the selected spawn Grant. Continuation additionally resolves the exact current prior generation and selects its live session-management Grant under the same decision gate/time sample. Reject before acceptance if either half fails.
 
-**Story:** `research-handoff-spawn-stale-event-fencing`
-
-**Files:** `core/src/acceptance/{ports,observation,elicitation}.rs`, `core/src/adapter/mod.rs`, `server/src/adapter_service.rs`, `pi-adapter/src/pi_session.ts`.
-
-- One runtime-generation classifier protects every runtime-targeted adapter ingress.
-- Tombstoned evidence is durable audit only and cannot mutate command/session/Elicitation/transcript/authority state.
-
-### Unit 5 — Atomic continuation claim
+### Unit 2 — Atomic accepted claim and N-delivery fence
 
 **Story:** `spawn-delivery-atomic-claim-idempotency-generation`
 
-**Files:** accepted/delivery generated contracts, `core/src/session/logical_target.rs`, `core/src/acceptance/pipeline.rs`, `server/src/{state,service,adapter_service}.rs`.
+**Files:** acceptance pipeline/storage transaction, claim fold, delivery index/server tests.
 
-- Accepted Operation is the durable exclusive claim.
-- Competing distinct continuations cannot both be accepted/delivered for the same expected generation.
+Atomically deduplicate and append the accepted envelope containing claim + compound provenance. Competing distinct continuation claims cannot both append. The same event activates the exact-N pending-replacement fence and supersedes never-offered prior work before a delivery reader can offer it.
 
-### Unit 6 — Retry and external duplicate honesty
+### Unit 3 — Claimed-successor staging and external-runtime reservation
+
+**Story:** `research-handoff-spawn-logical-target-registration` (rewritten; old direct-live registration superseded)
+
+**Files:** `core/src/session/{ingest,logical_target,spawn_claim}.rs`, `server/src/adapter_service.rs`.
+
+Classify a first fresh/N+1 report as `ClaimedSuccessor`, reserve its external-runtime reverse key, and append staged evidence. It never calls ordinary live registration.
+
+### Unit 4 — Promotion fold, exact monotonicity, and tombstones
+
+**Story:** `research-handoff-spawn-generation-monotonicity-tombstoning`
+
+**Files:** session/claim/command/authority folds, checkpoint/replay, `specs/seed/session_generation.qnt`.
+
+Validate and fold `∅→1` / exact `N→N+1`; atomically tombstone N, install N+1 current, consume the claim, and preserve reverse-index/tombstone history. Independent attempted evidence and mutations cover strict pre-state and exclusivity.
+
+### Unit 5 — Shared ingress fence and quarantine
+
+**Story:** `research-handoff-spawn-stale-event-fencing`
+
+**Files:** every runtime-targeted adapter ingress, quarantine append, transcript/Elicitation/ack paths, enumerate-first tests.
+
+Use the shared classifier everywhere. Only exact successor reports stage; tombstoned/unknown/mismatched evidence is rejected or quarantined as an outer event and cannot mutate normal projections.
+
+### Unit 6 — Duplicate, ambiguous-outcome, and claim reconciliation
 
 **Story:** `research-handoff-spawn-idempotency-duplicate-handling`
 
-**Files:** `core/src/acceptance/{pipeline,index}.rs`, `core/src/storage/port.rs`, `server/src/adapter_service.rs`, new `pi-adapter/src/spawn_journal.ts`.
+**Files:** command/claim indexes, server redelivery, adapter execution-evidence port, reconciliation vectors.
 
-- Preserve exact boundary dedup and return existing claim/state.
-- Journal adapter execution where possible; otherwise surface `execution_outcome_unknown` and declared retry strength.
+Preserve exact boundary retry while poisoning ambiguous claims. Reconcile one known external runtime to its original claim or abandon; never auto-launch a replacement for a poisoned generation.
 
-### Unit 7 — Pi restart-as-continuation orchestration and operator actions
+### Unit 7 — Atomic promotion completion driver
 
-**Story:** `research-handoff-spawn-restart-continuation-orchestration`
+**Story:** `research-handoff-spawn-completion-promotion-driver`
 
-**Files:** new `pi-adapter/src/spawn_supervisor.ts`, `pi-adapter/src/{delivery,pi_session,session_registry,core_client,main}.ts`, `web-cockpit/src/{main,ui/session-detail}.ts`, new `cli/src/commands/spawn.ts`, `cli/src/main.ts`, and rolling foundation docs.
+**Files:** `server/src/spawn_completion.rs`, `core/src/authority/spawn_tail.rs`, storage atomic-promotion port/backend, driver and crash-prefix tests.
 
-- New spawn Operation + typed continuation; no restart kind.
-- Explicit Pi session selection, quiesce/terminate/respawn, persisted-entry reconcile, and honest continuation status.
-- Reuse existing session-list/detail actions and delivery presentation; no new screen.
+Migrate the current grant-before-completed owner. New managed spawns emit one audited promotion decision only after all evidence and exact prior replacement authority are valid. One-way replay migration handles legacy evidence-only, audit-only, audit+grant, and completed prefixes without treating them as the new managed shape or duplicating grants/terminals.
 
-### Unit 8 — Reconnect/cursor convergence
-
-**Story:** `research-handoff-spawn-reconnect-cursor-reconcile`
-
-**Files:** new `pi-adapter/src/cursor_store.ts`, `pi-adapter/src/{spawn_supervisor,pi_session}.ts`, `core/src/session/{registry,replay}.rs`, `server/src/{snapshot,adapter_service}.rs`, `web-cockpit/src/domain/{reconcile,model}.ts`.
-
-- Keep Pi entry cursor and core LSN cursor distinct.
-- Unknown Pi cursor forces full resync; remembered stream never implies live.
-
-### Unit 9 — Adapter-local deployment authority
+### Unit 8 — Adapter-local deployment authority
 
 **Story:** `deployment-authority-workspace-scoped-revocable-keys`
 
-**Files:** generated spawn target spec, new `pi-adapter/src/deployment_authority.ts`, `pi-adapter/src/{spawn_supervisor,main}.ts`, `docs/SECURITY.md`.
+Retains the adapter-local credential-reference boundary, but consumes the new continuation/claim evidence. It cannot substitute for either core Grant and must be rechecked per continuation.
 
-- Opaque reference only; protected adapter-local credential resolution, expiry/revocation/scope checks, and canonical redaction.
-- No core Workspace/Project authority or second Grant mechanism.
+### Unit 9 — Restart-as-continuation orchestration
 
-## Implementation order and dependency graph
+**Story:** `research-handoff-spawn-restart-continuation-orchestration`
+
+Consumes the completed shared contracts. It owns phase transitions and operator actions, not Pi subprocess/file details. The Pi feature supplies the concrete supervisor after its redesign.
+
+### Unit 10 — Reconnect and cursor convergence
+
+**Story:** `research-handoff-spawn-reconnect-cursor-reconcile`
+
+Consumes the atomic replacement cursor contract and promotion event. Core replay, adapter external-state replacement, and surfaces converge without treating a remembered stream or stale upsert set as authority.
+
+## Failure-phase connectivity and claim mapping
+
+| Durable phase/evidence | Prior N | Candidate N+1 | Claim/fence outcome |
+|---|---|---|---|
+| authority/validation rejection before acceptance | unchanged | absent | no claim/fence |
+| claim accepted, before any offer | current state retained but N delivery-fenced | absent | active; core-proven never-offered terminal may release atomically |
+| quiesce begun, prior still running | `stale` or last confirmed connectivity; activity `unknown`; no new delivery | absent | active; release only after no-effect proof and renewed N liveness |
+| prior terminated cleanly before launch | `offline`, activity `unknown`, still current/non-tombstoned | absent | active; may release only with durable proof launch never occurred |
+| launch attempted, identity not durably known | N offline/failed/stale by evidence | unpublishable/unknown | poisoned; fence retained |
+| external identity known, handshake/reconcile incomplete | N offline/failed/stale | staged, never live | active or poisoned by failure evidence |
+| successor crashes before promotion | N remains current but unavailable as evidenced | staged failed evidence only | poisoned unless exact no-effect proof is later established |
+| handshake + authoritative replacement reconcile + successful Result/report | N remains current and fenced until commit | staged and ready | active; completion driver may promote |
+| atomic promotion committed | tombstoned at promotion LSN | current; `live` only if staged current evidence supports it | promoted; old fence consumed; descendant Grant durable |
+| unexplained stream loss at any delivered/launch phase | `stale`/activity `unknown` as applicable | never inferred live | `execution_outcome_unknown`; poisoned |
+| operator target abandonment | logical target retired; no revival | any candidate becomes audit-only | target_abandoned; claim permanently consumed |
+
+No row allocates a generation on crash, detach, reconnect, timeout, or clean exit. No protocol `restarting` state is added.
+
+## Validated bottom-up order
 
 ```text
-fleet-spawn-target-resolution
-  └─ research-handoff-spawn-logical-target-registration
-       └─ research-handoff-spawn-generation-monotonicity-tombstoning
-            ├─ research-handoff-spawn-stale-event-fencing
-            └─ spawn-delivery-atomic-claim-idempotency-generation
-                 └─ research-handoff-spawn-idempotency-duplicate-handling
+logical-target-identity-contract
+  ├─ cursor-authoritative-replacement-contract
+  └─ continuation-payload-authority-contract
+       └─ claim-registry-contract
+            └─ crash-external-effect-evidence-contract
+                 └─ runtime-evidence-promotion-contract
 
-research-handoff-spawn-stale-event-fencing
-  + research-handoff-spawn-idempotency-duplicate-handling
-    └─ research-handoff-spawn-restart-continuation-orchestration
-         ├─ research-handoff-spawn-reconnect-cursor-reconcile
-         └─ deployment-authority-workspace-scoped-revocable-keys
+(all contract leaves complete)
+  └─ fleet-spawn-target-resolution
+       ├─ deployment-authority-workspace-scoped-revocable-keys
+       └─ spawn-delivery-atomic-claim-idempotency-generation
+            └─ logical-target-registration (staging only)
+                 ├─ idempotency-duplicate-handling
+                 └─ generation-monotonicity-tombstoning
+                      └─ stale-event-fencing
+                           + idempotency-duplicate-handling
+                             └─ completion-promotion-driver
+                                  + deployment-authority...
+                                    └─ restart-continuation-orchestration
+                                         └─ reconnect-cursor-reconcile
 ```
 
-One feature owner remains the baseline because contracts, core projections, server gate, Pi adapter, and surfaces share one invariant chain. Stories are durable design/verification checkpoints, not one-worker-per-file assignments.
+Every operation consumes an earlier contract leaf. The logical-target projection and claim registry are defined before target resolution; continuation does not depend on downstream Pi mechanisms; the cursor leaf is independent and adapter-neutral; the completion driver has explicit file ownership. The Pi feature remains downstream of the spawn feature and will consume these contracts rather than define them backward.
 
 ## Simplification and cleanup
 
-- Replace the current same-runtime-id `SessionGenerationBumped` assumption with one logical-target transition rather than maintaining parallel “legacy” and “v1” lifecycle APIs. Preserve substantial durable data through an explicit one-way migration/replay normalization where required; do not run dual live semantics.
-- Remove Pi adapter-owned `current + 1` generation allocation from `PiSession.newSession()`; it must consume the core claim.
-- Consolidate runtime-generation classification in one port instead of repeating generation comparisons across SessionReport, Observation, acknowledgement, transcript, and Elicitation ingress.
-- Extend the existing `SpawnCompletionDriver`; do not add a second completion/reactor or let adapter Result terminalize directly.
-- Reuse canonical `SessionConnectivityState`, `CommandState`, failure vocabulary, and existing web delivery components. Do not add `unavailable`, `restarting`, or `continued` protocol states.
-- Correct stale fleet terminology in the staged target-resolution story/tests/docs while preserving the reserved fleet seam.
+- Replace direct managed `SessionRegistered`/`SessionGenerationBumped` publication with staged successor + one promotion event. Keep only explicit legacy replay normalization where real stored data requires it; do not run dual live semantics.
+- Keep one claim projection folded from durable events; no mutable side table or adapter-local generation allocator becomes core authority.
+- Keep one runtime-generation classifier and one quarantine envelope rather than ad hoc SessionReport/Observation exceptions.
+- Extend the existing completion owner; do not add a second reactor or allow generic Result ingestion to terminalize spawn.
+- Remove any claim-release rule derived solely from terminal `CommandState`.
+- Reject new N work during replacement rather than introduce a hidden hold queue or a new protocol connectivity state.
+- Keep Pi/project/cwd/native-cursor details behind adapter-neutral generated envelopes and adapter-owned profiles.
 
 ## Testing and assurance
 
-Smallest useful surface, organized by risk rather than file count:
+- **Generated contracts:** Rust/TypeScript generation/drift checks for logical ids, exact runtime refs, continuation provenance, claim/evidence dispositions, quarantine, staged evidence, cursor replacement, and promotion.
+- **Compound authority:** exact prior Grant absent/revoked/expired/wrong subject/wrong endpoint/wrong generation; adapter spawn Grant alone must fail. Mutation removing either half fails.
+- **Claim concurrency/poison:** two distinct N+1 attempts; delivered cancellation/expiry; effect-before-ack; no-effect proof; poison reconciliation; target abandonment. No new claim/delivery while active or poisoned.
+- **Promotion/crash:** result-first/report-first; evidence-only, audit-only, audit+grant legacy prefixes; new atomic source+audit crash; no public N+1 or completed state without descendant authority.
+- **Claimed successor:** fresh generation 1 and exact N+1 first reports stage successfully; wrong Operation/expected prior/runtime/generation fail without an ad hoc bypass.
+- **Quarantine/replay:** stale Observation/result/transcript/ack/Elicitation/report persists only in the outer envelope; replay mutation that dispatches its nested candidate fails.
+- **External identity:** `duplicate-native-reference` reserves one exact external runtime owner across hot fold, restart replay, and tombstones.
+- **Pending replacement:** a barrier race between continuation acceptance and N-bound instruct proves either instruct accepted before the fence and explicitly resolved, or rejected after it; never delivered after the fence.
+- **Cursor replacement:** unknown cursor full fetch omitting a stale projected entry removes it in the atomic replacement; upsert-only and cursor-before-projection mutations fail.
+- **Formal/release assurance:** extend genuine attempted-evidence properties for compound authority, exclusive/poisoned claim, atomic promotion, generation monotonicity, and stale inertness. Green implementation tests are not called model-checked or release-verified without promotion.
 
-- **Interface/contracts:** generated Rust/TypeScript compile and drift checks for spawn envelope, claim, logical id, runtime reference, continuation status, snapshot, and Delivery carriage.
-- **Acceptance/authority:** real Submit → adapter delivery → report/result in either order → audit → descendant grant → completed, plus crash repair at evidence-only, report-only, audit-only, grant-only, and complete prefixes. Protects authority-before-public-completion and the restart descendant-grant blocker.
-- **Concurrency regression:** barrier race between two distinct continuation Operations at expected generation N; only one accepted claim/delivery. Mutation removes claim check and must fail.
-- **Generation property/model:** independent attempted claim/report evidence for initial-one, exact N+1, monotonic current generation, atomic tombstone/current exclusivity, and lower/equal inertness. Promote under the project's deep verification lane with mutation-survivable oracles.
-- **Ingress inventory:** enumerate every runtime-targeted adapter ingress and submit generation N after N+1. Protects the known stale Observation gap rather than testing only SessionReport.
-- **Adapter E2E:** fresh Pi spawn, native resume, new-context fallback, duplicate delivery, effect-before-response-loss, journal unavailable, explicit crash, and old callback after replacement.
-- **Reconnect E2E:** detach without retirement; stream loss during generation advance; core restart/checkpoint; Pi known-cursor suffix and unknown-cursor full resync; web/CLI converge to the same target/generation.
-- **Surface:** target-before-intent, canonical continuation status, failed/stale distinction, idempotency-strength retry warning, and unsupported adapter action.
-- **Vectors:** implement the research candidates `spawn-continuation`, `detach-does-not-retire`, `crash-before-ack`, `restart-native-resume`, `restart-shape-only`, `reconnect-after-stream-loss`, `duplicate-continuation`, `stale-generation-event`, `equal/lower-generation-report`, `duplicate-native-reference`, and `project-cwd-boundary` through the single vector registry.
-- **Test removal:** retire same-runtime-id-only bump fixtures and any test that treats generation allocation inside Pi adapter state as correct. Keep legacy durable-event decode tests only where real stored data requires migration coverage.
+## Adversarial pre-mortem
 
-## Pre-mortem and risks
+### Forced adversary 1 — authority laundering
 
-### Riskiest assumption
+**Attack:** obtain adapter-wide spawn authority, target a protected/revoked generation, then rely on the new descendant Grant to regain control.
 
-That three separately arriving facts—accepted claim, session report, successful result—can be composed without a visibility window or a second authority. The existing completion driver proves the shape is feasible, but logical-target registration and generation effects add more cross-projection state.
+**Defense:** exact-prior session-management Grant at acceptance and still-live check at promotion; both ids and target preserved in accepted/descendant provenance. A descendant Grant cannot cite only the broad spawn Grant for continuation.
 
-**Mitigation:** keep one decision gate, one durable prefix, one claim projection, and one completion owner. Append generation/tombstone plus old-generation command/Elicitation effects as one audited decision. Rebuild/repair from the same fold before listeners bind.
+### Forced adversary 2 — crash between “session exists” and “grant exists”
 
-### Production failure modes attacked
+**Attack:** crash after SessionReport application but before descendant issuance, then replay N+1 as current without authority.
 
-1. **Old generation mutates successor.** A delayed result/ack/transcript callback reaches a generic ingress that checks command target but not tombstone. Mitigation: shared enumerate-first `RuntimeGenerationFence`; dedicated stale-event story.
-2. **Two restarts create two runtimes.** Different keys bypass boundary dedup and both compute N+1. Mitigation: accepted Operation as exclusive claim under reconciled `CoreDecisionGate`; adapter consumes persisted claimed generation; competing-claim mutation test.
-3. **Authority is stranded or widened.** Gen N+1 becomes live before a descendant grant, or silently inherits gen N authority. Mitigation: completion audit → new generation-scoped descendant grant → completed; no grant inheritance, old/new independently revocable.
-4. **Crash looks like restart.** Stream loss or process exit silently allocates N+1. Mitigation: explicit crash = failed, unexplained loss = stale, clean unavailable = offline; only a new accepted continuation may claim a generation.
-5. **Duplicate external process after response loss.** Core boundary dedup cannot prove adapter execution. Mitigation: durable adapter journal/external identity reconciliation where possible; otherwise `execution_outcome_unknown` and no automatic relaunch.
-6. **Cursor says live when only history is known.** Pi entry suffix or remembered stream is treated as process liveness. Mitigation: separate cursor authorities; full resync on unknown Pi cursor; live requires current authenticated evidence.
-7. **Project/cwd becomes routing authority.** Convenience target metadata or deployment credential widens scope. Mitigation: adapter-owned target spec/reference, canonical adapter Grant first, no core Project/Workspace.
-8. **Green tests miss async lifecycle leaks.** Late callback errors occur after assertions. Mitigation: E2E waits for observation/journal/process cleanup and fails on unhandled async errors, following the pitfall harvest.
+**Defense:** report stages only; one promotion event is the first source that any projection may interpret as current/authority/completed. Atomic source+audit append and one replay unit remove the prefix.
 
-### Fallback if the riskiest unit fails
+### Forced adversary 3 — ambiguous failure creates two runtimes
 
-Fail closed without replacing the current generation. Keep the accepted spawn visible as failed or `execution_outcome_unknown`, keep the logical target failed/stale, and require explicit operator reconciliation or an intentional fresh spawn with a new logical target. Do not fall back to automatic generation allocation, in-place reload, ambiguous `--continue`, or optimistic live state.
+**Attack:** launch N+1, lose response, terminalize failed/cancelled/expired, release claim, and accept another N+1.
 
-### Least-certain boundary
+**Defense:** terminal state cannot release. Launch/delivery ambiguity poisons the exact generation until reconciliation or target abandonment.
 
-Pi effect-before-ack recovery: after an external process/session is created but before its identity is durably journaled/reported, neither the core log nor Pi session history necessarily proves whether replay is safe. The design therefore does **not** promise exactly-once spawn. `idempotency_strength` stays honest and the ambiguous outcome is operator-visible unless implementation evidence proves end-to-end dedup.
+### Forced adversary 4 — first successor report is rejected or bypasses the fence
 
-### Prior review blocker disposition
+**Attack:** exploit `Unknown` fail-closed behavior to make all fresh reports impossible, pressuring implementation into a hidden SessionReport exception.
 
-The persisted review summary identifies BLOCKERs 3–5 by number; the operator brief additionally names authority-before-delivery and no silent generation allocation as load-bearing review risks. This design does not invent labels for the two review findings whose full text is not retained in the item.
+**Defense:** `ClaimedSuccessor` is part of the shared classifier and validates exact durable Operation provenance; it routes only to staging. Enumerate-first tests prohibit another path.
 
-- **BLOCKER 3 (stale Observation ingress):** dedicated shared-fence checkpoint across all runtime ingress.
-- **BLOCKER 4 (no exclusive generation claim):** durable accepted claim + decision-gate race test; boundary dedup alone is explicitly insufficient.
-- **BLOCKER 5 (restart strands descendant authority):** existing completion fold extended so every continuation issues a new generation-scoped descendant grant before completion.
-- **Authority-before-delivery/completion:** grant check and claim preparation precede accepted append/delivery; completion audit and descendant grant precede public terminal success.
-- **No silent generation allocation:** only accepted claims prepare generation `1`/`N+1`; adapter reports must echo the claim; crash, timeout, reconnect, and stream loss never advance generation.
+### Forced adversary 5 — stale raw event replays as current
+
+**Attack:** append raw Observation, later append stale audit, then let a transcript/completion projection consume the raw record before seeing the audit.
+
+**Defense:** only the outer quarantine kind is durable. The nested candidate is diagnostic evidence and cannot be dispatched by normal replay.
+
+### Additional material adversaries
+
+- **Duplicate native runtime:** reverse index rejects a second logical owner before staging/promotion.
+- **Work enters dying N:** the accepted claim activates a delivery fence in the same durable decision; new N work rejects, and pre-existing work is explicitly resolved.
+- **Phase ambiguity:** the table above maps every orchestration phase to N/N+1 connectivity and claim outcome; no “restart failed” catch-all invents liveness.
+- **Dishonest adapter:** exact authentication/correlation prevents confusion but not lies; this limitation is explicit and Pi must prove its journal/supervisor behavior through conformance.
+- **Cursor truncation:** unknown cursor requires exact-set replacement, not upsert, before installing the new cursor.
+
+### Riskiest assumption and fallback
+
+The riskiest unit is the cross-projection promotion event and storage append that stamps an audit link while remaining one semantic replay decision. If the current storage abstraction cannot implement that atomically, implementation must stop at a spike and extend the storage port; it must **not** fall back to publishing N+1 first or to independent event prefixes. The safe fallback is to leave the claim active/poisoned, N current but stale/offline, and the candidate staged for operator reconciliation.
+
+## Review traceability
+
+| Review finding | Resolution | Owning child checkpoint(s) |
+|---|---|---|
+| BLOCKER 1 compound continuation authority | two live Grants, exact prior, accepted + descendant provenance, promotion-time liveness | continuation contract; target resolution; completion driver |
+| BLOCKER 2 premature promotion | staged report + one atomic authority/session/claim/command promotion | promotion contract; generation fold; completion driver |
+| BLOCKER 3 ambiguous failure releases claim | independent claim disposition; closed no-effect proof; poison/reconcile/abandon | claim contract; crash evidence; duplicate handling |
+| BLOCKER 4 no legitimate successor disposition | shared `ClaimedSuccessor` exact Operation/claim classifier | promotion contract; staging; stale fence |
+| BLOCKER 5 raw stale Observation | outer quarantine envelope + atomic audit; no raw authoritative record | promotion contract; stale fence |
+| BLOCKER 7 hidden cycles | six early contract leaves + bottom-up graph above | all contract leaves/dependency metadata |
+| BLOCKER 8 no completion owner | explicit child owns both named files and crash-prefix migration | completion-promotion-driver |
+| MATERIAL duplicate native reference | core reverse index + vector | identity contract; staging |
+| MATERIAL N work during replacement | durable pending-replacement acceptance/delivery fence | claim contract; atomic claim |
+| MATERIAL phase connectivity | explicit table and typed crash phase/effect evidence | crash evidence; restart orchestration |
+| MATERIAL “authenticated exact claim” overclaim | explicit adapter-honesty trust assumption | continuation/crash contracts; conformance |
+| MATERIAL prior-review traceability | prior gate disclaimed; current five-reviewer gate is traceable re-run | this section + cited review |
 
 ## UI fallback / Mockups
 
-No net-new screen or navigation flow is introduced. Fresh spawn is an entry action in the existing session-list empty/action area; restart is a session-detail header action; both reuse canonical Operation delivery/failure components and the existing responsive shell. The parent epic intentionally has no mockup plan, and this is minor composition rather than a new surface, so feature-level mockups are skipped.
+No net-new screen or journey. Fresh spawn remains an existing entry action and continuation/restart remains a session-detail action. The existing canonical Operation lifecycle, failure, retry-risk, stale/offline, Grant, and audit presentation handles the new semantics. `replacement_pending` is a bounded reason over canonical `superseded`, not a new presentation state.
 
 ## Extension pressure classification
 
-- **Committed v1.0.0:** one adapter-scoped `spawn` kind; stable logical target; positive initial generation `1`; typed fresh/continuation intent; exact N→N+1 managed continuation; generation tombstones/stale-event fence; explicit crash→failed mapping; core-LSN/Pi-entry cursor reconciliation; authority-before-completion; adapter-owned target spec; honest idempotency strength.
-- **Reserved seams:** fleet-default selection, cross-adapter/deployment logical-target migration, core `ProjectRef`, per-spawn-variant OperationKinds/authority, automatic continuation fallback policy, stronger native-state proof, heartbeat freshness policy, end-to-end spawn idempotency for adapters that cannot prove it, HA/multi-core generation claims, and multi-human descendant authority.
-- **Explicitly rejected for this v1 arc:** generation zero as a real incarnation; broadcast spawn; cwd/project/label as core identity or grant authority; a separate `restart` OperationKind; restart hidden in `session-management`; arbitrary process-state restoration claims; crash/reconnect allocating a generation; treating `unavailable` as a new session state; inheriting prior-generation descendant authority; or rendering remembered streams/cursors as live.
+- **Committed v1.0.0:** stable logical target; generation 1; exact typed continuation; compound adapter-spawn + exact-prior session-management authority; durable two-Grant provenance; exclusive poison-retaining claim; pending-replacement fence; exact external-runtime reverse index; `ClaimedSuccessor`; quarantined stale evidence; staged successor; atomic authority-bearing promotion; adapter-neutral authoritative cursor replacement; explicit crash/effect phases; authority-before-completion.
+- **Reserved seams:** cross-adapter/deployment target migration, per-spawn-variant OperationKinds/authority, fleet selection, stronger hardware/remote attestation of adapter truth, automatic reconciliation policy, HA/multi-core claims, adapter-specific native-continuity uniqueness above the exact core tuple, and core `ProjectRef`.
+- **Explicitly rejected for this v1 arc:** continuation authorized by adapter spawn Grant alone; inheritance/revival of prior authority; direct SessionReport promotion; release-on-terminal; reuse of poisoned generation; raw stale Observation plus later audit; hidden N-work queue; upsert-only unknown-cursor recovery; adapter-local generation allocation; project/cwd/native path as core identity.
 
-The parked multi-human, mesh, desktop, and skin ideas do not become requirements here. Logical target and authority-domain qualification preserve their future seams without implementing them.
+The parked multi-human, mesh, desktop, and skin ideas remain pressure-test inputs only. Authority-domain qualification, explicit Grant provenance, generated contracts, and surface-neutral state presentation preserve those seams without implementing them.
 
 ## Child stories
 
-- `fleet-spawn-target-resolution` — `depends_on: []`
-- `research-handoff-spawn-logical-target-registration` — `depends_on: [fleet-spawn-target-resolution]`
-- `research-handoff-spawn-generation-monotonicity-tombstoning` — `depends_on: [research-handoff-spawn-logical-target-registration]`
-- `research-handoff-spawn-stale-event-fencing` — `depends_on: [research-handoff-spawn-generation-monotonicity-tombstoning]`
-- `spawn-delivery-atomic-claim-idempotency-generation` — `depends_on: [fleet-spawn-target-resolution, research-handoff-spawn-generation-monotonicity-tombstoning]`
-- `research-handoff-spawn-idempotency-duplicate-handling` — `depends_on: [spawn-delivery-atomic-claim-idempotency-generation]`
-- `research-handoff-spawn-restart-continuation-orchestration` — `depends_on: [research-handoff-spawn-stale-event-fencing, research-handoff-spawn-idempotency-duplicate-handling]`
-- `research-handoff-spawn-reconnect-cursor-reconcile` — `depends_on: [research-handoff-spawn-restart-continuation-orchestration]`
-- `deployment-authority-workspace-scoped-revocable-keys` — `depends_on: [research-handoff-spawn-restart-continuation-orchestration]`
+The authoritative dependency metadata lives in each child file; the list is repeated here for reviewability after the re-slice.
+
+**Contract leaves**
+- `research-handoff-spawn-logical-target-identity-contract`
+- `research-handoff-spawn-continuation-payload-authority-contract`
+- `research-handoff-spawn-claim-registry-contract`
+- `research-handoff-spawn-cursor-authoritative-replacement-contract`
+- `research-handoff-spawn-crash-external-effect-evidence-contract`
+- `research-handoff-spawn-runtime-evidence-promotion-contract`
+
+**Operations**
+- `fleet-spawn-target-resolution`
+- `spawn-delivery-atomic-claim-idempotency-generation`
+- `research-handoff-spawn-logical-target-registration`
+- `research-handoff-spawn-generation-monotonicity-tombstoning`
+- `research-handoff-spawn-stale-event-fencing`
+- `research-handoff-spawn-idempotency-duplicate-handling`
+- `research-handoff-spawn-completion-promotion-driver`
+- `deployment-authority-workspace-scoped-revocable-keys`
+- `research-handoff-spawn-restart-continuation-orchestration`
+- `research-handoff-spawn-reconnect-cursor-reconcile`

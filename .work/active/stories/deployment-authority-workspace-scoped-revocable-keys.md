@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [security, adapter, architecture]
 parent: research-handoff-spawn
-depends_on: [research-handoff-spawn-restart-continuation-orchestration]
+depends_on: [fleet-spawn-target-resolution]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -14,30 +14,25 @@ updated: 2026-08-12
 
 # Adapter-owned deployment-authority references for spawn
 
-## Ownership decision
+## Redesign disposition
 
-Keep this checkpoint under the spawn feature, but narrow it to the adapter boundary. The v1 project/cwd decision rules out a core `Workspace` or universal project-key authority layer. Canonical Patchbay grants remain the only core Operation authority. This story adds a fail-closed **adapter-local deployment-authority reference** for target specs whose external workspace/runtime needs an expiring or revocable launch credential.
+Rewritten to consume, not compete with, compound core authority. This checkpoint remains adapter-local and may not satisfy either the adapter-scoped spawn Grant or the exact-prior session-management Grant.
 
-Mission Control's useful lesson is strict workspace denial; the lesson does not justify importing its workspace ontology or role derivation. The core carries a bounded opaque reference for audit and delivery but never credential bytes and never interprets cwd/project labels as authority.
+## Checkpoint
+
+Provide an optional bounded `deployment_authority_ref` for adapter target specs whose external runtime requires a local expiring/revocable launch credential. The core carries the opaque reference for delivery/audit shape only; credential bytes and handles never enter core logs, Observations, diagnostics, snapshots, or surfaces.
+
+A continuation re-resolves and rechecks the reference against its target spec/logical target immediately before external launch. Prior-process credential presence is not continuation authority.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/operations.proto` — optional bounded `deployment_authority_ref` on `SpawnTargetSpec`; it is an identifier, not a bearer secret or Grant.
-- `pi-adapter/src/deployment_authority.ts` — adapter-owned resolver/check interface and fail-closed configured implementation.
-- `pi-adapter/src/spawn_supervisor.ts` — resolve the reference immediately before external create/continue and bind it to the adapter-local target-spec identity.
-- `pi-adapter/src/main.ts` — load references from protected local configuration; never from browser-supplied raw secret material.
-- `docs/SECURITY.md` — add the reference/credential bytes to the canonical boundary and redaction statement without introducing a second grant system.
-- `pi-adapter/tests/spawn.test.ts` and `server/tests/trust_boundary.rs` — expiration/revocation/scope mismatch and redaction evidence.
+- Generated `SpawnTargetSpec` contract from the continuation payload leaf.
+- New `pi-adapter/src/deployment_authority.ts` — downstream adapter implementation.
+- Downstream supervisor/configuration integration and redaction tests.
+- `docs/SECURITY.md` canonical redaction boundary update during implementation.
 
 ```ts
-export interface DeploymentAuthorityRequest {
-  readonly reference: string;
-  readonly targetSpecShape: string;
-  readonly projectRef?: string;
-  readonly logicalTargetId: string;
-}
-
 export interface DeploymentAuthorityResolver {
   authorize(request: DeploymentAuthorityRequest, now: Date): Promise<{
     readonly credentialHandle: string;
@@ -45,17 +40,17 @@ export interface DeploymentAuthorityResolver {
 }
 ```
 
-The returned handle is consumed only inside the adapter/supervisor. Neither the handle's secret value nor resolved credential material enters an Operation payload, Observation, diagnostic, audit record, or snapshot. A continuation re-evaluates expiry/revocation and scope; credential presence from the prior generation is not authority continuity.
+Project/cwd remains adapter-owned. The resolver binds a reference to configured adapter-local target-spec identity; raw paths/labels do not widen scope.
 
 ## Acceptance evidence
 
-- [ ] Missing, expired, revoked, unknown, project-mismatched, or shape-mismatched references fail at adapter delivery with a canonical refusal and no process creation.
-- [ ] A valid reference cannot authorize another adapter-local project/target-spec scope.
-- [ ] Restart-as-continuation re-checks the reference instead of inheriting the prior process credential.
-- [ ] Core grant authorization still runs before acceptance; adapter deployment authority cannot widen a Grant.
-- [ ] Raw credentials/handles are absent from durable log, audit/diagnostics, snapshots, and CLI/web output under byte/encoded-secret scans.
-- [ ] Omitting `deployment_authority_ref` remains valid for target specs that need no separate external credential; this story does not manufacture a workspace requirement.
+- [ ] Missing/expired/revoked/unknown/scope-mismatched references fail before external launch.
+- [ ] Valid local reference cannot authorize another adapter/project/shape/logical target.
+- [ ] Continuation rechecks instead of inheriting the prior credential.
+- [ ] Both core Grants are already proven by accepted compound provenance; local authority cannot replace/widen either.
+- [ ] Raw credential/handle material is absent from log/audit/diagnostics/snapshot/CLI/web scans.
+- [ ] Target specs needing no external credential remain valid without manufacturing a Workspace entity.
 
 ## Ordering constraint
 
-Runs after restart orchestration has an explicit logical target and target-spec continuation path. It must not shape core target identity.
+Consumes the complete generated target/continuation contract and operation-aware core authority resolution. Restart orchestration consumes it after completion semantics are ready.

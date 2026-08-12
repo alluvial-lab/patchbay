@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [adapter, protocol, security, verification]
 parent: research-handoff-spawn
-depends_on: [fleet-spawn-target-resolution, research-handoff-spawn-generation-monotonicity-tombstoning]
+depends_on: [fleet-spawn-target-resolution]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -12,58 +12,45 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Atomic generation claim before spawn delivery
+# Atomic spawn claim and prior-generation delivery fence
+
+## Redesign disposition
+
+Rewritten after the adversarial review. The old rule releasing any non-success terminal claim is superseded. Claim disposition is independent from `CommandState`, and continuation acceptance fences new work to N.
 
 ## Checkpoint
 
-Make the durable accepted spawn record itself the exclusive claim on a logical target's next generation. Boundary idempotency alone prevents only an exact retry from creating a second command; it does not prevent two distinct continuation Operations from concurrently claiming the same current generation. The shared decision gate must reconcile the durable claim projection, select at most one claim, append acceptance, and expose only the winning claim to delivery.
+Under one `CoreDecisionGate` decision, catch up the durable claim and prior-work projections, validate claimability, derive the complete prior-work effects, and atomically append the deduplicated accepted spawn envelope containing the exact claim, compound continuation provenance, pending-replacement fence, and those effects. For continuation, the same accepted event activates the exact-N fence and records supersession/quiesce dispositions before delivery can observe the claim.
 
-This strengthens Mission Control's compare-and-swap task claim with Patchbay's caller idempotency and target-generation fence. It directly addresses the spawn review's BLOCKER 4 and the outpost_pi field failure where a non-exclusive marker let multiple runtimes consume one request.
+A distinct competing command cannot claim the same generation. Exact retry returns the original accepted record/claim. Active or poisoned claims exclude every new claimant.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/operations.proto` — persist `SpawnGenerationClaim` inside `AcceptedOperation` and carry it on adapter `Delivery`.
-- `core/src/session/logical_target.rs` — fold accepted spawn claims, their terminal command state, and committed generation advances into `SpawnClaimRegistry`.
-- `core/src/acceptance/pipeline.rs` — accept only a claim prepared against the reconciled current generation; exact retry returns the existing persisted claim.
-- `server/src/state.rs` and `server/src/service.rs` — hold the composition-root `CoreDecisionGate` across projection catch-up, claim check, and accepted append.
-- `server/src/adapter_service.rs` — deliver the persisted claim rather than reconstructing or allocating a generation.
-- `core/tests/acceptance_pipeline.rs`, `server/tests/grpc_smoke.rs`, and `server/tests/spawn_completion.rs` — barrier-controlled competing-claim and crash-prefix tests.
+- `core/src/acceptance/{pipeline,index}.rs` — claimability and exact retry result.
+- `core/src/session/spawn_claim.rs` — fold accepted claim/fence.
+- `core/src/storage/port.rs` plus SQLite implementation — atomic dedup + claim exclusivity + audited acceptance.
+- `server/src/{state,service,adapter_service}.rs` — decision-gate catch-up and delivery consumption of persisted claim.
+- Acceptance/delivery barrier-race and replay tests.
 
-```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpawnClaimRecord {
-    pub logical_target_id: LogicalTargetId,
-    pub expected: Option<RuntimeGenerationRef>,
-    pub claimed_generation: Generation,
-    pub spawn_operation_id: CommandId,
-    pub accepted_lsn: u64,
-    pub disposition: SpawnClaimDisposition,
-}
+The claim's exclusive key is authority domain + logical target + expected prior generation. A fresh claim has no prior and generation `1`; continuation is exact `N→N+1`. No cached `current + 1` calculation is allowed after acceptance.
 
-pub trait SpawnClaimLookup: Send + Sync {
-    fn claimable(
-        &self,
-        domain: &AuthorityDomainId,
-        candidate: &SpawnGenerationClaim,
-    ) -> Result<(), SpawnClaimConflict>;
-}
-```
-
-The claim is not a second persistence source: it is a projection of the accepted Operation envelope in the durable log. For a continuation, only one nonterminal accepted Operation may claim `(authority_domain_id, logical_target_id, expected_generation)`. A later intentional attempt is allowed only after the prior claimant reached a durable non-success terminal without advancing the generation; it uses a new command id/key and creates a new claim record. A successful claim remains permanently consumed by the generation-advance event.
-
-No code path increments a generation from cached state, reconnect, timeout, or process launch. The adapter receives `claimed_generation` and must report that exact value; it never chooses `current + 1` independently.
+Fence behavior:
+- new N-bound submissions after the accepted claim reject with `superseded/replacement_pending`;
+- accepted but never-offered N work is durably superseded in the acceptance decision;
+- delivered/running N work is not redelivered and is handed to quiesce/effect reconciliation;
+- the fence remains through poison and clears only through no-effect release with renewed N evidence, promotion, or abandonment.
 
 ## Acceptance evidence
 
-- [ ] Two concurrent distinct continuation Operations against the same expected generation produce at most one accepted active claim and one adapter delivery.
-- [ ] An exact retry with the same command id/key/payload returns the existing claim and command state.
-- [ ] A different payload under the same key rejects without changing the claim projection.
-- [ ] A failed/cancelled/expired continuation may be intentionally retried with a new command/key only after its terminal event is durable; a successful generation cannot be reclaimed.
-- [ ] Crash after acceptance and before delivery reconstructs the same exclusive claim from replay.
-- [ ] Delivery carries the persisted claim; absence, mismatch, or a reconstructed next generation fails closed.
-- [ ] A mutation that removes the exclusive-claim check fails the competing-continuation test/vector.
+- [ ] Two concurrent distinct claims for one expected generation produce at most one accepted record and one delivery.
+- [ ] Exact retry returns the same claim and both continuation Grant provenance ids.
+- [ ] Changed payload under the same key rejects without projection mutation.
+- [ ] Claim activation, exact-N pending-replacement fence, and complete prior-work effect list are atomic and replay-identical.
+- [ ] N-bound work cannot be accepted/offered after the fence; a barrier race has an explicit before/after winner, and no affected pre-fence work is omitted.
+- [ ] Terminal command state alone never releases the claim; active/poisoned records block new claimants.
+- [ ] Delivery carries the persisted claim/provenance and never reconstructs a generation.
 
 ## Ordering constraint
 
-Depends on the logical-target registry and generation transition semantics. Duplicate/external-execution policy and Pi restart orchestration consume this claim.
+Consumes completed contracts and operation-aware compound resolution. Claimed-successor staging follows.

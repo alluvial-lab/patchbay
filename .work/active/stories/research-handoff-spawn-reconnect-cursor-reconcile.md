@@ -4,7 +4,7 @@ kind: story
 stage: implementing
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
-depends_on: [research-handoff-spawn-restart-continuation-orchestration]
+depends_on: [research-handoff-spawn-restart-continuation-orchestration, research-handoff-spawn-cursor-authoritative-replacement-contract]
 release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
@@ -12,50 +12,38 @@ created: 2026-08-12
 updated: 2026-08-12
 ---
 
-# Reconnect and cursor reconciliation across generation replacement
+# Reconnect and authoritative cursor convergence
+
+## Redesign disposition
+
+Rewritten. Unknown-cursor recovery cannot upsert a full fetch into an old projection or key external continuity solely by Patchbay generation.
 
 ## Checkpoint
 
-Prove that endpoint, adapter, and core reconnect converge on the durable logical-target/current-generation state. A remembered stream, WebSocket, Pi stdout event, process handle, or wall-clock age never establishes liveness. The core replays its authority-domain log/cursor; the Pi adapter reconciles persisted session entries with `get_entries(since)` semantics; control surfaces consume newer events and/or an authoritative snapshot.
+Prove convergence across three distinct authorities: core `(authority_domain_id, LSN)` lifecycle replay; adapter external persisted-state cursor scoped by verified external continuity identity; and surface snapshot/cursor reconciliation. A remembered stream/process handle/wall clock proves none of them.
 
-An unknown Pi entry cursor is an explicit resync path, not an empty suffix. Reconnect does not increment a runtime generation. Only a committed spawn continuation claim + authenticated replacement report advances it.
+A known external cursor applies a suffix. Unknown cursor stages a complete exact-set/tree projection, validates it, and atomically replaces projection + leaf + cursor + epoch. Stale omitted entries disappear. The replacement remains stale/unknown until commit and current process evidence; cursor installation cannot precede projection replacement.
 
 ## Design
 
 **Files**
-- `contracts/proto/patchbay/sessions.proto` — carry logical-target/current-runtime/continuation metadata in `SessionSnapshot` and checkpoint records.
-- `core/src/session/registry.rs`, `core/src/session/replay.rs`, and `server/src/snapshot.rs` — replay/checkpoint exact logical-target and tombstone state under domain/core-generation/LSN anchors.
-- `server/src/adapter_service.rs` — adapter delivery reconnect begins from durable cursor and current attachment epoch; no remembered stream authority.
-- `pi-adapter/src/cursor_store.ts` (new) — persist accepted Pi entry cursor per logical target/runtime generation only after processing.
-- `pi-adapter/src/spawn_supervisor.ts` and `pi-adapter/src/pi_session.ts` — fetch suffix/current leaf after continuation; full explicit resync on unknown cursor.
-- `web-cockpit/src/domain/reconcile.ts` and `web-cockpit/src/domain/model.ts` — replace cached logical/current generation from newer snapshot/event and keep stale presentation until confirmed.
-- `contracts/vectors/spawn-reconnect-generation.json` (new) plus core/server/Pi/cockpit checks — cross-layer executable trace.
+- `core/src/session/{registry,replay}.rs`, `server/src/{checkpoint,snapshot}.rs` — replay promotion, claims, quarantine, tombstones, and descendant authority.
+- Adapter-neutral cursor replacement consumers; Pi storage/reconciler remains downstream.
+- `web-cockpit/src/domain/{reconcile,model}.ts` — replace cached logical/current state only from newer core authority.
+- Cross-layer vectors/runners.
 
-```ts
-export interface PiEntryCursorStore {
-  load(logicalTargetId: string, generation: bigint): Promise<string | undefined>;
-  commit(logicalTargetId: string, generation: bigint, entryId: string): Promise<void>;
-  clear(logicalTargetId: string, generation: bigint): Promise<void>;
-}
-
-export type PiCursorReconcile =
-  | { kind: "suffix"; entries: readonly unknown[]; leafId: string | null }
-  | { kind: "full-resync"; entries: readonly unknown[]; leafId: string | null };
-```
-
-Adapter and control-surface cursors remain different authorities: Pi entry ids order persisted Pi session entries; core `(authority_domain_id, LSN)` orders Patchbay lifecycle state. Neither cursor is converted into the other.
+Core replay and external cursor replay remain distinct; neither cursor translates into the other. Endpoint detach/reconnect does not change runtime generation. Adapter reconnect reauthenticates attachment generation before reporting current evidence.
 
 ## Acceptance evidence
 
-- [ ] Reconnect after missing the N→N+1 transition returns one logical target with N tombstoned and N+1 current; cached N cannot overwrite it.
-- [ ] Endpoint detach/reconnect leaves the generation unchanged when the runtime remains reachable.
-- [ ] Adapter reconnect/replacement reauthenticates attachment generation, reconciles Pi persisted entries, and reports current generation with a fresh source revision.
-- [ ] Unknown Pi cursor triggers full resync and explicit evidence; it never yields false empty/current state.
-- [ ] Core replay/checkpoint recovery reconstructs claims, logical targets, tombstones, continuation status, commands, and descendant authority from the durable prefix.
-- [ ] Cursor replay is idempotent; duplicated entries/events do not duplicate transcript or lifecycle mutations.
-- [ ] Stale/unknown remains visually stale/unknown until authoritative evidence confirms live.
-- [ ] `reconnect-after-stream-loss`, `detach-does-not-retire`, and `cursor-gap-repair` vectors pass end to end and kill remembered-stream-as-live mutations.
+- [ ] Missing N→N+1 stream events reconcile to one logical target with N tombstoned and N+1 current/authorized only after promotion.
+- [ ] A poisoned/staged candidate remains non-live after restart/reconnect.
+- [ ] Unknown external cursor exact replacement removes stale omitted entries and atomically installs cursor/leaf/epoch.
+- [ ] External cursor scope survives Patchbay generation when verified native continuity is the same; cross-native-session reuse rejects.
+- [ ] Core replay reconstructs claims/fences/quarantine/promotion/authority deterministically.
+- [ ] Cached N, remembered live streams, or stale upsert entries cannot overwrite repaired authority.
+- [ ] Detach-does-not-retire, reconnect-after-stream-loss, cursor-gap-repair, and upsert-only mutations pass/fail as expected.
 
 ## Ordering constraint
 
-Depends on completed restart orchestration; it is the final lifecycle convergence checkpoint.
+Final spawn-side checkpoint after restart orchestration and the early cursor contract. The Pi redesign implements the reference external-cursor port.
