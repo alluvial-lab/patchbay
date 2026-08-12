@@ -5,7 +5,7 @@ stage: done
 tags: [security]
 parent: null
 depends_on: []
-release_binding: null
+release_binding: v0.2.1
 gate_origin: security
 archived_atop: v0.2.0
 git_ref: 87a4d3e
