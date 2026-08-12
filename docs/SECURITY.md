@@ -1,14 +1,14 @@
 # Patchbay Security
 
-Patchbay is a high-authority control plane: a browser or CLI action can mutate remote/headless agent sessions. v0.1.0 therefore treats security as part of protocol semantics, not as a UI add-on.
+Patchbay is a high-authority control plane: a browser or CLI action can mutate remote/headless agent sessions and operational resources. The current v0.2.1 system therefore treats security as part of protocol semantics, not as a UI add-on.
 
-This document defines Patchbay's security posture. The committed **v0.1.0** posture is session-only: one human operator, one authoritative coordination core, a responsive web cockpit, a CLI, and the first Pi adapter. The **post-v0.1 agent-operations direction** (per `docs/SPEC.md`'s "Post-v0.1 agent-operations direction") extends the posture to operational-resource targets; resource objectives and the resource-report boundary below are labeled post-v0.1 and are **not** v0.1.0 release obligations. It should be read with `docs/PROTOCOL.md` for command/grant state and `docs/VERIFICATION.md` for model obligations.
+This document defines Patchbay's current security posture. v0.2.1 covers one human operator and one authority domain, the web cockpit and CLI, the Pi session adapter, the token-commune resource adapter, durable revocation and lockdown, and authenticated operational-resource reporting. The v0.1.0 session-only posture is a historical baseline, not the current security boundary. It should be read with `docs/PROTOCOL.md` for command/grant and attachment semantics and `docs/VERIFICATION.md` for model obligations.
 
 Research grounding: `.research/analysis/briefs/web-control-security.md`.
 
 ## Security objectives
 
-v0.1.0 security must ensure:
+Current v0.2.1 security must ensure:
 
 - only authenticated operator endpoints can submit control actions;
 - every Operation is authorized before durable acceptance;
@@ -18,20 +18,20 @@ v0.1.0 security must ensure:
 - stale or late events cannot mutate newer session state;
 - audit records preserve security-relevant decisions without storing secrets.
 
-Post-v0.1 operational-resource security must additionally ensure:
+Operational-resource security must also ensure:
 
 - accepted Operations bind to the exact operational-resource `(adapter_id, resource_kind, resource_id)` tuple;
 - resource-id collisions across adapters or adapter-owned kinds cannot widen a resource grant or route to the wrong adapter.
 
 Patchbay does not prove cryptographic primitives, operating-system isolation, browser correctness, network latency bounds, or third-party harness internals. Those are deployment and adapter assumptions.
 
-## v0.1.0 authority domain
+## Current authority domain
 
-v0.1.0 has one human operator and one authority domain. This is a product scope decision, not a reason to omit authority modeling.
+v0.2.1 has one human operator and one authority domain. This remains a product scope decision, not a reason to omit authority modeling.
 
 The model keeps these concepts explicit:
 
-- **Operator** — the single human who controls Patchbay in v0.1.0.
+- **Operator** — the single human who controls the current Patchbay deployment.
 - **Actor** — represented participant: operator, agent, adapter, daemon, service, or control surface.
 - **Device** — a physical or virtual host that can run one or more endpoints, such as a browser on a laptop, a CLI on a VM, or an adapter process near a runtime.
 - **Endpoint** — a concrete browser, CLI, adapter process, or other connection-bearing instance for an actor on a device.
@@ -40,13 +40,13 @@ The model keeps these concepts explicit:
 - **Grant** — an authority relationship permitting a subject (an actor, optionally narrowed to an endpoint or endpoint class) to perform OperationKinds against a target scope.
 - **Authority domain** — the single core-owned context in which grants, revocation, routing authority, and audit are evaluated.
 
-Future multi-operator coordination remains a reserved extension seam. v0.1.0 data structures should not assume there can only ever be one operator, but v0.1.0 UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
+Future multi-operator coordination remains a reserved extension seam. Current data structures should not assume there can only ever be one operator, but current UX and provisioning do not implement multi-human administration, handoffs, or shared authority domains.
 
 ## Threat model
 
 ### In scope
 
-v0.1.0 is designed against:
+The current system is designed against:
 
 - unauthenticated browser or CLI access;
 - unauthorized browser, CLI, or adapter endpoint enrollment;
@@ -63,7 +63,7 @@ v0.1.0 is designed against:
 
 ### Out of scope
 
-v0.1.0 does not attempt to solve:
+The current system does not attempt to solve:
 
 - malicious code execution inside an already-controlled host;
 - compromise of the operator's browser, device, password manager, or OS account;
@@ -77,23 +77,30 @@ Out-of-scope does not mean irrelevant. These risks belong to deployment guidance
 
 ## Enrollment and authentication
 
-v0.1.0 enrollment is intentionally narrow:
+Current enrollment is intentionally narrow:
 
 - The first operator is created through CLI/local-console bootstrap, not through an unauthenticated network setup page.
 - Bootstrap produces a one-time setup secret that expires after use or timeout.
-- Setup establishes the operator's primary authenticator: password/passphrase for v0.1.0, with passkeys or MFA reserved as an extension seam.
+- Setup establishes the operator's primary authenticator: password/passphrase, with passkeys or MFA reserved as an extension seam.
 - A browser endpoint enrolls only after successful operator authentication and creation of a server-side operator session.
 - A CLI endpoint enrolls only through local setup credentials or an existing authenticated operator session.
 - An adapter endpoint enrolls only through configured adapter attachment material or an adapter-specific trust root; an adapter cannot self-assert core authority by display name or payload field.
+- The core's `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` configuration maps each claimed adapter id to one independently provisioned, non-empty ASCII credential. Credential values must be unique per adapter; a shared credential cannot authenticate multiple adapter ids.
 - Device labels are operator-facing metadata. The authority boundary is the endpoint/operator-session/grant tuple, not the label.
 
 Interactive login must be rate-limited, track failed attempts against the operator account as well as useful network metadata, and audit both success and failure. Rate limiting and lockout policy must avoid making denial of service easier than authentication.
+
+### Adapter attachment identity
+
+`Attach` authenticates the adapter identity before it can establish durable authority. The core selects the expected attachment credential by the registration's claimed `adapter_id`; the claim is untrusted until its evidence matches that adapter's configured credential. A successful attachment records the validated adapter id, endpoint, authority domain, capability manifest, and adapter generation, and returns a process-local attachment token. Lower-generation replacements are rejected, while replacing an accepted attachment invalidates the prior token and delivery stream epoch.
+
+Every subsequent adapter RPC presents the claimed adapter id, its attachment evidence, and the current attachment token. The core verifies all three against the current per-adapter binding before accepting diagnostics, session/resource/event observations, or delivery subscriptions. The authenticated adapter id and current registered generation are the source authority: report payload identity must match that adapter, and event audit sender identity is canonicalized from the authenticated registration rather than trusted from adapter-supplied fields. Resource and session reports cannot select another adapter by changing their payload `adapter_id`.
 
 ## Browser session model
 
 The web cockpit uses server-side sessions. The browser receives only an opaque session cookie; Operation authority, endpoint metadata, grants, and session state remain server-side.
 
-v0.1.0 browser-session requirements:
+Current browser-session requirements:
 
 - session identifiers are high-entropy, meaningless client-side values;
 - session records include operator id, endpoint id, device id, created time, last-used time, expiration, revoked time, and **operator-session generation**;
@@ -110,7 +117,7 @@ Default cookie shape:
 Set-Cookie: __Host-patchbay_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict
 ```
 
-`SameSite=Lax` is a reserved fallback only for a concrete operator flow that requires top-level cross-site navigation into Patchbay. `SameSite=None` is not a v0.1.0 default.
+`SameSite=Lax` is a reserved fallback only for a concrete operator flow that requires top-level cross-site navigation into Patchbay. `SameSite=None` is not a current default.
 
 ## CSRF and browser request protection
 
@@ -132,7 +139,7 @@ An Operation is accepted only after Patchbay validates:
 
 1. payload shape and `OperationKind` (the kind must be a known Patchbay OperationKind; an unknown or reserved-but-not-validatable kind like `agent-send` or `adapter-utility-exec` is `validation_failed` at submission, before a grant is evaluated);
 2. authenticated issuer session or endpoint;
-3. target actor/runtime-session identity and generation, exact typed operational-resource identity, or (for v0.1.0 spawn) one canonical attached-adapter scope selected before the target session exists;
+3. target actor/runtime-session identity and generation, exact typed operational-resource identity, or (for current adapter-scoped spawn) one canonical attached-adapter scope selected before the target session exists;
 4. idempotency key or command id;
 5. Operation expiration window;
 6. a live, unrevoked grant permitting that issuer to perform that OperationKind on that target scope.
@@ -141,7 +148,7 @@ Authorization is deny-by-default. Missing, expired, revoked, target-mismatched, 
 
 Retries with the same idempotency key return the existing command record. A new intentional action requires a new command id/key.
 
-Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. v0.1.0 Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) are a reserved seam, not v0.1.0 mediated behavior.
+Sender identity comes from the verified connection/session context. Payload display names, human labels, project names, cwd values, and adapter-reported friendly names are never routing authority. Current Operations are operator-originated; non-operator Operation senders (agent→agent, adapter→operator service Operations) remain a reserved seam, not current mediated behavior.
 
 ### Runtime-session report source boundary
 
@@ -149,7 +156,7 @@ A fresh typed session report is accepted only on the current authenticated adapt
 
 The source cursor covers the complete report; payload labels and mutable values cannot choose their own order or producer epoch. Only a strictly newer authenticated cursor may atomically replace report-carried fields and advance the durable watermark. Equal/lower cursors produce bounded `STALE_EVENT_IGNORED` evidence with canonical `stale_event` failure and do not append a session mutation. Core LSN, wall-clock time, and adapter-local promise serialization are not source authentication or source-order evidence. Core-authored disconnect/lockdown degradation never advances the adapter cursor.
 
-### Operational-resource report boundary (post-v0.1)
+### Operational-resource report boundary
 
 A typed resource report is accepted only on the current authenticated adapter
 attachment. The core replaces source authority with the verified adapter id,
@@ -176,11 +183,11 @@ freshness but never manufacture adapter domain health or authority.
 
 ### Compound issuer
 
-When an Operation arrives at the core through a control surface (the v0.1.0 path is browser → web server → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The implemented web↔core wire shape carries the operator-session evidence and control-surface principal evidence separately, and the core independently verifies both before accepting an Operation.
+When an Operation arrives at the core through a control surface (the current path is browser → web server → core, or CLI → core), the core verifies a compound issuer: the operator actor is the grant subject and is verified against operator-session evidence, and the transport endpoint (the web server, or a CLI endpoint) is verified as a principal. The core must not trust a self-asserted operator identity. The implemented web↔core wire shape carries the operator-session evidence and control-surface principal evidence separately, and the core independently verifies both before accepting an Operation.
 
 ## Grant shape
 
-A v0.1.0 grant has at least:
+A current grant has at least:
 
 - grant id;
 - authority domain id;
@@ -193,11 +200,11 @@ A v0.1.0 grant has at least:
 - revocation generation or revoked time;
 - revocation policy for already accepted commands.
 
-Delegation is a reserved future direction, not a v0.1.0 field; a `parent grant id / delegated-by` field is intentionally absent from v0.1.0. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time. Operational-resource identity is the exact `(adapter_id, resource_kind, resource_id)` tuple: a resource Grant matches only that tuple and a requested resource target. A local id collision under another adapter or kind is denied; adapter, fleet, and authority-domain Grants are the explicit wider scopes. The legacy Protobuf tag-8 audit target cannot satisfy an operational resource Grant.
+Delegation is a reserved future direction, not a current field; a `parent grant id / delegated-by` field is intentionally absent from the current model. Device is part of the identity model (for audit and revocation grouping) but is not a grant-matching field. Adapter capability sets are not grant authority; they are advisory UX declarations, and the adapter is the authority on its own support at delivery time. Operational-resource identity is the exact `(adapter_id, resource_kind, resource_id)` tuple: a resource Grant matches only that tuple and a requested resource target. A local id collision under another adapter or kind is denied; adapter, fleet, and authority-domain Grants are the explicit wider scopes. The legacy Protobuf tag-8 audit target cannot satisfy an operational resource Grant.
 
 ### Spawn authority
 
-Spawn is adapter-scoped in v0.1.0: the Operation explicitly selects one attached adapter before a target session exists, and the core requires a live matching spawn grant for that scope. Runtime-session and operational-resource spawn targets are incompatible and reject before durable acceptance. Fleet-supervisor/authority-domain default selection and per-spawn-variant authority are reserved; broadcasting a non-idempotent spawn is excluded.
+Spawn is adapter-scoped in the current system: the Operation explicitly selects one attached adapter before a target session exists, and the core requires a live matching spawn grant for that scope. Runtime-session and operational-resource spawn targets are incompatible and reject before durable acceptance. Fleet-supervisor/authority-domain default selection and per-spawn-variant authority are reserved; broadcasting a non-idempotent spawn is excluded.
 
 Adapter routing identity comes only from the canonical durable registration envelope written by authenticated `Attach`; generic adapter Event ingress cannot write that schema, and replay rejects disagreement among the event domain, Observation domain/kind, canonical adapter target, canonical adapter actor/endpoint sender, payload descriptor, and embedded registration identity. A valid durable registration remains spawn-resolvable after ordinary core restart. The live attachment token/subscription is deliberately not persisted and grants no durable routing authority: it governs current delivery and liveness, so an accepted spawn still waits or fails through the existing adapter delivery behavior when no current attachment can receive it.
 
@@ -205,7 +212,7 @@ Successful spawn completion records an explicit, auditable **descendant grant** 
 
 - `grant id` — standard grant id (core-assigned).
 - `authority domain id` — same domain as the spawning grant.
-- `subject actor id` — the spawner (operator actor in v0.1.0).
+- `subject actor id` — the spawner (the operator actor in the current single-operator deployment).
 - `optional subject endpoint id or endpoint class` — the spawning endpoint, if applicable.
 - `target scope` — the spawned session/generation (an existing-session scope, now that the session exists).
 - `allowed OperationKinds` — the full set of committed kinds applicable to an existing session, enumerated explicitly (not a wildcard `all`): `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`. `spawn` is excluded because recursive spawning requires a separate adapter-scoped spawn grant; `attach` is excluded because the spawned session is already attached to its spawner's control plane.
@@ -215,17 +222,17 @@ Successful spawn completion records an explicit, auditable **descendant grant** 
 - `revocation policy for already accepted commands` — standard.
 - `audit id` — links to the spawn-completion audit event.
 
-The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the v0.1.0 descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
+The auto-issued descendant grant is same actor (operator), new target (spawned session), not cross-actor delegation. No delegation lineage field is present in the current descendant grant. The reserved future direction is to inherit descendant allowed kinds from the spawning grant for delegation-aware authority; that future work must be designed with multi-operator / federated-authority semantics before use.
 
 Spawn completion is exposed only after verified provenance is durable. Generic Observation ingestion uses one exact command-correlation qualifier across ingestion, redelivery suppression, completion folding, and audit-source validation: identical non-empty duplicate `CommandId` references qualify as the same correlation, while empty/conflicting ids reject before durability. A successful spawn result records one bounded, redacted `CommandRunning/spawn_completion_deferred` audit checkpoint for operational inspection without terminalizing the command; delivery reconstruction treats that same qualifying durable success as a no-redelivery checkpoint across reconnect/restart. A single core owner folds the gap-free LSN prefix and requires the exact prior authorizing parent grant, verified accepted actor/endpoint/device and target, a valid accepted → delivered/running lifecycle before success, and a registered/replacement session target on the selected adapter. It writes a `CommandCompleted` audit with reason `spawn_completion`, stores its exact event id on the descendant grant, and appends the completed transition last while holding the shared decision gate. Revocation `command_effects` share the lifecycle fold, so an earlier cancellation or reauthorization terminal wins and suppresses issuance. Descendant ingress revalidates that complete durable context; a self-consistent source/audit/grant chain or preseeded result/session facts are insufficient. Restart repair uses the same fold and finishes before listeners open; malformed `spawn_origin` is rejected before session append, and self-asserted Observation sender fields do not become descendant authority. Broader repair-fold containment is not fleet target selection. The staged completion audit is kept out of premature stderr `completed` publication; the redacted process diagnostic is emitted only after final transition durability.
 
-Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is v0.1.0 behavior; future cascade is a query over grant provenance and needs no schema change.
+Revocation uses two independent levers: revoking the spawn grant prevents future spawns, but already-spawned sessions keep operating under their auto-issued descendant grant until that grant is separately revoked. No cascade-revoke is current behavior; future cascade is a query over grant provenance and needs no schema change.
 
 ### Elicitation responder authorization
 
-v0.1.0 Elicitations bind to the operator actor (the `expected_responder_actor`), not a specific endpoint. Any authenticated operator endpoint may answer; the responding endpoint is captured in the response Operation audit at response time, not pre-bound in the Elicitation. First valid answer terminalizes the Elicitation for all subscribed surfaces; later attempts from other surfaces are rejected as already-terminal/stale and audited. Tighter responder binding (endpoint, endpoint class, fallback chain) and responder-actor distinction for multi-operator sessions are reserved seams.
+Current Elicitations bind to the operator actor (the `expected_responder_actor`), not a specific endpoint. Any authenticated operator endpoint may answer; the responding endpoint is captured in the response Operation audit at response time, not pre-bound in the Elicitation. First valid answer terminalizes the Elicitation for all subscribed surfaces; later attempts from other surfaces are rejected as already-terminal/stale and audited. Tighter responder binding (endpoint, endpoint class, fallback chain) and responder-actor distinction for multi-operator sessions are reserved seams.
 
-Response Operations and spawn are state-changing and subject to the same CSRF and authority requirements as other Operations. Secret response-contract kinds (reserved, not validatable in v0.1.0) carry redaction/no-log obligations: a `secret` contract response must never be persisted in plaintext or logged raw; redaction policy is enforced at the boundary before any audit or snapshot materializes.
+Response Operations and spawn are state-changing and subject to the same CSRF and authority requirements as other Operations. Secret response-contract kinds (reserved, not validatable in the current model) carry redaction/no-log obligations: a `secret` contract response must never be persisted in plaintext or logged raw; redaction policy is enforced at the boundary before any audit or snapshot materializes.
 
 Grant checks are centralized in the coordination core. Control surfaces may hide unavailable actions, but UI availability is never authoritative.
 
@@ -237,15 +244,15 @@ Revocation prevents future authority. Already accepted Operations follow the pol
 - **cancel** — submit or record cancellation for accepted non-terminal Operations when supported;
 - **require reauthorization** — hold or reject delivery until a fresh grant/session is established.
 
-v0.1.0 must support these operator-facing revocation actions (the current-session, all-session, principal/endpoint/device, grant, and security-lockdown controls are implemented):
+The current system supports these operator-facing revocation actions (the current-session, all-session, principal/endpoint/device, grant, and security-lockdown controls are implemented):
 
 1. **Revoke current browser session** — delete or mark the session revoked and clear its cookie.
-2. **Revoke all operator sessions** — invalidate every current operator-session generation for the verified actor, including CLI sessions. v0.1.0 uses opaque server-side records and a durable generation fence; it does not add a signing-secret rotation layer.
+2. **Revoke all operator sessions** — invalidate every current operator-session generation for the verified actor, including CLI sessions. The current system uses opaque server-side records and a durable generation fence; it does not add a signing-secret rotation layer.
 3. **Revoke principal/endpoint/device** — mark the matching browser or CLI credential scope revoked and reject future Operations and same-id enrollment from it.
 4. **Revoke adapter/session grant** — stop Operation acceptance for a target scope while preserving audit history.
 5. **Security lockdown** — reject new Operations, mark affected runtime sessions stale, require fresh login, and record the reason.
 
-**Lockdown exit.** Lockdown is a durable posture (an audited, persisted event). Restarting the core does not clear it: crash recovery replays the log and lockdown remains in effect. Exit requires re-establishing the bootstrap trust level **via the bootstrap channel** (v0.1.0's loopback `AdminService`, invoked by `patchbay-cli lockdown-exit`), not routine web re-authentication. This self-scales with the operator's configured security posture. The protection depends on the enrollment channel being distinct from routine web login: if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection, because an attacker holding the routine credential could clear it. That channel distinction is load-bearing, not incidental.
+**Lockdown exit.** Lockdown is a durable posture (an audited, persisted event). Restarting the core does not clear it: crash recovery replays the log and lockdown remains in effect. Exit requires re-establishing the bootstrap trust level **via the bootstrap channel** (the current loopback `AdminService`, invoked by `patchbay-cli lockdown-exit`), not routine web re-authentication. This self-scales with the operator's configured security posture. The protection depends on the enrollment channel being distinct from routine web login: if a future deployment ever makes bootstrap trust equivalent to routine web login (same factor, same remote channel), lockdown would provide no protection, because an attacker holding the routine credential could clear it. That channel distinction is load-bearing, not incidental.
 
 While active, every `ControlService.Submit` and `QueryDiagnostics` Operation is rejected before acceptance with `authorization_denied/security_lockdown_active`; no command record is created. Already accepted Operations may finish under their existing policy, and adapter reports, `Subscribe`, `LoadSnapshot`, `LoadSecuritySnapshot`, fresh `VerifyOperatorPassword` login, current-session logout/revocation, and required audit ingress remain available. Fresh login is read-only for Operations and security mutations; grant, enrollment, and scope-revocation mutations fail closed until bootstrap exit. Entry and exit persist only bounded lower-snake-case reason codes and atomically pair their source event with the corresponding audit record.
 
@@ -255,7 +262,7 @@ CLI recovery is explicit and truthful: confirmed `patchbay-cli revoke-all-sessio
 
 ## Audit events
 
-Security audit is part of v0.1.0. The walking skeleton emits redacted security audit lines to process stderr/stdout. The implemented post-v0.1.0 core-diagnostics capability adds a durable, queryable redacted audit index behind the core storage port; process stderr remains diagnostic-only.
+Security audit is part of the current system. The core emits redacted security audit lines to process stderr/stdout and maintains a durable, queryable redacted audit index behind the core storage port; process stderr remains diagnostic-only.
 
 Audit records are distinct from durable command/session state-transition events. They may record rejected attempts, failed checks, and security decisions that do not create command records.
 
@@ -282,23 +289,23 @@ Audit records must not directly store raw session cookies, CSRF tokens, access t
 
 **This is the canonical no-log/redaction list for Patchbay.** Other docs (PROTOCOL, UX, ARCHITECTURE) summarize or point here; they do not maintain competing lists. Add new redacted fields to this list, not to a doc-local copy.
 
-The committed v0.1.0 `session-health` CLI projection reads canonical session state and does not create a raw-payload exposure path. The committed post-v0.1.0 `audit-query`, `inspect-command`, and `adapter-status` CLI commands consume the core's principal-gated `QueryDiagnostics` RPC. These projections inherit the redaction boundary above: `inspect-command` excludes prompt bodies and sensitive payloads, and `adapter-status` excludes raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
+The current `session-health`, `audit-query`, `inspect-command`, and `adapter-status` CLI projections consume canonical state or the core's principal-gated `QueryDiagnostics` RPC and do not create a raw-payload exposure path. These projections inherit the redaction boundary above: `inspect-command` excludes prompt bodies and sensitive payloads, and `adapter-status` excludes raw `attachment_method.descriptor`. Any future diagnostic command that would surface a field not covered by the rules above must extend this section before shipping.
 
-The committed post-v0.1.0 adapter-reporting extension has a structural allowlist: the generated diagnostic payload contains only adapter-declared `code`, severity, adapter generation, optional OperationKind, and bounded count. Target scope, at most one typed command correlation, observed time, and canonical failure code are separate generated fields. It has no message, stack, cause, prompt, transcript, tool result, attachment, descriptor, path, model, token, credential, or arbitrary metadata field. The core replaces adapter identity, endpoint, authority domain, and generation from the authenticated attachment and atomically appends the safe source Observation with its `ADAPTER_DIAGNOSTIC_REPORTED` audit record. Forwarding is best effort and non-retrying; a report cannot establish liveness or endanger the adapter control loop.
+The current adapter-reporting extension has a structural allowlist: the generated diagnostic payload contains only adapter-declared `code`, severity, adapter generation, optional OperationKind, and bounded count. Target scope, at most one typed command correlation, observed time, and canonical failure code are separate generated fields. It has no message, stack, cause, prompt, transcript, tool result, attachment, descriptor, path, model, token, credential, or arbitrary metadata field. The core replaces adapter identity, endpoint, authority domain, and generation from the authenticated attachment and atomically appends the safe source Observation with its `ADAPTER_DIAGNOSTIC_REPORTED` audit record. Forwarding is best effort and non-retrying; a report cannot establish liveness or endanger the adapter control loop.
 
 ## Deployment posture
 
-Allowed v0.1.0 deployments:
+Allowed current deployments:
 
-- a loopback/colocated deployment on a local workstation, VM, or container: the core's general and admin listeners bind to loopback, and the web server, CLI, and Pi adapter run on that host and reach the core through its loopback listener;
+- a loopback/colocated deployment on a local workstation, VM, or container: the core's general and admin listeners bind to loopback, and the web server, CLI, Pi adapter, and token-commune adapter run on that host and reach the core through its loopback listener;
 - a browser connected directly to that colocated web server over loopback or TLS. Direct TLS browser access does not make the core network-reachable.
 
 Reserved deployment seams:
 
 - exposing the core on a LAN or VPN, or separating the web server, CLI, or adapters from the core, requires a future transport/TLS design;
-- reverse-proxy TLS termination for the web server requires an explicit trusted-proxy design. v0.1.0 accepts direct TLS or loopback browser connections only.
+- reverse-proxy TLS termination for the web server requires an explicit trusted-proxy design. The current deployment accepts direct TLS or loopback browser connections only.
 
-Forbidden v0.1.0 deployments:
+Forbidden current deployments:
 
 - internet-exposed unauthenticated core;
 - non-localhost HTTP browser access carrying authenticated sessions;
@@ -308,7 +315,7 @@ Forbidden v0.1.0 deployments:
 
 ## Extension pressure classification
 
-Committed v0.1.0 behavior:
+Committed current behavior:
 
 - one operator and one authority domain;
 - explicit actor, device, endpoint, operator-session, runtime-session, grant, revocation, and audit concepts;
@@ -333,7 +340,7 @@ Reserved extension seams:
 - SIEM export and long-retention compliance archives;
 - lease-backed exclusive coordination.
 
-Rejected v0.1.0 directions:
+Rejected directions:
 
 - unauthenticated web control;
 - UI-only authorization;

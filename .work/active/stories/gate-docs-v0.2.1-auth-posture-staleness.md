@@ -1,7 +1,7 @@
 ---
 id: gate-docs-v0.2.1-auth-posture-staleness
 kind: story
-stage: drafting
+stage: done
 tags: [documentation, security]
 parent: null
 depends_on: []
@@ -25,3 +25,7 @@ Medium (docs drift)
 
 ## Remediation direction
 Roll the auth/enrollment/attachment sections forward to the v0.2.1 model (per-adapter `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS`, authenticated identity → accepted adapter_id+generation, canonical audit sender). The RUNBOOK migration note + CHANGELOG v0.2.1 entry are already done; these are the deeper foundation-doc updates.
+
+## Resolution (2026-08-12)
+
+`docs/SECURITY.md` now describes the current v0.2.1 resource-aware posture, per-adapter credential selection/uniqueness, authenticated attachment identity and token fencing, canonical adapter report/audit identity, and current resource/session report boundaries. `docs/PROTOCOL.md` now makes the per-adapter credential map and exact claimed-adapter selection an explicit Attach rule and documents current attachment lifecycle semantics. README and RUNBOOK were coordinated in the sibling stories. Verified with `git diff --check` and bounded accuracy/drift review against `server/src/adapter_service.rs`, `core/src/adapter/mod.rs`, `docs/RUNBOOK.md`, `CHANGELOG.md`, and `docs/PROTOCOL.md`.

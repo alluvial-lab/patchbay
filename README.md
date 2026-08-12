@@ -8,11 +8,11 @@ Patchbay starts with a **responsive web cockpit** and a **Pi-first adapter targe
 
 ## Current status
 
-Patchbay now contains the implemented **`v0.1.0` walking skeleton**: a Rust coordination core with durable local state, a TypeScript web server and responsive web cockpit, a Pi adapter, a diagnostic/scriptable CLI, generated Protobuf contracts, the browser/core trust boundary, and the registry-derived presentation conformance floor. Together these components exercise the single-operator durable control loop; deployment and operation are documented in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+Patchbay now contains the implemented **v0.2.1** control plane: a Rust coordination core with durable local state, a TypeScript web server and responsive web cockpit, a diagnostic/scriptable CLI, generated Protobuf contracts, the browser/core trust boundary, and the registry-derived presentation conformance floor. The v0.2.x line adds durable revocation and lockdown, the typed operational-resource plane, authenticated resource reporting and reconciliation, and two materially distinct reference adapters: Pi sessions and the token-commune resource adapter. Deployment and operation are documented in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
-This is an executable internal milestone rather than a finished public distribution. Versioned SQLite migrations (schema v2 via `PRAGMA user_version`) exist; packaging, supported public upgrade/rollback policy, public compatibility guarantees, broader adapter proof, and independent-operator deployment hardening remain work for the `v0.x` line.
+This is an executable internal milestone rather than a finished public distribution. Versioned SQLite migrations (schema v2 via `PRAGMA user_version`) exist; packaging, supported public upgrade/rollback policy, public compatibility guarantees, and independent-operator deployment hardening remain work for the `v0.x` line. The v0.2.1 adapter attachment model requires independently provisioned, unique per-adapter credentials rather than one shared core secret.
 
-`v0.1.0` gets the initial operator operational; it is a personal/internal milestone rather than a public distribution milestone and does not require completed publication legal review. It is not the product ceiling. The `v0.x` line hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` is the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path, designated public contracts carry SemVer compatibility, and Pi plus a credible second or materially distinct reference adapter proves the adapter boundary.
+The v0.2.x line is not the product ceiling. It hardens deployment, migrations, public contracts, executable assurance, and adapter portability. `v1.0.0` remains the reliable self-hosted public-product threshold: independent operators can deploy Patchbay through a supported reference path and designated public contracts carry SemVer compatibility. Pi and token-commune now provide the shipped session and materially distinct resource-adapter boundary; packaging and deployment hardening remain before that threshold.
 
 ## Why Patchbay exists
 
@@ -45,13 +45,14 @@ generated Protobuf contracts + protocol semantics
       ▼
 Patchbay coordination core
       │
-      ├── Pi adapter
+      ├── Pi session adapter
+      ├── token-commune resource adapter
       ├── shell/job adapters
       ├── future harness adapters
       └── future tool/project adapters
 ```
 
-The first useful milestone is a responsive web cockpit backed by durable command/message semantics and a Pi adapter good enough to migrate existing Remote Pi workflows. v0.1.0 is single-operator and single-core: no native mobile app, no high availability, no multi-human coordination, and no arbitrary adapter ecosystem yet. The UX quality bar is closer to a mature first-party remote agent app: clear session identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity. Canonical command, session, and failure state names live in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+The current useful milestone is a responsive web cockpit backed by durable command/message semantics, revocation and recovery controls, and both a Pi session adapter and a token-commune operational-resource adapter. v0.2.x remains single-operator and single-core: no native mobile app, no high availability, and no multi-human coordination. The UX quality bar is closer to a mature first-party remote agent app: clear session and resource identity, visible delivery state, recoverable history, stale-state honesty, and multi-device continuity. Canonical command, session, resource, and failure state names live in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Core ideas
 
@@ -60,7 +61,8 @@ Patchbay separates examples from architecture through explicit planes:
 - **Human control surface plane** — web, CLI, future mobile, notifications, approvals.
 - **Operation plane** — operator-originated Operations: prompts, commands, cancels, approvals, resumes.
 - **Runtime/session plane** — agents, shells, jobs, harness sessions, containers, worktrees.
-- **Adapter plane** — Pi first; other harnesses/tools later.
+- **Operational-resource plane** — typed adapter-owned resources, capability manifests, authenticated reports, snapshots, and stale/degraded reconciliation.
+- **Adapter plane** — Pi sessions and token-commune resources today; other harnesses/tools later.
 - **Operation / Observation / Elicitation plane** — delivery, replies, idempotent retry, failure vocabulary, and operator elicitations.
 - **State and snapshot plane** — authoritative snapshots, stale/offline/unknown recovery.
 - **Authority and identity plane** — grants, revocation, identity, anti-spoofing.
@@ -68,9 +70,9 @@ Patchbay separates examples from architecture through explicit planes:
 - **Deployment plane** — daemon, container, VM, local service, sidecar, split deployment.
 - **Verification plane** — formal specs, contracts, conformance vectors, property tests.
 
-## v0.1.0 walking skeleton
+## v0.1.0 walking skeleton (historical milestone)
 
-v0.1.0 proves the smallest useful control loop:
+v0.1.0 proved the smallest useful control loop:
 
 - one human operator;
 - responsive web cockpit as the primary surface;
@@ -80,7 +82,7 @@ v0.1.0 proves the smallest useful control loop:
 - Pi adapter as the first runtime integration;
 - initial commands for message/prompt delivery, cancel/interrupt where supported, status/snapshot refresh, and correlated replies/events.
 
-v0.1.0 intentionally defers native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination unless later foundation work explicitly promotes a specific lease-backed workflow.
+The historical v0.1.0 milestone intentionally deferred native mobile, HA or replicated cores, multi-human authority workflows, arbitrary adapters, project-management features, and lease-backed coordination. The v0.2.x line has since promoted the operational-resource plane and token-commune adapter; the remaining items stay reserved unless later foundation work explicitly promotes them.
 
 ## Design commitments
 
@@ -129,21 +131,24 @@ docs/
   GLOSSARY.md     terminology
 ```
 
-v0.1.0 repository layout:
+Current v0.2.x repository layout:
 
 ```text
-specs/        TLA+/Quint and Alloy models
-contracts/    Protobuf contracts, generated bindings, and conformance vectors
-core/         Rust coordination-core domain and storage code
-server/       Rust coordination-core server
-web-server/   TypeScript HTTP/HTTPS control-surface server
-web-cockpit/  TypeScript browser cockpit and shared operator-domain code
-pi-adapter/   TypeScript Pi runtime adapter
-cli/          TypeScript setup, administration, and diagnostic CLI
+specs/                 TLA+/Quint and Alloy models
+contracts/             Protobuf contracts, generated bindings, and conformance vectors
+core/                  Rust coordination-core domain and storage code
+server/                Rust coordination-core server
+operator-domain/       Shared TypeScript operator-domain code
+web-server/            TypeScript HTTP/HTTPS control-surface server
+web-cockpit/           TypeScript browser cockpit and shared operator-domain code
+pi-adapter/            TypeScript Pi runtime/session adapter
+token-commune-adapter/ TypeScript token-commune operational-resource adapter
+cli/                   TypeScript setup, administration, and diagnostic CLI
+e2e/                   Composed separate-process end-to-end tests
 ```
 
-Additional adapters and control surfaces, including a native Expo app, are
-reserved seams; v0.1.0 does not represent them as current repository paths.
+Pi and token-commune are current adapter paths. Additional adapters and control
+surfaces, including a native Expo app, remain reserved seams until promoted.
 
 ## Reading guide
 

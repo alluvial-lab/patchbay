@@ -1,14 +1,14 @@
 ---
 id: gate-docs-runbook-release-framing
 kind: story
-stage: drafting
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
 release_binding: null
 gate_origin: docs
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 # Runbook v0.1.0 framing now encloses post-v0.1 operations
@@ -36,3 +36,7 @@ Rename the document and current operational/limitations framing to version-neutr
 ## Release disposition
 
 Parked unbound under the operator's low-risk gate policy; it does not block v0.2.0 shipment.
+
+## Resolution (2026-08-12)
+
+`docs/RUNBOOK.md` now uses version-neutral current framing for the v0.2.1 deployment, includes the token-commune adapter in prerequisites/startup, and labels its limitations as current rather than v0.1.0-only. The existing v0.2.0 → v0.2.1 credential migration note was retained without duplication. Verified with `git diff --check` and bounded accuracy/drift review against the existing credential table and `CHANGELOG.md`.

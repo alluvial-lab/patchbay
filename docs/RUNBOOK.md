@@ -1,8 +1,9 @@
-# Patchbay v0.1.0 Runbook
+# Patchbay Runbook
 
-How to bring up the v0.1.0 walking skeleton: one operator controls Pi-backed
-agent sessions through the web cockpit and the CLI. Four logical processes —
-the Rust coordination core, the Pi adapter, the web server, and the control
+How to bring up the current v0.2.1 system: one operator controls Pi-backed
+agent sessions and token-commune operational resources through the web cockpit
+and CLI. The deployment comprises the Rust coordination core, the Pi session
+adapter, the token-commune resource adapter, the web server, and the control
 surfaces (browser cockpit + CLI).
 
 ## Prerequisites
@@ -12,7 +13,7 @@ surfaces (browser cockpit + CLI).
   `target/debug/patchbay-core-server`).
 - Install/build the TS packages: `contracts/ts` (`npm ci && npm run build`),
   `web-server`, `web-cockpit` (`npm ci && npm run build`, incl.
-  `build:browser`), `pi-adapter`, `cli`.
+  `build:browser`), `pi-adapter`, `token-commune-adapter`, `cli`.
 
 ## Environment
 
@@ -38,7 +39,7 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_SETUP_SECRET` | CLI | setup only | One-time setup secret. Supply through the environment or the CLI's non-echoing TTY prompt; never as an argument. |
 | `PATCHBAY_OPERATOR_PASSWORD` | CLI | setup/login | Operator password. Supply through the environment or the CLI's non-echoing TTY prompt; never as an argument. |
 | `PATCHBAY_OPERATOR_ID` | web-server | yes | Configured operator identity for core password verification; the web server refuses startup without it. |
-| `PATCHBAY_OPERATOR_PASSWORD_HASH` | web-server | no | Optional local password-verifier fallback. Normal v0.1.0 login verifies the bootstrapped operator record at the core. |
+| `PATCHBAY_OPERATOR_PASSWORD_HASH` | web-server | no | Optional local password-verifier fallback. Normal login verifies the bootstrapped operator record at the core. |
 | `PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL` | token-commune-adapter | yes | token-commune gateway base URL. HTTPS is required except for local development on a verified loopback host (`localhost`, `127.0.0.0/8`, or `[::1]`); LAN, container-network, and remote plaintext HTTP URLs are rejected. |
 | `PATCHBAY_TOKEN_COMMUNE_MEMBER_KEY_FILE` | token-commune-adapter | yes | Path to the token-commune member key file; it must be a regular, non-symlink file with mode `0600`. |
 
@@ -54,9 +55,12 @@ surfaces (browser cockpit + CLI).
    is rejected (first-run-only). Do not put either secret in CLI arguments.
 3. **Pi adapter** — `pi-adapter`, pointed at the core (`PATCHBAY_CORE_ADDR`)
    with the per-adapter attachment credential mapped to `pi` in the core.
-4. **Web server** — `patchbay-web-server`, pointed at the core. It serves the
+4. **token-commune adapter** — `token-commune-adapter`, pointed at the core
+   with the per-adapter attachment credential mapped to `token-commune` in the
+   core, the gateway URL, and the member key file configured.
+5. **Web server** — `patchbay-web-server`, pointed at the core. It serves the
    cockpit assets and templates the configured authority domain into the page.
-5. **Surfaces** — open the cockpit in a browser (it now has a login form;
+6. **Surfaces** — open the cockpit in a browser (it now has a login form;
    authenticate with the operator credentials created at setup), or
    `patchbay-cli login` (prompts non-echoingly for the password unless
    `PATCHBAY_OPERATOR_PASSWORD` is set; throttled core password verification;
@@ -109,7 +113,7 @@ credential file; then run `patchbay-cli login` for a higher-generation session.
 If exit fails, posture remains locked. Never use the consumed setup secret as a
 recovery shortcut.
 
-The diagnostics and emergency-control CLI is VM-local in v0.1.0 because the core listener is loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, `adapter-status`, or revocation commands on the VM; workstation operators may use an SSH tunnel or run the CLI on the VM. After confirmed all-session revocation, run `patchbay-cli login` from that trusted host. If the principal, endpoint, or device itself was revoked, use a distinct unrevoked identity or new endpoint/device configuration. The one-time `setup` secret is consumed bootstrap material, not recovery. Supported remote CLI transport is reserved for the future split-transport milestone.
+The diagnostics and emergency-control CLI is VM-local in the current colocated deployment because the core listener is loopback-only. Run `patchbay-cli audit-query`, `inspect-command`, `adapter-status`, or revocation commands on the VM; workstation operators may use an SSH tunnel or run the CLI on the VM. After confirmed all-session revocation, run `patchbay-cli login` from that trusted host. If the principal, endpoint, or device itself was revoked, use a distinct unrevoked identity or new endpoint/device configuration. The one-time `setup` secret is consumed bootstrap material, not recovery. Supported remote CLI transport is reserved for the future split-transport milestone.
 
 Diagnostic flags are `audit-query --kind --actor-id --endpoint-id --command-id
 --target --failure-code --reason-code --since --until --before-event --limit
@@ -126,7 +130,7 @@ successful and exit `0`. Exit codes are `0` success, `1` local/transport/
 protocol failure, `2` pre-acceptance rejection, `3` execution failure, and `4`
 unknown submission outcome.
 
-## Known v0.1.0 limitations (honest, not defects)
+## Known current limitations (honest, not defects)
 
 - **Transport liveness is not an application heartbeat.** Each current adapter
   attachment holds one long-lived authenticated delivery stream, and an

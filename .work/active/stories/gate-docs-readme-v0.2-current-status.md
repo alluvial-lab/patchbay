@@ -1,14 +1,14 @@
 ---
 id: gate-docs-readme-v0.2-current-status
 kind: story
-stage: drafting
+stage: done
 tags: [documentation]
 parent: null
 depends_on: []
 release_binding: null
 gate_origin: docs
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 # README current-status and repository map stop at v0.1.0
@@ -36,3 +36,7 @@ Roll the current-status paragraph, product-direction diagram, and repository lay
 ## Release disposition
 
 Parked unbound under the operator's low-risk gate policy; it does not block v0.2.0 shipment.
+
+## Resolution (2026-08-12)
+
+README current status, product-direction diagram, core planes, historical v0.1.0 milestone framing, and repository map now describe the v0.2.x implementation, including the operational-resource plane and token-commune adapter. The v0.1.0 material remains explicitly historical. Verified with `git diff --check` and bounded accuracy/drift review against `CHANGELOG.md`, `docs/VISION.md`, and the repository tree.
