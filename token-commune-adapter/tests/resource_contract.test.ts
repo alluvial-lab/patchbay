@@ -254,6 +254,8 @@ test("configuration permits plaintext gateways only on verified loopback hosts",
     "http://192.168.1.20:8787/",
     "http://172.18.0.2:8787/",
     "http://10.0.0.20:8787/",
+    "http://0.0.0.0:8787/",
+    "http://[2001:db8::1]:8787/",
     "http://gateway.example:8787/",
   ]) {
     assert.throws(

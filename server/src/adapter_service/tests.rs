@@ -1981,6 +1981,59 @@ async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
         .expect_err("one adapter's attachment cannot ingest as another adapter");
     assert_eq!(forged_ingest.code(), tonic::Code::Unauthenticated);
 
+    let before_diagnostic = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("pre-diagnostic events read");
+    let forged_diagnostic = service
+        .report_diagnostics(authenticated_as_with_attachment_token(
+            AdapterDiagnosticReport {
+                authority_domain_id: Some(domain.clone()),
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::Adapter as i32,
+                    adapter_id: Some(victim_id.clone()),
+                    ..Default::default()
+                }),
+                observed_at: Some(Timestamp { seconds: 2, nanos: 0 }),
+                payload: Some(PayloadEnvelope {
+                    payload: AdapterDiagnosticPayload {
+                        code: "token_commune_started".into(),
+                        severity: AdapterDiagnosticSeverity::Info as i32,
+                        adapter_generation: Some(Generation { value: 1 }),
+                        count: 1,
+                        ..Default::default()
+                    }
+                    .encode_to_vec(),
+                    content_type: PayloadContentType::Protobuf as i32,
+                    schema_ref: "patchbay.AdapterDiagnosticPayload".into(),
+                }),
+                ..Default::default()
+            },
+            &victim_id,
+            EVIDENCE,
+            &attacker_token,
+        ))
+        .await
+        .expect_err("one adapter's attachment cannot report diagnostics as another adapter");
+    assert_eq!(forged_diagnostic.code(), tonic::Code::Unauthenticated);
+    let after_diagnostic = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("post-diagnostic events read");
+    for kind in [StoredEventKind::Observation, StoredEventKind::AuditRecord] {
+        assert_eq!(
+            before_diagnostic
+                .iter()
+                .filter(|event| event.payload.kind == kind as i32)
+                .count(),
+            after_diagnostic
+                .iter()
+                .filter(|event| event.payload.kind == kind as i32)
+                .count(),
+            "cross-adapter diagnostic rejection must append no source or audit event"
+        );
+    }
+
     let forged_subscription = service
         .receive_deliveries(authenticated_as_with_attachment_token(
             ReceiveRequest {
