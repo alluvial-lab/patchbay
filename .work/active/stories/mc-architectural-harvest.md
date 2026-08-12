@@ -1,7 +1,7 @@
 ---
 id: mc-architectural-harvest
 kind: story
-stage: drafting
+stage: done
 tags: [adapter, architecture]
 parent: research-handoff-pi-adapter-capability
 depends_on: []
@@ -30,3 +30,10 @@ Harvest Mission Control's adapter-neutral structural ideas as **design direction
 **Source**: `.research/analysis/campaigns/v1-control-plane-and-spawn/parent.md` (slug: `v1-control-plane-and-spawn`) — facet `peer-protocol-deep-dive` + attestation `mission-control-src`.
 
 The directions are source-grounded in MC's actual code (cloned, MIT). Each is framed as a Patchbay extension (`{extends}`) that strengthens the borrowed idea with the operation contract MC lacks.
+
+## Decomposition (research-handoff emission, 2026-08-12)
+The five directions are emitted as grounded `.work/` items (each carries `research_origin: v1-control-plane-and-spawn`):
+- **Directions 1 + 4** (declared capability depth + reconciliation honesty) → `capability-manifest-durability-and-reconciliation-depth` (feature).
+- **Direction 3** (atomic claim before delivery) → `spawn-delivery-atomic-claim-idempotency-generation` (story, child of `research-handoff-spawn` — generation-lifecycle fold).
+- **Direction 5** (fail-closed workspace boundaries) → `deployment-authority-workspace-scoped-revocable-keys` (story; re-parent when the owning stride is chosen).
+- **Direction 2** (durable provenance, Operation as source of truth) → **already a Patchbay foundation principle** (`docs/SPEC.md`: the durable event log is the single source of truth; no derived projection may become an independent authority source). No new item; the harvest confirms it.
