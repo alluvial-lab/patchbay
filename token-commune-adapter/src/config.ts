@@ -1,4 +1,5 @@
 import { resolveAdapterLogPath } from "./adapter_diagnostics.js";
+import { requireSafeGatewayBaseUrl } from "./gateway_url.js";
 
 export interface TokenCommuneAdapterConfig {
   coreAddress: string;
@@ -38,13 +39,7 @@ export function loadTokenCommuneAdapterConfig(
   } catch {
     throw new Error("PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL must be an absolute URL");
   }
-  if (
-    !["http:", "https:"].includes(gatewayBaseUrl.protocol) ||
-    gatewayBaseUrl.username || gatewayBaseUrl.password ||
-    gatewayBaseUrl.search || gatewayBaseUrl.hash
-  ) {
-    throw new Error("PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL must be a credential-free http(s) base URL");
-  }
+  requireSafeGatewayBaseUrl(gatewayBaseUrl, "PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL");
   return {
     coreAddress,
     adapterId,

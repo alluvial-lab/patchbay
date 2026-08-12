@@ -242,3 +242,34 @@ test("configuration fails fast by environment key and never echoes values", () =
   assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_POLL_INTERVAL_MS: "0" }), /PATCHBAY_TOKEN_COMMUNE_POLL_INTERVAL_MS/);
   assert.throws(() => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL: "https://gateway.example/?key=secret" }), /PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL/);
 });
+
+test("configuration permits plaintext gateways only on verified loopback hosts", () => {
+  const valid = {
+    PATCHBAY_CORE_ADDR: "http://127.0.0.1:9000",
+    PATCHBAY_ADAPTER_ATTACHMENT_SECRET: "attachment-secret-value",
+    PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL: "https://gateway.example/",
+    PATCHBAY_TOKEN_COMMUNE_MEMBER_KEY_FILE: "/secret/member.key",
+  };
+  for (const gatewayUrl of [
+    "http://192.168.1.20:8787/",
+    "http://172.18.0.2:8787/",
+    "http://10.0.0.20:8787/",
+    "http://gateway.example:8787/",
+  ]) {
+    assert.throws(
+      () => loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL: gatewayUrl }),
+      /PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL.*HTTPS.*loopback/,
+      gatewayUrl,
+    );
+  }
+  for (const gatewayUrl of [
+    "http://127.0.0.1:8787/",
+    "http://localhost:8787/",
+    "http://[::1]:8787/",
+  ]) {
+    assert.equal(
+      loadTokenCommuneAdapterConfig({ ...valid, PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL: gatewayUrl }).gatewayBaseUrl.href,
+      gatewayUrl,
+    );
+  }
+});

@@ -1,7 +1,7 @@
 ---
 id: gate-security-token-commune-http-credentials
 kind: story
-stage: drafting
+stage: review
 tags: [security]
 parent: null
 depends_on: []
@@ -44,3 +44,25 @@ A non-loopback HTTP gateway exposes the member key and returned operational tele
 
 ## Remediation direction
 Require HTTPS for non-loopback gateway URLs. If plaintext HTTP is necessary for local development, restrict it to verified loopback hosts and document the exception explicitly. Add configuration tests rejecting LAN, container-network, and remote `http:` endpoints.
+
+## Symptom
+Configuration and direct gateway-client construction both accepted non-loopback `http:` base URLs, after which every request attached the reusable member-key bearer credential.
+
+## Root cause
+The two gateway URL boundaries validated only URL shape and the broad `http:`/`https:` scheme set; neither coupled plaintext transport permission to a verified loopback hostname.
+
+## Fix approach
+Use one shared gateway URL guard at both configuration ingress and direct client construction. Keep HTTPS valid for any credential-free host, and permit HTTP only for the exact local-development loopback forms `localhost`, IPv4 `127.0.0.0/8`, and IPv6 `[::1]`.
+
+## Regression test
+`token-commune-adapter/tests/resource_contract.test.ts` rejects LAN, container-network, and remote HTTP configuration while retaining loopback HTTP. `token-commune-adapter/tests/gateway_client.test.ts` proves direct client callers cannot bypass the same transport policy.
+
+## Implementation notes
+
+- **Execution capability:** direct inline implementation; the bug was confined to two URL-ingress boundaries with one shared policy and did not need delegated exploration.
+- **Files changed:** added `token-commune-adapter/src/gateway_url.ts`; applied it in `src/config.ts` and `src/gateway_client.ts`; added regression coverage in both relevant test suites; documented the local-development exception in `docs/RUNBOOK.md`.
+- **Reproduction:** the two new negative tests initially failed because `http://192.168.1.20` was accepted by both configuration and direct client construction.
+- **Focused confirmation:** `npm run build && node --test dist/tests/resource_contract.test.js dist/tests/gateway_client.test.js` passed 14/14 after the fix.
+- **Full confirmation:** `npm test` passed 62/62, including the real gateway/core flow. This command rebuilt the operator domain, web cockpit types, and token-commune adapter.
+- **Original symptom:** LAN, container-network, and remote plaintext gateway URLs now fail before credential application; the existing loopback HTTP development path remains valid.
+- **Adjacent issues parked:** none.

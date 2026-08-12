@@ -1,5 +1,6 @@
 import type { GatewayCredential } from "./credential.js";
 import { parseGatewayEventKind, type GatewayEventKind } from "./event_observation.js";
+import { requireSafeGatewayBaseUrl } from "./gateway_url.js";
 
 export const GATEWAY_ENDPOINTS = {
   status: "/commune/status", pool: "/commune/pool", me: "/commune/me",
@@ -127,9 +128,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
   if (!Number.isSafeInteger(maximum) || maximum <= 0) throw new Error("maxResponseBytes must be a positive safe integer");
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) throw new Error("requestTimeoutMs must be a positive safe integer");
   const base = new URL(options.baseUrl.href);
-  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
-    throw new Error("gateway base URL must be a credential-free http(s) URL");
-  }
+  requireSafeGatewayBaseUrl(base, "gateway base URL");
   if (!base.pathname.endsWith("/")) base.pathname += "/";
 
   const get = async <T>(endpoint: GatewayEndpoint, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> => {

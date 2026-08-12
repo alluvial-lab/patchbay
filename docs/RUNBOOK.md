@@ -37,6 +37,8 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_OPERATOR_PASSWORD` | CLI | setup/login | Operator password. Supply through the environment or the CLI's non-echoing TTY prompt; never as an argument. |
 | `PATCHBAY_OPERATOR_ID` | web-server | yes | Configured operator identity for core password verification; the web server refuses startup without it. |
 | `PATCHBAY_OPERATOR_PASSWORD_HASH` | web-server | no | Optional local password-verifier fallback. Normal v0.1.0 login verifies the bootstrapped operator record at the core. |
+| `PATCHBAY_TOKEN_COMMUNE_GATEWAY_URL` | token-commune-adapter | yes | token-commune gateway base URL. HTTPS is required except for local development on a verified loopback host (`localhost`, `127.0.0.0/8`, or `[::1]`); LAN, container-network, and remote plaintext HTTP URLs are rejected. |
+| `PATCHBAY_TOKEN_COMMUNE_MEMBER_KEY_FILE` | token-commune-adapter | yes | Path to the token-commune member key file; it must be a regular, non-symlink file with mode `0600`. |
 
 ## Startup order
 

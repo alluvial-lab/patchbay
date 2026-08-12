@@ -37,6 +37,23 @@ const fixtures: Record<string, unknown> = {
   ].map((id) => ({ id, object: "model", owned_by: "token-commune", provider: id.includes("claude") ? "anthropic" : "openai-codex", surface: "codex", context_window: 200000, max_tokens: 8192, reasoning: true, available: true })) },
 };
 
+test("client refuses bearer credential transport over non-loopback plaintext HTTP", () => {
+  for (const baseUrl of [
+    "http://192.168.1.20:8787/",
+    "http://172.18.0.2:8787/",
+    "http://gateway.example:8787/",
+  ]) {
+    assert.throws(
+      () => createHttpTokenCommuneGatewayClient({ baseUrl: new URL(baseUrl), credential }),
+      /gateway base URL.*HTTPS.*loopback/,
+      baseUrl,
+    );
+  }
+  for (const baseUrl of ["http://127.0.0.1:8787/", "http://localhost:8787/", "http://[::1]:8787/"]) {
+    assert.doesNotThrow(() => createHttpTokenCommuneGatewayClient({ baseUrl: new URL(baseUrl), credential }));
+  }
+});
+
 test("credential reflection in a successful gateway body fails closed before decoding", async () => {
   const client = createHttpTokenCommuneGatewayClient({
     baseUrl: new URL("https://gateway.example/"), credential,
