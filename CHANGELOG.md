@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.1
+
+### Security
+
+- **Adapter attachment credentials are now scoped per adapter.** Core requires `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` — a JSON map of each adapter id to a distinct, independently-provisioned credential (e.g. `{"pi":"...","token-commune":"..."}`) — replacing the single shared `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` on the core. One adapter can no longer attach, replace, subscribe, or ingest as another adapter. **Breaking configuration change — see the RUNBOOK migration note.**
+- Token-commune gateway bearer credentials now require HTTPS for non-loopback hosts; plaintext HTTP is restricted to verified loopback (`localhost`, `127.0.0.0/8`, `[::1]`) for local development.
+- Observation audit attribution is now derived from the authenticated attachment context. Adapter-supplied sender claims (actor/endpoint/device) that conflict with the authenticated identity are rejected before persistence, preventing forged durable audit records.
+
+### Notes
+
+- Retroactive deep security scan of v0.2.0 (whose release gate had degraded to an inline pass) surfaced these three findings; this patch closes them. The v0.2.1 release gate ran the full top-level scanner fan-out (0 critical / 0 high).
+
 ## v0.2.0
 
 ### Features

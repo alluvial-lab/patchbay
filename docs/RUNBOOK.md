@@ -21,6 +21,8 @@ surfaces (browser cockpit + CLI).
 | `PATCHBAY_CORE_SECRET` | core, web-server, CLI | yes | Shared secret authenticating control surfaces as principals to the core (`x-patchbay-core-secret`). |
 | `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` | core | yes | JSON object mapping each adapter id to its independently provisioned `AdapterControlService.Attach` credential, for example `{"pi":"...","token-commune":"..."}`. Credentials must be non-empty ASCII and distinct per adapter. |
 | `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` | pi-adapter, token-commune-adapter | yes | This adapter process's credential; it must match only its own id in the core's credential map. |
+
+> **Migration (v0.2.0 → v0.2.1):** the core's single global `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` is **removed**. Provision `PATCHBAY_ADAPTER_ATTACHMENT_CREDENTIALS` as a JSON map of each adapter id to a distinct credential, set each adapter process's `PATCHBAY_ADAPTER_ATTACHMENT_SECRET` to its own entry in that map, and restart core + adapters. Core refuses to start without the new map. This is a security change: under v0.2.0 any holder of the shared secret could attach as any adapter; credentials are now per-adapter.
 | `PATCHBAY_ADAPTER_LOG` | pi-adapter | no (default `$XDG_STATE_HOME/patchbay/adapter.log` when set and absolute, else `~/.local/state/patchbay/adapter.log`) | Durable adapter diagnostics log path. |
 | `PATCHBAY_AUTHORITY_DOMAIN_ID` | all | no (default `default`) | The authority domain. All processes must agree; the core rejects mismatches. |
 | `PATCHBAY_BIND_ADDR` | core | no | Network listener for `ControlService` + `AdapterControlService`. |
