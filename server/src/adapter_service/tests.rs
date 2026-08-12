@@ -1942,7 +1942,7 @@ async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
     victim_registration.adapter_generation = Some(Generation { value: u64::MAX });
     let forged_attach = service
         .attach(Request::new(AttachRequest {
-            registration: Some(victim_registration),
+            registration: Some(victim_registration.clone()),
             attachment_evidence: EVIDENCE.as_bytes().to_vec(),
         }))
         .await
@@ -2020,6 +2020,15 @@ async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
         Some(1),
         "forged maximal generation must not fence legitimate reattachment"
     );
+
+    victim_registration.adapter_generation = Some(Generation { value: 2 });
+    service
+        .attach(Request::new(AttachRequest {
+            registration: Some(victim_registration),
+            attachment_evidence: VICTIM_EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("the legitimate adapter can reattach at its next generation");
 }
 
 #[tokio::test]

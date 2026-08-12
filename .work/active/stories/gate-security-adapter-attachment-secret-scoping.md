@@ -63,7 +63,7 @@ This is the minimal realization of the existing foundation requirement that adap
 - Pi's credential cannot attach or replace token-commune at a maximal generation;
 - Pi's attachment cannot establish token-commune delivery subscription or observation ingestion;
 - the rejected attempt leaves token-commune's legitimate ingestion and subscription current; and
-- durable replay retains token-commune generation 1, so the forged maximal generation cannot fence legitimate reattachment.
+- durable replay retains token-commune generation 1, and token-commune can then reattach successfully at generation 2, so the forged maximal generation cannot fence legitimate reattachment.
 
 ## Implementation notes
 
@@ -85,3 +85,14 @@ This is the minimal realization of the existing foundation requirement that adap
 5. Lint/type checks: `cargo clippy --workspace --all-targets -- -D warnings`, `npm --prefix pi-adapter run build`, `npm --prefix token-commune-adapter run build`, and `node --check` for changed `.mjs` harnesses — pass.
 
 **Adjacent issues parked**: none.
+
+## Review (2026-08-12)
+
+**Verdict**: Approve
+
+**Blockers**: none
+**Important**: none
+**Nits**: none
+**Rejected**: none
+
+**Notes**: Bounded inline standalone-story review; no independent, fresh-context, or cross-model reviewer ran, as required by the story lane. Correctness review confirmed that credential lookup is keyed by the untrusted claimed adapter id before generation preflight, durable registration, token issuance/replacement, or stream-epoch mutation. Security review confirmed that the core rejects shared credential material and that post-attach authentication uses the same identity-scoped lookup; credentials are neither persisted nor logged. Tests exercise the complete exploit chain (attach/replace, subscribe, ingest, maximal-generation fencing) and the legitimate victim path. Configuration breakage is intentional for pre-1.0 and documented in `docs/RUNBOOK.md`; a global fallback was correctly omitted. Existing ARCHITECTURE/SECURITY assertions already require adapter-specific trust roots and remain aligned. The bounded pass found one local coverage weakness—the durable generation assertion did not actually attempt the victim's next reattach—so the regression was strengthened to perform and require a successful generation-2 victim Attach; the focused test passes. Broader security-audit lenses were skipped because this review is bounded to the reported attachment-identity defect.
