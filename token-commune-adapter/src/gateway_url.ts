@@ -4,11 +4,15 @@ export function requireSafeGatewayBaseUrl(url: URL, name: string): void {
     && !url.password
     && !url.search
     && !url.hash;
-  if (!validShape || (url.protocol === "http:" && !isLoopbackHostname(url.hostname))) {
+  if (!validShape || (url.protocol === "http:" && !isLoopbackHttpUrl(url))) {
     throw new Error(
       `${name} must be a credential-free http(s) URL; HTTPS is required except for loopback-only local development`,
     );
   }
+}
+
+export function isLoopbackHttpUrl(url: URL): boolean {
+  return url.protocol === "http:" && isLoopbackHostname(url.hostname);
 }
 
 function isLoopbackHostname(hostname: string): boolean {

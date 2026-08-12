@@ -1,6 +1,8 @@
+import { Agent, request as httpRequest } from "node:http";
+import { Readable } from "node:stream";
 import type { GatewayCredential } from "./credential.js";
 import { parseGatewayEventKind, type GatewayEventKind } from "./event_observation.js";
-import { requireSafeGatewayBaseUrl } from "./gateway_url.js";
+import { isLoopbackHttpUrl, requireSafeGatewayBaseUrl } from "./gateway_url.js";
 
 export const GATEWAY_ENDPOINTS = {
   status: "/commune/status", pool: "/commune/pool", me: "/commune/me",
@@ -122,7 +124,6 @@ export function createHttpTokenCommuneGatewayClient(options: {
   maxResponseBytes?: number; requestTimeoutMs?: number; now?: () => Date;
   redactionSecrets?: readonly string[];
 }): TokenCommuneGatewayClient {
-  const fetcher = options.fetch ?? globalThis.fetch;
   const maximum = options.maxResponseBytes ?? 1024 * 1024;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   if (!Number.isSafeInteger(maximum) || maximum <= 0) throw new Error("maxResponseBytes must be a positive safe integer");
@@ -130,6 +131,7 @@ export function createHttpTokenCommuneGatewayClient(options: {
   const base = new URL(options.baseUrl.href);
   requireSafeGatewayBaseUrl(base, "gateway base URL");
   if (!base.pathname.endsWith("/")) base.pathname += "/";
+  const fetcher = options.fetch ?? (isLoopbackHttpUrl(base) ? directLoopbackHttpFetch : globalThis.fetch);
 
   const get = async <T>(endpoint: GatewayEndpoint, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> => {
     const headers = new Headers({ Accept: "application/json" });
@@ -172,6 +174,54 @@ export function createHttpTokenCommuneGatewayClient(options: {
     getModels: (signal?: AbortSignal) => get(GATEWAY_ENDPOINTS.models, decodeModels, signal),
   });
 }
+
+const directLoopbackHttpAgent = new Agent();
+
+const directLoopbackHttpFetch: typeof globalThis.fetch = async (input, init) => {
+  const url = input instanceof URL
+    ? input
+    : typeof input === "string"
+      ? new URL(input)
+      : new URL(input.url);
+  if (!isLoopbackHttpUrl(url)) throw new Error("direct loopback transport requires a loopback HTTP URL");
+  if (init?.body) throw new Error("direct loopback transport does not accept request bodies");
+
+  return new Promise<Response>((resolve, reject) => {
+    const headers = new Headers(init?.headers);
+    const request = httpRequest(url, {
+      method: init?.method ?? "GET",
+      headers: Object.fromEntries(headers.entries()),
+      agent: directLoopbackHttpAgent,
+      signal: init?.signal ?? undefined,
+    }, (incoming) => {
+      const status = incoming.statusCode;
+      if (status === undefined) {
+        incoming.destroy();
+        reject(new Error("loopback gateway returned no HTTP status"));
+        return;
+      }
+      const responseHeaders = new Headers();
+      for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+        const name = incoming.rawHeaders[index];
+        const value = incoming.rawHeaders[index + 1];
+        if (name !== undefined && value !== undefined) responseHeaders.append(name, value);
+      }
+      const hasBody = init?.method !== "HEAD" && ![204, 205, 304].includes(status);
+      if (!hasBody) incoming.resume();
+      try {
+        resolve(new Response(
+          hasBody ? Readable.toWeb(incoming) as unknown as BodyInit : null,
+          { status, statusText: incoming.statusMessage ?? "", headers: responseHeaders },
+        ));
+      } catch (error) {
+        incoming.destroy();
+        reject(error);
+      }
+    });
+    request.once("error", reject);
+    request.end();
+  });
+};
 
 async function boundedText(response: Response, maximum: number): Promise<string> {
   const declared = response.headers.get("content-length");

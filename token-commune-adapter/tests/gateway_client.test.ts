@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import test from "node:test";
 import {
   createHttpTokenCommuneGatewayClient,
@@ -53,6 +55,82 @@ test("client refuses bearer credential transport over non-loopback plaintext HTT
     assert.doesNotThrow(() => createHttpTokenCommuneGatewayClient({ baseUrl: new URL(baseUrl), credential }));
   }
 });
+
+test("loopback HTTP uses a direct transport when Node environment proxy mode is enabled", async (t) => {
+  if (!process.allowedNodeEnvironmentFlags.has("--use-env-proxy")) {
+    t.skip("this Node release has no environment-proxy fetch mode");
+    return;
+  }
+
+  let proxyRequests = 0;
+  const proxy = createServer((_request, response) => {
+    proxyRequests += 1;
+    response.writeHead(502).end();
+  });
+  proxy.on("connect", (_request, socket) => {
+    proxyRequests += 1;
+    socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+  });
+  const gateway = createServer((request, response) => {
+    assert.equal(request.headers.authorization, "Bearer member-key");
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(fixtures[GATEWAY_ENDPOINTS.status]));
+  });
+
+  const proxyPort = await listenOnLoopback(proxy);
+  const gatewayPort = await listenOnLoopback(gateway);
+  try {
+    const moduleUrl = new URL("../src/gateway_client.js", import.meta.url);
+    const script = `
+      const { createHttpTokenCommuneGatewayClient } = await import(${JSON.stringify(moduleUrl.href)});
+      const credential = {
+        apply(headers) { headers.set("Authorization", "Bearer member-key"); },
+        redactionSecrets() { return ["member-key"]; },
+        dispose() {},
+      };
+      const client = createHttpTokenCommuneGatewayClient({
+        baseUrl: new URL("http://127.0.0.1:${gatewayPort}/"),
+        credential,
+      });
+      const status = await client.getStatus();
+      if (!status.ok) process.exitCode = 2;
+    `;
+    const child = spawn(process.execPath, ["--use-env-proxy", "--input-type=module", "--eval", script], {
+      env: {
+        ...process.env,
+        HTTP_PROXY: `http://127.0.0.1:${proxyPort}`,
+        HTTPS_PROXY: `http://127.0.0.1:${proxyPort}`,
+        NO_PROXY: "",
+        no_proxy: "",
+      },
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+    assert.equal(code, 0, stderr);
+    assert.equal(proxyRequests, 0, "loopback bearer request must not enter the configured proxy");
+  } finally {
+    await Promise.all([closeServer(proxy), closeServer(gateway)]);
+  }
+});
+
+async function listenOnLoopback(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return address.port;
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
 
 test("credential reflection in a successful gateway body fails closed before decoding", async () => {
   const client = createHttpTokenCommuneGatewayClient({
