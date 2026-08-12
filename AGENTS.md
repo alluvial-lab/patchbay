@@ -40,6 +40,11 @@ When standing up or refreshing these substrates, follow the installed plugin dis
 - `[refactor]` is behavior-preserving only.
 - `[perf]` is performance work.
 
+## Workflow execution (harness discipline)
+
+- **Orchestrator and release agents run at the top level.** Do not delegate `release-deploy` (or any agent whose gates/workers fan out via subagents — `autopilot`, `implement-orchestrator`, the gates, `bug-scan`, `deep-code-scan`) one level down. `pi-subagents` applies an unconditional recursion guard that strips `subagent`/`get_subagent_result`/`steer_subagent` from every child session, so a delegated orchestrator cannot spawn its gates' scanners and the gates silently degrade to an inline pass.
+- **A sub-agent blocked on a subagent spawn must trip upward (escalate), not continue inline.** Silent inline fallback masks reduced rigor from the operator (it nearly shipped a degraded-gate v0.2.0). If you hit a spawn block inside a delegated agent, stop and surface it so the work can be re-driven from the top level. See `workflow-top-level-orchestrator-gate-trip-upward`.
+
 ## Design principles
 
 - Ports & Adapters: domain logic stays independent of DB/filesystem/HTTP/time/randomness.
