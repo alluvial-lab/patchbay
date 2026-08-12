@@ -159,6 +159,7 @@ updated: 2026-08-11
 - **gate-security** (2026-08-11) — 3 findings (2 high, 1 medium); scanner-agent path unavailable in this sub-agent harness, so the documented inline fallback was used. High findings were fixed and verified; medium finding `gate-security-upgrade-dompurify` is parked unbound per operator policy.
 - **gate-tests** (2026-08-11) — 0 findings; inline fallback used because scanner agents were unavailable. CI's contract/conformance/Rust/TypeScript suites were green; targeted integrity scans found no skipped/tautological tests or deleted coverage, and post-security-fix Pi/web suites passed.
 - **gate-cruft** (2026-08-11) — 0 findings; inline fallback used because scanner agents were unavailable. Rust clippy with warnings denied, all TypeScript builds, stale-marker searches, and tracked test-deletion checks were clean.
+- **gate-docs** (2026-08-11) — 2 low-risk drift findings; inline fallback used because scanner agents were unavailable. `gate-docs-readme-v0.2-current-status` and `gate-docs-runbook-release-framing` are parked unbound per operator policy.
 
 ### Binding-consistency guard
 
