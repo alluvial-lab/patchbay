@@ -156,7 +156,8 @@ updated: 2026-08-11
 
 ## Gate runs
 
-- **gate-security** (2026-08-11) — 3 findings (2 high, 1 medium); scanner-agent path unavailable in this sub-agent harness, so the documented inline fallback was used. High findings are bound for focused remediation; medium finding `gate-security-upgrade-dompurify` is parked unbound per operator policy.
+- **gate-security** (2026-08-11) — 3 findings (2 high, 1 medium); scanner-agent path unavailable in this sub-agent harness, so the documented inline fallback was used. High findings were fixed and verified; medium finding `gate-security-upgrade-dompurify` is parked unbound per operator policy.
+- **gate-tests** (2026-08-11) — 0 findings; inline fallback used because scanner agents were unavailable. CI's contract/conformance/Rust/TypeScript suites were green; targeted integrity scans found no skipped/tautological tests or deleted coverage, and post-security-fix Pi/web suites passed.
 
 ### Binding-consistency guard
 
