@@ -71,3 +71,10 @@ First contract leaf. Continuation, claims, cursor scope, target resolution, stag
 - Discrepancies from design: none; the generated checkpoint record is private and omits project/cwd/name/model by construction.
 - Adjacent issues parked: none.
 - Verification: contract generation, vectors/models, workspace build/tests, and clippy were green; generated-drift preflight is run after this commit because the repository check intentionally refuses uncommitted generated changes.
+
+## Review fix notes
+
+- Aligned `RuntimeGenerationRef.external_runtime` with the authoritative proto shape while retaining wire tag `2`, then regenerated committed Rust/TypeScript bindings.
+- Added `checkpoint::tests::logical_target_checkpoint_round_trip_recovers_both_consumers_and_ownership`, which folds durable identity events, checkpoints through `SessionCheckpointWriter` to file storage, reopens both server projection consumers, and proves recovered ownership plus duplicate rejection. Replacing materialized logical-target records with `Vec::new()` makes this test fail.
+- Added `illegal_slot_transitions_are_rejected_without_mutation`, an exact-error/non-mutation oracle for illegal empty/current/candidate/tombstone transitions, including double initial assignment, candidate-to-current bypass, and tombstoned-target revival. Removing the `CurrentAlreadyAssigned` guard makes this test fail.
+- Review-fix verification: generated contract vectors/models, workspace build/tests, and clippy all pass; story remains at `stage: review` for reviewer re-run.

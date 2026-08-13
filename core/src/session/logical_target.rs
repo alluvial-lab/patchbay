@@ -223,7 +223,7 @@ impl LogicalTargetRegistry {
         if record
             .current
             .as_ref()
-            .is_some_and(|current| current.external_runtime_ref.as_ref() == Some(&external))
+            .is_some_and(|current| current.external_runtime.as_ref() == Some(&external))
         {
             return Err(LogicalTargetError::RuntimeRefMismatch);
         }
@@ -278,7 +278,7 @@ impl LogicalTargetRegistry {
         let prior = record.current.clone();
         let prior_tombstone = prior.as_ref().map(|current| {
             let external = current
-                .external_runtime_ref
+                .external_runtime
                 .clone()
                 .expect("validated current runtime reference");
             let key = self
@@ -327,7 +327,7 @@ impl LogicalTargetRegistry {
             return Err(LogicalTargetError::CandidateAlreadyReserved);
         }
         let external = expected_current
-            .external_runtime_ref
+            .external_runtime
             .clone()
             .ok_or(LogicalTargetError::RuntimeRefMismatch)?;
         let key = self.external_key(&external)?;
@@ -400,7 +400,7 @@ impl LogicalTargetRegistry {
         if let Some(current) = record.current.as_ref() {
             validate_runtime_generation_ref(&logical_target_id, current)?;
             let external = current
-                .external_runtime_ref
+                .external_runtime
                 .as_ref()
                 .expect("validated runtime-generation reference");
             validate_external_against_record(&record, external)?;
@@ -411,7 +411,7 @@ impl LogicalTargetRegistry {
             if record
                 .current
                 .as_ref()
-                .is_some_and(|current| current.external_runtime_ref.as_ref() == Some(candidate))
+                .is_some_and(|current| current.external_runtime.as_ref() == Some(candidate))
             {
                 return Err(corrupt("current and reserved candidate are identical"));
             }
@@ -432,7 +432,7 @@ impl LogicalTargetRegistry {
             if record
                 .current
                 .as_ref()
-                .is_some_and(|current| current.external_runtime_ref.as_ref() == Some(&external))
+                .is_some_and(|current| current.external_runtime.as_ref() == Some(&external))
                 || record.reserved_candidate.as_ref() == Some(&external)
             {
                 return Err(corrupt("tombstone overlaps a live identity slot"));
@@ -530,7 +530,7 @@ fn record_external_refs(record: &LogicalTargetRecord) -> Vec<&ExternalRuntimeRef
     if let Some(current) = record.current.as_ref() {
         refs.push(
             current
-                .external_runtime_ref
+                .external_runtime
                 .as_ref()
                 .expect("checkpoint current validated before indexing"),
         );
@@ -568,7 +568,7 @@ fn runtime_generation_ref(
 ) -> RuntimeGenerationRef {
     RuntimeGenerationRef {
         logical_target_id: Some(logical_target_id.clone()),
-        external_runtime_ref: Some(external),
+        external_runtime: Some(external),
     }
 }
 
@@ -610,7 +610,7 @@ fn validate_runtime_generation_ref(
     }
     validate_external_ref(
         runtime
-            .external_runtime_ref
+            .external_runtime
             .as_ref()
             .ok_or(LogicalTargetError::RuntimeRefMismatch)?,
     )

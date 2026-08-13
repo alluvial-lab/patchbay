@@ -83,7 +83,7 @@ pub struct RuntimeGenerationRef {
     #[prost(message, optional, tag="1")]
     pub logical_target_id: ::core::option::Option<LogicalTargetId>,
     #[prost(message, optional, tag="2")]
-    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
+    pub external_runtime: ::core::option::Option<ExternalRuntimeRef>,
 }
 /// Adapter-local resource identifier. Routable identity also includes the
 /// owning adapter and adapter-owned resource kind.

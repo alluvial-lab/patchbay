@@ -315,6 +315,11 @@ impl ProjectionState {
         self.target_resolver.inner.lock().await.sessions().sessions().count() as u32
     }
 
+    #[cfg(test)]
+    pub async fn conformance_session_registry(&self) -> patchbay_core::session::SessionRegistry {
+        self.target_resolver.inner.lock().await.sessions().clone()
+    }
+
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
         self.decision_gate.acquire().await
     }

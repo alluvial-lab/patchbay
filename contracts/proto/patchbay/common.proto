@@ -67,7 +67,7 @@ message ExternalRuntimeRef {
 // Binds a stable logical target to one exact external runtime incarnation.
 message RuntimeGenerationRef {
   LogicalTargetId logical_target_id = 1;
-  ExternalRuntimeRef external_runtime_ref = 2;
+  ExternalRuntimeRef external_runtime = 2;
 }
 
 // Adapter-local resource identifier. Routable identity also includes the

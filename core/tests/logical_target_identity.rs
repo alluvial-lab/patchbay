@@ -46,7 +46,7 @@ fn current(
 ) -> RuntimeGenerationRef {
     RuntimeGenerationRef {
         logical_target_id: Some(logical_target_id.clone()),
-        external_runtime_ref: Some(external.clone()),
+        external_runtime: Some(external.clone()),
     }
 }
 
@@ -134,6 +134,159 @@ fn slot_transitions_are_exact_and_tombstones_retain_ownership() {
             attempted_owner: other,
         })
     );
+}
+
+#[test]
+fn illegal_slot_transitions_are_rejected_without_mutation() {
+    let logical = target("target-a");
+    let generation_one = external("pi", "machine-a", "runtime-a", 1);
+    let generation_two = external("pi", "machine-a", "runtime-b", 2);
+    let generation_three = external("pi", "machine-a", "runtime-c", 3);
+
+    let mut double_current = registry();
+    double_current
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    double_current
+        .assign_initial_current(&logical, generation_one.clone())
+        .unwrap();
+    let before = double_current.clone();
+    assert_eq!(
+        double_current.assign_initial_current(&logical, generation_two.clone()),
+        Err(LogicalTargetError::CurrentAlreadyAssigned)
+    );
+    assert_eq!(double_current, before);
+
+    let mut candidate_bypass = registry();
+    candidate_bypass
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    candidate_bypass
+        .reserve_candidate(&logical, generation_one.clone())
+        .unwrap();
+    let before = candidate_bypass.clone();
+    assert_eq!(
+        candidate_bypass.assign_initial_current(&logical, generation_two.clone()),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(candidate_bypass, before);
+    assert_eq!(
+        candidate_bypass.reserve_candidate(&logical, generation_two.clone()),
+        Err(LogicalTargetError::CandidateAlreadyReserved)
+    );
+    assert_eq!(candidate_bypass, before);
+    assert_eq!(
+        candidate_bypass.release_candidate(&logical, &generation_two),
+        Err(LogicalTargetError::ReservedCandidateMismatch)
+    );
+    assert_eq!(candidate_bypass, before);
+
+    let mut empty_slots = registry();
+    empty_slots
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    let before = empty_slots.clone();
+    assert_eq!(
+        empty_slots.release_candidate(&logical, &generation_one),
+        Err(LogicalTargetError::ReservedCandidateMismatch)
+    );
+    assert_eq!(empty_slots, before);
+    assert_eq!(
+        empty_slots.commit_reserved_candidate(&logical, None, &generation_one, 7),
+        Err(LogicalTargetError::ReservedCandidateMismatch)
+    );
+    assert_eq!(empty_slots, before);
+    assert_eq!(
+        empty_slots.tombstone_current(&current(&logical, &generation_one), 7),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(empty_slots, before);
+
+    let mut current_slots = registry();
+    current_slots
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    current_slots
+        .assign_initial_current(&logical, generation_one.clone())
+        .unwrap();
+    let before = current_slots.clone();
+    assert_eq!(
+        current_slots.reserve_candidate(&logical, generation_one.clone()),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(current_slots, before);
+    assert_eq!(
+        current_slots.commit_reserved_candidate(
+            &logical,
+            Some(&current(&logical, &generation_one)),
+            &generation_two,
+            7,
+        ),
+        Err(LogicalTargetError::ReservedCandidateMismatch)
+    );
+    assert_eq!(current_slots, before);
+    assert_eq!(
+        current_slots.tombstone_current(&current(&logical, &generation_two), 7),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(current_slots, before);
+    assert_eq!(
+        current_slots.tombstone_current(&current(&logical, &generation_one), 0),
+        Err(LogicalTargetError::NonPositiveTombstoneLsn)
+    );
+    assert_eq!(current_slots, before);
+
+    current_slots
+        .reserve_candidate(&logical, generation_two.clone())
+        .unwrap();
+    let before = current_slots.clone();
+    assert_eq!(
+        current_slots.tombstone_current(&current(&logical, &generation_one), 7),
+        Err(LogicalTargetError::CandidateAlreadyReserved)
+    );
+    assert_eq!(current_slots, before);
+    assert_eq!(
+        current_slots.commit_reserved_candidate(
+            &logical,
+            Some(&current(&logical, &generation_one)),
+            &generation_two,
+            0,
+        ),
+        Err(LogicalTargetError::NonPositiveTombstoneLsn)
+    );
+    assert_eq!(current_slots, before);
+    assert_eq!(
+        current_slots.commit_reserved_candidate(
+            &logical,
+            Some(&current(&logical, &generation_three)),
+            &generation_two,
+            7,
+        ),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(current_slots, before);
+
+    let mut retired = registry();
+    retired
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    retired
+        .assign_initial_current(&logical, generation_one.clone())
+        .unwrap();
+    retired
+        .tombstone_current(&current(&logical, &generation_one), 7)
+        .unwrap();
+    let before = retired.clone();
+    assert_eq!(
+        retired.assign_initial_current(&logical, generation_two.clone()),
+        Err(LogicalTargetError::RuntimeRefMismatch)
+    );
+    assert_eq!(retired, before);
+    assert_eq!(
+        retired.reserve_candidate(&logical, generation_two),
+        Err(LogicalTargetError::RetiredTarget)
+    );
+    assert_eq!(retired, before);
 }
 
 #[test]

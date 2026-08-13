@@ -377,15 +377,20 @@ mod tests {
 
     use patchbay_contracts::patchbay::{
         resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
-        EventId, Generation, IdempotencyKey, Observation, PayloadContentType, PayloadEnvelope,
-        ResourceId, ResourceIdentity, ResourceKind, ResourceStateEvent, ResourceStateMutation,
-        ResourceStateUpsert, ResourceViewStateUpdate, RuntimeSessionId, SecurityLockdownEntered,
-        SessionActivityState, SessionConnectivityState, SessionGenerationBumped, SessionRegistered,
-        SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState,
-        StoredEventKind, StoredEventPayload,
+        EventId, ExternalRuntimeRef, Generation, IdempotencyKey, LogicalTargetCandidateReserved,
+        LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Observation,
+        PayloadContentType, PayloadEnvelope, ResourceId, ResourceIdentity, ResourceKind,
+        ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
+        RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
+        SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionReport,
+        SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
+        StoredEventPayload,
     };
     use patchbay_core::{
-        session::{events as session_events, rebuild_from_log as rebuild_sessions_from_log},
+        session::{
+            events as session_events, rebuild_from_log as rebuild_sessions_from_log,
+            ExternalRuntimeOwnership, LogicalTargetError, SessionRegistry,
+        },
         storage::{
             CoreGenerationStore, DedupOutcome, RecordedEvent, RusqliteStorage, StoredSnapshot,
             TargetKey,
@@ -542,6 +547,146 @@ mod tests {
             writer.state.core_generation(),
         )
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn logical_target_checkpoint_round_trip_recovers_both_consumers_and_ownership() {
+        fn assert_ownership_and_duplicate_rejection(
+            mut registry: SessionRegistry,
+            first: &LogicalTargetId,
+            second: &LogicalTargetId,
+            current: &ExternalRuntimeRef,
+            candidate: &ExternalRuntimeRef,
+        ) {
+            assert_eq!(registry.logical_targets().owner_of(current), Some(first));
+            assert_eq!(registry.logical_targets().owner_of(candidate), Some(first));
+            let before = registry.clone();
+            assert_eq!(
+                registry
+                    .logical_targets_mut()
+                    .reserve_candidate(second, candidate.clone()),
+                Err(LogicalTargetError::DuplicateNativeReference {
+                    owner: first.clone(),
+                    attempted_owner: second.clone(),
+                })
+            );
+            assert_eq!(registry, before);
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("logical-target-checkpoint.sqlite3");
+        let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        let first = LogicalTargetId {
+            value: "target-a".to_owned(),
+        };
+        let second = LogicalTargetId {
+            value: "target-b".to_owned(),
+        };
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let external = |runtime: &str, generation: u64| ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: runtime.to_owned(),
+            }),
+            generation: Some(Generation { value: generation }),
+        };
+        let current = external("runtime-current", 1);
+        let candidate = external("runtime-candidate", 2);
+        let source = [
+            session_events::logical_target_created(
+                domain(),
+                LogicalTargetCreated {
+                    logical_target_id: Some(first.clone()),
+                    adapter_id: Some(adapter_id.clone()),
+                    deployment_scope: "machine-a".to_owned(),
+                },
+            ),
+            session_events::logical_target_created(
+                domain(),
+                LogicalTargetCreated {
+                    logical_target_id: Some(second.clone()),
+                    adapter_id: Some(adapter_id),
+                    deployment_scope: "machine-a".to_owned(),
+                },
+            ),
+            session_events::logical_target_initial_current_assigned(
+                domain(),
+                LogicalTargetInitialCurrentAssigned {
+                    logical_target_id: Some(first.clone()),
+                    external_runtime_ref: Some(current.clone()),
+                },
+            ),
+            session_events::logical_target_candidate_reserved(
+                domain(),
+                LogicalTargetCandidateReserved {
+                    logical_target_id: Some(first.clone()),
+                    external_runtime_ref: Some(candidate.clone()),
+                },
+            ),
+        ];
+        for event in source {
+            storage
+                .append(&domain(), session_events::encode(&event))
+                .await
+                .unwrap();
+        }
+
+        let state = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
+        let writer = SessionCheckpointWriter::new(
+            storage.clone(),
+            state.clone(),
+            domain(),
+            Arc::new(TestClock::new(prost_types::Timestamp {
+                seconds: 4,
+                nanos: 0,
+            })),
+            SessionCheckpointPolicy {
+                events_per_checkpoint: NonZeroU64::new(1).unwrap(),
+                ..test_policy()
+            },
+            Arc::new(RecordingObserver::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            writer.run_once().await.unwrap(),
+            CheckpointTickOutcome::Written {
+                prior_lsn: 0,
+                checkpoint_lsn: 4,
+            }
+        );
+        drop(writer);
+        drop(state);
+        drop(storage);
+
+        let reopened = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        let aggregate = ProjectionState::rebuild(&reopened, &domain()).await.unwrap();
+        assert_eq!(aggregate.session_recovery_checkpoint_lsn(), 4);
+        assert_eq!(aggregate.session_replayed_event_count(), 0);
+        assert_ownership_and_duplicate_rejection(
+            aggregate.conformance_session_registry().await,
+            &first,
+            &second,
+            &current,
+            &candidate,
+        );
+
+        let adapter_service = crate::adapter_service::AdapterControlServiceImpl::new(
+            reopened,
+            domain(),
+            crate::adapter_service::AdapterEvidenceVerifier::new([("pi", "evidence")]).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_ownership_and_duplicate_rejection(
+            adapter_service.conformance_session_registry().await,
+            &first,
+            &second,
+            &current,
+            &candidate,
+        );
     }
 
     #[tokio::test]
