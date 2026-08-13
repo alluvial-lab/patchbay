@@ -1,10 +1,10 @@
 //! Operation submission and durable acceptance.
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode,
-    GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
-    StoredEventPayload,
-    SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind, TimeWindow,
+    spawn_request, AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId,
+    FailureCode, GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope,
+    TargetScopeKind, TimeWindow,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -252,13 +252,29 @@ where
     }
 
     if validated.operation_kind == OperationKind::Spawn {
-        if let Err(error) = validate_spawn_operation_payload(&operation) {
+        let spawn_request = match validate_spawn_operation_payload(&operation) {
+            Ok(request) => request,
+            Err(error) => {
+                return Ok(rejected_result(
+                    Some(validated.command_id.clone()),
+                    FailureCode::ValidationFailed,
+                    "validation_failed".to_owned(),
+                    None,
+                    error.to_string(),
+                ));
+            }
+        };
+        if matches!(
+            spawn_request.intent,
+            Some(spawn_request::Intent::Continuation(_))
+        ) {
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
-                FailureCode::ValidationFailed,
-                "validation_failed".to_owned(),
+                FailureCode::UnsupportedCommand,
+                "unsupported_command".to_owned(),
                 None,
-                error.to_string(),
+                "spawn continuation requires compound authority selection, which is not yet supported"
+                    .to_owned(),
             ));
         }
     }

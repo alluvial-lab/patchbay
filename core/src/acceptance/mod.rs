@@ -34,9 +34,8 @@ pub use ports::{
 };
 pub use replay::rebuild_from_log;
 pub use spawn::{
-    validate_continuation_authority_provenance, validate_spawn_authority_carriage,
-    validate_spawn_operation_payload, validate_spawn_request, SpawnValidationError,
-    SPAWN_REQUEST_SCHEMA,
+    validate_spawn_authority_carriage, validate_spawn_operation_payload, validate_spawn_request,
+    SpawnValidationError, SPAWN_REQUEST_SCHEMA,
 };
 pub use state::{is_terminal, CommandRecord, OperationStateExt};
 pub use transitions::{

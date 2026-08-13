@@ -2,18 +2,20 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    response_contract, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
-    ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId, CommandId, DeviceId,
-    ElicitationId, ElicitationResponsePayload, EndpointId, FailureCode, Generation, GrantId, Lsn,
-    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
-    QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, StoredEventKind,
-    SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
+    response_contract, spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef,
+    ActorId, AdapterId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId, CommandId,
+    DeviceId, ElicitationId, ElicitationResponsePayload, EndpointId, ExternalRuntimeRef,
+    FailureCode, FreshSpawn, Generation, GrantId, LogicalTargetId, Lsn, Operation, OperationKind,
+    OperationState, PayloadContentType, PayloadEnvelope, QuestionContract, ResponseContract,
+    ResponseContractKind, ResponseOption, RuntimeGenerationRef, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SpawnContinuation,
+    SpawnRequest, SpawnTargetSpec, StoredEventKind, SubmissionOutcome, TargetScope,
+    TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     submit, submit_with_clock, AcceptanceError, ActiveElicitation, Authorized, Clock,
     CommandSnapshot, CommandStateLookup, ElicitationContractLookup, GrantCheck, GrantDenied,
-    TargetBinding, TargetNotFound, TargetResolver,
+    TargetBinding, TargetNotFound, TargetResolver, SPAWN_REQUEST_SCHEMA,
 };
 use patchbay_core::{
     authority::IssuerContext,
@@ -268,6 +270,55 @@ fn operation() -> Operation {
         submitted_at: Some(timestamp(1)),
         ..Operation::default()
     }
+}
+
+fn spawn_operation(intent: spawn_request::Intent, command: &str) -> Operation {
+    let mut operation = operation();
+    operation.command_id = Some(CommandId {
+        value: command.to_owned(),
+    });
+    operation.kind = OperationKind::Spawn as i32;
+    operation.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        ..TargetScope::default()
+    });
+    operation.idempotency_key = format!("{command}-key");
+    operation.payload = Some(PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(intent),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
+    operation
+}
+
+fn spawn_continuation() -> spawn_request::Intent {
+    spawn_request::Intent::Continuation(SpawnContinuation {
+        prior: Some(RuntimeGenerationRef {
+            logical_target_id: Some(LogicalTargetId {
+                value: "logical-1".to_owned(),
+            }),
+            external_runtime: Some(ExternalRuntimeRef {
+                adapter_id: Some(AdapterId {
+                    value: "pi".to_owned(),
+                }),
+                deployment_scope: "local".to_owned(),
+                runtime_session_id: Some(RuntimeSessionId {
+                    value: "session-1".to_owned(),
+                }),
+                generation: Some(Generation { value: 7 }),
+            }),
+        }),
+    })
 }
 
 struct TerminalRetryLookup {
@@ -1091,6 +1142,58 @@ async fn unknown_target_rejects_without_durable_state() {
     assert_eq!(grant.calls.load(Ordering::Relaxed), 1);
     assert_eq!(resolver.calls.load(Ordering::Relaxed), 1);
     assert!(durable_events(&storage).await.is_empty());
+}
+
+#[tokio::test]
+async fn continuation_rejects_before_grant_target_or_append_while_fresh_spawn_remains_enabled() {
+    let continuation_storage = RusqliteStorage::open_in_memory().unwrap();
+    let continuation_grant = TestGrantCheck::new(true);
+    let continuation_resolver = TestTargetResolver::new(true);
+
+    let rejected = submit(
+        &continuation_storage,
+        &continuation_grant,
+        &continuation_resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        spawn_operation(spawn_continuation(), "continuation-command"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&rejected), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&rejected), FailureCode::UnsupportedCommand);
+    assert_eq!(rejected.reason_code, "unsupported_command");
+    assert!(rejected.diagnostic_message.contains("compound authority"));
+    assert_eq!(continuation_grant.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(durable_events(&continuation_storage).await.is_empty());
+
+    let fresh_storage = RusqliteStorage::open_in_memory().unwrap();
+    let fresh_grant = TestGrantCheck::new(true);
+    let fresh_resolver = TestTargetResolver::new(true);
+    let accepted = submit(
+        &fresh_storage,
+        &fresh_grant,
+        &fresh_resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        spawn_operation(
+            spawn_request::Intent::Fresh(FreshSpawn {}),
+            "fresh-spawn-command",
+        ),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome(&accepted), SubmissionOutcome::Accepted);
+    assert_eq!(fresh_grant.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(fresh_resolver.calls.load(Ordering::Relaxed), 1);
+    let events = durable_events(&fresh_storage).await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload.kind, StoredEventKind::Operation as i32);
 }
 
 #[tokio::test]

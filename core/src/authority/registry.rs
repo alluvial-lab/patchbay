@@ -14,7 +14,8 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use crate::{
-    acceptance::{exact_command_correlation, validate_continuation_authority_provenance},
+    acceptance::exact_command_correlation,
+    contract_validation::validate_continuation_authority_provenance,
     resource::ResourceIdentity,
     storage::RecordedEvent,
 };

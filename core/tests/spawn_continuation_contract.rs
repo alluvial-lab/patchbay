@@ -200,6 +200,61 @@ fn spawn_payload_contract_rejects_envelope_mutations() {
 }
 
 #[test]
+fn spawn_wire_rejects_unknown_top_level_fields_for_every_intent() {
+    for request in [fresh_request(), continuation_request(7)] {
+        let mut submitted = operation(request);
+        // Unknown tag 4, length-delimited empty value, alongside an otherwise
+        // valid request. Protobuf decoding alone would silently discard it.
+        submitted
+            .payload
+            .as_mut()
+            .unwrap()
+            .payload
+            .extend_from_slice(&[0x22, 0x00]);
+        assert!(matches!(
+            validate_spawn_operation_payload(&submitted),
+            Err(SpawnValidationError::MalformedPayload(message))
+                if message.contains("unknown top-level field 4")
+        ));
+    }
+}
+
+#[test]
+fn spawn_wire_rejects_known_top_level_fields_with_wrong_wire_types() {
+    for wrong_field in [0x08, 0x10, 0x18] {
+        let mut submitted = operation(fresh_request());
+        submitted
+            .payload
+            .as_mut()
+            .unwrap()
+            .payload
+            .extend_from_slice(&[wrong_field, 0x00]);
+        assert!(matches!(
+            validate_spawn_operation_payload(&submitted),
+            Err(SpawnValidationError::MalformedPayload(_))
+        ));
+    }
+}
+
+#[test]
+fn spawn_wire_rejects_both_intents_in_either_wire_order() {
+    let fresh_wire = fresh_request().encode_to_vec();
+    let continuation_wire = continuation_request(7).encode_to_vec();
+
+    for wire in [
+        [fresh_wire.as_slice(), continuation_wire.as_slice()].concat(),
+        [continuation_wire.as_slice(), fresh_wire.as_slice()].concat(),
+    ] {
+        let mut submitted = operation(fresh_request());
+        submitted.payload.as_mut().unwrap().payload = wire;
+        assert_eq!(
+            validate_spawn_operation_payload(&submitted),
+            Err(SpawnValidationError::MixedIntent)
+        );
+    }
+}
+
+#[test]
 fn request_shape_mutations_reject_independently() {
     let mut no_intent = fresh_request();
     no_intent.intent = None;
@@ -424,12 +479,36 @@ fn compound_authority_requires_both_distinct_grants_and_exact_prior() {
         Err(SpawnValidationError::ReusedSpawningGrant)
     );
 
-    for kind in [OperationKind::Unspecified, OperationKind::Spawn] {
+    let every_generated_non_session_management_kind = [
+        OperationKind::Unspecified,
+        OperationKind::Spawn,
+        OperationKind::Attach,
+        OperationKind::Instruct,
+        OperationKind::Cancel,
+        OperationKind::Interrupt,
+        OperationKind::Query,
+        OperationKind::ApprovalResponse,
+        OperationKind::ElicitationResponse,
+        OperationKind::Reconfigure,
+        OperationKind::ReservedAgentSend,
+        OperationKind::ReservedAdapterUtilityExec,
+    ];
+    for kind in every_generated_non_session_management_kind {
         let mut wrong_kind = valid.clone();
         wrong_kind.replacement_authority_kind = kind as i32;
         assert_eq!(
             validate_spawn_authority_carriage(&request, Some(&spawn_grant), Some(&wrong_kind)),
-            Err(SpawnValidationError::WrongReplacementAuthorityKind)
+            Err(SpawnValidationError::WrongReplacementAuthorityKind),
+            "unexpectedly admitted {kind:?}"
+        );
+    }
+    for unknown_kind in [-1, 11, 99, 102, i32::MAX] {
+        let mut wrong_kind = valid.clone();
+        wrong_kind.replacement_authority_kind = unknown_kind;
+        assert_eq!(
+            validate_spawn_authority_carriage(&request, Some(&spawn_grant), Some(&wrong_kind)),
+            Err(SpawnValidationError::WrongReplacementAuthorityKind),
+            "unexpectedly admitted unknown operation kind {unknown_kind}"
         );
     }
 }

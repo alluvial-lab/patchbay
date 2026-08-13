@@ -5,10 +5,15 @@
 //! operation-aware authority decision.
 
 use patchbay_contracts::patchbay::{
-    spawn_request, ContinuationAuthorityProvenance, ExternalRuntimeRef, GrantId, Operation,
-    OperationKind, PayloadContentType, RuntimeGenerationRef, SpawnRequest, SpawnTargetSpec,
+    spawn_request, ContinuationAuthorityProvenance, GrantId, Operation, PayloadContentType,
+    SpawnRequest, SpawnTargetSpec,
 };
 use prost::Message;
+
+use crate::contract_validation::{
+    validate_continuation_authority_provenance, validate_runtime_generation_ref,
+    ContinuationProvenanceError,
+};
 
 pub const SPAWN_REQUEST_SCHEMA: &str = "patchbay.SpawnRequest";
 
@@ -16,7 +21,6 @@ const MAX_SHAPE_BYTES: usize = 128;
 const MAX_DEPLOYMENT_AUTHORITY_REF_BYTES: usize = 256;
 const MAX_ADAPTER_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_SCHEMA_REF_BYTES: usize = 256;
-const MAX_DEPLOYMENT_SCOPE_BYTES: usize = 256;
 
 /// Structural errors rejected before grant selection, target resolution, or durability.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -51,7 +55,7 @@ pub enum SpawnValidationError {
     MissingExternalRuntime,
     #[error("continuation exact prior adapter_id must not be empty")]
     EmptyAdapterId,
-    #[error("continuation exact prior deployment_scope must be 1..={MAX_DEPLOYMENT_SCOPE_BYTES} printable ASCII bytes")]
+    #[error("continuation exact prior deployment_scope must be 1..=256 printable ASCII bytes")]
     MalformedDeploymentScope,
     #[error("continuation exact prior runtime_session_id must not be empty")]
     EmptyRuntimeSessionId,
@@ -73,6 +77,27 @@ pub enum SpawnValidationError {
     ReusedSpawningGrant,
     #[error("continuation replacement authority kind must be session-management")]
     WrongReplacementAuthorityKind,
+}
+
+impl From<ContinuationProvenanceError> for SpawnValidationError {
+    fn from(error: ContinuationProvenanceError) -> Self {
+        match error {
+            ContinuationProvenanceError::MissingSpawningGrant => Self::MissingSpawningGrant,
+            ContinuationProvenanceError::MissingExactPrior => Self::MissingExactPrior,
+            ContinuationProvenanceError::EmptyLogicalTargetId => Self::EmptyLogicalTargetId,
+            ContinuationProvenanceError::MissingExternalRuntime => Self::MissingExternalRuntime,
+            ContinuationProvenanceError::EmptyAdapterId => Self::EmptyAdapterId,
+            ContinuationProvenanceError::MalformedDeploymentScope => Self::MalformedDeploymentScope,
+            ContinuationProvenanceError::EmptyRuntimeSessionId => Self::EmptyRuntimeSessionId,
+            ContinuationProvenanceError::NonPositiveGeneration => Self::NonPositiveGeneration,
+            ContinuationProvenanceError::GenerationOverflow => Self::GenerationOverflow,
+            ContinuationProvenanceError::MissingReplacementGrant => Self::MissingReplacementGrant,
+            ContinuationProvenanceError::ReusedSpawningGrant => Self::ReusedSpawningGrant,
+            ContinuationProvenanceError::WrongReplacementAuthorityKind => {
+                Self::WrongReplacementAuthorityKind
+            }
+        }
+    }
 }
 
 /// Decode and validate the generated payload for a spawn Operation.
@@ -116,7 +141,8 @@ pub fn validate_spawn_request(request: &SpawnRequest) -> Result<(), SpawnValidat
                 .prior
                 .as_ref()
                 .ok_or(SpawnValidationError::MissingExactPrior)?,
-        ),
+        )
+        .map_err(SpawnValidationError::from),
         None => Err(SpawnValidationError::MissingIntent),
     }
 }
@@ -153,7 +179,8 @@ pub fn validate_spawn_authority_carriage(
                 .ok_or(SpawnValidationError::MissingExactPrior)?;
             let provenance =
                 continuation_authority.ok_or(SpawnValidationError::MissingReplacementAuthority)?;
-            validate_continuation_authority_provenance(spawning_grant_id, provenance)?;
+            validate_continuation_authority_provenance(spawning_grant_id, provenance)
+                .map_err(SpawnValidationError::from)?;
             if provenance.exact_prior.as_ref() != Some(prior) {
                 return Err(SpawnValidationError::ReplacementPriorMismatch);
             }
@@ -161,39 +188,6 @@ pub fn validate_spawn_authority_carriage(
         }
         None => Err(SpawnValidationError::MissingIntent),
     }
-}
-
-/// Validate the self-contained descendant continuation provenance shape.
-///
-/// Exact equality with the accepted request is checked by
-/// [`validate_spawn_authority_carriage`]; this narrower function is also used
-/// when replaying a descendant Grant from durable storage.
-pub fn validate_continuation_authority_provenance(
-    spawning_grant_id: &GrantId,
-    provenance: &ContinuationAuthorityProvenance,
-) -> Result<(), SpawnValidationError> {
-    if spawning_grant_id.value.is_empty() {
-        return Err(SpawnValidationError::MissingSpawningGrant);
-    }
-    let exact_prior = provenance
-        .exact_prior
-        .as_ref()
-        .ok_or(SpawnValidationError::MissingExactPrior)?;
-    validate_runtime_generation_ref(exact_prior)?;
-    let replacement_grant_id = provenance
-        .replacement_grant_id
-        .as_ref()
-        .filter(|grant_id| !grant_id.value.is_empty())
-        .ok_or(SpawnValidationError::MissingReplacementGrant)?;
-    if replacement_grant_id == spawning_grant_id {
-        return Err(SpawnValidationError::ReusedSpawningGrant);
-    }
-    if OperationKind::try_from(provenance.replacement_authority_kind).ok()
-        != Some(OperationKind::SessionManagement)
-    {
-        return Err(SpawnValidationError::WrongReplacementAuthorityKind);
-    }
-    Ok(())
 }
 
 fn validate_disjoint_intent_tags(payload: &[u8]) -> Result<(), SpawnValidationError> {
@@ -210,8 +204,13 @@ fn validate_disjoint_intent_tags(payload: &[u8]) -> Result<(), SpawnValidationEr
         match field {
             1 if wire_type == 2 => saw_fresh = true,
             2 if wire_type == 2 => saw_continuation = true,
-            1 | 2 => return Err(malformed_framing()),
-            _ => {}
+            3 if wire_type == 2 => {}
+            1..=3 => return Err(malformed_framing()),
+            _ => {
+                return Err(SpawnValidationError::MalformedPayload(format!(
+                    "SpawnRequest contains unknown top-level field {field}"
+                )));
+            }
         }
         skip_wire_value(payload, &mut cursor, wire_type).ok_or_else(malformed_framing)?;
     }
@@ -286,60 +285,6 @@ fn validate_target_spec(target: &SpawnTargetSpec) -> Result<(), SpawnValidationE
         {
             return Err(SpawnValidationError::InvalidAdapterPayloadSchema);
         }
-    }
-    Ok(())
-}
-
-fn validate_runtime_generation_ref(
-    prior: &RuntimeGenerationRef,
-) -> Result<(), SpawnValidationError> {
-    if prior
-        .logical_target_id
-        .as_ref()
-        .is_none_or(|id| id.value.is_empty())
-    {
-        return Err(SpawnValidationError::EmptyLogicalTargetId);
-    }
-    let external = prior
-        .external_runtime
-        .as_ref()
-        .ok_or(SpawnValidationError::MissingExternalRuntime)?;
-    validate_external_runtime_ref(external)
-}
-
-fn validate_external_runtime_ref(
-    external: &ExternalRuntimeRef,
-) -> Result<(), SpawnValidationError> {
-    if external
-        .adapter_id
-        .as_ref()
-        .is_none_or(|id| id.value.is_empty())
-    {
-        return Err(SpawnValidationError::EmptyAdapterId);
-    }
-    if !bounded_graphic(
-        &external.deployment_scope,
-        MAX_DEPLOYMENT_SCOPE_BYTES,
-        false,
-    ) {
-        return Err(SpawnValidationError::MalformedDeploymentScope);
-    }
-    if external
-        .runtime_session_id
-        .as_ref()
-        .is_none_or(|id| id.value.is_empty())
-    {
-        return Err(SpawnValidationError::EmptyRuntimeSessionId);
-    }
-    let generation = external
-        .generation
-        .as_ref()
-        .map_or(0, |generation| generation.value);
-    if generation == 0 {
-        return Err(SpawnValidationError::NonPositiveGeneration);
-    }
-    if generation == u64::MAX {
-        return Err(SpawnValidationError::GenerationOverflow);
     }
     Ok(())
 }

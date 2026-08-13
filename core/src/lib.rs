@@ -14,6 +14,7 @@ pub mod acceptance;
 pub mod audit;
 pub mod adapter;
 pub mod authority;
+pub mod contract_validation;
 pub mod diagnostics;
 pub mod resource;
 pub mod session;

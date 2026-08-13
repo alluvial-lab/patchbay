@@ -2,16 +2,17 @@ use std::collections::HashSet;
 
 use patchbay_contracts::patchbay::{
     typed_correlation, ActorEndpointRef, ActorId, AdapterId, AuditEventKind, AuditRecord,
-    AuthorityDomainId, CommandId, DescendantGrant, DescendantGrantProvenance, EndpointId, EventId,
-    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
-    Observation, ObservationKind, OperationKind, ResourceId, ResourceIdentity, ResourceKind,
-    Revocation, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope,
+    AuthorityDomainId, CommandId, ContinuationAuthorityProvenance, DescendantGrant,
+    DescendantGrantProvenance, EndpointId, EventId, ExternalRuntimeRef, FailureCode, Generation,
+    Grant, GrantId, GrantProvenance, GrantRevocationPolicy, LogicalTargetId, Lsn, Observation,
+    ObservationKind, OperationKind, ResourceId, ResourceIdentity, ResourceKind, Revocation,
+    RuntimeGenerationRef, RuntimeSessionId, StoredEventKind, StoredEventPayload, TargetScope,
     TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
-        grant_authorizes, target_scope_matches, AuthorityError, AuthorityRegistry, IssuerRef,
-        DESCENDANT_GRANT_ALLOWED_KINDS,
+        grant_authorizes, target_scope_matches, AuthorityError, AuthorityRegistry,
+        GrantProvenanceKind, IssuerRef, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::RecordedEvent,
 };
@@ -157,6 +158,24 @@ fn descendant_audit() -> AuditRecord {
             lsn: Some(Lsn { value: 1 }),
         }),
         ..AuditRecord::default()
+    }
+}
+
+fn continuation_authority(generation_value: u64) -> ContinuationAuthorityProvenance {
+    ContinuationAuthorityProvenance {
+        exact_prior: Some(RuntimeGenerationRef {
+            logical_target_id: Some(LogicalTargetId {
+                value: "logical-1".to_owned(),
+            }),
+            external_runtime: Some(ExternalRuntimeRef {
+                adapter_id: Some(adapter("pi")),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: Some(runtime("session-0")),
+                generation: Some(generation(generation_value)),
+            }),
+        }),
+        replacement_grant_id: Some(grant_id("replacement")),
+        replacement_authority_kind: OperationKind::SessionManagement as i32,
     }
 }
 
@@ -405,6 +424,99 @@ fn descendant_grants_require_the_exact_canonical_kind_set() {
     assert!(wrong_registry
         .get_grant(&grant_id("desc:authority-main:spawn-1"))
         .is_none());
+}
+
+#[test]
+fn continuation_descendant_replay_validates_and_preserves_compound_provenance() {
+    let valid = continuation_authority(6);
+    let mut valid_descendant = descendant_grant();
+    valid_descendant
+        .provenance
+        .as_mut()
+        .unwrap()
+        .continuation_authority = Some(valid.clone());
+
+    let mut registry = AuthorityRegistry::new();
+    registry
+        .observe(&recorded(
+            1,
+            StoredEventKind::Observation,
+            &descendant_source(),
+        ))
+        .unwrap();
+    registry
+        .observe(&recorded(
+            2,
+            StoredEventKind::AuditRecord,
+            &descendant_audit(),
+        ))
+        .unwrap();
+    registry
+        .observe(&recorded(
+            3,
+            StoredEventKind::DescendantGrant,
+            &valid_descendant,
+        ))
+        .unwrap();
+
+    let projected = registry
+        .get_grant(&grant_id("desc:authority-main:spawn-1"))
+        .unwrap();
+    let GrantProvenanceKind::Descendant {
+        continuation_authority: projected_continuation,
+        ..
+    } = &projected.provenance
+    else {
+        panic!("descendant provenance must remain classified as descendant");
+    };
+    assert_eq!(projected_continuation.as_ref(), Some(&valid));
+
+    let mut malformed = Vec::new();
+    let mut missing_prior = continuation_authority(6);
+    missing_prior.exact_prior = None;
+    malformed.push(missing_prior);
+    let mut missing_replacement = continuation_authority(6);
+    missing_replacement.replacement_grant_id = None;
+    malformed.push(missing_replacement);
+    let mut reused_parent = continuation_authority(6);
+    reused_parent.replacement_grant_id = Some(grant_id("parent"));
+    malformed.push(reused_parent);
+    let mut wrong_kind = continuation_authority(6);
+    wrong_kind.replacement_authority_kind = OperationKind::Query as i32;
+    malformed.push(wrong_kind);
+    malformed.push(continuation_authority(0));
+
+    for invalid in malformed {
+        let mut descendant = descendant_grant();
+        descendant
+            .provenance
+            .as_mut()
+            .unwrap()
+            .continuation_authority = Some(invalid);
+        let mut replay = AuthorityRegistry::new();
+        replay
+            .observe(&recorded(
+                1,
+                StoredEventKind::Observation,
+                &descendant_source(),
+            ))
+            .unwrap();
+        replay
+            .observe(&recorded(
+                2,
+                StoredEventKind::AuditRecord,
+                &descendant_audit(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            replay.observe(&recorded(3, StoredEventKind::DescendantGrant, &descendant)),
+            Err(AuthorityError::InvalidGrant(message))
+                if message.contains("invalid continuation provenance")
+        ));
+        assert!(replay
+            .get_grant(&grant_id("desc:authority-main:spawn-1"))
+            .is_none());
+    }
 }
 
 #[test]
