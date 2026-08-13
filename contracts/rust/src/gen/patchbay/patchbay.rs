@@ -1487,8 +1487,13 @@ pub mod no_external_effect_proof {
         ExactSupervisorPreLaunchFailure(super::SupervisorPreLaunchFailureProof),
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+/// Exact durable core decision that terminalized the claim command while it was
+/// still accepted and before any delivery offer. Replay validates the referenced
+/// CommandTransition, including command identity, terminal outcome, and ordering.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CorePreDeliveryTerminalProof {
+    #[prost(message, optional, tag="1")]
+    pub terminal_decision_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterRefusalBeforeDeliveryProof {

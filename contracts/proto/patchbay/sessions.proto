@@ -114,7 +114,12 @@ message NoExternalEffectProof {
   }
 }
 
-message CorePreDeliveryTerminalProof {}
+// Exact durable core decision that terminalized the claim command while it was
+// still accepted and before any delivery offer. Replay validates the referenced
+// CommandTransition, including command identity, terminal outcome, and ordering.
+message CorePreDeliveryTerminalProof {
+  EventId terminal_decision_event_id = 1;
+}
 
 message AdapterRefusalBeforeDeliveryProof {
   AdapterId adapter_id = 1;

@@ -45,6 +45,9 @@ pub struct SpawnClaimRecord {
     pub compound_authority: Option<ContinuationAuthorityProvenance>,
     pub disposition: SpawnClaimDisposition,
     pub pending_replacement: Option<RuntimeGenerationRef>,
+    /// Latest durable claim-disposition decision whose effect evidence must be
+    /// superseded by any later no-effect release proof.
+    pub latest_disposition_lsn: u64,
     /// Canonical adapter target from the accepted Operation. Evidence from any
     /// other adapter can never authorize this claim.
     pub adapter_id: AdapterId,
@@ -310,6 +313,7 @@ impl SpawnClaimRegistry {
                 compound_authority: accepted.compound_authority,
                 disposition: SpawnClaimDisposition::Active,
                 pending_replacement,
+                latest_disposition_lsn: event_lsn,
                 adapter_id,
             },
         );
@@ -356,6 +360,7 @@ impl SpawnClaimRegistry {
             .get_mut(&command_id)
             .expect("claim existence validated above");
         record.disposition = to;
+        record.latest_disposition_lsn = event_lsn;
         if matches!(
             to,
             SpawnClaimDisposition::ReleasedNoExternalEffect
@@ -844,7 +849,13 @@ fn validate_no_effect_release(
             "release evidence does not prove absence of external effect",
         ));
     }
-    validate_no_effect_proof(events, record, &typed, evidence_lsn)?;
+    if evidence_lsn <= record.latest_disposition_lsn {
+        return Err(corrupt_log(
+            "no-effect proof does not postdate the latest claim disposition",
+        ));
+    }
+    validate_no_effect_proof(events, domain, record, &typed, evidence_lsn)?;
+    reject_later_external_effect_evidence(events, record, evidence_lsn, event_lsn)?;
 
     match record.claim.expected_prior.as_ref() {
         Some(prior) => {
@@ -987,6 +998,11 @@ pub fn validate_execution_evidence_contract(
                     "proved-none evidence has unspecified failure code",
                 ));
             }
+            if failure == FailureCode::ExecutionOutcomeUnknown {
+                return Err(corrupt_log(
+                    "execution_outcome_unknown can never prove absence of external effect",
+                ));
+            }
         }
         ExternalEffectDisposition::MayExist => {
             if evidence.no_external_effect_proof.is_some() || !poison_failure(evidence.failure_code)
@@ -1042,6 +1058,7 @@ pub const fn allowed_external_effect_disposition(
 
 fn validate_no_effect_proof(
     events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
     record: &SpawnClaimRecord,
     evidence: &SpawnExecutionEvidence,
     evidence_lsn: u64,
@@ -1062,15 +1079,23 @@ fn validate_no_effect_proof(
         .as_ref()
         .ok_or_else(|| corrupt_record("no-external-effect proof has no variant"))?
     {
-        no_external_effect_proof::Proof::CorePreDeliveryTerminal(_) => {
+        no_external_effect_proof::Proof::CorePreDeliveryTerminal(core) => {
             if producer != SpawnExecutionEvidenceProducer::Core
                 || phase != SpawnExecutionPhase::AcceptedNotOffered
-                || delivered_responsibility_exists(events, record, evidence_lsn)?
             {
                 return Err(corrupt_log(
                     "core no-effect proof is not an atomic accepted-before-offer terminal decision",
                 ));
             }
+            validate_core_pre_delivery_terminal_decision(
+                events,
+                domain,
+                record,
+                core.terminal_decision_event_id.as_ref(),
+                evidence_lsn,
+                FailureCode::try_from(evidence.failure_code)
+                    .expect("execution evidence failure validated"),
+            )?;
         }
         no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(adapter) => {
             validate_adapter_proof_source(
@@ -1121,6 +1146,172 @@ fn validate_no_effect_proof(
                     "supervisor/journal proof does not establish exact-claim pre-launch failure",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_core_pre_delivery_terminal_decision(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
+    record: &SpawnClaimRecord,
+    decision_event_id: Option<&EventId>,
+    evidence_lsn: u64,
+    evidence_failure: FailureCode,
+) -> Result<(), SpawnClaimError> {
+    let decision = validate_referenced_event(
+        events,
+        domain,
+        record.accepted_lsn,
+        decision_event_id,
+        evidence_lsn,
+        "core pre-delivery terminal decision",
+    )?;
+    if StoredEventKind::try_from(decision.kind).ok() != Some(StoredEventKind::CommandTransition) {
+        return Err(corrupt_log(
+            "core pre-delivery terminal proof does not reference a command transition",
+        ));
+    }
+    let transition =
+        patchbay_contracts::patchbay::CommandTransition::decode(decision.payload.as_slice())
+            .map_err(|error| {
+                corrupt_record(format!(
+                    "cannot decode core pre-delivery terminal decision: {error}"
+                ))
+            })?;
+    let to = required_operation_state(transition.to_state, "core terminal decision target")?;
+    let from = required_operation_state(transition.from_state, "core terminal decision source")?;
+    let failure = FailureCode::try_from(transition.failure_code)
+        .map_err(|_| corrupt_record("core terminal decision failure code is unknown"))?;
+    let safe_terminal = matches!(
+        (to, failure),
+        (
+            OperationState::Rejected,
+            FailureCode::TargetNotFound | FailureCode::UnsupportedCommand
+        ) | (
+            OperationState::Failed,
+            FailureCode::TargetOffline
+                | FailureCode::AdapterUnavailable
+                | FailureCode::TransportTimeout
+        ) | (OperationState::Expired, FailureCode::Expired)
+            | (OperationState::Cancelled, FailureCode::Cancelled)
+            | (OperationState::Superseded, FailureCode::Superseded)
+    );
+    let decision_lsn = decision_event_id
+        .and_then(|id| id.lsn)
+        .expect("referenced core decision id validated")
+        .value;
+    if transition.command_id.as_ref() != record.claim.claim_operation_id.as_ref()
+        || from != OperationState::Accepted
+        || failure != evidence_failure
+        || !safe_terminal
+        || delivered_responsibility_exists(events, record, decision_lsn)?
+    {
+        return Err(corrupt_log(
+            "core no-effect proof does not reference the exact safe accepted-before-offer terminal decision",
+        ));
+    }
+    Ok(())
+}
+
+fn reject_later_external_effect_evidence(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    record: &SpawnClaimRecord,
+    proof_lsn: u64,
+    release_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    let first_later = proof_lsn
+        .checked_add(1)
+        .ok_or_else(|| corrupt_log("no-effect proof LSN overflow"))?;
+    for (&lsn, payload) in events.range(first_later..release_lsn) {
+        match StoredEventKind::try_from(payload.kind).ok() {
+            Some(StoredEventKind::CommandTransition) => {
+                let transition = patchbay_contracts::patchbay::CommandTransition::decode(
+                    payload.payload.as_slice(),
+                )
+                .map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode command transition at LSN {lsn} while validating release: {error}"
+                    ))
+                })?;
+                if transition.command_id.as_ref() == record.claim.claim_operation_id.as_ref()
+                    && (matches!(
+                        OperationState::try_from(transition.to_state).ok(),
+                        Some(
+                            OperationState::Delivered
+                                | OperationState::Running
+                                | OperationState::Completed
+                        )
+                    ) || matches!(
+                        FailureCode::try_from(transition.failure_code).ok(),
+                        Some(FailureCode::ExecutionFailed | FailureCode::ExecutionOutcomeUnknown)
+                    ))
+                {
+                    return Err(corrupt_log(
+                        "later command delivery or execution evidence contradicts no-effect proof",
+                    ));
+                }
+            }
+            Some(StoredEventKind::SpawnExecutionEvidence) => {
+                let evidence = SpawnExecutionEvidence::decode(payload.payload.as_slice())
+                    .map_err(|error| {
+                        corrupt_record(format!(
+                            "cannot decode spawn execution evidence at LSN {lsn} while validating release: {error}"
+                        ))
+                    })?;
+                if evidence.exact_claim.as_ref() == Some(&record.claim)
+                    && (matches!(
+                        SpawnExecutionPhase::try_from(evidence.phase).ok(),
+                        Some(
+                            SpawnExecutionPhase::LaunchAttempted
+                                | SpawnExecutionPhase::ExternalIdentityKnown
+                                | SpawnExecutionPhase::HandshakeReconciling
+                                | SpawnExecutionPhase::SuccessEvidenceReported
+                        )
+                    ) || matches!(
+                        ExternalEffectDisposition::try_from(evidence.external_effect_disposition)
+                            .ok(),
+                        Some(
+                            ExternalEffectDisposition::MayExist
+                                | ExternalEffectDisposition::Identified
+                        )
+                    ) || evidence.external_runtime.is_some()
+                        || matches!(
+                            FailureCode::try_from(evidence.failure_code).ok(),
+                            Some(
+                                FailureCode::ExecutionFailed | FailureCode::ExecutionOutcomeUnknown
+                            )
+                        ))
+                {
+                    return Err(corrupt_log(
+                        "later spawn execution evidence contradicts no-effect proof",
+                    ));
+                }
+            }
+            Some(StoredEventKind::SpawnClaim) => {
+                let event = SpawnClaimEvent::decode(payload.payload.as_slice()).map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode spawn claim event at LSN {lsn} while validating release: {error}"
+                    ))
+                })?;
+                if matches!(
+                    event.mutation,
+                    Some(spawn_claim_event::Mutation::DispositionChanged(
+                        SpawnClaimDispositionChanged {
+                            claim_operation_id: Some(ref command_id),
+                            to_disposition,
+                            ..
+                        }
+                    )) if Some(command_id) == record.claim.claim_operation_id.as_ref()
+                        && SpawnClaimDisposition::try_from(to_disposition).ok()
+                            == Some(SpawnClaimDisposition::PoisonedPendingReconciliation)
+                ) {
+                    return Err(corrupt_log(
+                        "later poisoned claim disposition contradicts no-effect proof",
+                    ));
+                }
+            }
+            _ => {}
         }
     }
     Ok(())

@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use patchbay_contracts::patchbay::{
     no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
-    spawn_claim_event,
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
     AdapterTargetCategory, AuthorityDomainId, CommandId, CommandTransition,
     ContinuationAuthorityProvenance, EndpointId, EventId, ExternalEffectDisposition,
@@ -99,6 +98,44 @@ fn terminal_sibling(lsn: u64, state: OperationState) -> RecordedEvent {
                 command_id: Some(command("spawn-a")),
                 from_state: OperationState::Running as i32,
                 to_state: state as i32,
+                ..CommandTransition::default()
+            }
+            .encode_to_vec(),
+        },
+    )
+}
+
+fn pre_delivery_terminal_decision(
+    lsn: u64,
+    to_state: OperationState,
+    failure: FailureCode,
+) -> RecordedEvent {
+    recorded(
+        lsn,
+        StoredEventPayload {
+            kind: StoredEventKind::CommandTransition as i32,
+            payload: CommandTransition {
+                command_id: Some(command("spawn-a")),
+                from_state: OperationState::Accepted as i32,
+                to_state: to_state as i32,
+                failure_code: failure as i32,
+                ..CommandTransition::default()
+            }
+            .encode_to_vec(),
+        },
+    )
+}
+
+fn delivered_event(lsn: u64) -> RecordedEvent {
+    recorded(
+        lsn,
+        StoredEventPayload {
+            kind: StoredEventKind::CommandTransition as i32,
+            payload: CommandTransition {
+                command_id: Some(command("spawn-a")),
+                from_state: OperationState::Accepted as i32,
+                to_state: OperationState::Delivered as i32,
+                failure_code: FailureCode::Unspecified as i32,
                 ..CommandTransition::default()
             }
             .encode_to_vec(),
@@ -301,6 +338,10 @@ fn attachment_event(lsn: u64, adapter: &str, generation: u64) -> RecordedEvent {
 }
 
 fn prior_live_event(lsn: u64) -> RecordedEvent {
+    prior_live_event_for(lsn, 7)
+}
+
+fn prior_live_event_for(lsn: u64, generation: u64) -> RecordedEvent {
     recorded(
         lsn,
         StoredEventPayload {
@@ -316,7 +357,7 @@ fn prior_live_event(lsn: u64) -> RecordedEvent {
                         runtime_session_id: Some(RuntimeSessionId {
                             value: "runtime-a".to_owned(),
                         }),
-                        session_generation: Some(Generation { value: 7 }),
+                        session_generation: Some(Generation { value: generation }),
                         from: SessionConnectivityState::Stale as i32,
                         to: SessionConnectivityState::Live as i32,
                     },
@@ -348,6 +389,31 @@ fn execution_evidence_event(
     proof: Option<NoExternalEffectProof>,
     external_runtime: Option<RuntimeGenerationRef>,
 ) -> RecordedEvent {
+    execution_evidence_event_from(
+        lsn,
+        exact_claim,
+        phase,
+        disposition,
+        producer,
+        failure,
+        proof,
+        external_runtime,
+        source("pi", 3, 1),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execution_evidence_event_from(
+    lsn: u64,
+    exact_claim: SpawnGenerationClaim,
+    phase: SpawnExecutionPhase,
+    disposition: ExternalEffectDisposition,
+    producer: SpawnExecutionEvidenceProducer,
+    failure: FailureCode,
+    proof: Option<NoExternalEffectProof>,
+    external_runtime: Option<RuntimeGenerationRef>,
+    source_attachment: SpawnEvidenceAttachment,
+) -> RecordedEvent {
     recorded(
         lsn,
         encode_spawn_execution_evidence(&SpawnExecutionEvidence {
@@ -356,7 +422,7 @@ fn execution_evidence_event(
             phase: phase as i32,
             external_effect_disposition: disposition as i32,
             producer: producer as i32,
-            source_attachment: Some(source("pi", 3, 1)),
+            source_attachment: Some(source_attachment),
             failure_code: failure as i32,
             no_external_effect_proof: proof,
             external_runtime,
@@ -364,10 +430,12 @@ fn execution_evidence_event(
     )
 }
 
-fn core_proof() -> NoExternalEffectProof {
+fn core_proof(terminal_decision_lsn: u64) -> NoExternalEffectProof {
     NoExternalEffectProof {
         proof: Some(no_external_effect_proof::Proof::CorePreDeliveryTerminal(
-            patchbay_contracts::patchbay::CorePreDeliveryTerminalProof {},
+            patchbay_contracts::patchbay::CorePreDeliveryTerminalProof {
+                terminal_decision_event_id: Some(event_id(terminal_decision_lsn)),
+            },
         )),
     }
 }
@@ -773,26 +841,33 @@ fn continuation_release_requires_typed_exact_prior_liveness() {
         .observe(&accepted_event(2, continuation_accepted("spawn-a")))
         .unwrap();
     registry
-        .observe(&execution_evidence_event(
+        .observe(&pre_delivery_terminal_decision(
             3,
+            OperationState::Cancelled,
+            FailureCode::Cancelled,
+        ))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            4,
             claim("spawn-a", Some(7)),
             SpawnExecutionPhase::AcceptedNotOffered,
             ExternalEffectDisposition::ProvedNone,
             SpawnExecutionEvidenceProducer::Core,
             FailureCode::Cancelled,
-            Some(core_proof()),
+            Some(core_proof(3)),
             None,
         ))
         .unwrap();
-    registry.observe(&sibling(4)).unwrap();
+    registry.observe(&sibling(5)).unwrap();
     let before = registry.clone();
     assert!(registry
         .observe(&disposition_event(
-            5,
+            6,
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::ReleasedNoExternalEffect,
-            core_no_effect(3, Some(4)),
+            core_no_effect(4, Some(5)),
         ))
         .is_err());
     assert_eq!(registry, before);
@@ -806,25 +881,32 @@ fn continuation_release_fires_after_exact_post_proof_prior_liveness() {
         .observe(&accepted_event(2, continuation_accepted("spawn-a")))
         .unwrap();
     registry
-        .observe(&execution_evidence_event(
+        .observe(&pre_delivery_terminal_decision(
             3,
+            OperationState::Cancelled,
+            FailureCode::Cancelled,
+        ))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            4,
             claim("spawn-a", Some(7)),
             SpawnExecutionPhase::AcceptedNotOffered,
             ExternalEffectDisposition::ProvedNone,
             SpawnExecutionEvidenceProducer::Core,
             FailureCode::Cancelled,
-            Some(core_proof()),
+            Some(core_proof(3)),
             None,
         ))
         .unwrap();
-    registry.observe(&prior_live_event(4)).unwrap();
+    registry.observe(&prior_live_event(5)).unwrap();
     registry
         .observe(&disposition_event(
-            5,
+            6,
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::ReleasedNoExternalEffect,
-            core_no_effect(3, Some(4)),
+            core_no_effect(4, Some(5)),
         ))
         .unwrap();
     assert_eq!(
@@ -834,7 +916,10 @@ fn continuation_release_fires_after_exact_post_proof_prior_liveness() {
             .disposition,
         SpawnClaimDisposition::ReleasedNoExternalEffect
     );
-    assert_eq!(registry.delivery_fence(&runtime(7)), SpawnDeliveryFence::Open);
+    assert_eq!(
+        registry.delivery_fence(&runtime(7)),
+        SpawnDeliveryFence::Open
+    );
 }
 
 #[test]
@@ -1018,7 +1103,7 @@ fn phase_disposition_and_proof_mismatches_are_non_mutating() {
             ExternalEffectDisposition::ProvedNone,
             SpawnExecutionEvidenceProducer::Core,
             FailureCode::Cancelled,
-            Some(core_proof()),
+            Some(core_proof(2)),
         ),
         (
             SpawnExecutionPhase::AcceptedNotOffered,
@@ -1075,30 +1160,45 @@ fn all_three_closed_no_effect_proofs_can_release_only_with_typed_evidence() {
             SpawnExecutionPhase::AcceptedNotOffered,
             SpawnExecutionEvidenceProducer::Core,
             FailureCode::Cancelled,
-            core_proof(),
+            core_proof(3),
+            true,
         ),
         (
             SpawnExecutionPhase::Offered,
             SpawnExecutionEvidenceProducer::CurrentAdapter,
             FailureCode::DeliveryRejected,
             refusal_proof("pi", 3),
+            false,
         ),
         (
             SpawnExecutionPhase::Offered,
             SpawnExecutionEvidenceProducer::CurrentAdapter,
             FailureCode::ExecutionFailed,
             supervisor_proof("pi", 3),
+            false,
         ),
     ];
-    for (phase, producer, failure, proof) in cases {
+    for (phase, producer, failure, proof, needs_core_decision) in cases {
         let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
         registry.observe(&attachment_event(1, "pi", 3)).unwrap();
         registry
             .observe(&accepted_event(2, fresh_accepted("spawn-a")))
             .unwrap();
+        let evidence_lsn = if needs_core_decision {
+            registry
+                .observe(&pre_delivery_terminal_decision(
+                    3,
+                    OperationState::Cancelled,
+                    FailureCode::Cancelled,
+                ))
+                .unwrap();
+            4
+        } else {
+            3
+        };
         registry
             .observe(&execution_evidence_event(
-                3,
+                evidence_lsn,
                 claim("spawn-a", None),
                 phase,
                 ExternalEffectDisposition::ProvedNone,
@@ -1110,11 +1210,11 @@ fn all_three_closed_no_effect_proofs_can_release_only_with_typed_evidence() {
             .unwrap();
         registry
             .observe(&disposition_event(
-                4,
+                evidence_lsn + 1,
                 "spawn-a",
                 SpawnClaimDisposition::Active,
                 SpawnClaimDisposition::ReleasedNoExternalEffect,
-                core_no_effect(3, None),
+                core_no_effect(evidence_lsn, None),
             ))
             .unwrap();
         assert_eq!(
@@ -1129,6 +1229,289 @@ fn all_three_closed_no_effect_proofs_can_release_only_with_typed_evidence() {
             SpawnClaimability::Available
         ));
     }
+}
+
+#[test]
+fn execution_outcome_unknown_is_never_a_core_no_effect_proof() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&pre_delivery_terminal_decision(
+            3,
+            OperationState::Failed,
+            FailureCode::ExecutionOutcomeUnknown,
+        ))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            4,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::ExecutionOutcomeUnknown,
+            Some(core_proof(3)),
+            None,
+        ))
+        .unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(4, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn obsolete_refusal_proof_cannot_release_after_later_ambiguity_poison() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("pi", 3)),
+            None,
+        ))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            4,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+            None,
+        ))
+        .unwrap();
+    registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            ambiguity(4),
+        ))
+        .unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            6,
+            "spawn-a",
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+    assert_eq!(
+        registry
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation
+    );
+}
+
+#[test]
+fn obsolete_core_proof_cannot_release_after_later_delivery() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&pre_delivery_terminal_decision(
+            3,
+            OperationState::Cancelled,
+            FailureCode::Cancelled,
+        ))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            4,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::Cancelled,
+            Some(core_proof(3)),
+            None,
+        ))
+        .unwrap();
+    registry.observe(&delivered_event(5)).unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            6,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(4, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn missing_evidence_event_id_is_silence_not_proof() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("pi", 3)),
+            None,
+        ))
+        .unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(
+                SpawnClaimNoEffectRelease {
+                    evidence_event_id: None,
+                    exact_prior_liveness: None,
+                    prior_liveness_event_id: None,
+                },
+            ),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn evidence_source_adapter_must_match_claim_adapter() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry.observe(&attachment_event(2, "other", 3)).unwrap();
+    registry
+        .observe(&accepted_event(3, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event_from(
+            4,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("other", 3)),
+            None,
+            source("other", 3, 2),
+        ))
+        .unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(4, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn fresh_claim_cannot_use_prior_runtime_phase_evidence() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::QuiescingPrior,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionFailed,
+            Some(supervisor_proof("pi", 3)),
+            None,
+        ))
+        .unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn live_evidence_must_match_exact_prior_n_identity() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("pi", 3)),
+            None,
+        ))
+        .unwrap();
+    registry.observe(&prior_live_event_for(4, 6)).unwrap();
+
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, Some(4)),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
 }
 
 #[test]
