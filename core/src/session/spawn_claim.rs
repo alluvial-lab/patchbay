@@ -12,10 +12,9 @@ use patchbay_contracts::patchbay::{
     no_external_effect_proof, spawn_claim_disposition_changed, spawn_claim_event,
     AcceptedOperation, AuthorityDomainId, CommandId, ContinuationAuthorityProvenance, EventId,
     FailureCode, Lsn, NoExternalEffectProof, OperationKind, OperationState, RuntimeGenerationRef,
-    SpawnClaimAccepted, SpawnClaimCheckpoint, SpawnClaimCheckpointRecord, SpawnClaimDisposition,
-    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect, StoredEventKind,
-    StoredEventPayload,
+    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent,
+    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPriorWorkDisposition,
+    SpawnPriorWorkEffect, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -94,6 +93,18 @@ pub enum SpawnClaimError {
 }
 
 /// One authority-domain claim projection.
+///
+/// Raw claim checkpoints are deliberately not a recovery authority. Recovery
+/// rebuilds this projection from the durable authority-domain log until a
+/// continuity-epoch and exact-row-anchored checkpoint loader exists.
+///
+/// ```compile_fail
+/// use patchbay_contracts::patchbay::SpawnClaimCheckpoint;
+/// use patchbay_core::session::SpawnClaimRegistry;
+///
+/// let hostile = SpawnClaimCheckpoint::default();
+/// let _ = SpawnClaimRegistry::from_checkpoint(hostile);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnClaimRegistry {
     authority_domain_id: AuthorityDomainId,
@@ -115,46 +126,6 @@ impl SpawnClaimRegistry {
             exclusive_claims: HashMap::new(),
             prior_work_effects: HashMap::new(),
         })
-    }
-
-    /// Restore the complete claim projection from a domain/LSN-bound checkpoint.
-    pub fn from_checkpoint(checkpoint: SpawnClaimCheckpoint) -> Result<Self, SpawnClaimError> {
-        let authority_domain_id = checkpoint
-            .authority_domain_id
-            .ok_or_else(|| corrupt_record("checkpoint is missing authority_domain_id"))?;
-        validate_domain(&authority_domain_id)?;
-        let snapshot_lsn = checkpoint
-            .snapshot_lsn
-            .filter(|lsn| lsn.value > 0)
-            .ok_or_else(|| corrupt_record("checkpoint is missing a positive snapshot_lsn"))?
-            .value;
-        let mut registry = Self::new(authority_domain_id)?;
-        registry.applied_through_lsn = snapshot_lsn;
-
-        for wire in checkpoint.records {
-            let (record, prior_work_effects) =
-                decode_checkpoint_record(&registry.authority_domain_id, snapshot_lsn, wire)?;
-            let command_id = required_command_id(&record.claim)?.clone();
-            if registry.records.contains_key(&command_id) {
-                return Err(corrupt_record(
-                    "checkpoint contains duplicate claim_operation_id",
-                ));
-            }
-            if disposition_consumes_generation(record.disposition) {
-                let key = claim_key(&record.claim)?;
-                if let Some(owner) = registry.exclusive_claims.insert(key, command_id.clone()) {
-                    return Err(SpawnClaimError::CorruptLog(format!(
-                        "checkpoint gives one generation to commands {:?} and {:?}",
-                        owner, command_id
-                    )));
-                }
-            }
-            registry
-                .prior_work_effects
-                .insert(command_id.clone(), prior_work_effects);
-            registry.records.insert(command_id, record);
-        }
-        Ok(registry)
     }
 
     #[must_use]
@@ -231,49 +202,6 @@ impl SpawnClaimRegistry {
         next.applied_events.insert(event_lsn, event.payload.clone());
         *self = next;
         Ok(())
-    }
-
-    /// Encode a deterministic private checkpoint at the currently applied LSN.
-    pub fn checkpoint(&self) -> Result<SpawnClaimCheckpoint, SpawnClaimError> {
-        if self.applied_through_lsn == 0 {
-            return Err(corrupt_record("cannot checkpoint an empty claim prefix"));
-        }
-        let mut records: Vec<_> = self.records.values().collect();
-        records.sort_by(|left, right| {
-            required_command_id(&left.claim)
-                .expect("stored claim was validated")
-                .value
-                .cmp(
-                    &required_command_id(&right.claim)
-                        .expect("stored claim was validated")
-                        .value,
-                )
-        });
-        Ok(SpawnClaimCheckpoint {
-            authority_domain_id: Some(self.authority_domain_id.clone()),
-            snapshot_lsn: Some(Lsn {
-                value: self.applied_through_lsn,
-            }),
-            records: records
-                .into_iter()
-                .map(|record| SpawnClaimCheckpointRecord {
-                    claim: Some(record.claim.clone()),
-                    accepted_lsn: Some(Lsn {
-                        value: record.accepted_lsn,
-                    }),
-                    compound_authority: record.compound_authority.clone(),
-                    disposition: record.disposition as i32,
-                    pending_replacement: record.pending_replacement.clone(),
-                    prior_work_effects: self
-                        .prior_work_effects
-                        .get(
-                            required_command_id(&record.claim).expect("stored claim was validated"),
-                        )
-                        .cloned()
-                        .unwrap_or_default(),
-                })
-                .collect(),
-        })
     }
 
     fn apply_claim_event(
@@ -368,6 +296,7 @@ impl SpawnClaimRegistry {
             return Err(SpawnClaimError::IllegalDispositionTransition { from, to });
         }
         validate_transition_evidence(
+            &self.applied_events,
             &self.authority_domain_id,
             projected,
             to,
@@ -731,6 +660,7 @@ fn validate_prior_work_effects(
 }
 
 fn validate_transition_evidence(
+    events: &BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
     record: &SpawnClaimRecord,
     to: SpawnClaimDisposition,
@@ -741,22 +671,33 @@ fn validate_transition_evidence(
         (
             SpawnClaimDisposition::ReleasedNoExternalEffect,
             Some(spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(release)),
-        ) => validate_no_effect_release(domain, record, release, event_lsn),
+        ) => validate_no_effect_release(events, domain, record, release, event_lsn),
         (
             SpawnClaimDisposition::PoisonedPendingReconciliation,
             Some(spawn_claim_disposition_changed::Evidence::AmbiguousExternalEffect(ambiguity)),
-        ) => validate_prior_event(
-            domain,
-            ambiguity.evidence_event_id.as_ref(),
-            event_lsn,
-            "ambiguous external-effect evidence",
-        ),
+        ) => {
+            let referenced = validate_referenced_event(
+                events,
+                domain,
+                record.accepted_lsn,
+                ambiguity.evidence_event_id.as_ref(),
+                event_lsn,
+                "ambiguous external-effect evidence",
+            )?;
+            reject_unavailable_typed_evidence(
+                referenced,
+                "ExternalEffectDisposition",
+                "spawn execution/crash evidence (Leaf 5)",
+            )
+        }
         (
             SpawnClaimDisposition::Promoted,
             Some(spawn_claim_disposition_changed::Evidence::Promotion(promotion)),
         ) => {
-            validate_prior_event(
+            let referenced = validate_referenced_event(
+                events,
                 domain,
+                record.accepted_lsn,
                 promotion.promotion_event_id.as_ref(),
                 event_lsn,
                 "promotion evidence",
@@ -765,17 +706,25 @@ fn validate_transition_evidence(
                 .promoted_runtime
                 .as_ref()
                 .ok_or_else(|| corrupt_record("promotion evidence has no promoted runtime"))?;
-            validate_promoted_runtime(domain, &record.claim, runtime)
+            validate_promoted_runtime(domain, &record.claim, runtime)?;
+            reject_unavailable_typed_evidence(
+                referenced,
+                "SpawnPromotionCommitted",
+                "runtime evidence and promotion envelopes (Leaf 6)",
+            )
         }
         (
             SpawnClaimDisposition::TargetAbandoned,
             Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(abandonment)),
-        ) => validate_prior_event(
+        ) => validate_referenced_event(
+            events,
             domain,
+            record.accepted_lsn,
             abandonment.abandonment_event_id.as_ref(),
             event_lsn,
             "target-abandonment evidence",
-        ),
+        )
+        .map(|_| ()),
         _ => Err(corrupt_log(
             "claim disposition is not paired with its exact closed-vocabulary evidence",
         )),
@@ -783,13 +732,16 @@ fn validate_transition_evidence(
 }
 
 fn validate_no_effect_release(
+    events: &BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
     record: &SpawnClaimRecord,
     release: &patchbay_contracts::patchbay::SpawnClaimNoEffectRelease,
     event_lsn: u64,
 ) -> Result<(), SpawnClaimError> {
-    validate_no_effect_proof(
+    let proof_event = validate_no_effect_proof_reference(
+        events,
         domain,
+        record.accepted_lsn,
         release
             .proof
             .as_ref()
@@ -803,43 +755,57 @@ fn validate_no_effect_release(
                     "continuation release lacks exact prior-N liveness",
                 ));
             }
-            validate_prior_event(
+            let _ = validate_referenced_event(
+                events,
                 domain,
+                record.accepted_lsn,
                 release.prior_liveness_event_id.as_ref(),
                 event_lsn,
                 "prior-N liveness evidence",
-            )
+            )?;
         }
         None if release.exact_prior_liveness.is_none()
-            && release.prior_liveness_event_id.is_none() =>
-        {
-            Ok(())
+            && release.prior_liveness_event_id.is_none() => {}
+        None => {
+            return Err(corrupt_log(
+                "fresh claim release carries unrelated prior-N liveness evidence",
+            ));
         }
-        None => Err(corrupt_log(
-            "fresh claim release carries unrelated prior-N liveness evidence",
-        )),
     }
+    reject_unavailable_typed_evidence(
+        proof_event,
+        "NoExternalEffectProof with exact claim/phase/outcome and current attachment",
+        "spawn execution/crash evidence (Leaf 5)",
+    )
 }
 
-fn validate_no_effect_proof(
+fn validate_no_effect_proof_reference<'a>(
+    events: &'a BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
+    accepted_lsn: u64,
     proof: &NoExternalEffectProof,
     event_lsn: u64,
-) -> Result<(), SpawnClaimError> {
+) -> Result<&'a StoredEventPayload, SpawnClaimError> {
     match proof
         .proof
         .as_ref()
         .ok_or_else(|| corrupt_record("no-external-effect proof has no variant"))?
     {
-        no_external_effect_proof::Proof::CorePreDeliveryTerminal(core) => validate_prior_event(
-            domain,
-            core.decision_event_id.as_ref(),
-            event_lsn,
-            "core pre-delivery terminal proof",
-        ),
-        no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(adapter) => {
-            validate_adapter_proof(
+        no_external_effect_proof::Proof::CorePreDeliveryTerminal(core) => {
+            validate_referenced_event(
+                events,
                 domain,
+                accepted_lsn,
+                core.decision_event_id.as_ref(),
+                event_lsn,
+                "core pre-delivery terminal proof",
+            )
+        }
+        no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(adapter) => {
+            validate_adapter_proof_reference(
+                events,
+                domain,
+                accepted_lsn,
                 adapter.evidence_event_id.as_ref(),
                 adapter.adapter_id.as_ref(),
                 adapter.adapter_generation.as_ref(),
@@ -848,8 +814,10 @@ fn validate_no_effect_proof(
             )
         }
         no_external_effect_proof::Proof::ExactSupervisorPreLaunchFailure(supervisor) => {
-            validate_adapter_proof(
+            validate_adapter_proof_reference(
+                events,
                 domain,
+                accepted_lsn,
                 supervisor.evidence_event_id.as_ref(),
                 supervisor.adapter_id.as_ref(),
                 supervisor.adapter_generation.as_ref(),
@@ -860,15 +828,17 @@ fn validate_no_effect_proof(
     }
 }
 
-fn validate_adapter_proof(
+#[allow(clippy::too_many_arguments)]
+fn validate_adapter_proof_reference<'a>(
+    events: &'a BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
+    accepted_lsn: u64,
     event_id: Option<&EventId>,
     adapter_id: Option<&patchbay_contracts::patchbay::AdapterId>,
     adapter_generation: Option<&patchbay_contracts::patchbay::Generation>,
     event_lsn: u64,
     name: &str,
-) -> Result<(), SpawnClaimError> {
-    validate_prior_event(domain, event_id, event_lsn, name)?;
+) -> Result<&'a StoredEventPayload, SpawnClaimError> {
     if adapter_id.is_none_or(|adapter| adapter.value.is_empty())
         || adapter_generation.is_none_or(|generation| generation.value == 0)
     {
@@ -876,7 +846,7 @@ fn validate_adapter_proof(
             "{name} lacks authenticated adapter identity/generation"
         )));
     }
-    Ok(())
+    validate_referenced_event(events, domain, accepted_lsn, event_id, event_lsn, name)
 }
 
 fn validate_promoted_runtime(
@@ -900,93 +870,46 @@ fn validate_promoted_runtime(
     Ok(())
 }
 
-fn validate_prior_event(
+fn validate_referenced_event<'a>(
+    events: &'a BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
+    accepted_lsn: u64,
     event_id: Option<&EventId>,
     current_lsn: u64,
     name: &str,
-) -> Result<(), SpawnClaimError> {
+) -> Result<&'a StoredEventPayload, SpawnClaimError> {
     let event_id = event_id.ok_or_else(|| corrupt_record(format!("{name} has no event id")))?;
+    let referenced_lsn = event_id
+        .lsn
+        .as_ref()
+        .filter(|lsn| lsn.value > 0)
+        .ok_or_else(|| corrupt_record(format!("{name} has no positive event LSN")))?
+        .value;
     if event_id.authority_domain_id.as_ref() != Some(domain)
-        || event_id
-            .lsn
-            .as_ref()
-            .is_none_or(|lsn| lsn.value == 0 || lsn.value >= current_lsn)
+        || referenced_lsn < accepted_lsn
+        || referenced_lsn >= current_lsn
     {
         return Err(corrupt_log(format!(
-            "{name} does not reference a prior durable event in the claim authority domain"
+            "{name} is outside the claim's accepted durable prefix"
         )));
     }
-    Ok(())
+    events.get(&referenced_lsn).ok_or_else(|| {
+        corrupt_log(format!(
+            "{name} references unavailable or unauthenticated durable bytes"
+        ))
+    })
 }
 
-fn decode_checkpoint_record(
-    domain: &AuthorityDomainId,
-    checkpoint_lsn: u64,
-    wire: SpawnClaimCheckpointRecord,
-) -> Result<(SpawnClaimRecord, Vec<SpawnPriorWorkEffect>), SpawnClaimError> {
-    let claim = wire
-        .claim
-        .ok_or_else(|| corrupt_record("checkpoint claim record is missing claim"))?;
-    validate_claim(domain, &claim)?;
-    let accepted_lsn = wire
-        .accepted_lsn
-        .filter(|lsn| lsn.value > 0 && lsn.value <= checkpoint_lsn)
-        .ok_or_else(|| corrupt_record("claim accepted_lsn is outside checkpoint prefix"))?
-        .value;
-    let disposition = required_disposition(wire.disposition, "checkpoint")?;
-    let continuation = claim.expected_prior.as_ref();
-    if continuation.is_some() {
-        validate_prior_work_effects(required_command_id(&claim)?, &wire.prior_work_effects)?;
-    } else if !wire.prior_work_effects.is_empty() {
-        return Err(corrupt_log(
-            "fresh checkpoint claim carries prior-work effects",
-        ));
-    }
-    match (continuation, disposition, wire.pending_replacement.as_ref()) {
-        (
-            Some(prior),
-            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation,
-            Some(pending),
-        ) if pending == prior => {
-            validate_compound_authority(prior, wire.compound_authority.as_ref())?
-        }
-        (
-            None,
-            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation,
-            None,
-        ) if wire.compound_authority.is_none() => {}
-        (
-            _,
-            SpawnClaimDisposition::ReleasedNoExternalEffect
-            | SpawnClaimDisposition::Promoted
-            | SpawnClaimDisposition::TargetAbandoned,
-            None,
-        ) => {
-            if let Some(prior) = continuation {
-                validate_compound_authority(prior, wire.compound_authority.as_ref())?;
-            } else if wire.compound_authority.is_some() {
-                return Err(corrupt_log(
-                    "fresh checkpoint claim carries compound authority",
-                ));
-            }
-        }
-        _ => {
-            return Err(corrupt_log(
-                "checkpoint claim disposition and pending-replacement fence disagree",
-            ));
-        }
-    }
-    Ok((
-        SpawnClaimRecord {
-            claim,
-            accepted_lsn,
-            compound_authority: wire.compound_authority,
-            disposition,
-            pending_replacement: wire.pending_replacement,
-        },
-        wire.prior_work_effects,
-    ))
+fn reject_unavailable_typed_evidence(
+    referenced: &StoredEventPayload,
+    required_discriminator: &str,
+    owner: &str,
+) -> Result<(), SpawnClaimError> {
+    let actual = StoredEventKind::try_from(referenced.kind)
+        .map_err(|_| corrupt_record("evidence references an unknown stored-event discriminator"))?;
+    Err(corrupt_log(format!(
+        "{actual:?} cannot authorize this claim transition: {required_discriminator} is owned by {owner} and is not registered yet"
+    )))
 }
 
 fn claim_key(claim: &SpawnGenerationClaim) -> Result<SpawnClaimKey, SpawnClaimError> {
@@ -1046,10 +969,6 @@ fn required_operation_state(raw: i32, field: &str) -> Result<OperationState, Spa
         return Err(corrupt_record(format!("{field} is unspecified")));
     }
     Ok(state)
-}
-
-const fn disposition_consumes_generation(disposition: SpawnClaimDisposition) -> bool {
-    !matches!(disposition, SpawnClaimDisposition::ReleasedNoExternalEffect)
 }
 
 fn validate_domain(domain: &AuthorityDomainId) -> Result<(), SpawnClaimError> {

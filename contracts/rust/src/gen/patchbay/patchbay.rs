@@ -1591,8 +1591,10 @@ pub mod spawn_claim_event {
         DispositionChanged(super::SpawnClaimDispositionChanged),
     }
 }
-/// Private claim-projection checkpoint. It is independently domain/LSN anchored
-/// and never becomes an ordering source separate from the durable log.
+/// Untrusted private claim-projection checkpoint serialization. v0.1.0 recovery
+/// does not install this shape: it rebuilds from the complete durable log. A
+/// future loader must validate continuity epoch, exact storage-row anchor, and
+/// durable prefix/tail semantics before any field below may affect projection.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnClaimCheckpoint {
     #[prost(message, optional, tag="1")]
@@ -1610,6 +1612,8 @@ pub struct SpawnClaimCheckpointRecord {
     pub accepted_lsn: ::core::option::Option<Lsn>,
     #[prost(message, optional, tag="3")]
     pub compound_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
+    /// Cached projection data only; never disposition authority without replayed
+    /// durable transition evidence from the anchored log prefix.
     #[prost(enumeration="SpawnClaimDisposition", tag="4")]
     pub disposition: i32,
     #[prost(message, optional, tag="5")]

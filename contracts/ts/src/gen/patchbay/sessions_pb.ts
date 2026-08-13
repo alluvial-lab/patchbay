@@ -640,8 +640,10 @@ export const SpawnClaimEventSchema: GenMessage<SpawnClaimEvent> = /*@__PURE__*/
   messageDesc(file_patchbay_sessions, 16);
 
 /**
- * Private claim-projection checkpoint. It is independently domain/LSN anchored
- * and never becomes an ordering source separate from the durable log.
+ * Untrusted private claim-projection checkpoint serialization. v0.1.0 recovery
+ * does not install this shape: it rebuilds from the complete durable log. A
+ * future loader must validate continuity epoch, exact storage-row anchor, and
+ * durable prefix/tail semantics before any field below may affect projection.
  *
  * @generated from message patchbay.SpawnClaimCheckpoint
  */
@@ -689,6 +691,9 @@ export type SpawnClaimCheckpointRecord = Message<"patchbay.SpawnClaimCheckpointR
   compoundAuthority?: ContinuationAuthorityProvenance | undefined;
 
   /**
+   * Cached projection data only; never disposition authority without replayed
+   * durable transition evidence from the anchored log prefix.
+   *
    * @generated from field: patchbay.SpawnClaimDisposition disposition = 4;
    */
   disposition: SpawnClaimDisposition;

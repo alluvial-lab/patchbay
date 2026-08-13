@@ -181,8 +181,10 @@ message SpawnClaimEvent {
   }
 }
 
-// Private claim-projection checkpoint. It is independently domain/LSN anchored
-// and never becomes an ordering source separate from the durable log.
+// Untrusted private claim-projection checkpoint serialization. v0.1.0 recovery
+// does not install this shape: it rebuilds from the complete durable log. A
+// future loader must validate continuity epoch, exact storage-row anchor, and
+// durable prefix/tail semantics before any field below may affect projection.
 message SpawnClaimCheckpoint {
   AuthorityDomainId authority_domain_id = 1;
   Lsn snapshot_lsn = 2;
@@ -193,6 +195,8 @@ message SpawnClaimCheckpointRecord {
   SpawnGenerationClaim claim = 1;
   Lsn accepted_lsn = 2;
   ContinuationAuthorityProvenance compound_authority = 3;
+  // Cached projection data only; never disposition authority without replayed
+  // durable transition evidence from the anchored log prefix.
   SpawnClaimDisposition disposition = 4;
   RuntimeGenerationRef pending_replacement = 5;
   repeated SpawnPriorWorkEffect prior_work_effects = 6;
