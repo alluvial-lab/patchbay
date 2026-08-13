@@ -401,6 +401,7 @@ async fn ingest_test_descendant<L: GrantProjection>(
             provenance: Some(DescendantGrantProvenance {
                 spawn_operation_id: Some(command_id),
                 spawning_grant_id: Some(parent_grant_id),
+                continuation_authority: None,
             }),
             created_at: Some(occurred_at),
             revocation_policy: GrantRevocationPolicy::Continue as i32,

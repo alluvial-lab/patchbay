@@ -17,9 +17,9 @@ use crate::{
 
 use super::{
     elicitation::correlation_to_elicitation, validate_response_payload,
-    validate_response_responder, AcceptanceError, AllowOperations, Clock, CommandStateLookup,
-    ElicitationContractLookup, GrantCheck, OperationPosture, OperationPostureDenied, SystemClock,
-    TargetResolver,
+    validate_response_responder, validate_spawn_operation_payload, AcceptanceError,
+    AllowOperations, Clock, CommandStateLookup, ElicitationContractLookup, GrantCheck,
+    OperationPosture, OperationPostureDenied, SystemClock, TargetResolver,
 };
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
@@ -85,7 +85,20 @@ pub fn validate_operation_boundary(
     now: &Timestamp,
 ) -> Result<(), Box<SubmissionResult>> {
     match validate_operation(operation, now) {
-        Ok(_) => Ok(()),
+        Ok(validated) => {
+            if validated.operation_kind == OperationKind::Spawn {
+                validate_spawn_operation_payload(operation).map_err(|error| {
+                    Box::new(rejected_result(
+                        operation.command_id.clone(),
+                        FailureCode::ValidationFailed,
+                        "validation_failed".to_owned(),
+                        None,
+                        error.to_string(),
+                    ))
+                })?;
+            }
+            Ok(())
+        }
         Err(rejection) => Err(Box::new(rejected_result(
             operation.command_id.clone(),
             rejection.failure_code,
@@ -236,6 +249,18 @@ where
             None,
             format!("security lockdown is active: {reason_code} (entered at {:?})", entered_event_id.lsn),
         ));
+    }
+
+    if validated.operation_kind == OperationKind::Spawn {
+        if let Err(error) = validate_spawn_operation_payload(&operation) {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::ValidationFailed,
+                "validation_failed".to_owned(),
+                None,
+                error.to_string(),
+            ));
+        }
     }
 
     if matches!(

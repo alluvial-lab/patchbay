@@ -6,7 +6,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ActorEndpointRef, AuthorityDomainId, CommandId, GrantId, Lsn, PayloadEnvelope, TargetScope, TimeWindow, TypedCorrelation } from "./common_pb.js";
+import type { ActorEndpointRef, AuthorityDomainId, CommandId, GrantId, Lsn, PayloadEnvelope, RuntimeGenerationRef, TargetScope, TimeWindow, TypedCorrelation } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/operations.proto.
  */
 export const file_patchbay_operations: GenFile = /*@__PURE__*/
-  fileDesc("ChlwYXRjaGJheS9vcGVyYXRpb25zLnByb3RvEghwYXRjaGJheSKnAgoRQ29tbWFuZFRyYW5zaXRpb24SJwoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZBIqCgh0b19zdGF0ZRgCIAEoDjIYLnBhdGNoYmF5Lk9wZXJhdGlvblN0YXRlEiwKCmZyb21fc3RhdGUYAyABKA4yGC5wYXRjaGJheS5PcGVyYXRpb25TdGF0ZRIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRIwCgxjb21taXR0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDGNvcnJlbGF0aW9ucxgGIAMoCzIaLnBhdGNoYmF5LlR5cGVkQ29ycmVsYXRpb24i9QMKCU9wZXJhdGlvbhInCgpjb21tYW5kX2lkGAEgASgLMhMucGF0Y2hiYXkuQ29tbWFuZElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYAiABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIqCgZzZW5kZXIYAyABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi0KCXJlY2lwaWVudBgEIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSJQoEa2luZBgFIAEoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSKwoMdGFyZ2V0X3Njb3BlGAYgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSFwoPaWRlbXBvdGVuY3lfa2V5GAcgASgJEioKB3BheWxvYWQYCCABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSMAoMY29ycmVsYXRpb25zGAkgAygLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhItCg92YWxpZGl0eV93aW5kb3cYCiABKAsyFC5wYXRjaGJheS5UaW1lV2luZG93EjAKDHN1Ym1pdHRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAibAoRQWNjZXB0ZWRPcGVyYXRpb24SJgoJb3BlcmF0aW9uGAEgASgLMhMucGF0Y2hiYXkuT3BlcmF0aW9uEi8KFGF1dGhvcml6aW5nX2dyYW50X2lkGAIgASgLMhEucGF0Y2hiYXkuR3JhbnRJZCLjAgoQU3VibWlzc2lvblJlc3VsdBIsCgdvdXRjb21lGAEgASgOMhsucGF0Y2hiYXkuU3VibWlzc2lvbk91dGNvbWUSJwoKY29tbWFuZF9pZBgCIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZBIxCg9vcGVyYXRpb25fc3RhdGUYAyABKA4yGC5wYXRjaGJheS5PcGVyYXRpb25TdGF0ZRIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRIaChJkaWFnbm9zdGljX21lc3NhZ2UYBSABKAkSIwoMYWNjZXB0ZWRfbHNuGAYgASgLMg0ucGF0Y2hiYXkuTHNuEhQKDGRlZHVwbGljYXRlZBgHIAEoCBIsChFkZWNpc2lvbl9ncmFudF9pZBgIIAEoCzIRLnBhdGNoYmF5LkdyYW50SWQSEwoLcmVhc29uX2NvZGUYCSABKAkqxAMKDU9wZXJhdGlvbktpbmQSHgoaT1BFUkFUSU9OX0tJTkRfVU5TUEVDSUZJRUQQABIYChRPUEVSQVRJT05fS0lORF9TUEFXThABEhkKFU9QRVJBVElPTl9LSU5EX0FUVEFDSBACEhsKF09QRVJBVElPTl9LSU5EX0lOU1RSVUNUEAMSGQoVT1BFUkFUSU9OX0tJTkRfQ0FOQ0VMEAQSHAoYT1BFUkFUSU9OX0tJTkRfSU5URVJSVVBUEAUSGAoUT1BFUkFUSU9OX0tJTkRfUVVFUlkQBhIkCiBPUEVSQVRJT05fS0lORF9BUFBST1ZBTF9SRVNQT05TRRAHEicKI09QRVJBVElPTl9LSU5EX0VMSUNJVEFUSU9OX1JFU1BPTlNFEAgSHgoaT1BFUkFUSU9OX0tJTkRfUkVDT05GSUdVUkUQCRIlCiFPUEVSQVRJT05fS0lORF9TRVNTSU9OX01BTkFHRU1FTlQQChImCiJPUEVSQVRJT05fS0lORF9SRVNFUlZFRF9BR0VOVF9TRU5EEGQSMAosT1BFUkFUSU9OX0tJTkRfUkVTRVJWRURfQURBUFRFUl9VVElMSVRZX0VYRUMQZSrAAgoOT3BlcmF0aW9uU3RhdGUSHwobT1BFUkFUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASHAoYT1BFUkFUSU9OX1NUQVRFX0FDQ0VQVEVEEAESHQoZT1BFUkFUSU9OX1NUQVRFX0RFTElWRVJFRBACEhsKF09QRVJBVElPTl9TVEFURV9SVU5OSU5HEAMSHQoZT1BFUkFUSU9OX1NUQVRFX0NPTVBMRVRFRBAEEhwKGE9QRVJBVElPTl9TVEFURV9SRUpFQ1RFRBAFEhoKFk9QRVJBVElPTl9TVEFURV9GQUlMRUQQBhIbChdPUEVSQVRJT05fU1RBVEVfRVhQSVJFRBAHEh0KGU9QRVJBVElPTl9TVEFURV9DQU5DRUxMRUQQCBIeChpPUEVSQVRJT05fU1RBVEVfU1VQRVJTRURFRBAJKrgBChFTdWJtaXNzaW9uT3V0Y29tZRIiCh5TVUJNSVNTSU9OX09VVENPTUVfVU5TUEVDSUZJRUQQABIfChtTVUJNSVNTSU9OX09VVENPTUVfQUNDRVBURUQQARIfChtTVUJNSVNTSU9OX09VVENPTUVfUkVKRUNURUQQAhIdChlTVUJNSVNTSU9OX09VVENPTUVfRkFJTEVEEAMSHgoaU1VCTUlTU0lPTl9PVVRDT01FX1VOS05PV04QBCrVAQoUTG9jYWxTdWJtaXNzaW9uU3RhdGUSJgoiTE9DQUxfU1VCTUlTU0lPTl9TVEFURV9VTlNQRUNJRklFRBAAEiAKHExPQ0FMX1NVQk1JU1NJT05fU1RBVEVfRFJBRlQQARIlCiFMT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1NVQk1JVFRJTkcQAhIoCiRMT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1NVQk1JVF9GQUlMRUQQAxIiCh5MT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1VOS05PV04QBCqOBAoLRmFpbHVyZUNvZGUSHAoYRkFJTFVSRV9DT0RFX1VOU1BFQ0lGSUVEEAASIgoeRkFJTFVSRV9DT0RFX1ZBTElEQVRJT05fRkFJTEVEEAESJQohRkFJTFVSRV9DT0RFX0FVVEhPUklaQVRJT05fREVOSUVEEAISIQodRkFJTFVSRV9DT0RFX1RBUkdFVF9OT1RfRk9VTkQQAxIkCiBGQUlMVVJFX0NPREVfVU5TVVBQT1JURURfQ09NTUFORBAEEh8KG0ZBSUxVUkVfQ09ERV9UQVJHRVRfT0ZGTElORRAFEiQKIEZBSUxVUkVfQ09ERV9BREFQVEVSX1VOQVZBSUxBQkxFEAYSIgoeRkFJTFVSRV9DT0RFX1RSQU5TUE9SVF9USU1FT1VUEAcSIgoeRkFJTFVSRV9DT0RFX0RFTElWRVJZX1JFSkVDVEVEEAgSIQodRkFJTFVSRV9DT0RFX0VYRUNVVElPTl9GQUlMRUQQCRIYChRGQUlMVVJFX0NPREVfRVhQSVJFRBAKEhoKFkZBSUxVUkVfQ09ERV9DQU5DRUxMRUQQCxIbChdGQUlMVVJFX0NPREVfU1VQRVJTRURFRBAMEhwKGEZBSUxVUkVfQ09ERV9TVEFMRV9FVkVOVBANEioKJkZBSUxVUkVfQ09ERV9FWEVDVVRJT05fT1VUQ09NRV9VTktOT1dOEA5iBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common]);
+  fileDesc("ChlwYXRjaGJheS9vcGVyYXRpb25zLnByb3RvEghwYXRjaGJheSKnAgoRQ29tbWFuZFRyYW5zaXRpb24SJwoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZBIqCgh0b19zdGF0ZRgCIAEoDjIYLnBhdGNoYmF5Lk9wZXJhdGlvblN0YXRlEiwKCmZyb21fc3RhdGUYAyABKA4yGC5wYXRjaGJheS5PcGVyYXRpb25TdGF0ZRIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRIwCgxjb21taXR0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDGNvcnJlbGF0aW9ucxgGIAMoCzIaLnBhdGNoYmF5LlR5cGVkQ29ycmVsYXRpb24i9QMKCU9wZXJhdGlvbhInCgpjb21tYW5kX2lkGAEgASgLMhMucGF0Y2hiYXkuQ29tbWFuZElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYAiABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIqCgZzZW5kZXIYAyABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi0KCXJlY2lwaWVudBgEIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSJQoEa2luZBgFIAEoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSKwoMdGFyZ2V0X3Njb3BlGAYgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSFwoPaWRlbXBvdGVuY3lfa2V5GAcgASgJEioKB3BheWxvYWQYCCABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSMAoMY29ycmVsYXRpb25zGAkgAygLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhItCg92YWxpZGl0eV93aW5kb3cYCiABKAsyFC5wYXRjaGJheS5UaW1lV2luZG93EjAKDHN1Ym1pdHRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAipAEKDFNwYXduUmVxdWVzdBIlCgVmcmVzaBgBIAEoCzIULnBhdGNoYmF5LkZyZXNoU3Bhd25IABIzCgxjb250aW51YXRpb24YAiABKAsyGy5wYXRjaGJheS5TcGF3bkNvbnRpbnVhdGlvbkgAEi4KC3RhcmdldF9zcGVjGAMgASgLMhkucGF0Y2hiYXkuU3Bhd25UYXJnZXRTcGVjQggKBmludGVudCIMCgpGcmVzaFNwYXduIkIKEVNwYXduQ29udGludWF0aW9uEi0KBXByaW9yGAEgASgLMh4ucGF0Y2hiYXkuUnVudGltZUdlbmVyYXRpb25SZWYidgoPU3Bhd25UYXJnZXRTcGVjEg0KBXNoYXBlGAEgASgJEjIKD2FkYXB0ZXJfcGF5bG9hZBgCIAEoCzIZLnBhdGNoYmF5LlBheWxvYWRFbnZlbG9wZRIgChhkZXBsb3ltZW50X2F1dGhvcml0eV9yZWYYAyABKAkibAoRQWNjZXB0ZWRPcGVyYXRpb24SJgoJb3BlcmF0aW9uGAEgASgLMhMucGF0Y2hiYXkuT3BlcmF0aW9uEi8KFGF1dGhvcml6aW5nX2dyYW50X2lkGAIgASgLMhEucGF0Y2hiYXkuR3JhbnRJZCLjAgoQU3VibWlzc2lvblJlc3VsdBIsCgdvdXRjb21lGAEgASgOMhsucGF0Y2hiYXkuU3VibWlzc2lvbk91dGNvbWUSJwoKY29tbWFuZF9pZBgCIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZBIxCg9vcGVyYXRpb25fc3RhdGUYAyABKA4yGC5wYXRjaGJheS5PcGVyYXRpb25TdGF0ZRIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRIaChJkaWFnbm9zdGljX21lc3NhZ2UYBSABKAkSIwoMYWNjZXB0ZWRfbHNuGAYgASgLMg0ucGF0Y2hiYXkuTHNuEhQKDGRlZHVwbGljYXRlZBgHIAEoCBIsChFkZWNpc2lvbl9ncmFudF9pZBgIIAEoCzIRLnBhdGNoYmF5LkdyYW50SWQSEwoLcmVhc29uX2NvZGUYCSABKAkqxAMKDU9wZXJhdGlvbktpbmQSHgoaT1BFUkFUSU9OX0tJTkRfVU5TUEVDSUZJRUQQABIYChRPUEVSQVRJT05fS0lORF9TUEFXThABEhkKFU9QRVJBVElPTl9LSU5EX0FUVEFDSBACEhsKF09QRVJBVElPTl9LSU5EX0lOU1RSVUNUEAMSGQoVT1BFUkFUSU9OX0tJTkRfQ0FOQ0VMEAQSHAoYT1BFUkFUSU9OX0tJTkRfSU5URVJSVVBUEAUSGAoUT1BFUkFUSU9OX0tJTkRfUVVFUlkQBhIkCiBPUEVSQVRJT05fS0lORF9BUFBST1ZBTF9SRVNQT05TRRAHEicKI09QRVJBVElPTl9LSU5EX0VMSUNJVEFUSU9OX1JFU1BPTlNFEAgSHgoaT1BFUkFUSU9OX0tJTkRfUkVDT05GSUdVUkUQCRIlCiFPUEVSQVRJT05fS0lORF9TRVNTSU9OX01BTkFHRU1FTlQQChImCiJPUEVSQVRJT05fS0lORF9SRVNFUlZFRF9BR0VOVF9TRU5EEGQSMAosT1BFUkFUSU9OX0tJTkRfUkVTRVJWRURfQURBUFRFUl9VVElMSVRZX0VYRUMQZSrAAgoOT3BlcmF0aW9uU3RhdGUSHwobT1BFUkFUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASHAoYT1BFUkFUSU9OX1NUQVRFX0FDQ0VQVEVEEAESHQoZT1BFUkFUSU9OX1NUQVRFX0RFTElWRVJFRBACEhsKF09QRVJBVElPTl9TVEFURV9SVU5OSU5HEAMSHQoZT1BFUkFUSU9OX1NUQVRFX0NPTVBMRVRFRBAEEhwKGE9QRVJBVElPTl9TVEFURV9SRUpFQ1RFRBAFEhoKFk9QRVJBVElPTl9TVEFURV9GQUlMRUQQBhIbChdPUEVSQVRJT05fU1RBVEVfRVhQSVJFRBAHEh0KGU9QRVJBVElPTl9TVEFURV9DQU5DRUxMRUQQCBIeChpPUEVSQVRJT05fU1RBVEVfU1VQRVJTRURFRBAJKrgBChFTdWJtaXNzaW9uT3V0Y29tZRIiCh5TVUJNSVNTSU9OX09VVENPTUVfVU5TUEVDSUZJRUQQABIfChtTVUJNSVNTSU9OX09VVENPTUVfQUNDRVBURUQQARIfChtTVUJNSVNTSU9OX09VVENPTUVfUkVKRUNURUQQAhIdChlTVUJNSVNTSU9OX09VVENPTUVfRkFJTEVEEAMSHgoaU1VCTUlTU0lPTl9PVVRDT01FX1VOS05PV04QBCrVAQoUTG9jYWxTdWJtaXNzaW9uU3RhdGUSJgoiTE9DQUxfU1VCTUlTU0lPTl9TVEFURV9VTlNQRUNJRklFRBAAEiAKHExPQ0FMX1NVQk1JU1NJT05fU1RBVEVfRFJBRlQQARIlCiFMT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1NVQk1JVFRJTkcQAhIoCiRMT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1NVQk1JVF9GQUlMRUQQAxIiCh5MT0NBTF9TVUJNSVNTSU9OX1NUQVRFX1VOS05PV04QBCqOBAoLRmFpbHVyZUNvZGUSHAoYRkFJTFVSRV9DT0RFX1VOU1BFQ0lGSUVEEAASIgoeRkFJTFVSRV9DT0RFX1ZBTElEQVRJT05fRkFJTEVEEAESJQohRkFJTFVSRV9DT0RFX0FVVEhPUklaQVRJT05fREVOSUVEEAISIQodRkFJTFVSRV9DT0RFX1RBUkdFVF9OT1RfRk9VTkQQAxIkCiBGQUlMVVJFX0NPREVfVU5TVVBQT1JURURfQ09NTUFORBAEEh8KG0ZBSUxVUkVfQ09ERV9UQVJHRVRfT0ZGTElORRAFEiQKIEZBSUxVUkVfQ09ERV9BREFQVEVSX1VOQVZBSUxBQkxFEAYSIgoeRkFJTFVSRV9DT0RFX1RSQU5TUE9SVF9USU1FT1VUEAcSIgoeRkFJTFVSRV9DT0RFX0RFTElWRVJZX1JFSkVDVEVEEAgSIQodRkFJTFVSRV9DT0RFX0VYRUNVVElPTl9GQUlMRUQQCRIYChRGQUlMVVJFX0NPREVfRVhQSVJFRBAKEhoKFkZBSUxVUkVfQ09ERV9DQU5DRUxMRUQQCxIbChdGQUlMVVJFX0NPREVfU1VQRVJTRURFRBAMEhwKGEZBSUxVUkVfQ09ERV9TVEFMRV9FVkVOVBANEioKJkZBSUxVUkVfQ09ERV9FWEVDVVRJT05fT1VUQ09NRV9VTktOT1dOEA5iBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common]);
 
 /**
  * A durable command lifecycle transition. One event per real transition
@@ -153,6 +153,104 @@ export const OperationSchema: GenMessage<Operation> = /*@__PURE__*/
   messageDesc(file_patchbay_operations, 1);
 
 /**
+ * Generated payload for the single spawn OperationKind. The oneof makes fresh
+ * creation and exact-prior continuation disjoint wire variants.
+ *
+ * @generated from message patchbay.SpawnRequest
+ */
+export type SpawnRequest = Message<"patchbay.SpawnRequest"> & {
+  /**
+   * @generated from oneof patchbay.SpawnRequest.intent
+   */
+  intent: {
+    /**
+     * @generated from field: patchbay.FreshSpawn fresh = 1;
+     */
+    value: FreshSpawn;
+    case: "fresh";
+  } | {
+    /**
+     * @generated from field: patchbay.SpawnContinuation continuation = 2;
+     */
+    value: SpawnContinuation;
+    case: "continuation";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * @generated from field: patchbay.SpawnTargetSpec target_spec = 3;
+   */
+  targetSpec?: SpawnTargetSpec | undefined;
+};
+
+/**
+ * Describes the message patchbay.SpawnRequest.
+ * Use `create(SpawnRequestSchema)` to create a new message.
+ */
+export const SpawnRequestSchema: GenMessage<SpawnRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_operations, 2);
+
+/**
+ * @generated from message patchbay.FreshSpawn
+ */
+export type FreshSpawn = Message<"patchbay.FreshSpawn"> & {
+};
+
+/**
+ * Describes the message patchbay.FreshSpawn.
+ * Use `create(FreshSpawnSchema)` to create a new message.
+ */
+export const FreshSpawnSchema: GenMessage<FreshSpawn> = /*@__PURE__*/
+  messageDesc(file_patchbay_operations, 3);
+
+/**
+ * @generated from message patchbay.SpawnContinuation
+ */
+export type SpawnContinuation = Message<"patchbay.SpawnContinuation"> & {
+  /**
+   * @generated from field: patchbay.RuntimeGenerationRef prior = 1;
+   */
+  prior?: RuntimeGenerationRef | undefined;
+};
+
+/**
+ * Describes the message patchbay.SpawnContinuation.
+ * Use `create(SpawnContinuationSchema)` to create a new message.
+ */
+export const SpawnContinuationSchema: GenMessage<SpawnContinuation> = /*@__PURE__*/
+  messageDesc(file_patchbay_operations, 4);
+
+/**
+ * Adapter-owned creation parameters. Shape names the adapter-declared variant;
+ * the opaque payload and local authority reference never become core identity
+ * or substitute for a Patchbay Grant.
+ *
+ * @generated from message patchbay.SpawnTargetSpec
+ */
+export type SpawnTargetSpec = Message<"patchbay.SpawnTargetSpec"> & {
+  /**
+   * @generated from field: string shape = 1;
+   */
+  shape: string;
+
+  /**
+   * @generated from field: patchbay.PayloadEnvelope adapter_payload = 2;
+   */
+  adapterPayload?: PayloadEnvelope | undefined;
+
+  /**
+   * @generated from field: string deployment_authority_ref = 3;
+   */
+  deploymentAuthorityRef: string;
+};
+
+/**
+ * Describes the message patchbay.SpawnTargetSpec.
+ * Use `create(SpawnTargetSpecSchema)` to create a new message.
+ */
+export const SpawnTargetSpecSchema: GenMessage<SpawnTargetSpec> = /*@__PURE__*/
+  messageDesc(file_patchbay_operations, 5);
+
+/**
  * A durable acceptance envelope. The ingress request remains a plain
  * Operation; the core adds the verified authorizing grant only after the
  * authority decision succeeds.
@@ -176,7 +274,7 @@ export type AcceptedOperation = Message<"patchbay.AcceptedOperation"> & {
  * Use `create(AcceptedOperationSchema)` to create a new message.
  */
 export const AcceptedOperationSchema: GenMessage<AcceptedOperation> = /*@__PURE__*/
-  messageDesc(file_patchbay_operations, 2);
+  messageDesc(file_patchbay_operations, 6);
 
 /**
  * @generated from message patchbay.SubmissionResult
@@ -238,7 +336,7 @@ export type SubmissionResult = Message<"patchbay.SubmissionResult"> & {
  * Use `create(SubmissionResultSchema)` to create a new message.
  */
 export const SubmissionResultSchema: GenMessage<SubmissionResult> = /*@__PURE__*/
-  messageDesc(file_patchbay_operations, 3);
+  messageDesc(file_patchbay_operations, 7);
 
 /**
  * @generated from enum patchbay.OperationKind

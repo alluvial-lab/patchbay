@@ -49,6 +49,31 @@ message Operation {
   google.protobuf.Timestamp submitted_at = 11;
 }
 
+// Generated payload for the single spawn OperationKind. The oneof makes fresh
+// creation and exact-prior continuation disjoint wire variants.
+message SpawnRequest {
+  oneof intent {
+    FreshSpawn fresh = 1;
+    SpawnContinuation continuation = 2;
+  }
+  SpawnTargetSpec target_spec = 3;
+}
+
+message FreshSpawn {}
+
+message SpawnContinuation {
+  RuntimeGenerationRef prior = 1;
+}
+
+// Adapter-owned creation parameters. Shape names the adapter-declared variant;
+// the opaque payload and local authority reference never become core identity
+// or substitute for a Patchbay Grant.
+message SpawnTargetSpec {
+  string shape = 1;
+  PayloadEnvelope adapter_payload = 2;
+  string deployment_authority_ref = 3;
+}
+
 // A durable acceptance envelope. The ingress request remains a plain
 // Operation; the core adds the verified authorizing grant only after the
 // authority decision succeeds.

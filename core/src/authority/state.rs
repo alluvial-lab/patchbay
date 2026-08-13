@@ -6,8 +6,9 @@ use crate::{
     time::{Clock, SystemClock},
 };
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, EndpointId, EventId, Generation,
-    GrantId, GrantRevocationPolicy, OperationKind, TargetScope, TargetScopeKind,
+    ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, ContinuationAuthorityProvenance,
+    EndpointId, EventId, Generation, GrantId, GrantRevocationPolicy, OperationKind, TargetScope,
+    TargetScopeKind,
 };
 
 /// The in-memory grant record derived from the durable authority log.
@@ -121,6 +122,8 @@ pub enum GrantProvenanceKind {
     Descendant {
         spawn_operation_id: Option<CommandId>,
         spawning_grant_id: Option<GrantId>,
+        /// Exact-prior replacement authority; absent only for fresh spawn.
+        continuation_authority: Option<ContinuationAuthorityProvenance>,
         /// Exact durable spawn-completion audit that created this grant.
         audit_id: Option<EventId>,
     },

@@ -211,6 +211,7 @@ async fn valid_descendant_candidate(
     descendant.provenance = Some(DescendantGrantProvenance {
         spawn_operation_id: Some(command_id),
         spawning_grant_id: Some(grant_id(parent_id)),
+        continuation_authority: None,
     });
     descendant.created_at = Some(occurred_at);
     descendant.audit_id = Some(audit_id);
@@ -962,6 +963,7 @@ async fn self_consistent_source_audit_and_grant_without_accepted_context_is_reje
     descendant.provenance = Some(DescendantGrantProvenance {
         spawn_operation_id: Some(command_id),
         spawning_grant_id: Some(grant_id("forged-parent")),
+        continuation_authority: None,
     });
     descendant.created_at = Some(occurred_at);
     descendant.audit_id = Some(audit_id);

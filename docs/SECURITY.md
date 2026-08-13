@@ -208,6 +208,8 @@ Spawn is adapter-scoped in the current system: the Operation explicitly selects 
 
 Adapter routing identity comes only from the canonical durable registration envelope written by authenticated `Attach`; generic adapter Event ingress cannot write that schema, and replay rejects disagreement among the event domain, Observation domain/kind, canonical adapter target, canonical adapter actor/endpoint sender, payload descriptor, and embedded registration identity. A valid durable registration remains spawn-resolvable after ordinary core restart. The live attachment token/subscription is deliberately not persisted and grants no durable routing authority: it governs current delivery and liveness, so an accepted spawn still waits or fails through the existing adapter delivery behavior when no current attachment can receive it.
 
+A fresh spawn uses only that live adapter-scoped `spawn` Grant. A continuation additionally requires a live Grant for the same verified subject, endpoint, and authority domain, scoped to the exact prior logical-target/runtime generation and allowing `session-management`. The two Grants are selected under one decision gate and sampled decision time. Durable continuation provenance preserves the exact prior reference, the adapter-spawn Grant id, the exact-prior replacement Grant id, and the canonical `session-management` kind. Missing, malformed, mismatched, expired, or revoked replacement authority fails closed; adapter-wide spawn authority alone cannot replace or revive a protected generation. Authentication and exact correlation prevent source confusion but do not prove that an authenticated adapter honestly observed an external effect.
+
 Successful spawn completion records an explicit, auditable **descendant grant** for the spawned session. This is an explicit grant record generated as part of spawn, not an implicit grant-matching rule. The descendant grant shape matches `docs/PROTOCOL.md` and is a normal grant instance with:
 
 - `grant id` — standard grant id (core-assigned).
@@ -216,7 +218,7 @@ Successful spawn completion records an explicit, auditable **descendant grant** 
 - `optional subject endpoint id or endpoint class` — the spawning endpoint, if applicable.
 - `target scope` — the spawned session/generation (an existing-session scope, now that the session exists).
 - `allowed OperationKinds` — the full set of committed kinds applicable to an existing session, enumerated explicitly (not a wildcard `all`): `instruct`, `cancel`, `interrupt`, `query`, `approval-response`, `elicitation-response`, `reconfigure`, `session-management`. `spawn` is excluded because recursive spawning requires a separate adapter-scoped spawn grant; `attach` is excluded because the spawned session is already attached to its spawner's control plane.
-- `creation time and provenance` — `provenance = { spawn_operation_id, spawning_grant_id }` (explicit link to the spawn Operation and the grant that authorized it).
+- `creation time and provenance` — fresh spawn records `{ spawn_operation_id, spawning_grant_id }`; continuation additionally records `{ exact_prior, replacement_grant_id, replacement_authority_kind = session-management }`, preserving both selected Grant ids without treating either as delegation.
 - `optional expiration` — none by default (the descendant grant lives until revoked or the session is retired).
 - `revocation generation or revoked time` — standard; revocable independently of the spawn grant (two-lever rule, no cascade).
 - `revocation policy for already accepted commands` — standard.

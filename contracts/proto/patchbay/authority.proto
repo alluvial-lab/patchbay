@@ -55,9 +55,23 @@ message DescendantGrant {
   EventId audit_id = 14;
 }
 
+// Core-selected exact-prior replacement authority for a continuation. This is
+// composed with the accepted operation's adapter-scoped spawning Grant; it is
+// never accepted from an untrusted SpawnRequest payload.
+message ContinuationAuthorityProvenance {
+  RuntimeGenerationRef exact_prior = 1;
+  GrantId replacement_grant_id = 2;
+  // Must be OPERATION_KIND_SESSION_MANAGEMENT. Keeping the kind explicit makes
+  // durable security provenance self-describing and fail-closed on replay.
+  OperationKind replacement_authority_kind = 3;
+}
+
 message DescendantGrantProvenance {
   CommandId spawn_operation_id = 1;
   GrantId spawning_grant_id = 2;
+  // Present only for continuation descendants. Together with
+  // spawning_grant_id this preserves both authorizing Grant ids.
+  ContinuationAuthorityProvenance continuation_authority = 3;
 }
 
 message GrantRevocationEffect {

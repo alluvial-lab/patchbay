@@ -248,6 +248,7 @@ fn descendant_from(issuance: &DescendantGrantIssuance) -> DescendantGrant {
         provenance: Some(DescendantGrantProvenance {
             spawn_operation_id: Some(issuance.spawn_operation_id.clone()),
             spawning_grant_id: Some(issuance.spawning_grant_id.clone()),
+            continuation_authority: None,
         }),
         created_at: Some(issuance.created_at),
         revocation_policy: GrantRevocationPolicy::Continue as i32,

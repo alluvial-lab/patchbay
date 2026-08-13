@@ -176,6 +176,7 @@ fn descendant_grant() -> DescendantGrant {
                 value: "spawn-1".to_owned(),
             }),
             spawning_grant_id: Some(grant_id("parent")),
+            continuation_authority: None,
         }),
         created_at: Some(Timestamp {
             seconds: 10,

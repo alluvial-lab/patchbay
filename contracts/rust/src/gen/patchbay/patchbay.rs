@@ -454,6 +454,45 @@ pub struct Operation {
     #[prost(message, optional, tag="11")]
     pub submitted_at: ::core::option::Option<::prost_types::Timestamp>,
 }
+/// Generated payload for the single spawn OperationKind. The oneof makes fresh
+/// creation and exact-prior continuation disjoint wire variants.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnRequest {
+    #[prost(message, optional, tag="3")]
+    pub target_spec: ::core::option::Option<SpawnTargetSpec>,
+    #[prost(oneof="spawn_request::Intent", tags="1, 2")]
+    pub intent: ::core::option::Option<spawn_request::Intent>,
+}
+/// Nested message and enum types in `SpawnRequest`.
+pub mod spawn_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Intent {
+        #[prost(message, tag="1")]
+        Fresh(super::FreshSpawn),
+        #[prost(message, tag="2")]
+        Continuation(super::SpawnContinuation),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FreshSpawn {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnContinuation {
+    #[prost(message, optional, tag="1")]
+    pub prior: ::core::option::Option<RuntimeGenerationRef>,
+}
+/// Adapter-owned creation parameters. Shape names the adapter-declared variant;
+/// the opaque payload and local authority reference never become core identity
+/// or substitute for a Patchbay Grant.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnTargetSpec {
+    #[prost(string, tag="1")]
+    pub shape: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub adapter_payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(string, tag="3")]
+    pub deployment_authority_ref: ::prost::alloc::string::String,
+}
 /// A durable acceptance envelope. The ingress request remains a plain
 /// Operation; the core adds the verified authorizing grant only after the
 /// authority decision succeeds.
@@ -993,12 +1032,30 @@ pub struct DescendantGrant {
     #[prost(message, optional, tag="14")]
     pub audit_id: ::core::option::Option<EventId>,
 }
+/// Core-selected exact-prior replacement authority for a continuation. This is
+/// composed with the accepted operation's adapter-scoped spawning Grant; it is
+/// never accepted from an untrusted SpawnRequest payload.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ContinuationAuthorityProvenance {
+    #[prost(message, optional, tag="1")]
+    pub exact_prior: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="2")]
+    pub replacement_grant_id: ::core::option::Option<GrantId>,
+    /// Must be OPERATION_KIND_SESSION_MANAGEMENT. Keeping the kind explicit makes
+    /// durable security provenance self-describing and fail-closed on replay.
+    #[prost(enumeration="OperationKind", tag="3")]
+    pub replacement_authority_kind: i32,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DescendantGrantProvenance {
     #[prost(message, optional, tag="1")]
     pub spawn_operation_id: ::core::option::Option<CommandId>,
     #[prost(message, optional, tag="2")]
     pub spawning_grant_id: ::core::option::Option<GrantId>,
+    /// Present only for continuation descendants. Together with
+    /// spawning_grant_id this preserves both authorizing Grant ids.
+    #[prost(message, optional, tag="3")]
+    pub continuation_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantRevocationEffect {

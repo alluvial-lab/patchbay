@@ -203,6 +203,7 @@ where
                     provenance: Some(DescendantGrantProvenance {
                         spawn_operation_id: Some(issuance.spawn_operation_id),
                         spawning_grant_id: Some(issuance.spawning_grant_id),
+                        continuation_authority: None,
                     }),
                     created_at: Some(issuance.created_at),
                     revocation_policy: GrantRevocationPolicy::Continue as i32,

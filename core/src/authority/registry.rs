@@ -14,7 +14,9 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use crate::{
-    acceptance::exact_command_correlation, resource::ResourceIdentity, storage::RecordedEvent,
+    acceptance::{exact_command_correlation, validate_continuation_authority_provenance},
+    resource::ResourceIdentity,
+    storage::RecordedEvent,
 };
 
 use super::{
@@ -483,6 +485,17 @@ fn descendant_grant_record(
                 grant_id
             ))
         })?;
+    let continuation_authority = provenance.continuation_authority;
+    if let Some(continuation) = continuation_authority.as_ref() {
+        validate_continuation_authority_provenance(&spawning_grant_id, continuation).map_err(
+            |error| {
+                AuthorityError::InvalidGrant(format!(
+                    "descendant grant {:?} at LSN {event_lsn} has invalid continuation provenance: {error}",
+                    grant_id
+                ))
+            },
+        )?;
+    }
     let audit_id = grant
         .audit_id
         .filter(|id| {
@@ -536,6 +549,7 @@ fn descendant_grant_record(
         provenance: GrantProvenanceKind::Descendant {
             spawn_operation_id: Some(spawn_operation_id),
             spawning_grant_id: Some(spawning_grant_id),
+            continuation_authority,
             audit_id: Some(audit_id),
         },
     })

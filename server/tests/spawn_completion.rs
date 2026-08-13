@@ -8,20 +8,22 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, session_state_event, typed_correlation, AcceptedOperation,
+    observation_request, session_state_event, spawn_request, typed_correlation, AcceptedOperation,
     ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
     AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuditRecord,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
-    DeviceId, EndpointId, EventId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
+    DeviceId, EndpointId, EventId, FailureCode, FreshSpawn, Generation, Grant, GrantId,
+    GrantProvenance,
     GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind, ObservationRequest,
-    Operation, OperationKind, OperationState, OperatorRecord, PayloadEnvelope, PrincipalEnrollment,
-    ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind, Revocation, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState,
-    SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload, SubmissionOutcome,
-    SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
+    Operation, OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
+    PrincipalEnrollment, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind, Revocation,
+    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionRegistered,
+    SessionStateEvent, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
+    SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
     VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
+    acceptance::SPAWN_REQUEST_SCHEMA,
     adapter,
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::{
@@ -267,6 +269,7 @@ fn descendant_candidate(audit_id: EventId) -> DescendantGrant {
         provenance: Some(DescendantGrantProvenance {
             spawn_operation_id: Some(command_id()),
             spawning_grant_id: Some(parent_grant_id()),
+            continuation_authority: None,
         }),
         created_at: Some(Timestamp {
             seconds: 1_000,
@@ -401,6 +404,18 @@ fn submitted_operation(
     kind: OperationKind,
     target_scope: TargetScope,
 ) -> Operation {
+    let payload = (kind == OperationKind::Spawn).then(|| PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
     Operation {
         command_id: Some(CommandId {
             value: command.to_owned(),
@@ -411,6 +426,7 @@ fn submitted_operation(
         kind: kind as i32,
         target_scope: Some(target_scope),
         idempotency_key: key.to_owned(),
+        payload,
         validity_window: Some(TimeWindow {
             starts_at: Some(Timestamp {
                 seconds: 1,
