@@ -3,7 +3,9 @@ syntax = "proto3";
 package patchbay;
 
 import "google/protobuf/timestamp.proto";
+import "patchbay/authority.proto";
 import "patchbay/common.proto";
+import "patchbay/operations.proto";
 import "patchbay/security.proto";
 
 message Session {
@@ -88,6 +90,112 @@ message StoredSessionCheckpoint {
   SessionSnapshot snapshot = 1;
   repeated SessionCheckpointTombstone tombstones = 2;
   repeated LogicalTargetProjectionRecord logical_targets = 3;
+}
+
+// Claim lifecycle is independent from CommandState. In particular, failed,
+// cancelled, expired, and other terminal command states never imply release.
+enum SpawnClaimDisposition {
+  SPAWN_CLAIM_DISPOSITION_UNSPECIFIED = 0;
+  SPAWN_CLAIM_DISPOSITION_ACTIVE = 1;
+  SPAWN_CLAIM_DISPOSITION_RELEASED_NO_EXTERNAL_EFFECT = 2;
+  SPAWN_CLAIM_DISPOSITION_POISONED_PENDING_RECONCILIATION = 3;
+  SPAWN_CLAIM_DISPOSITION_PROMOTED = 4;
+  SPAWN_CLAIM_DISPOSITION_TARGET_ABANDONED = 5;
+}
+
+// Closed proof vocabulary. Each variant references a prior durable event;
+// absence of delivered acknowledgement is deliberately not a proof variant.
+message NoExternalEffectProof {
+  oneof proof {
+    CorePreDeliveryTerminalProof core_pre_delivery_terminal = 1;
+    AdapterRefusalBeforeDeliveryProof authenticated_adapter_refusal_before_delivery = 2;
+    SupervisorPreLaunchFailureProof exact_supervisor_pre_launch_failure = 3;
+  }
+}
+
+message CorePreDeliveryTerminalProof {
+  EventId decision_event_id = 1;
+}
+
+message AdapterRefusalBeforeDeliveryProof {
+  EventId evidence_event_id = 1;
+  AdapterId adapter_id = 2;
+  Generation adapter_generation = 3;
+}
+
+message SupervisorPreLaunchFailureProof {
+  EventId evidence_event_id = 1;
+  AdapterId adapter_id = 2;
+  Generation adapter_generation = 3;
+}
+
+message SpawnClaimNoEffectRelease {
+  NoExternalEffectProof proof = 1;
+  // Required for continuation release: exact prior-N liveness must be durably
+  // re-established before the pending-replacement fence can clear.
+  RuntimeGenerationRef exact_prior_liveness = 2;
+  EventId prior_liveness_event_id = 3;
+}
+
+message SpawnClaimAmbiguityEvidence {
+  EventId evidence_event_id = 1;
+}
+
+message SpawnClaimPromotionEvidence {
+  EventId promotion_event_id = 1;
+  RuntimeGenerationRef promoted_runtime = 2;
+}
+
+message SpawnClaimAbandonmentEvidence {
+  EventId abandonment_event_id = 1;
+}
+
+// One durable accepted spawn/continuation decision. The continuation's claim,
+// compound authority, exact-N fence, and complete already-accepted-work
+// effects are one replay unit and therefore cannot race each other.
+message SpawnClaimAccepted {
+  AcceptedOperation accepted_operation = 1;
+  SpawnGenerationClaim claim = 2;
+  ContinuationAuthorityProvenance compound_authority = 3;
+  SpawnPendingReplacementFence pending_replacement = 4;
+  repeated SpawnPriorWorkEffect prior_work_effects = 5;
+}
+
+message SpawnClaimDispositionChanged {
+  CommandId claim_operation_id = 1;
+  SpawnClaimDisposition from_disposition = 2;
+  SpawnClaimDisposition to_disposition = 3;
+  oneof evidence {
+    SpawnClaimNoEffectRelease no_external_effect_release = 4;
+    SpawnClaimAmbiguityEvidence ambiguous_external_effect = 5;
+    SpawnClaimPromotionEvidence promotion = 6;
+    SpawnClaimAbandonmentEvidence target_abandonment = 7;
+  }
+}
+
+message SpawnClaimEvent {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof mutation {
+    SpawnClaimAccepted accepted = 2;
+    SpawnClaimDispositionChanged disposition_changed = 3;
+  }
+}
+
+// Private claim-projection checkpoint. It is independently domain/LSN anchored
+// and never becomes an ordering source separate from the durable log.
+message SpawnClaimCheckpoint {
+  AuthorityDomainId authority_domain_id = 1;
+  Lsn snapshot_lsn = 2;
+  repeated SpawnClaimCheckpointRecord records = 3;
+}
+
+message SpawnClaimCheckpointRecord {
+  SpawnGenerationClaim claim = 1;
+  Lsn accepted_lsn = 2;
+  ContinuationAuthorityProvenance compound_authority = 3;
+  SpawnClaimDisposition disposition = 4;
+  RuntimeGenerationRef pending_replacement = 5;
+  repeated SpawnPriorWorkEffect prior_work_effects = 6;
 }
 
 // Private logical-target projection state. Project/cwd/name/model are absent

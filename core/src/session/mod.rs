@@ -13,6 +13,7 @@ pub mod logical_target;
 pub mod registry;
 pub mod replay;
 pub mod resolver;
+pub mod spawn_claim;
 pub mod state;
 
 pub use events::SessionStateEvent;
@@ -27,6 +28,11 @@ pub use logical_target::{
 pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
+pub use spawn_claim::{
+    allowed_spawn_claim_transition, encode_spawn_claim_event, rebuild_spawn_claims_from_log,
+    SpawnClaimError, SpawnClaimKey, SpawnClaimQuery, SpawnClaimRecord, SpawnClaimRegistry,
+    SpawnClaimability, SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
+};
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,
     SessionIdentity,

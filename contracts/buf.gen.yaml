@@ -8,6 +8,7 @@ plugins:
       - type_attribute=.patchbay.DiagnosticsQuery.query=#[allow(clippy::large_enum_variant)]
       - type_attribute=.patchbay.QueryDiagnosticsResponse.result=#[allow(clippy::large_enum_variant)]
       - type_attribute=.patchbay.DiagnosticsResult.result=#[allow(clippy::large_enum_variant)]
+      - type_attribute=.patchbay.SpawnClaimEvent.mutation=#[allow(clippy::large_enum_variant)]
   - local: ./ts/node_modules/.bin/protoc-gen-es
     out: ts/src/gen
     opt:

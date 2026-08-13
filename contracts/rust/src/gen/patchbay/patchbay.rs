@@ -344,6 +344,9 @@ pub enum StoredEventKind {
     SecurityLockdown = 14,
     /// Durable normalized operational-resource projection update (resources.proto).
     ResourceState = 15,
+    /// Durable exclusive spawn-generation claim and disposition update
+    /// (sessions.proto). Command terminality is never interpreted as release.
+    SpawnClaim = 16,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -368,6 +371,7 @@ impl StoredEventKind {
             Self::ControlSurfaceRevocation => "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION",
             Self::SecurityLockdown => "STORED_EVENT_KIND_SECURITY_LOCKDOWN",
             Self::ResourceState => "STORED_EVENT_KIND_RESOURCE_STATE",
+            Self::SpawnClaim => "STORED_EVENT_KIND_SPAWN_CLAIM",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -389,6 +393,7 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_CONTROL_SURFACE_REVOCATION" => Some(Self::ControlSurfaceRevocation),
             "STORED_EVENT_KIND_SECURITY_LOCKDOWN" => Some(Self::SecurityLockdown),
             "STORED_EVENT_KIND_RESOURCE_STATE" => Some(Self::ResourceState),
+            "STORED_EVENT_KIND_SPAWN_CLAIM" => Some(Self::SpawnClaim),
             _ => None,
         }
     }
@@ -481,6 +486,53 @@ pub struct SpawnContinuation {
     #[prost(message, optional, tag="1")]
     pub prior: ::core::option::Option<RuntimeGenerationRef>,
 }
+/// Exclusive core-prepared generation claim. The authority domain plus logical
+/// target plus expected-prior generation is the exclusive key. Fresh claims
+/// omit expected_prior and consume generation 1; continuations consume exact
+/// N+1. claim_operation_id prevents a later command from impersonating the
+/// original claimant.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnGenerationClaim {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub claim_operation_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag="3")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="4")]
+    pub expected_prior: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="5")]
+    pub claimed_generation: ::core::option::Option<Generation>,
+}
+/// The exact prior-generation delivery fence activated by the same durable
+/// decision that accepts a continuation claim.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnPendingReplacementFence {
+    #[prost(message, optional, tag="1")]
+    pub exact_prior: ::core::option::Option<RuntimeGenerationRef>,
+    /// must be SUPERSEDED
+    #[prost(enumeration="FailureCode", tag="2")]
+    pub failure_code: i32,
+    /// must be replacement_pending
+    #[prost(string, tag="3")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+/// One complete precomputed effect for already-accepted work bound to exact N.
+/// No hold/queue variant exists: every affected command is explicitly
+/// superseded or routed to quiesce/outcome reconciliation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnPriorWorkEffect {
+    #[prost(message, optional, tag="1")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(enumeration="OperationState", tag="2")]
+    pub prior_state: i32,
+    #[prost(enumeration="SpawnPriorWorkDisposition", tag="3")]
+    pub disposition: i32,
+    #[prost(enumeration="FailureCode", tag="4")]
+    pub failure_code: i32,
+    #[prost(string, tag="5")]
+    pub reason_code: ::prost::alloc::string::String,
+}
 /// Adapter-owned creation parameters. Shape names the adapter-declared variant;
 /// the opaque payload and local authority reference never become core identity
 /// or substitute for a Patchbay Grant.
@@ -526,6 +578,37 @@ pub struct SubmissionResult {
     /// Bounded lower-snake-case decision vocabulary, distinct from FailureCode.
     #[prost(string, tag="9")]
     pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpawnPriorWorkDisposition {
+    Unspecified = 0,
+    /// Accepted before the fence but never offered: terminalize explicitly.
+    SupersededBeforeOffer = 1,
+    /// Delivery responsibility or execution may exist: quiesce and reconcile.
+    QuiesceOutcomeReconciliation = 2,
+}
+impl SpawnPriorWorkDisposition {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SPAWN_PRIOR_WORK_DISPOSITION_UNSPECIFIED",
+            Self::SupersededBeforeOffer => "SPAWN_PRIOR_WORK_DISPOSITION_SUPERSEDED_BEFORE_OFFER",
+            Self::QuiesceOutcomeReconciliation => "SPAWN_PRIOR_WORK_DISPOSITION_QUIESCE_OUTCOME_RECONCILIATION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAWN_PRIOR_WORK_DISPOSITION_UNSPECIFIED" => Some(Self::Unspecified),
+            "SPAWN_PRIOR_WORK_DISPOSITION_SUPERSEDED_BEFORE_OFFER" => Some(Self::SupersededBeforeOffer),
+            "SPAWN_PRIOR_WORK_DISPOSITION_QUIESCE_OUTCOME_RECONCILIATION" => Some(Self::QuiesceOutcomeReconciliation),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1379,6 +1462,161 @@ pub struct StoredSessionCheckpoint {
     #[prost(message, repeated, tag="3")]
     pub logical_targets: ::prost::alloc::vec::Vec<LogicalTargetProjectionRecord>,
 }
+/// Closed proof vocabulary. Each variant references a prior durable event;
+/// absence of delivered acknowledgement is deliberately not a proof variant.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NoExternalEffectProof {
+    #[prost(oneof="no_external_effect_proof::Proof", tags="1, 2, 3")]
+    pub proof: ::core::option::Option<no_external_effect_proof::Proof>,
+}
+/// Nested message and enum types in `NoExternalEffectProof`.
+pub mod no_external_effect_proof {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Proof {
+        #[prost(message, tag="1")]
+        CorePreDeliveryTerminal(super::CorePreDeliveryTerminalProof),
+        #[prost(message, tag="2")]
+        AuthenticatedAdapterRefusalBeforeDelivery(super::AdapterRefusalBeforeDeliveryProof),
+        #[prost(message, tag="3")]
+        ExactSupervisorPreLaunchFailure(super::SupervisorPreLaunchFailureProof),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CorePreDeliveryTerminalProof {
+    #[prost(message, optional, tag="1")]
+    pub decision_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterRefusalBeforeDeliveryProof {
+    #[prost(message, optional, tag="1")]
+    pub evidence_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag="3")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SupervisorPreLaunchFailureProof {
+    #[prost(message, optional, tag="1")]
+    pub evidence_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag="3")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnClaimNoEffectRelease {
+    #[prost(message, optional, tag="1")]
+    pub proof: ::core::option::Option<NoExternalEffectProof>,
+    /// Required for continuation release: exact prior-N liveness must be durably
+    /// re-established before the pending-replacement fence can clear.
+    #[prost(message, optional, tag="2")]
+    pub exact_prior_liveness: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="3")]
+    pub prior_liveness_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnClaimAmbiguityEvidence {
+    #[prost(message, optional, tag="1")]
+    pub evidence_event_id: ::core::option::Option<EventId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnClaimPromotionEvidence {
+    #[prost(message, optional, tag="1")]
+    pub promotion_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub promoted_runtime: ::core::option::Option<RuntimeGenerationRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnClaimAbandonmentEvidence {
+    #[prost(message, optional, tag="1")]
+    pub abandonment_event_id: ::core::option::Option<EventId>,
+}
+/// One durable accepted spawn/continuation decision. The continuation's claim,
+/// compound authority, exact-N fence, and complete already-accepted-work
+/// effects are one replay unit and therefore cannot race each other.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnClaimAccepted {
+    #[prost(message, optional, tag="1")]
+    pub accepted_operation: ::core::option::Option<AcceptedOperation>,
+    #[prost(message, optional, tag="2")]
+    pub claim: ::core::option::Option<SpawnGenerationClaim>,
+    #[prost(message, optional, tag="3")]
+    pub compound_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
+    #[prost(message, optional, tag="4")]
+    pub pending_replacement: ::core::option::Option<SpawnPendingReplacementFence>,
+    #[prost(message, repeated, tag="5")]
+    pub prior_work_effects: ::prost::alloc::vec::Vec<SpawnPriorWorkEffect>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnClaimDispositionChanged {
+    #[prost(message, optional, tag="1")]
+    pub claim_operation_id: ::core::option::Option<CommandId>,
+    #[prost(enumeration="SpawnClaimDisposition", tag="2")]
+    pub from_disposition: i32,
+    #[prost(enumeration="SpawnClaimDisposition", tag="3")]
+    pub to_disposition: i32,
+    #[prost(oneof="spawn_claim_disposition_changed::Evidence", tags="4, 5, 6, 7")]
+    pub evidence: ::core::option::Option<spawn_claim_disposition_changed::Evidence>,
+}
+/// Nested message and enum types in `SpawnClaimDispositionChanged`.
+pub mod spawn_claim_disposition_changed {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Evidence {
+        #[prost(message, tag="4")]
+        NoExternalEffectRelease(super::SpawnClaimNoEffectRelease),
+        #[prost(message, tag="5")]
+        AmbiguousExternalEffect(super::SpawnClaimAmbiguityEvidence),
+        #[prost(message, tag="6")]
+        Promotion(super::SpawnClaimPromotionEvidence),
+        #[prost(message, tag="7")]
+        TargetAbandonment(super::SpawnClaimAbandonmentEvidence),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnClaimEvent {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(oneof="spawn_claim_event::Mutation", tags="2, 3")]
+    pub mutation: ::core::option::Option<spawn_claim_event::Mutation>,
+}
+/// Nested message and enum types in `SpawnClaimEvent`.
+pub mod spawn_claim_event {
+    #[allow(clippy::large_enum_variant)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Mutation {
+        #[prost(message, tag="2")]
+        Accepted(super::SpawnClaimAccepted),
+        #[prost(message, tag="3")]
+        DispositionChanged(super::SpawnClaimDispositionChanged),
+    }
+}
+/// Private claim-projection checkpoint. It is independently domain/LSN anchored
+/// and never becomes an ordering source separate from the durable log.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnClaimCheckpoint {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub snapshot_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, repeated, tag="3")]
+    pub records: ::prost::alloc::vec::Vec<SpawnClaimCheckpointRecord>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnClaimCheckpointRecord {
+    #[prost(message, optional, tag="1")]
+    pub claim: ::core::option::Option<SpawnGenerationClaim>,
+    #[prost(message, optional, tag="2")]
+    pub accepted_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag="3")]
+    pub compound_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
+    #[prost(enumeration="SpawnClaimDisposition", tag="4")]
+    pub disposition: i32,
+    #[prost(message, optional, tag="5")]
+    pub pending_replacement: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, repeated, tag="6")]
+    pub prior_work_effects: ::prost::alloc::vec::Vec<SpawnPriorWorkEffect>,
+}
 /// Private logical-target projection state. Project/cwd/name/model are absent
 /// because mutable presentation metadata is never logical or external identity.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1694,6 +1932,46 @@ impl SessionActivityState {
             "SESSION_ACTIVITY_STATE_IDLE" => Some(Self::Idle),
             "SESSION_ACTIVITY_STATE_WORKING" => Some(Self::Working),
             "SESSION_ACTIVITY_STATE_UNKNOWN" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+/// Claim lifecycle is independent from CommandState. In particular, failed,
+/// cancelled, expired, and other terminal command states never imply release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpawnClaimDisposition {
+    Unspecified = 0,
+    Active = 1,
+    ReleasedNoExternalEffect = 2,
+    PoisonedPendingReconciliation = 3,
+    Promoted = 4,
+    TargetAbandoned = 5,
+}
+impl SpawnClaimDisposition {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SPAWN_CLAIM_DISPOSITION_UNSPECIFIED",
+            Self::Active => "SPAWN_CLAIM_DISPOSITION_ACTIVE",
+            Self::ReleasedNoExternalEffect => "SPAWN_CLAIM_DISPOSITION_RELEASED_NO_EXTERNAL_EFFECT",
+            Self::PoisonedPendingReconciliation => "SPAWN_CLAIM_DISPOSITION_POISONED_PENDING_RECONCILIATION",
+            Self::Promoted => "SPAWN_CLAIM_DISPOSITION_PROMOTED",
+            Self::TargetAbandoned => "SPAWN_CLAIM_DISPOSITION_TARGET_ABANDONED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAWN_CLAIM_DISPOSITION_UNSPECIFIED" => Some(Self::Unspecified),
+            "SPAWN_CLAIM_DISPOSITION_ACTIVE" => Some(Self::Active),
+            "SPAWN_CLAIM_DISPOSITION_RELEASED_NO_EXTERNAL_EFFECT" => Some(Self::ReleasedNoExternalEffect),
+            "SPAWN_CLAIM_DISPOSITION_POISONED_PENDING_RECONCILIATION" => Some(Self::PoisonedPendingReconciliation),
+            "SPAWN_CLAIM_DISPOSITION_PROMOTED" => Some(Self::Promoted),
+            "SPAWN_CLAIM_DISPOSITION_TARGET_ABANDONED" => Some(Self::TargetAbandoned),
             _ => None,
         }
     }

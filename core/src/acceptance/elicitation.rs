@@ -102,6 +102,7 @@ impl ElicitationSlotLayer {
             | StoredEventKind::Revocation
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
+            | StoredEventKind::SpawnClaim
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation

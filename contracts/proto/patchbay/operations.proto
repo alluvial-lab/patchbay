@@ -65,6 +65,46 @@ message SpawnContinuation {
   RuntimeGenerationRef prior = 1;
 }
 
+// Exclusive core-prepared generation claim. The authority domain plus logical
+// target plus expected-prior generation is the exclusive key. Fresh claims
+// omit expected_prior and consume generation 1; continuations consume exact
+// N+1. claim_operation_id prevents a later command from impersonating the
+// original claimant.
+message SpawnGenerationClaim {
+  AuthorityDomainId authority_domain_id = 1;
+  CommandId claim_operation_id = 2;
+  LogicalTargetId logical_target_id = 3;
+  RuntimeGenerationRef expected_prior = 4;
+  Generation claimed_generation = 5;
+}
+
+// The exact prior-generation delivery fence activated by the same durable
+// decision that accepts a continuation claim.
+message SpawnPendingReplacementFence {
+  RuntimeGenerationRef exact_prior = 1;
+  FailureCode failure_code = 2; // must be SUPERSEDED
+  string reason_code = 3; // must be replacement_pending
+}
+
+enum SpawnPriorWorkDisposition {
+  SPAWN_PRIOR_WORK_DISPOSITION_UNSPECIFIED = 0;
+  // Accepted before the fence but never offered: terminalize explicitly.
+  SPAWN_PRIOR_WORK_DISPOSITION_SUPERSEDED_BEFORE_OFFER = 1;
+  // Delivery responsibility or execution may exist: quiesce and reconcile.
+  SPAWN_PRIOR_WORK_DISPOSITION_QUIESCE_OUTCOME_RECONCILIATION = 2;
+}
+
+// One complete precomputed effect for already-accepted work bound to exact N.
+// No hold/queue variant exists: every affected command is explicitly
+// superseded or routed to quiesce/outcome reconciliation.
+message SpawnPriorWorkEffect {
+  CommandId command_id = 1;
+  OperationState prior_state = 2;
+  SpawnPriorWorkDisposition disposition = 3;
+  FailureCode failure_code = 4;
+  string reason_code = 5;
+}
+
 // Adapter-owned creation parameters. Shape names the adapter-declared variant;
 // the opaque payload and local authority reference never become core identity
 // or substitute for a Patchbay Grant.

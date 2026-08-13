@@ -72,6 +72,7 @@ impl AuthorityRegistry {
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
+            | StoredEventKind::SpawnClaim
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation

@@ -70,6 +70,7 @@ impl CommandIndex {
             | StoredEventKind::DescendantGrant
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
+            | StoredEventKind::SpawnClaim
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
