@@ -40,8 +40,11 @@ import {
   OperationSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  FreshSpawnSchema,
   PrincipalEnrollmentSchema,
   QueryDiagnosticsRequestSchema,
+  SpawnRequestSchema,
+  SpawnTargetSpecSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -696,10 +699,25 @@ function operation(
     }),
     submittedAt: { seconds: 1n },
     idempotencyKey: `${commandId}-key`,
-    payload: create(PayloadEnvelopeSchema, {
+    payload: payloadEnvelope(kind, payload),
+  });
+}
+
+function payloadEnvelope(kind: OperationKind, payload: string) {
+  if (kind !== OperationKind.SPAWN) {
+    return create(PayloadEnvelopeSchema, {
       payload: new TextEncoder().encode(payload),
       contentType: PayloadContentType.TEXT_UTF8,
-    }),
+    });
+  }
+  const request = create(SpawnRequestSchema, {
+    intent: { case: "fresh", value: create(FreshSpawnSchema, {}) },
+    targetSpec: create(SpawnTargetSpecSchema, { shape: "session" }),
+  });
+  return create(PayloadEnvelopeSchema, {
+    payload: toBinary(SpawnRequestSchema, request),
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "patchbay.SpawnRequest",
   });
 }
 
