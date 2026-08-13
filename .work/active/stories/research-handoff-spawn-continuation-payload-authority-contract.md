@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-continuation-payload-authority-contract
 kind: story
-stage: review
+stage: done
 tags: [protocol, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract]
