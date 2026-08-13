@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-crash-external-effect-evidence-contract
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-claim-registry-contract]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
 # Spawn execution and crash-evidence contract
@@ -60,3 +60,15 @@ Closed no-effect proof variants are core atomic never-offered terminalization, a
 ## Ordering constraint
 
 Consumes the claim state machine. The runtime evidence/promotion envelope and duplicate/reconciliation operation consume this leaf.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; selected by the autopilot caller for the security-critical exact-claim external-effect boundary.
+- Review weight: `thorough` from the caller; implementation stops at `review` for independent adjudication of the evidence/correlation invariants.
+- Files changed: `contracts/proto/patchbay/{adapter_control,common,sessions}.proto` plus generated Rust/TypeScript contracts; claim projection and sibling durable-log folds under `core/src/`; `core/tests/spawn_claim_registry.rs`; adapter ingress and tests under `server/src/adapter_service*`; `docs/{PROTOCOL,SECURITY}.md`.
+- Tests added/updated: closed phase/disposition table; all three no-effect proof variants; valid typed release and poison folds; delivered cancellation/expiry/outcome-unknown poison; wrong event kind; another claim; pre-acceptance LSN; stale/wrong adapter; silence-as-proof; phase/proof mismatch; exact external-runtime correlation; continuation prior-N liveness; authenticated ingress canonicalization and rejected wrong-claim append.
+- Simplification: moved no-effect proof provenance into the typed `SpawnExecutionEvidence` event and made `SpawnClaimNoEffectRelease` reference that event once, eliminating duplicated/circular event ids in individual proof variants. Sibling projections explicitly ignore the new evidence discriminator; no second state source was added.
+- Design rationale: the durable evidence repeats the complete `SpawnGenerationClaim` rather than only a command id, and records the latest durable attachment event/generation. A producer enum distinguishes core-only never-offered decisions from current-adapter reports, preventing authenticated adapter ingress from manufacturing core proof. Full claim, phase/disposition, source attachment, proof, failure, and optional runtime are revalidated during the later disposition fold. This is source/correlation evidence, not cryptographic proof of adapter honesty.
+- Promotion boundary: `SpawnPromotionCommitted` remains rejected by `reject_unavailable_typed_evidence(...)`; Leaf 5 evidence cannot promote a claim.
+- Discrepancies from design: added explicit producer authority and attachment-event provenance because the resolved current-authenticated-adapter trust boundary cannot be replay-validated from adapter id/generation alone. No product behavior beyond the resolved evidence boundary was added.
+- Adjacent issues parked: none.

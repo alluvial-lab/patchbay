@@ -10,7 +10,8 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
     ActorEndpointRef, ActorId, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
     AdapterSnapshotSupport, AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode,
-    Generation, Observation, ObservationRequest, ObservationResult, OperationState, ReceiveRequest, StoredEventKind,
+    Generation, Observation, ObservationRequest, ObservationResult, OperationState, ReceiveRequest,
+    SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer, StoredEventKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex},
@@ -988,6 +989,47 @@ where
                 *sessions = rebuilt;
                 session_result_event_id(result)
             }
+            Some(observation_request::Observation::SpawnExecutionEvidence(mut evidence)) => {
+                if evidence.authority_domain_id.as_ref() != Some(&domain) {
+                    return Err(Status::invalid_argument(
+                        "spawn execution evidence authority domain does not match request",
+                    ));
+                }
+                let (adapter_generation, attachment_event_id) = {
+                    let adapters = self.adapters.lock().await;
+                    let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                        Status::unauthenticated(
+                            "adapter attachment is not current; reattach required",
+                        )
+                    })?;
+                    (
+                        record.registration.adapter_generation.ok_or_else(|| {
+                            Status::internal("attached adapter has no generation")
+                        })?,
+                        record.attach_event_id.clone(),
+                    )
+                };
+                // Producer and attachment provenance are canonical facts from
+                // the authenticated current attachment, never payload claims.
+                evidence.producer = SpawnExecutionEvidenceProducer::CurrentAdapter as i32;
+                evidence.source_attachment = Some(SpawnEvidenceAttachment {
+                    adapter_id: Some(authenticated_adapter.clone()),
+                    adapter_generation: Some(adapter_generation),
+                    attachment_event_id: Some(attachment_event_id),
+                });
+                let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
+                    .await
+                    .map_err(map_spawn_claim_error)?;
+                claims
+                    .validate_execution_evidence_candidate(&evidence)
+                    .map_err(map_spawn_claim_error)?;
+                Some(
+                    self.storage
+                        .append(&domain, session::encode_spawn_execution_evidence(&evidence))
+                        .await
+                        .map_err(map_storage_error_to_status)?,
+                )
+            }
             Some(observation_request::Observation::ResourceReport(report)) => {
                 require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
                 let generation = report.adapter_generation.ok_or_else(|| {
@@ -1541,6 +1583,21 @@ fn map_adapter_error(error: adapter::AdapterError) -> Status {
         | adapter::AdapterError::CorruptLog(message) => Status::internal(message),
         adapter::AdapterError::Resource(error) => map_resource_error(error),
         adapter::AdapterError::Storage(error) => map_storage_error_to_status(error),
+    }
+}
+
+fn map_spawn_claim_error(error: session::SpawnClaimError) -> Status {
+    match error {
+        session::SpawnClaimError::UnknownClaim(_)
+        | session::SpawnClaimError::GenerationAlreadyClaimed(_)
+        | session::SpawnClaimError::IllegalDispositionTransition { .. } => {
+            Status::failed_precondition(error.to_string())
+        }
+        session::SpawnClaimError::CorruptRecord(message) => Status::invalid_argument(message),
+        session::SpawnClaimError::EmptyAuthorityDomain
+        | session::SpawnClaimError::CorruptLog(_)
+        | session::SpawnClaimError::LogicalTarget(_)
+        | session::SpawnClaimError::Storage(_) => Status::internal(error.to_string()),
     }
 }
 

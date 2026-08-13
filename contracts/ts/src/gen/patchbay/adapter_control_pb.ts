@@ -2,21 +2,21 @@
 // @generated from file patchbay/adapter_control.proto (package patchbay, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { AdapterRegistration } from "./adapter_pb.js";
 import { file_patchbay_adapter } from "./adapter_pb.js";
-import type { AdapterId, AuthorityDomainId, EventId, Lsn, PayloadEnvelope, TargetScope, TypedCorrelation } from "./common_pb.js";
+import type { AdapterId, AuthorityDomainId, EventId, Generation, Lsn, PayloadEnvelope, RuntimeGenerationRef, TargetScope, TypedCorrelation } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { Observation } from "./observations_pb.js";
 import { file_patchbay_observations } from "./observations_pb.js";
-import type { FailureCode, Operation } from "./operations_pb.js";
+import type { FailureCode, Operation, SpawnGenerationClaim } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
 import type { ResourceReport } from "./resources_pb.js";
 import { file_patchbay_resources } from "./resources_pb.js";
-import type { SessionReport } from "./sessions_pb.js";
+import type { NoExternalEffectProof, SessionReport } from "./sessions_pb.js";
 import { file_patchbay_sessions } from "./sessions_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/adapter_control.proto.
  */
 export const file_patchbay_adapter_control: GenFile = /*@__PURE__*/
-  fileDesc("Ch5wYXRjaGJheS9hZGFwdGVyX2NvbnRyb2wucHJvdG8SCHBhdGNoYmF5ImEKDUF0dGFjaFJlcXVlc3QSMwoMcmVnaXN0cmF0aW9uGAEgASgLMh0ucGF0Y2hiYXkuQWRhcHRlclJlZ2lzdHJhdGlvbhIbChNhdHRhY2htZW50X2V2aWRlbmNlGAIgASgMImIKDEF0dGFjaFJlc3VsdBIQCghhY2NlcHRlZBgBIAEoCBIqCg9hdHRhY2hfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEhQKDGZhaWx1cmVfY29kZRgDIAEoCSLtAQoST2JzZXJ2YXRpb25SZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIxCg5zZXNzaW9uX3JlcG9ydBgCIAEoCzIXLnBhdGNoYmF5LlNlc3Npb25SZXBvcnRIABImCgVldmVudBgDIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uSAASMwoPcmVzb3VyY2VfcmVwb3J0GAQgASgLMhgucGF0Y2hiYXkuUmVzb3VyY2VSZXBvcnRIAEINCgtvYnNlcnZhdGlvbiI4ChFPYnNlcnZhdGlvblJlc3VsdBIjCghldmVudF9pZBgBIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQivAIKF0FkYXB0ZXJEaWFnbm9zdGljUmVwb3J0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIrCgx0YXJnZXRfc2NvcGUYAiABKAsyFS5wYXRjaGJheS5UYXJnZXRTY29wZRIwCgxjb3JyZWxhdGlvbnMYAyADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEi8KC29ic2VydmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCgxmYWlsdXJlX2NvZGUYBSABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZRIqCgdwYXlsb2FkGAYgASgLMhkucGF0Y2hiYXkuUGF5bG9hZEVudmVsb3BlIroBCh1BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydFJlc3VsdBIQCghhY2NlcHRlZBgBIAEoCBIvChRvYnNlcnZhdGlvbl9ldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSKQoOYXVkaXRfZXZlbnRfaWQYAyABKAsyES5wYXRjaGJheS5FdmVudElkEisKDGZhaWx1cmVfY29kZRgEIAEoDjIVLnBhdGNoYmF5LkZhaWx1cmVDb2RlIlgKDlJlY2VpdmVSZXF1ZXN0EicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSHQoGY3Vyc29yGAIgASgLMg0ucGF0Y2hiYXkuTHNuImAKCERlbGl2ZXJ5EiYKCW9wZXJhdGlvbhgBIAEoCzITLnBhdGNoYmF5Lk9wZXJhdGlvbhIsChFkZWxpdmVyeV9ldmVudF9pZBgCIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQyyAIKFUFkYXB0ZXJDb250cm9sU2VydmljZRI5CgZBdHRhY2gSFy5wYXRjaGJheS5BdHRhY2hSZXF1ZXN0GhYucGF0Y2hiYXkuQXR0YWNoUmVzdWx0Ek4KEUluZ2VzdE9ic2VydmF0aW9uEhwucGF0Y2hiYXkuT2JzZXJ2YXRpb25SZXF1ZXN0GhsucGF0Y2hiYXkuT2JzZXJ2YXRpb25SZXN1bHQSXwoRUmVwb3J0RGlhZ25vc3RpY3MSIS5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydBonLnBhdGNoYmF5LkFkYXB0ZXJEaWFnbm9zdGljUmVwb3J0UmVzdWx0EkMKEVJlY2VpdmVEZWxpdmVyaWVzEhgucGF0Y2hiYXkuUmVjZWl2ZVJlcXVlc3QaEi5wYXRjaGJheS5EZWxpdmVyeTABYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_adapter, file_patchbay_common, file_patchbay_observations, file_patchbay_operations, file_patchbay_resources, file_patchbay_sessions]);
+  fileDesc("Ch5wYXRjaGJheS9hZGFwdGVyX2NvbnRyb2wucHJvdG8SCHBhdGNoYmF5ImEKDUF0dGFjaFJlcXVlc3QSMwoMcmVnaXN0cmF0aW9uGAEgASgLMh0ucGF0Y2hiYXkuQWRhcHRlclJlZ2lzdHJhdGlvbhIbChNhdHRhY2htZW50X2V2aWRlbmNlGAIgASgMImIKDEF0dGFjaFJlc3VsdBIQCghhY2NlcHRlZBgBIAEoCBIqCg9hdHRhY2hfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEhQKDGZhaWx1cmVfY29kZRgDIAEoCSKzAgoST2JzZXJ2YXRpb25SZXF1ZXN0EjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIxCg5zZXNzaW9uX3JlcG9ydBgCIAEoCzIXLnBhdGNoYmF5LlNlc3Npb25SZXBvcnRIABImCgVldmVudBgDIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uSAASMwoPcmVzb3VyY2VfcmVwb3J0GAQgASgLMhgucGF0Y2hiYXkuUmVzb3VyY2VSZXBvcnRIABJEChhzcGF3bl9leGVjdXRpb25fZXZpZGVuY2UYBSABKAsyIC5wYXRjaGJheS5TcGF3bkV4ZWN1dGlvbkV2aWRlbmNlSABCDQoLb2JzZXJ2YXRpb24ipAEKF1NwYXduRXZpZGVuY2VBdHRhY2htZW50EicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSMAoSYWRhcHRlcl9nZW5lcmF0aW9uGAIgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIuChNhdHRhY2htZW50X2V2ZW50X2lkGAMgASgLMhEucGF0Y2hiYXkuRXZlbnRJZCKjBAoWU3Bhd25FeGVjdXRpb25FdmlkZW5jZRI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMwoLZXhhY3RfY2xhaW0YAiABKAsyHi5wYXRjaGJheS5TcGF3bkdlbmVyYXRpb25DbGFpbRIsCgVwaGFzZRgDIAEoDjIdLnBhdGNoYmF5LlNwYXduRXhlY3V0aW9uUGhhc2USSAobZXh0ZXJuYWxfZWZmZWN0X2Rpc3Bvc2l0aW9uGAQgASgOMiMucGF0Y2hiYXkuRXh0ZXJuYWxFZmZlY3REaXNwb3NpdGlvbhI6Cghwcm9kdWNlchgFIAEoDjIoLnBhdGNoYmF5LlNwYXduRXhlY3V0aW9uRXZpZGVuY2VQcm9kdWNlchI8ChFzb3VyY2VfYXR0YWNobWVudBgGIAEoCzIhLnBhdGNoYmF5LlNwYXduRXZpZGVuY2VBdHRhY2htZW50EisKDGZhaWx1cmVfY29kZRgHIAEoDjIVLnBhdGNoYmF5LkZhaWx1cmVDb2RlEkEKGG5vX2V4dGVybmFsX2VmZmVjdF9wcm9vZhgIIAEoCzIfLnBhdGNoYmF5Lk5vRXh0ZXJuYWxFZmZlY3RQcm9vZhI4ChBleHRlcm5hbF9ydW50aW1lGAkgASgLMh4ucGF0Y2hiYXkuUnVudGltZUdlbmVyYXRpb25SZWYiOAoRT2JzZXJ2YXRpb25SZXN1bHQSIwoIZXZlbnRfaWQYASABKAsyES5wYXRjaGJheS5FdmVudElkIrwCChdBZGFwdGVyRGlhZ25vc3RpY1JlcG9ydBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAEgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSKwoMdGFyZ2V0X3Njb3BlGAIgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSMAoMY29ycmVsYXRpb25zGAMgAygLMhoucGF0Y2hiYXkuVHlwZWRDb3JyZWxhdGlvbhIvCgtvYnNlcnZlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoMZmFpbHVyZV9jb2RlGAUgASgOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSKgoHcGF5bG9hZBgGIAEoCzIZLnBhdGNoYmF5LlBheWxvYWRFbnZlbG9wZSK6AQodQWRhcHRlckRpYWdub3N0aWNSZXBvcnRSZXN1bHQSEAoIYWNjZXB0ZWQYASABKAgSLwoUb2JzZXJ2YXRpb25fZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkEikKDmF1ZGl0X2V2ZW50X2lkGAMgASgLMhEucGF0Y2hiYXkuRXZlbnRJZBIrCgxmYWlsdXJlX2NvZGUYBCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZSJYCg5SZWNlaXZlUmVxdWVzdBInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEh0KBmN1cnNvchgCIAEoCzINLnBhdGNoYmF5LkxzbiJgCghEZWxpdmVyeRImCglvcGVyYXRpb24YASABKAsyEy5wYXRjaGJheS5PcGVyYXRpb24SLAoRZGVsaXZlcnlfZXZlbnRfaWQYAiABKAsyES5wYXRjaGJheS5FdmVudElkKqsDChNTcGF3bkV4ZWN1dGlvblBoYXNlEiUKIVNQQVdOX0VYRUNVVElPTl9QSEFTRV9VTlNQRUNJRklFRBAAEi4KKlNQQVdOX0VYRUNVVElPTl9QSEFTRV9BQ0NFUFRFRF9OT1RfT0ZGRVJFRBABEiEKHVNQQVdOX0VYRUNVVElPTl9QSEFTRV9PRkZFUkVEEAISKQolU1BBV05fRVhFQ1VUSU9OX1BIQVNFX1FVSUVTQ0lOR19QUklPUhADEioKJlNQQVdOX0VYRUNVVElPTl9QSEFTRV9QUklPUl9URVJNSU5BVEVEEAQSKgomU1BBV05fRVhFQ1VUSU9OX1BIQVNFX0xBVU5DSF9BVFRFTVBURUQQBRIxCi1TUEFXTl9FWEVDVVRJT05fUEhBU0VfRVhURVJOQUxfSURFTlRJVFlfS05PV04QBhIvCitTUEFXTl9FWEVDVVRJT05fUEhBU0VfSEFORFNIQUtFX1JFQ09OQ0lMSU5HEAcSMwovU1BBV05fRVhFQ1VUSU9OX1BIQVNFX1NVQ0NFU1NfRVZJREVOQ0VfUkVQT1JURUQQCCrMAQoZRXh0ZXJuYWxFZmZlY3REaXNwb3NpdGlvbhIrCidFWFRFUk5BTF9FRkZFQ1RfRElTUE9TSVRJT05fVU5TUEVDSUZJRUQQABIrCidFWFRFUk5BTF9FRkZFQ1RfRElTUE9TSVRJT05fUFJPVkVEX05PTkUQARIpCiVFWFRFUk5BTF9FRkZFQ1RfRElTUE9TSVRJT05fTUFZX0VYSVNUEAISKgomRVhURVJOQUxfRUZGRUNUX0RJU1BPU0lUSU9OX0lERU5USUZJRUQQAyq2AQoeU3Bhd25FeGVjdXRpb25FdmlkZW5jZVByb2R1Y2VyEjEKLVNQQVdOX0VYRUNVVElPTl9FVklERU5DRV9QUk9EVUNFUl9VTlNQRUNJRklFRBAAEioKJlNQQVdOX0VYRUNVVElPTl9FVklERU5DRV9QUk9EVUNFUl9DT1JFEAESNQoxU1BBV05fRVhFQ1VUSU9OX0VWSURFTkNFX1BST0RVQ0VSX0NVUlJFTlRfQURBUFRFUhACMsgCChVBZGFwdGVyQ29udHJvbFNlcnZpY2USOQoGQXR0YWNoEhcucGF0Y2hiYXkuQXR0YWNoUmVxdWVzdBoWLnBhdGNoYmF5LkF0dGFjaFJlc3VsdBJOChFJbmdlc3RPYnNlcnZhdGlvbhIcLnBhdGNoYmF5Lk9ic2VydmF0aW9uUmVxdWVzdBobLnBhdGNoYmF5Lk9ic2VydmF0aW9uUmVzdWx0El8KEVJlcG9ydERpYWdub3N0aWNzEiEucGF0Y2hiYXkuQWRhcHRlckRpYWdub3N0aWNSZXBvcnQaJy5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydFJlc3VsdBJDChFSZWNlaXZlRGVsaXZlcmllcxIYLnBhdGNoYmF5LlJlY2VpdmVSZXF1ZXN0GhIucGF0Y2hiYXkuRGVsaXZlcnkwAWIGcHJvdG8z", [file_google_protobuf_timestamp, file_patchbay_adapter, file_patchbay_common, file_patchbay_observations, file_patchbay_operations, file_patchbay_resources, file_patchbay_sessions]);
 
 /**
  * @generated from message patchbay.AttachRequest
@@ -105,6 +105,12 @@ export type ObservationRequest = Message<"patchbay.ObservationRequest"> & {
      */
     value: ResourceReport;
     case: "resourceReport";
+  } | {
+    /**
+     * @generated from field: patchbay.SpawnExecutionEvidence spawn_execution_evidence = 5;
+     */
+    value: SpawnExecutionEvidence;
+    case: "spawnExecutionEvidence";
   } | { case: undefined; value?: undefined };
 };
 
@@ -114,6 +120,102 @@ export type ObservationRequest = Message<"patchbay.ObservationRequest"> & {
  */
 export const ObservationRequestSchema: GenMessage<ObservationRequest> = /*@__PURE__*/
   messageDesc(file_patchbay_adapter_control, 2);
+
+/**
+ * Durable attachment provenance for replay validation. The process-local
+ * attachment token is deliberately not persisted.
+ *
+ * @generated from message patchbay.SpawnEvidenceAttachment
+ */
+export type SpawnEvidenceAttachment = Message<"patchbay.SpawnEvidenceAttachment"> & {
+  /**
+   * @generated from field: patchbay.AdapterId adapter_id = 1;
+   */
+  adapterId?: AdapterId | undefined;
+
+  /**
+   * @generated from field: patchbay.Generation adapter_generation = 2;
+   */
+  adapterGeneration?: Generation | undefined;
+
+  /**
+   * @generated from field: patchbay.EventId attachment_event_id = 3;
+   */
+  attachmentEventId?: EventId | undefined;
+};
+
+/**
+ * Describes the message patchbay.SpawnEvidenceAttachment.
+ * Use `create(SpawnEvidenceAttachmentSchema)` to create a new message.
+ */
+export const SpawnEvidenceAttachmentSchema: GenMessage<SpawnEvidenceAttachment> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter_control, 3);
+
+/**
+ * The only durable evidence family that may release or poison an accepted
+ * spawn claim. `exact_claim` prevents cross-command/claim reuse. Silence and
+ * absence of a delivered acknowledgement have no representation here.
+ *
+ * @generated from message patchbay.SpawnExecutionEvidence
+ */
+export type SpawnExecutionEvidence = Message<"patchbay.SpawnExecutionEvidence"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from field: patchbay.SpawnGenerationClaim exact_claim = 2;
+   */
+  exactClaim?: SpawnGenerationClaim | undefined;
+
+  /**
+   * @generated from field: patchbay.SpawnExecutionPhase phase = 3;
+   */
+  phase: SpawnExecutionPhase;
+
+  /**
+   * @generated from field: patchbay.ExternalEffectDisposition external_effect_disposition = 4;
+   */
+  externalEffectDisposition: ExternalEffectDisposition;
+
+  /**
+   * @generated from field: patchbay.SpawnExecutionEvidenceProducer producer = 5;
+   */
+  producer: SpawnExecutionEvidenceProducer;
+
+  /**
+   * @generated from field: patchbay.SpawnEvidenceAttachment source_attachment = 6;
+   */
+  sourceAttachment?: SpawnEvidenceAttachment | undefined;
+
+  /**
+   * @generated from field: patchbay.FailureCode failure_code = 7;
+   */
+  failureCode: FailureCode;
+
+  /**
+   * Present only for PROVED_NONE and restricted to the closed proof oneof.
+   *
+   * @generated from field: patchbay.NoExternalEffectProof no_external_effect_proof = 8;
+   */
+  noExternalEffectProof?: NoExternalEffectProof | undefined;
+
+  /**
+   * Optional for MAY_EXIST and required for IDENTIFIED. When present it must
+   * be the exact claimed logical target/generation and current adapter.
+   *
+   * @generated from field: patchbay.RuntimeGenerationRef external_runtime = 9;
+   */
+  externalRuntime?: RuntimeGenerationRef | undefined;
+};
+
+/**
+ * Describes the message patchbay.SpawnExecutionEvidence.
+ * Use `create(SpawnExecutionEvidenceSchema)` to create a new message.
+ */
+export const SpawnExecutionEvidenceSchema: GenMessage<SpawnExecutionEvidence> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter_control, 4);
 
 /**
  * @generated from message patchbay.ObservationResult
@@ -130,7 +232,7 @@ export type ObservationResult = Message<"patchbay.ObservationResult"> & {
  * Use `create(ObservationResultSchema)` to create a new message.
  */
 export const ObservationResultSchema: GenMessage<ObservationResult> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 3);
+  messageDesc(file_patchbay_adapter_control, 5);
 
 /**
  * @generated from message patchbay.AdapterDiagnosticReport
@@ -172,7 +274,7 @@ export type AdapterDiagnosticReport = Message<"patchbay.AdapterDiagnosticReport"
  * Use `create(AdapterDiagnosticReportSchema)` to create a new message.
  */
 export const AdapterDiagnosticReportSchema: GenMessage<AdapterDiagnosticReport> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 4);
+  messageDesc(file_patchbay_adapter_control, 6);
 
 /**
  * @generated from message patchbay.AdapterDiagnosticReportResult
@@ -204,7 +306,7 @@ export type AdapterDiagnosticReportResult = Message<"patchbay.AdapterDiagnosticR
  * Use `create(AdapterDiagnosticReportResultSchema)` to create a new message.
  */
 export const AdapterDiagnosticReportResultSchema: GenMessage<AdapterDiagnosticReportResult> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 5);
+  messageDesc(file_patchbay_adapter_control, 7);
 
 /**
  * @generated from message patchbay.ReceiveRequest
@@ -226,7 +328,7 @@ export type ReceiveRequest = Message<"patchbay.ReceiveRequest"> & {
  * Use `create(ReceiveRequestSchema)` to create a new message.
  */
 export const ReceiveRequestSchema: GenMessage<ReceiveRequest> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 6);
+  messageDesc(file_patchbay_adapter_control, 8);
 
 /**
  * @generated from message patchbay.Delivery
@@ -248,7 +350,127 @@ export type Delivery = Message<"patchbay.Delivery"> & {
  * Use `create(DeliverySchema)` to create a new message.
  */
 export const DeliverySchema: GenMessage<Delivery> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter_control, 7);
+  messageDesc(file_patchbay_adapter_control, 9);
+
+/**
+ * Exact orchestration phase at the last durable spawn-execution observation.
+ * No phase is a catch-all liveness assertion: each phase has a closed set of
+ * compatible external-effect dispositions validated by the core.
+ *
+ * @generated from enum patchbay.SpawnExecutionPhase
+ */
+export enum SpawnExecutionPhase {
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_ACCEPTED_NOT_OFFERED = 1;
+   */
+  ACCEPTED_NOT_OFFERED = 1,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_OFFERED = 2;
+   */
+  OFFERED = 2,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_QUIESCING_PRIOR = 3;
+   */
+  QUIESCING_PRIOR = 3,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_PRIOR_TERMINATED = 4;
+   */
+  PRIOR_TERMINATED = 4,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_LAUNCH_ATTEMPTED = 5;
+   */
+  LAUNCH_ATTEMPTED = 5,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_EXTERNAL_IDENTITY_KNOWN = 6;
+   */
+  EXTERNAL_IDENTITY_KNOWN = 6,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_HANDSHAKE_RECONCILING = 7;
+   */
+  HANDSHAKE_RECONCILING = 7,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_PHASE_SUCCESS_EVIDENCE_REPORTED = 8;
+   */
+  SUCCESS_EVIDENCE_REPORTED = 8,
+}
+
+/**
+ * Describes the enum patchbay.SpawnExecutionPhase.
+ */
+export const SpawnExecutionPhaseSchema: GenEnum<SpawnExecutionPhase> = /*@__PURE__*/
+  enumDesc(file_patchbay_adapter_control, 0);
+
+/**
+ * @generated from enum patchbay.ExternalEffectDisposition
+ */
+export enum ExternalEffectDisposition {
+  /**
+   * @generated from enum value: EXTERNAL_EFFECT_DISPOSITION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: EXTERNAL_EFFECT_DISPOSITION_PROVED_NONE = 1;
+   */
+  PROVED_NONE = 1,
+
+  /**
+   * @generated from enum value: EXTERNAL_EFFECT_DISPOSITION_MAY_EXIST = 2;
+   */
+  MAY_EXIST = 2,
+
+  /**
+   * @generated from enum value: EXTERNAL_EFFECT_DISPOSITION_IDENTIFIED = 3;
+   */
+  IDENTIFIED = 3,
+}
+
+/**
+ * Describes the enum patchbay.ExternalEffectDisposition.
+ */
+export const ExternalEffectDispositionSchema: GenEnum<ExternalEffectDisposition> = /*@__PURE__*/
+  enumDesc(file_patchbay_adapter_control, 1);
+
+/**
+ * Producer authority is explicit so an authenticated adapter cannot
+ * manufacture the core-only never-offered terminal decision.
+ *
+ * @generated from enum patchbay.SpawnExecutionEvidenceProducer
+ */
+export enum SpawnExecutionEvidenceProducer {
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_EVIDENCE_PRODUCER_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_EVIDENCE_PRODUCER_CORE = 1;
+   */
+  CORE = 1,
+
+  /**
+   * @generated from enum value: SPAWN_EXECUTION_EVIDENCE_PRODUCER_CURRENT_ADAPTER = 2;
+   */
+  CURRENT_ADAPTER = 2,
+}
+
+/**
+ * Describes the enum patchbay.SpawnExecutionEvidenceProducer.
+ */
+export const SpawnExecutionEvidenceProducerSchema: GenEnum<SpawnExecutionEvidenceProducer> = /*@__PURE__*/
+  enumDesc(file_patchbay_adapter_control, 2);
 
 /**
  * The adapter-facing service. Adapters are clients of the authoritative core

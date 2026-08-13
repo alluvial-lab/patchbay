@@ -71,6 +71,7 @@ impl CommandIndex {
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
+            | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation

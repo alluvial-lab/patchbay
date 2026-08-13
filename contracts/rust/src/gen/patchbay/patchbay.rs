@@ -347,6 +347,9 @@ pub enum StoredEventKind {
     /// Durable exclusive spawn-generation claim and disposition update
     /// (sessions.proto). Command terminality is never interpreted as release.
     SpawnClaim = 16,
+    /// Exact claim-correlated spawn execution/crash evidence
+    /// (adapter_control.proto). This is evidence, never promotion authority.
+    SpawnExecutionEvidence = 17,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -372,6 +375,7 @@ impl StoredEventKind {
             Self::SecurityLockdown => "STORED_EVENT_KIND_SECURITY_LOCKDOWN",
             Self::ResourceState => "STORED_EVENT_KIND_RESOURCE_STATE",
             Self::SpawnClaim => "STORED_EVENT_KIND_SPAWN_CLAIM",
+            Self::SpawnExecutionEvidence => "STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -394,6 +398,7 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_SECURITY_LOCKDOWN" => Some(Self::SecurityLockdown),
             "STORED_EVENT_KIND_RESOURCE_STATE" => Some(Self::ResourceState),
             "STORED_EVENT_KIND_SPAWN_CLAIM" => Some(Self::SpawnClaim),
+            "STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE" => Some(Self::SpawnExecutionEvidence),
             _ => None,
         }
     }
@@ -1462,8 +1467,9 @@ pub struct StoredSessionCheckpoint {
     #[prost(message, repeated, tag="3")]
     pub logical_targets: ::prost::alloc::vec::Vec<LogicalTargetProjectionRecord>,
 }
-/// Closed proof vocabulary. Each variant references a prior durable event;
-/// absence of delivered acknowledgement is deliberately not a proof variant.
+/// Closed proof vocabulary. It is carried by the referenced typed
+/// SpawnExecutionEvidence event; absence of a delivered acknowledgement is
+/// deliberately not a proof variant.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct NoExternalEffectProof {
     #[prost(oneof="no_external_effect_proof::Proof", tags="1, 2, 3")]
@@ -1481,33 +1487,27 @@ pub mod no_external_effect_proof {
         ExactSupervisorPreLaunchFailure(super::SupervisorPreLaunchFailureProof),
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CorePreDeliveryTerminalProof {
-    #[prost(message, optional, tag="1")]
-    pub decision_event_id: ::core::option::Option<EventId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdapterRefusalBeforeDeliveryProof {
     #[prost(message, optional, tag="1")]
-    pub evidence_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag="2")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag="3")]
+    #[prost(message, optional, tag="2")]
     pub adapter_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SupervisorPreLaunchFailureProof {
     #[prost(message, optional, tag="1")]
-    pub evidence_event_id: ::core::option::Option<EventId>,
-    #[prost(message, optional, tag="2")]
     pub adapter_id: ::core::option::Option<AdapterId>,
-    #[prost(message, optional, tag="3")]
+    #[prost(message, optional, tag="2")]
     pub adapter_generation: ::core::option::Option<Generation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SpawnClaimNoEffectRelease {
     #[prost(message, optional, tag="1")]
-    pub proof: ::core::option::Option<NoExternalEffectProof>,
+    pub evidence_event_id: ::core::option::Option<EventId>,
     /// Required for continuation release: exact prior-N liveness must be durably
     /// re-established before the pending-replacement fence can clear.
     #[prost(message, optional, tag="2")]
@@ -2440,7 +2440,7 @@ pub struct AttachResult {
 pub struct ObservationRequest {
     #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof="observation_request::Observation", tags="2, 3, 4")]
+    #[prost(oneof="observation_request::Observation", tags="2, 3, 4, 5")]
     pub observation: ::core::option::Option<observation_request::Observation>,
 }
 /// Nested message and enum types in `ObservationRequest`.
@@ -2454,7 +2454,47 @@ pub mod observation_request {
         Event(super::Observation),
         #[prost(message, tag="4")]
         ResourceReport(super::ResourceReport),
+        #[prost(message, tag="5")]
+        SpawnExecutionEvidence(super::SpawnExecutionEvidence),
     }
+}
+/// Durable attachment provenance for replay validation. The process-local
+/// attachment token is deliberately not persisted.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnEvidenceAttachment {
+    #[prost(message, optional, tag="1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag="3")]
+    pub attachment_event_id: ::core::option::Option<EventId>,
+}
+/// The only durable evidence family that may release or poison an accepted
+/// spawn claim. `exact_claim` prevents cross-command/claim reuse. Silence and
+/// absence of a delivered acknowledgement have no representation here.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnExecutionEvidence {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub exact_claim: ::core::option::Option<SpawnGenerationClaim>,
+    #[prost(enumeration="SpawnExecutionPhase", tag="3")]
+    pub phase: i32,
+    #[prost(enumeration="ExternalEffectDisposition", tag="4")]
+    pub external_effect_disposition: i32,
+    #[prost(enumeration="SpawnExecutionEvidenceProducer", tag="5")]
+    pub producer: i32,
+    #[prost(message, optional, tag="6")]
+    pub source_attachment: ::core::option::Option<SpawnEvidenceAttachment>,
+    #[prost(enumeration="FailureCode", tag="7")]
+    pub failure_code: i32,
+    /// Present only for PROVED_NONE and restricted to the closed proof oneof.
+    #[prost(message, optional, tag="8")]
+    pub no_external_effect_proof: ::core::option::Option<NoExternalEffectProof>,
+    /// Optional for MAY_EXIST and required for IDENTIFIED. When present it must
+    /// be the exact claimed logical target/generation and current adapter.
+    #[prost(message, optional, tag="9")]
+    pub external_runtime: ::core::option::Option<RuntimeGenerationRef>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ObservationResult {
@@ -2500,6 +2540,119 @@ pub struct Delivery {
     pub operation: ::core::option::Option<Operation>,
     #[prost(message, optional, tag="2")]
     pub delivery_event_id: ::core::option::Option<EventId>,
+}
+/// Exact orchestration phase at the last durable spawn-execution observation.
+/// No phase is a catch-all liveness assertion: each phase has a closed set of
+/// compatible external-effect dispositions validated by the core.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpawnExecutionPhase {
+    Unspecified = 0,
+    AcceptedNotOffered = 1,
+    Offered = 2,
+    QuiescingPrior = 3,
+    PriorTerminated = 4,
+    LaunchAttempted = 5,
+    ExternalIdentityKnown = 6,
+    HandshakeReconciling = 7,
+    SuccessEvidenceReported = 8,
+}
+impl SpawnExecutionPhase {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SPAWN_EXECUTION_PHASE_UNSPECIFIED",
+            Self::AcceptedNotOffered => "SPAWN_EXECUTION_PHASE_ACCEPTED_NOT_OFFERED",
+            Self::Offered => "SPAWN_EXECUTION_PHASE_OFFERED",
+            Self::QuiescingPrior => "SPAWN_EXECUTION_PHASE_QUIESCING_PRIOR",
+            Self::PriorTerminated => "SPAWN_EXECUTION_PHASE_PRIOR_TERMINATED",
+            Self::LaunchAttempted => "SPAWN_EXECUTION_PHASE_LAUNCH_ATTEMPTED",
+            Self::ExternalIdentityKnown => "SPAWN_EXECUTION_PHASE_EXTERNAL_IDENTITY_KNOWN",
+            Self::HandshakeReconciling => "SPAWN_EXECUTION_PHASE_HANDSHAKE_RECONCILING",
+            Self::SuccessEvidenceReported => "SPAWN_EXECUTION_PHASE_SUCCESS_EVIDENCE_REPORTED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAWN_EXECUTION_PHASE_UNSPECIFIED" => Some(Self::Unspecified),
+            "SPAWN_EXECUTION_PHASE_ACCEPTED_NOT_OFFERED" => Some(Self::AcceptedNotOffered),
+            "SPAWN_EXECUTION_PHASE_OFFERED" => Some(Self::Offered),
+            "SPAWN_EXECUTION_PHASE_QUIESCING_PRIOR" => Some(Self::QuiescingPrior),
+            "SPAWN_EXECUTION_PHASE_PRIOR_TERMINATED" => Some(Self::PriorTerminated),
+            "SPAWN_EXECUTION_PHASE_LAUNCH_ATTEMPTED" => Some(Self::LaunchAttempted),
+            "SPAWN_EXECUTION_PHASE_EXTERNAL_IDENTITY_KNOWN" => Some(Self::ExternalIdentityKnown),
+            "SPAWN_EXECUTION_PHASE_HANDSHAKE_RECONCILING" => Some(Self::HandshakeReconciling),
+            "SPAWN_EXECUTION_PHASE_SUCCESS_EVIDENCE_REPORTED" => Some(Self::SuccessEvidenceReported),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ExternalEffectDisposition {
+    Unspecified = 0,
+    ProvedNone = 1,
+    MayExist = 2,
+    Identified = 3,
+}
+impl ExternalEffectDisposition {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EXTERNAL_EFFECT_DISPOSITION_UNSPECIFIED",
+            Self::ProvedNone => "EXTERNAL_EFFECT_DISPOSITION_PROVED_NONE",
+            Self::MayExist => "EXTERNAL_EFFECT_DISPOSITION_MAY_EXIST",
+            Self::Identified => "EXTERNAL_EFFECT_DISPOSITION_IDENTIFIED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EXTERNAL_EFFECT_DISPOSITION_UNSPECIFIED" => Some(Self::Unspecified),
+            "EXTERNAL_EFFECT_DISPOSITION_PROVED_NONE" => Some(Self::ProvedNone),
+            "EXTERNAL_EFFECT_DISPOSITION_MAY_EXIST" => Some(Self::MayExist),
+            "EXTERNAL_EFFECT_DISPOSITION_IDENTIFIED" => Some(Self::Identified),
+            _ => None,
+        }
+    }
+}
+/// Producer authority is explicit so an authenticated adapter cannot
+/// manufacture the core-only never-offered terminal decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpawnExecutionEvidenceProducer {
+    Unspecified = 0,
+    Core = 1,
+    CurrentAdapter = 2,
+}
+impl SpawnExecutionEvidenceProducer {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SPAWN_EXECUTION_EVIDENCE_PRODUCER_UNSPECIFIED",
+            Self::Core => "SPAWN_EXECUTION_EVIDENCE_PRODUCER_CORE",
+            Self::CurrentAdapter => "SPAWN_EXECUTION_EVIDENCE_PRODUCER_CURRENT_ADAPTER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAWN_EXECUTION_EVIDENCE_PRODUCER_UNSPECIFIED" => Some(Self::Unspecified),
+            "SPAWN_EXECUTION_EVIDENCE_PRODUCER_CORE" => Some(Self::Core),
+            "SPAWN_EXECUTION_EVIDENCE_PRODUCER_CURRENT_ADAPTER" => Some(Self::CurrentAdapter),
+            _ => None,
+        }
+    }
 }
 /// The core-owned durable operator authentication record. Password hashes use
 /// the v0.1.0 scrypt$<base64url-salt>$<base64url-hash> format.

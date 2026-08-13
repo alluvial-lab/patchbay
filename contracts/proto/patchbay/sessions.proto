@@ -103,8 +103,9 @@ enum SpawnClaimDisposition {
   SPAWN_CLAIM_DISPOSITION_TARGET_ABANDONED = 5;
 }
 
-// Closed proof vocabulary. Each variant references a prior durable event;
-// absence of delivered acknowledgement is deliberately not a proof variant.
+// Closed proof vocabulary. It is carried by the referenced typed
+// SpawnExecutionEvidence event; absence of a delivered acknowledgement is
+// deliberately not a proof variant.
 message NoExternalEffectProof {
   oneof proof {
     CorePreDeliveryTerminalProof core_pre_delivery_terminal = 1;
@@ -113,24 +114,20 @@ message NoExternalEffectProof {
   }
 }
 
-message CorePreDeliveryTerminalProof {
-  EventId decision_event_id = 1;
-}
+message CorePreDeliveryTerminalProof {}
 
 message AdapterRefusalBeforeDeliveryProof {
-  EventId evidence_event_id = 1;
-  AdapterId adapter_id = 2;
-  Generation adapter_generation = 3;
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
 }
 
 message SupervisorPreLaunchFailureProof {
-  EventId evidence_event_id = 1;
-  AdapterId adapter_id = 2;
-  Generation adapter_generation = 3;
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
 }
 
 message SpawnClaimNoEffectRelease {
-  NoExternalEffectProof proof = 1;
+  EventId evidence_event_id = 1;
   // Required for continuation release: exact prior-N liveness must be durably
   // re-established before the pending-replacement fence can clear.
   RuntimeGenerationRef exact_prior_liveness = 2;

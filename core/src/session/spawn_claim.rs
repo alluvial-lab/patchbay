@@ -9,16 +9,21 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    no_external_effect_proof, spawn_claim_disposition_changed, spawn_claim_event,
-    AcceptedOperation, AuthorityDomainId, CommandId, ContinuationAuthorityProvenance, EventId,
-    FailureCode, Lsn, NoExternalEffectProof, OperationKind, OperationState, RuntimeGenerationRef,
-    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent,
+    no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
+    spawn_claim_event, AcceptedOperation, AdapterId, AuthorityDomainId, CommandId,
+    ContinuationAuthorityProvenance, EventId, ExternalEffectDisposition, FailureCode, Lsn,
+    OperationKind, OperationState, RuntimeGenerationRef, SessionConnectivityState,
+    SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimDispositionChanged,
+    SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
     SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPriorWorkDisposition,
-    SpawnPriorWorkEffect, StoredEventKind, StoredEventPayload,
+    SpawnPriorWorkEffect, StoredEventKind, StoredEventPayload, TargetScopeKind,
 };
 use prost::Message;
 
-use crate::storage::{validate_next_replay_event, RecordedEvent, Storage};
+use crate::{
+    adapter::AdapterRegistry,
+    storage::{validate_next_replay_event, RecordedEvent, Storage},
+};
 
 use super::{external_runtime_key, LogicalTargetError};
 
@@ -40,6 +45,9 @@ pub struct SpawnClaimRecord {
     pub compound_authority: Option<ContinuationAuthorityProvenance>,
     pub disposition: SpawnClaimDisposition,
     pub pending_replacement: Option<RuntimeGenerationRef>,
+    /// Canonical adapter target from the accepted Operation. Evidence from any
+    /// other adapter can never authorize this claim.
+    pub adapter_id: AdapterId,
 }
 
 /// Canonical delivery-fence answer for work bound to an exact runtime.
@@ -140,6 +148,36 @@ impl SpawnClaimRegistry {
 
     pub fn records(&self) -> impl Iterator<Item = &SpawnClaimRecord> {
         self.records.values()
+    }
+
+    /// Pre-append boundary validation for a candidate typed evidence event.
+    /// The later disposition fold revalidates the same bytes and current
+    /// attachment, so an evidence append alone never mutates a claim.
+    pub fn validate_execution_evidence_candidate(
+        &self,
+        evidence: &SpawnExecutionEvidence,
+    ) -> Result<(), SpawnClaimError> {
+        let command_id = evidence
+            .exact_claim
+            .as_ref()
+            .and_then(|claim| claim.claim_operation_id.as_ref())
+            .filter(|id| !id.value.is_empty())
+            .ok_or_else(|| corrupt_record("spawn execution evidence has no claim command id"))?;
+        let record = self
+            .records
+            .get(command_id)
+            .ok_or_else(|| SpawnClaimError::UnknownClaim(command_id.clone()))?;
+        let evidence_lsn = self
+            .applied_through_lsn
+            .checked_add(1)
+            .ok_or_else(|| corrupt_log("spawn evidence LSN overflow"))?;
+        validate_execution_evidence_contract(
+            &self.applied_events,
+            &self.authority_domain_id,
+            record,
+            evidence,
+            evidence_lsn,
+        )
     }
 
     #[must_use]
@@ -250,6 +288,13 @@ impl SpawnClaimRegistry {
         if let Some(owner) = self.exclusive_claims.get(&key) {
             return Err(SpawnClaimError::GenerationAlreadyClaimed(owner.clone()));
         }
+        let adapter_id = accepted_adapter_id(
+            accepted
+                .accepted_operation
+                .as_ref()
+                .expect("accepted operation validated"),
+        )?
+        .clone();
         let pending_replacement = accepted
             .pending_replacement
             .as_ref()
@@ -265,6 +310,7 @@ impl SpawnClaimRegistry {
                 compound_authority: accepted.compound_authority,
                 disposition: SpawnClaimDisposition::Active,
                 pending_replacement,
+                adapter_id,
             },
         );
         Ok(())
@@ -435,6 +481,17 @@ pub fn encode_spawn_claim_event(event: &SpawnClaimEvent) -> StoredEventPayload {
     }
 }
 
+/// Encode exact claim-correlated execution evidence in its schema-owned
+/// durable discriminator. The claim projection still validates it before any
+/// disposition transition can consume it.
+#[must_use]
+pub fn encode_spawn_execution_evidence(event: &SpawnExecutionEvidence) -> StoredEventPayload {
+    StoredEventPayload {
+        kind: StoredEventKind::SpawnExecutionEvidence as i32,
+        payload: event.encode_to_vec(),
+    }
+}
+
 fn validate_accepted_decision(
     domain: &AuthorityDomainId,
     accepted: &SpawnClaimAccepted,
@@ -517,7 +574,34 @@ fn validate_accepted_operation(
             "accepted spawn operation has no authorizing_grant_id",
         ));
     }
+    accepted_adapter_id(accepted)?;
     Ok(())
+}
+
+fn accepted_adapter_id(accepted: &AcceptedOperation) -> Result<&AdapterId, SpawnClaimError> {
+    let scope = accepted
+        .operation
+        .as_ref()
+        .and_then(|operation| operation.target_scope.as_ref())
+        .ok_or_else(|| corrupt_record("accepted spawn operation has no adapter target"))?;
+    if TargetScopeKind::try_from(scope.kind).ok() != Some(TargetScopeKind::Adapter)
+        || scope
+            .adapter_id
+            .as_ref()
+            .is_none_or(|id| id.value.is_empty())
+        || scope.actor_id.is_some()
+        || scope.runtime_session_id.is_some()
+        || scope.session_generation.is_some()
+        || !scope.deployment_scope.is_empty()
+        || !scope.project_or_group.is_empty()
+        || !scope.legacy_audit_resource_id.is_empty()
+        || scope.resource.is_some()
+    {
+        return Err(corrupt_log(
+            "accepted spawn operation target is not one exact adapter",
+        ));
+    }
+    Ok(scope.adapter_id.as_ref().expect("validated adapter target"))
 }
 
 fn validate_claim(
@@ -676,19 +760,26 @@ fn validate_transition_evidence(
             SpawnClaimDisposition::PoisonedPendingReconciliation,
             Some(spawn_claim_disposition_changed::Evidence::AmbiguousExternalEffect(ambiguity)),
         ) => {
-            let referenced = validate_referenced_event(
+            let (_, typed) = validate_typed_execution_evidence(
                 events,
                 domain,
-                record.accepted_lsn,
+                record,
                 ambiguity.evidence_event_id.as_ref(),
                 event_lsn,
-                "ambiguous external-effect evidence",
+                "external-effect evidence",
             )?;
-            reject_unavailable_typed_evidence(
-                referenced,
-                "ExternalEffectDisposition",
-                "spawn execution/crash evidence (Leaf 5)",
-            )
+            let disposition =
+                required_external_effect_disposition(typed.external_effect_disposition)?;
+            if !matches!(
+                disposition,
+                ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified
+            ) || !poison_failure(typed.failure_code)
+            {
+                return Err(corrupt_log(
+                    "claim poison requires typed ambiguous or identified external-effect failure evidence",
+                ));
+            }
+            Ok(())
         }
         (
             SpawnClaimDisposition::Promoted,
@@ -738,16 +829,23 @@ fn validate_no_effect_release(
     release: &patchbay_contracts::patchbay::SpawnClaimNoEffectRelease,
     event_lsn: u64,
 ) -> Result<(), SpawnClaimError> {
-    let proof_event = validate_no_effect_proof_reference(
+    let (evidence_lsn, typed) = validate_typed_execution_evidence(
         events,
         domain,
-        record.accepted_lsn,
-        release
-            .proof
-            .as_ref()
-            .ok_or_else(|| corrupt_record("release is missing no-external-effect proof"))?,
+        record,
+        release.evidence_event_id.as_ref(),
         event_lsn,
+        "no-external-effect evidence",
     )?;
+    if required_external_effect_disposition(typed.external_effect_disposition)?
+        != ExternalEffectDisposition::ProvedNone
+    {
+        return Err(corrupt_log(
+            "release evidence does not prove absence of external effect",
+        ));
+    }
+    validate_no_effect_proof(events, record, &typed, evidence_lsn)?;
+
     match record.claim.expected_prior.as_ref() {
         Some(prior) => {
             if release.exact_prior_liveness.as_ref() != Some(prior) {
@@ -755,13 +853,13 @@ fn validate_no_effect_release(
                     "continuation release lacks exact prior-N liveness",
                 ));
             }
-            let _ = validate_referenced_event(
+            validate_prior_liveness(
                 events,
                 domain,
-                record.accepted_lsn,
+                evidence_lsn,
+                prior,
                 release.prior_liveness_event_id.as_ref(),
                 event_lsn,
-                "prior-N liveness evidence",
             )?;
         }
         None if release.exact_prior_liveness.is_none()
@@ -772,81 +870,471 @@ fn validate_no_effect_release(
             ));
         }
     }
-    reject_unavailable_typed_evidence(
-        proof_event,
-        "NoExternalEffectProof with exact claim/phase/outcome and current attachment",
-        "spawn execution/crash evidence (Leaf 5)",
-    )
+    Ok(())
 }
 
-fn validate_no_effect_proof_reference<'a>(
-    events: &'a BTreeMap<u64, StoredEventPayload>,
+fn validate_typed_execution_evidence(
+    events: &BTreeMap<u64, StoredEventPayload>,
     domain: &AuthorityDomainId,
-    accepted_lsn: u64,
-    proof: &NoExternalEffectProof,
-    event_lsn: u64,
-) -> Result<&'a StoredEventPayload, SpawnClaimError> {
+    record: &SpawnClaimRecord,
+    event_id: Option<&EventId>,
+    current_lsn: u64,
+    name: &str,
+) -> Result<(u64, SpawnExecutionEvidence), SpawnClaimError> {
+    let referenced = validate_referenced_event(
+        events,
+        domain,
+        record.accepted_lsn,
+        event_id,
+        current_lsn,
+        name,
+    )?;
+    if StoredEventKind::try_from(referenced.kind).ok()
+        != Some(StoredEventKind::SpawnExecutionEvidence)
+    {
+        return Err(corrupt_log(format!(
+            "{name} does not reference SpawnExecutionEvidence"
+        )));
+    }
+    let typed = SpawnExecutionEvidence::decode(referenced.payload.as_slice())
+        .map_err(|error| corrupt_record(format!("cannot decode {name}: {error}")))?;
+    let evidence_lsn = event_id
+        .and_then(|id| id.lsn)
+        .expect("referenced event id validated")
+        .value;
+    validate_execution_evidence_contract(events, domain, record, &typed, evidence_lsn)?;
+    Ok((evidence_lsn, typed))
+}
+
+/// Validate one typed evidence event against its exact durable claim. Adapter
+/// ingress and replay use the same fail-closed contract.
+pub fn validate_execution_evidence_contract(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
+    record: &SpawnClaimRecord,
+    evidence: &SpawnExecutionEvidence,
+    evidence_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    if evidence.authority_domain_id.as_ref() != Some(domain)
+        || evidence.exact_claim.as_ref() != Some(&record.claim)
+        || evidence_lsn < record.accepted_lsn
+    {
+        return Err(corrupt_log(
+            "spawn execution evidence is not correlated to the exact accepted claim",
+        ));
+    }
+    let phase = required_execution_phase(evidence.phase)?;
+    let disposition = required_external_effect_disposition(evidence.external_effect_disposition)?;
+    if !allowed_external_effect_disposition(phase, disposition) {
+        return Err(corrupt_log(
+            "spawn execution phase and external-effect disposition conflict",
+        ));
+    }
+    if record.claim.expected_prior.is_none()
+        && matches!(
+            phase,
+            SpawnExecutionPhase::QuiescingPrior | SpawnExecutionPhase::PriorTerminated
+        )
+    {
+        return Err(corrupt_log(
+            "fresh spawn evidence names a prior-runtime phase",
+        ));
+    }
+
+    let source = evidence
+        .source_attachment
+        .as_ref()
+        .ok_or_else(|| corrupt_record("spawn execution evidence has no attachment provenance"))?;
+    let source_adapter = source
+        .adapter_id
+        .as_ref()
+        .filter(|adapter| !adapter.value.is_empty())
+        .ok_or_else(|| corrupt_record("evidence attachment has no adapter id"))?;
+    let source_generation = source
+        .adapter_generation
+        .filter(|generation| generation.value > 0)
+        .ok_or_else(|| corrupt_record("evidence attachment has no positive generation"))?;
+    if source_adapter != &record.adapter_id {
+        return Err(corrupt_log("evidence came from another claim adapter"));
+    }
+    validate_current_attachment(
+        events,
+        domain,
+        source_adapter,
+        source_generation.value,
+        source.attachment_event_id.as_ref(),
+    )?;
+
+    let producer = SpawnExecutionEvidenceProducer::try_from(evidence.producer)
+        .map_err(|_| corrupt_record("spawn execution evidence producer is unknown"))?;
+    if producer == SpawnExecutionEvidenceProducer::Unspecified {
+        return Err(corrupt_record(
+            "spawn execution evidence producer is unspecified",
+        ));
+    }
+    let failure = FailureCode::try_from(evidence.failure_code)
+        .map_err(|_| corrupt_record("spawn execution evidence failure code is unknown"))?;
+
+    match disposition {
+        ExternalEffectDisposition::ProvedNone => {
+            if evidence.external_runtime.is_some() || evidence.no_external_effect_proof.is_none() {
+                return Err(corrupt_log(
+                    "proved-none evidence must carry one proof and no external runtime",
+                ));
+            }
+            if failure == FailureCode::Unspecified {
+                return Err(corrupt_record(
+                    "proved-none evidence has unspecified failure code",
+                ));
+            }
+        }
+        ExternalEffectDisposition::MayExist => {
+            if evidence.no_external_effect_proof.is_some() || !poison_failure(evidence.failure_code)
+            {
+                return Err(corrupt_log(
+                    "effect-may-exist evidence must carry an ambiguity failure and no no-effect proof",
+                ));
+            }
+            if let Some(runtime) = evidence.external_runtime.as_ref() {
+                validate_evidence_runtime(domain, record, source_adapter, runtime)?;
+            }
+        }
+        ExternalEffectDisposition::Identified => {
+            if evidence.no_external_effect_proof.is_some() {
+                return Err(corrupt_log(
+                    "identified external effect carries a no-effect proof",
+                ));
+            }
+            validate_evidence_runtime(
+                domain,
+                record,
+                source_adapter,
+                evidence.external_runtime.as_ref().ok_or_else(|| {
+                    corrupt_record("identified external effect has no external runtime")
+                })?,
+            )?;
+        }
+        ExternalEffectDisposition::Unspecified => unreachable!("rejected above"),
+    }
+    Ok(())
+}
+
+#[must_use]
+pub const fn allowed_external_effect_disposition(
+    phase: SpawnExecutionPhase,
+    disposition: ExternalEffectDisposition,
+) -> bool {
+    use ExternalEffectDisposition::{Identified, MayExist, ProvedNone};
+    use SpawnExecutionPhase::{
+        AcceptedNotOffered, ExternalIdentityKnown, HandshakeReconciling, LaunchAttempted, Offered,
+        PriorTerminated, QuiescingPrior, SuccessEvidenceReported,
+    };
+    match phase {
+        AcceptedNotOffered => matches!(disposition, ProvedNone),
+        Offered | QuiescingPrior | PriorTerminated => matches!(disposition, ProvedNone | MayExist),
+        LaunchAttempted => matches!(disposition, MayExist | Identified),
+        ExternalIdentityKnown | HandshakeReconciling | SuccessEvidenceReported => {
+            matches!(disposition, Identified)
+        }
+        SpawnExecutionPhase::Unspecified => false,
+    }
+}
+
+fn validate_no_effect_proof(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    record: &SpawnClaimRecord,
+    evidence: &SpawnExecutionEvidence,
+    evidence_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    let phase = required_execution_phase(evidence.phase)?;
+    let producer = SpawnExecutionEvidenceProducer::try_from(evidence.producer)
+        .map_err(|_| corrupt_record("spawn execution evidence producer is unknown"))?;
+    let source = evidence
+        .source_attachment
+        .as_ref()
+        .expect("execution evidence contract validated source");
+    let proof = evidence
+        .no_external_effect_proof
+        .as_ref()
+        .expect("execution evidence contract validated proof");
     match proof
         .proof
         .as_ref()
         .ok_or_else(|| corrupt_record("no-external-effect proof has no variant"))?
     {
-        no_external_effect_proof::Proof::CorePreDeliveryTerminal(core) => {
-            validate_referenced_event(
-                events,
-                domain,
-                accepted_lsn,
-                core.decision_event_id.as_ref(),
-                event_lsn,
-                "core pre-delivery terminal proof",
-            )
+        no_external_effect_proof::Proof::CorePreDeliveryTerminal(_) => {
+            if producer != SpawnExecutionEvidenceProducer::Core
+                || phase != SpawnExecutionPhase::AcceptedNotOffered
+                || delivered_responsibility_exists(events, record, evidence_lsn)?
+            {
+                return Err(corrupt_log(
+                    "core no-effect proof is not an atomic accepted-before-offer terminal decision",
+                ));
+            }
         }
         no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(adapter) => {
-            validate_adapter_proof_reference(
-                events,
-                domain,
-                accepted_lsn,
-                adapter.evidence_event_id.as_ref(),
+            validate_adapter_proof_source(
                 adapter.adapter_id.as_ref(),
-                adapter.adapter_generation.as_ref(),
-                event_lsn,
-                "authenticated adapter refusal-before-delivery proof",
-            )
+                adapter.adapter_generation,
+                source,
+            )?;
+            if producer != SpawnExecutionEvidenceProducer::CurrentAdapter
+                || phase != SpawnExecutionPhase::Offered
+                || !matches!(
+                    FailureCode::try_from(evidence.failure_code).ok(),
+                    Some(
+                        FailureCode::UnsupportedCommand
+                            | FailureCode::TargetOffline
+                            | FailureCode::DeliveryRejected
+                    )
+                )
+                || delivered_responsibility_exists(events, record, evidence_lsn)?
+            {
+                return Err(corrupt_log(
+                    "adapter refusal proof is not explicitly before delivery responsibility",
+                ));
+            }
         }
         no_external_effect_proof::Proof::ExactSupervisorPreLaunchFailure(supervisor) => {
-            validate_adapter_proof_reference(
-                events,
-                domain,
-                accepted_lsn,
-                supervisor.evidence_event_id.as_ref(),
+            validate_adapter_proof_source(
                 supervisor.adapter_id.as_ref(),
-                supervisor.adapter_generation.as_ref(),
-                event_lsn,
-                "exact supervisor pre-launch failure proof",
-            )
+                supervisor.adapter_generation,
+                source,
+            )?;
+            if producer != SpawnExecutionEvidenceProducer::CurrentAdapter
+                || !matches!(
+                    phase,
+                    SpawnExecutionPhase::Offered
+                        | SpawnExecutionPhase::QuiescingPrior
+                        | SpawnExecutionPhase::PriorTerminated
+                )
+                || !matches!(
+                    FailureCode::try_from(evidence.failure_code).ok(),
+                    Some(
+                        FailureCode::ExecutionFailed
+                            | FailureCode::Cancelled
+                            | FailureCode::Expired
+                    )
+                )
+            {
+                return Err(corrupt_log(
+                    "supervisor/journal proof does not establish exact-claim pre-launch failure",
+                ));
+            }
         }
     }
+    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_adapter_proof_reference<'a>(
-    events: &'a BTreeMap<u64, StoredEventPayload>,
-    domain: &AuthorityDomainId,
-    accepted_lsn: u64,
-    event_id: Option<&EventId>,
-    adapter_id: Option<&patchbay_contracts::patchbay::AdapterId>,
-    adapter_generation: Option<&patchbay_contracts::patchbay::Generation>,
-    event_lsn: u64,
-    name: &str,
-) -> Result<&'a StoredEventPayload, SpawnClaimError> {
-    if adapter_id.is_none_or(|adapter| adapter.value.is_empty())
+fn validate_adapter_proof_source(
+    adapter_id: Option<&AdapterId>,
+    adapter_generation: Option<patchbay_contracts::patchbay::Generation>,
+    source: &patchbay_contracts::patchbay::SpawnEvidenceAttachment,
+) -> Result<(), SpawnClaimError> {
+    if adapter_id != source.adapter_id.as_ref()
+        || adapter_generation != source.adapter_generation
+        || adapter_id.is_none_or(|id| id.value.is_empty())
         || adapter_generation.is_none_or(|generation| generation.value == 0)
     {
-        return Err(corrupt_record(format!(
-            "{name} lacks authenticated adapter identity/generation"
-        )));
+        return Err(corrupt_log(
+            "no-effect proof does not match current authenticated attachment provenance",
+        ));
     }
-    validate_referenced_event(events, domain, accepted_lsn, event_id, event_lsn, name)
+    Ok(())
+}
+
+fn validate_current_attachment(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    adapter_generation: u64,
+    attachment_event_id: Option<&EventId>,
+) -> Result<(), SpawnClaimError> {
+    let attachment_event_id = attachment_event_id
+        .ok_or_else(|| corrupt_record("evidence source has no attachment event id"))?;
+    let attachment_lsn = attachment_event_id
+        .lsn
+        .filter(|lsn| lsn.value > 0)
+        .ok_or_else(|| corrupt_record("evidence source attachment has no positive LSN"))?
+        .value;
+    if attachment_event_id.authority_domain_id.as_ref() != Some(domain) {
+        return Err(corrupt_log(
+            "evidence source attachment belongs to another domain",
+        ));
+    }
+    let mut adapters = AdapterRegistry::new();
+    for (&lsn, payload) in events {
+        adapters
+            .observe(&RecordedEvent {
+                event_id: EventId {
+                    authority_domain_id: Some(domain.clone()),
+                    lsn: Some(Lsn { value: lsn }),
+                },
+                payload: payload.clone(),
+            })
+            .map_err(|error| {
+                corrupt_log(format!("cannot validate evidence attachment: {error}"))
+            })?;
+    }
+    let current = adapters
+        .get(adapter_id)
+        .ok_or_else(|| corrupt_log("evidence adapter has no authenticated durable attachment"))?;
+    if current
+        .registration
+        .adapter_generation
+        .map(|generation| generation.value)
+        != Some(adapter_generation)
+        || current.attach_event_id.lsn.map(|lsn| lsn.value) != Some(attachment_lsn)
+    {
+        return Err(corrupt_log(
+            "spawn execution evidence came from a stale adapter attachment",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_evidence_runtime(
+    domain: &AuthorityDomainId,
+    record: &SpawnClaimRecord,
+    adapter_id: &AdapterId,
+    runtime: &RuntimeGenerationRef,
+) -> Result<(), SpawnClaimError> {
+    validate_promoted_runtime(domain, &record.claim, runtime)?;
+    if runtime
+        .external_runtime
+        .as_ref()
+        .and_then(|external| external.adapter_id.as_ref())
+        != Some(adapter_id)
+    {
+        return Err(corrupt_log(
+            "external runtime is not owned by the current claim adapter",
+        ));
+    }
+    Ok(())
+}
+
+fn delivered_responsibility_exists(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    record: &SpawnClaimRecord,
+    through_lsn: u64,
+) -> Result<bool, SpawnClaimError> {
+    for (&lsn, payload) in events.range(record.accepted_lsn..=through_lsn) {
+        if StoredEventKind::try_from(payload.kind).ok() != Some(StoredEventKind::CommandTransition)
+        {
+            continue;
+        }
+        let transition =
+            patchbay_contracts::patchbay::CommandTransition::decode(payload.payload.as_slice())
+                .map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode command transition at LSN {lsn}: {error}"
+                    ))
+                })?;
+        if transition.command_id.as_ref() == record.claim.claim_operation_id.as_ref()
+            && matches!(
+                OperationState::try_from(transition.to_state).ok(),
+                Some(
+                    OperationState::Delivered | OperationState::Running | OperationState::Completed
+                )
+            )
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn validate_prior_liveness(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
+    accepted_lsn: u64,
+    prior: &RuntimeGenerationRef,
+    event_id: Option<&EventId>,
+    current_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    let payload = validate_referenced_event(
+        events,
+        domain,
+        accepted_lsn,
+        event_id,
+        current_lsn,
+        "prior-N liveness evidence",
+    )?;
+    if StoredEventKind::try_from(payload.kind).ok() != Some(StoredEventKind::SessionState) {
+        return Err(corrupt_log(
+            "prior-N liveness does not reference typed session-state evidence",
+        ));
+    }
+    let state = SessionStateEvent::decode(payload.payload.as_slice())
+        .map_err(|error| corrupt_record(format!("cannot decode prior-N liveness: {error}")))?;
+    if state.authority_domain_id.as_ref() != Some(domain) {
+        return Err(corrupt_log("prior-N liveness belongs to another domain"));
+    }
+    let external = prior
+        .external_runtime
+        .as_ref()
+        .ok_or_else(|| corrupt_record("prior-N liveness target has no external runtime"))?;
+    let is_live = match state.mutation.as_ref() {
+        Some(session_state_event::Mutation::ConnectivityChanged(change)) => {
+            change.adapter_id == external.adapter_id
+                && change.deployment_scope == external.deployment_scope
+                && change.runtime_session_id == external.runtime_session_id
+                && change.session_generation == external.generation
+                && SessionConnectivityState::try_from(change.to).ok()
+                    == Some(SessionConnectivityState::Live)
+        }
+        Some(session_state_event::Mutation::ReportApplied(applied)) => {
+            applied.report.as_ref().is_some_and(|report| {
+                report.adapter_id == external.adapter_id
+                    && report.deployment_scope == external.deployment_scope
+                    && report.runtime_session_id == external.runtime_session_id
+                    && report.session_generation == external.generation
+                    && SessionConnectivityState::try_from(report.connectivity).ok()
+                        == Some(SessionConnectivityState::Live)
+            })
+        }
+        _ => false,
+    };
+    if !is_live {
+        return Err(corrupt_log(
+            "prior-N liveness evidence does not re-establish exact prior runtime as live",
+        ));
+    }
+    Ok(())
+}
+
+fn poison_failure(raw: i32) -> bool {
+    matches!(
+        FailureCode::try_from(raw).ok(),
+        Some(
+            FailureCode::AdapterUnavailable
+                | FailureCode::TransportTimeout
+                | FailureCode::ExecutionFailed
+                | FailureCode::Expired
+                | FailureCode::Cancelled
+                | FailureCode::ExecutionOutcomeUnknown
+        )
+    )
+}
+
+fn required_execution_phase(raw: i32) -> Result<SpawnExecutionPhase, SpawnClaimError> {
+    let phase = SpawnExecutionPhase::try_from(raw)
+        .map_err(|_| corrupt_record("spawn execution phase is unknown"))?;
+    if phase == SpawnExecutionPhase::Unspecified {
+        return Err(corrupt_record("spawn execution phase is unspecified"));
+    }
+    Ok(phase)
+}
+
+fn required_external_effect_disposition(
+    raw: i32,
+) -> Result<ExternalEffectDisposition, SpawnClaimError> {
+    let disposition = ExternalEffectDisposition::try_from(raw)
+        .map_err(|_| corrupt_record("external-effect disposition is unknown"))?;
+    if disposition == ExternalEffectDisposition::Unspecified {
+        return Err(corrupt_record("external-effect disposition is unspecified"));
+    }
+    Ok(disposition)
 }
 
 fn validate_promoted_runtime(

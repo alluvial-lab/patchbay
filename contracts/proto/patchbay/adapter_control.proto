@@ -37,7 +37,64 @@ message ObservationRequest {
     SessionReport session_report = 2;
     Observation event = 3;
     ResourceReport resource_report = 4;
+    SpawnExecutionEvidence spawn_execution_evidence = 5;
   }
+}
+
+// Exact orchestration phase at the last durable spawn-execution observation.
+// No phase is a catch-all liveness assertion: each phase has a closed set of
+// compatible external-effect dispositions validated by the core.
+enum SpawnExecutionPhase {
+  SPAWN_EXECUTION_PHASE_UNSPECIFIED = 0;
+  SPAWN_EXECUTION_PHASE_ACCEPTED_NOT_OFFERED = 1;
+  SPAWN_EXECUTION_PHASE_OFFERED = 2;
+  SPAWN_EXECUTION_PHASE_QUIESCING_PRIOR = 3;
+  SPAWN_EXECUTION_PHASE_PRIOR_TERMINATED = 4;
+  SPAWN_EXECUTION_PHASE_LAUNCH_ATTEMPTED = 5;
+  SPAWN_EXECUTION_PHASE_EXTERNAL_IDENTITY_KNOWN = 6;
+  SPAWN_EXECUTION_PHASE_HANDSHAKE_RECONCILING = 7;
+  SPAWN_EXECUTION_PHASE_SUCCESS_EVIDENCE_REPORTED = 8;
+}
+
+enum ExternalEffectDisposition {
+  EXTERNAL_EFFECT_DISPOSITION_UNSPECIFIED = 0;
+  EXTERNAL_EFFECT_DISPOSITION_PROVED_NONE = 1;
+  EXTERNAL_EFFECT_DISPOSITION_MAY_EXIST = 2;
+  EXTERNAL_EFFECT_DISPOSITION_IDENTIFIED = 3;
+}
+
+// Producer authority is explicit so an authenticated adapter cannot
+// manufacture the core-only never-offered terminal decision.
+enum SpawnExecutionEvidenceProducer {
+  SPAWN_EXECUTION_EVIDENCE_PRODUCER_UNSPECIFIED = 0;
+  SPAWN_EXECUTION_EVIDENCE_PRODUCER_CORE = 1;
+  SPAWN_EXECUTION_EVIDENCE_PRODUCER_CURRENT_ADAPTER = 2;
+}
+
+// Durable attachment provenance for replay validation. The process-local
+// attachment token is deliberately not persisted.
+message SpawnEvidenceAttachment {
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
+  EventId attachment_event_id = 3;
+}
+
+// The only durable evidence family that may release or poison an accepted
+// spawn claim. `exact_claim` prevents cross-command/claim reuse. Silence and
+// absence of a delivered acknowledgement have no representation here.
+message SpawnExecutionEvidence {
+  AuthorityDomainId authority_domain_id = 1;
+  SpawnGenerationClaim exact_claim = 2;
+  SpawnExecutionPhase phase = 3;
+  ExternalEffectDisposition external_effect_disposition = 4;
+  SpawnExecutionEvidenceProducer producer = 5;
+  SpawnEvidenceAttachment source_attachment = 6;
+  FailureCode failure_code = 7;
+  // Present only for PROVED_NONE and restricted to the closed proof oneof.
+  NoExternalEffectProof no_external_effect_proof = 8;
+  // Optional for MAY_EXIST and required for IDENTIFIED. When present it must
+  // be the exact claimed logical target/generation and current adapter.
+  RuntimeGenerationRef external_runtime = 9;
 }
 
 message ObservationResult {

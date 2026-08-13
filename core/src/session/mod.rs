@@ -29,9 +29,11 @@ pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
 pub use spawn_claim::{
-    allowed_spawn_claim_transition, encode_spawn_claim_event, rebuild_spawn_claims_from_log,
-    SpawnClaimError, SpawnClaimKey, SpawnClaimQuery, SpawnClaimRecord, SpawnClaimRegistry,
-    SpawnClaimability, SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
+    allowed_external_effect_disposition, allowed_spawn_claim_transition,
+    encode_spawn_claim_event, encode_spawn_execution_evidence, rebuild_spawn_claims_from_log,
+    validate_execution_evidence_contract, SpawnClaimError, SpawnClaimKey, SpawnClaimQuery,
+    SpawnClaimRecord, SpawnClaimRegistry, SpawnClaimability, SpawnDeliveryFence,
+    REPLACEMENT_PENDING_REASON,
 };
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,

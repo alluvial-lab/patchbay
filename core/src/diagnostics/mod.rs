@@ -233,6 +233,7 @@ impl DiagnosticsProjection {
             | StoredEventKind::Elicitation
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
+            | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::OperatorRecord

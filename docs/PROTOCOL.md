@@ -394,6 +394,25 @@ Failures are layer-aware. Use the narrowest term that matches the authoritative 
 | `superseded` | policy/operator | A newer command or policy replaced this command. | `superseded` |
 | `stale_event` | reconciliation | A late event refers to an old command/session generation or terminal command. | audit record only; no state mutation |
 
+### Spawn execution and external-effect evidence
+
+An accepted spawn generation claim changes independently from `CommandState`. The only durable evidence family permitted to release or poison that claim is `SpawnExecutionEvidence`, stored under its dedicated event discriminator. It carries the complete exact `SpawnGenerationClaim`, current durable adapter-attachment provenance, a typed phase, an external-effect disposition, canonical failure code, and an optional exact candidate runtime. Adapter ingress replaces producer and attachment fields from the authenticated current attachment; replay revalidates that attachment against the latest durable registration. This proves source/correlation, not that a malicious or buggy authenticated adapter reported external reality honestly.
+
+The phase/disposition registry is closed:
+
+| `SpawnExecutionPhase` | Allowed `ExternalEffectDisposition` | Claim consequence on failure evidence |
+|---|---|---|
+| `accepted_not_offered` | `proved_none` | release only through the atomic core pre-delivery terminal proof |
+| `offered` | `proved_none`, `may_exist` | explicit refusal-before-responsibility may release; delivered cancellation/expiry or ambiguity poisons |
+| `quiescing_prior` | `proved_none`, `may_exist` | exact supervisor/journal pre-launch proof may release after prior-N liveness is renewed; ambiguity poisons |
+| `prior_terminated` | `proved_none`, `may_exist` | exact supervisor/journal pre-launch proof may release after prior-N liveness is renewed; ambiguity poisons |
+| `launch_attempted` | `may_exist`, `identified` | poison and retain the replacement fence |
+| `external_identity_known` | `identified` | poison on failure and retain exact candidate identity |
+| `handshake_reconciling` | `identified` | poison on failure; candidate remains staged, never inferred live |
+| `success_evidence_reported` | `identified` | claim remains active until the separate atomic promotion contract commits |
+
+The no-effect proof oneof has exactly three variants: (1) an atomic core-side terminal/fence decision while still `accepted_not_offered`, with no durable delivered/running transition; (2) current authenticated-adapter refusal at `offered`, explicitly before delivery responsibility; or (3) current-adapter supervisor/journal evidence for the exact claim at an allowed pre-launch phase. A continuation additionally needs typed exact prior-N `live` session evidence before its fence clears. Silence, absence of a delivered acknowledgement, a generic terminal command event, wrong-kind bytes, another claim, pre-acceptance evidence, stale attachment evidence, phase mismatch, delivered cancellation/expiry, and `execution_outcome_unknown` are never no-effect proof. `SpawnPromotionCommitted` remains a separate guarded event family; spawn execution evidence cannot promote a claim.
+
 Adapter diagnostic reporting is a committed post-v0.1.0 capability extension: an adapter declares bounded `[a-z0-9_]{1,64}` diagnostic codes, and sends a typed `AdapterDiagnosticPayload` through `AdapterControlService.ReportDiagnostics`. The core records the authenticated source as one `Observation` plus one correlated `ADAPTER_DIAGNOSTIC_REPORTED` audit record in the same authority-domain append. Warning/error reports carry a canonical failure vocabulary value; informational reports may use `UNSPECIFIED`. These reports are evidence only: diagnostic cadence, timestamps, and silence never establish adapter/session liveness; heartbeat and last-report-age policy remain reserved. Adapter-specific codes are not core failure enum members.
 
 ## Acceptance semantics

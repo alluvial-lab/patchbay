@@ -193,6 +193,7 @@ impl SpawnDescendantTail {
             StoredEventKind::Revocation => self.observe_revocation(event, &event_domain, event_lsn),
             StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
+            | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::OperatorRecord

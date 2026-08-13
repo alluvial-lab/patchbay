@@ -211,6 +211,9 @@ enum StoredEventKind {
   // Durable exclusive spawn-generation claim and disposition update
   // (sessions.proto). Command terminality is never interpreted as release.
   STORED_EVENT_KIND_SPAWN_CLAIM = 16;
+  // Exact claim-correlated spawn execution/crash evidence
+  // (adapter_control.proto). This is evidence, never promotion authority.
+  STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE = 17;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

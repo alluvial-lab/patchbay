@@ -239,6 +239,7 @@ pub fn audit_draft_for_source(
         StoredEventKind::SessionState
         | StoredEventKind::ResourceState
         | StoredEventKind::SpawnClaim
+        | StoredEventKind::SpawnExecutionEvidence
         | StoredEventKind::Elicitation => {
             return Err(StorageError::UnsupportedOperation);
         }

@@ -1,21 +1,28 @@
 use std::sync::{Arc, Mutex};
 
 use patchbay_contracts::patchbay::{
-    no_external_effect_proof, spawn_claim_disposition_changed, spawn_claim_event,
-    AcceptedOperation, AdapterId, AdapterRefusalBeforeDeliveryProof, AuthorityDomainId, CommandId,
-    CommandTransition, ContinuationAuthorityProvenance, EventId, ExternalRuntimeRef, FailureCode,
-    Generation, GrantId, LogicalTargetId, Lsn, NoExternalEffectProof, Operation, OperationKind,
-    OperationState, RuntimeGenerationRef, RuntimeSessionId, SpawnClaimAbandonmentEvidence,
-    SpawnClaimAccepted, SpawnClaimAmbiguityEvidence, SpawnClaimCheckpoint,
-    SpawnClaimCheckpointRecord, SpawnClaimDisposition, SpawnClaimDispositionChanged,
-    SpawnClaimEvent, SpawnClaimNoEffectRelease, SpawnClaimPromotionEvidence, SpawnGenerationClaim,
+    no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
+    spawn_claim_event,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory, AuthorityDomainId, CommandId, CommandTransition,
+    ContinuationAuthorityProvenance, EndpointId, EventId, ExternalEffectDisposition,
+    ExternalRuntimeRef, FailureCode, Generation, GrantId, LogicalTargetId, Lsn,
+    NoExternalEffectProof, Observation, ObservationKind, Operation, OperationKind, OperationState,
+    PayloadContentType, PayloadEnvelope, RuntimeGenerationRef, RuntimeSessionId,
+    SessionConnectivityChanged, SessionConnectivityState, SessionStateEvent,
+    SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnClaimAmbiguityEvidence,
+    SpawnClaimCheckpoint, SpawnClaimCheckpointRecord, SpawnClaimDisposition,
+    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnClaimNoEffectRelease,
+    SpawnClaimPromotionEvidence, SpawnEvidenceAttachment, SpawnExecutionEvidence,
+    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
     SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect, StoredEventKind,
-    StoredEventPayload, SupervisorPreLaunchFailureProof,
+    StoredEventPayload, SupervisorPreLaunchFailureProof, TargetScope, TargetScopeKind,
 };
 use patchbay_core::session::{
-    allowed_spawn_claim_transition, encode_spawn_claim_event, rebuild_spawn_claims_from_log,
-    SpawnClaimError, SpawnClaimQuery, SpawnClaimRegistry, SpawnClaimability, SpawnDeliveryFence,
-    REPLACEMENT_PENDING_REASON,
+    allowed_spawn_claim_transition, encode_spawn_claim_event, encode_spawn_execution_evidence,
+    rebuild_spawn_claims_from_log, SpawnClaimError, SpawnClaimQuery, SpawnClaimRegistry,
+    SpawnClaimability, SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
 };
 use patchbay_core::storage::{RecordedEvent, RusqliteStorage, Storage};
 use proptest::prelude::*;
@@ -117,6 +124,13 @@ fn accepted_operation(command_id: &str) -> AcceptedOperation {
             command_id: Some(command(command_id)),
             authority_domain_id: Some(domain()),
             kind: OperationKind::Spawn as i32,
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::Adapter as i32,
+                adapter_id: Some(AdapterId {
+                    value: "pi".to_owned(),
+                }),
+                ..TargetScope::default()
+            }),
             ..Operation::default()
         }),
         authorizing_grant_id: Some(GrantId {
@@ -226,20 +240,166 @@ fn abandonment(lsn: u64) -> spawn_claim_disposition_changed::Evidence {
 }
 
 fn core_no_effect(
-    proof_lsn: u64,
+    evidence_lsn: u64,
     prior_liveness_lsn: Option<u64>,
 ) -> spawn_claim_disposition_changed::Evidence {
     spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(SpawnClaimNoEffectRelease {
-        proof: Some(NoExternalEffectProof {
-            proof: Some(no_external_effect_proof::Proof::CorePreDeliveryTerminal(
-                patchbay_contracts::patchbay::CorePreDeliveryTerminalProof {
-                    decision_event_id: Some(event_id(proof_lsn)),
-                },
-            )),
-        }),
+        evidence_event_id: Some(event_id(evidence_lsn)),
         exact_prior_liveness: prior_liveness_lsn.map(|_| runtime(7)),
         prior_liveness_event_id: prior_liveness_lsn.map(event_id),
     })
+}
+
+fn attachment_event(lsn: u64, adapter: &str, generation: u64) -> RecordedEvent {
+    let adapter_id = AdapterId {
+        value: adapter.to_owned(),
+    };
+    let endpoint_id = EndpointId {
+        value: format!("{adapter}-endpoint"),
+    };
+    let registration = AdapterRegistration {
+        adapter_id: Some(adapter_id.clone()),
+        endpoint_id: Some(endpoint_id.clone()),
+        authority_domain_id: Some(domain()),
+        adapter_generation: Some(Generation { value: generation }),
+        capability: Some(AdapterCapability {
+            session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+            target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            ..AdapterCapability::default()
+        }),
+        ..AdapterRegistration::default()
+    };
+    let observation = Observation {
+        authority_domain_id: Some(domain()),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: adapter.to_owned(),
+            }),
+            endpoint_id: Some(endpoint_id),
+            ..ActorEndpointRef::default()
+        }),
+        kind: ObservationKind::Event as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(adapter_id),
+            ..TargetScope::default()
+        }),
+        payload: Some(PayloadEnvelope {
+            payload: registration.encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: "patchbay.AdapterRegistration".to_owned(),
+        }),
+        ..Observation::default()
+    };
+    recorded(
+        lsn,
+        StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: observation.encode_to_vec(),
+        },
+    )
+}
+
+fn prior_live_event(lsn: u64) -> RecordedEvent {
+    recorded(
+        lsn,
+        StoredEventPayload {
+            kind: StoredEventKind::SessionState as i32,
+            payload: SessionStateEvent {
+                authority_domain_id: Some(domain()),
+                mutation: Some(session_state_event::Mutation::ConnectivityChanged(
+                    SessionConnectivityChanged {
+                        adapter_id: Some(AdapterId {
+                            value: "pi".to_owned(),
+                        }),
+                        deployment_scope: "machine-a".to_owned(),
+                        runtime_session_id: Some(RuntimeSessionId {
+                            value: "runtime-a".to_owned(),
+                        }),
+                        session_generation: Some(Generation { value: 7 }),
+                        from: SessionConnectivityState::Stale as i32,
+                        to: SessionConnectivityState::Live as i32,
+                    },
+                )),
+            }
+            .encode_to_vec(),
+        },
+    )
+}
+
+fn source(adapter: &str, generation: u64, attachment_lsn: u64) -> SpawnEvidenceAttachment {
+    SpawnEvidenceAttachment {
+        adapter_id: Some(AdapterId {
+            value: adapter.to_owned(),
+        }),
+        adapter_generation: Some(Generation { value: generation }),
+        attachment_event_id: Some(event_id(attachment_lsn)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execution_evidence_event(
+    lsn: u64,
+    exact_claim: SpawnGenerationClaim,
+    phase: SpawnExecutionPhase,
+    disposition: ExternalEffectDisposition,
+    producer: SpawnExecutionEvidenceProducer,
+    failure: FailureCode,
+    proof: Option<NoExternalEffectProof>,
+    external_runtime: Option<RuntimeGenerationRef>,
+) -> RecordedEvent {
+    recorded(
+        lsn,
+        encode_spawn_execution_evidence(&SpawnExecutionEvidence {
+            authority_domain_id: Some(domain()),
+            exact_claim: Some(exact_claim),
+            phase: phase as i32,
+            external_effect_disposition: disposition as i32,
+            producer: producer as i32,
+            source_attachment: Some(source("pi", 3, 1)),
+            failure_code: failure as i32,
+            no_external_effect_proof: proof,
+            external_runtime,
+        }),
+    )
+}
+
+fn core_proof() -> NoExternalEffectProof {
+    NoExternalEffectProof {
+        proof: Some(no_external_effect_proof::Proof::CorePreDeliveryTerminal(
+            patchbay_contracts::patchbay::CorePreDeliveryTerminalProof {},
+        )),
+    }
+}
+
+fn refusal_proof(adapter: &str, generation: u64) -> NoExternalEffectProof {
+    NoExternalEffectProof {
+        proof: Some(
+            no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(
+                AdapterRefusalBeforeDeliveryProof {
+                    adapter_id: Some(AdapterId {
+                        value: adapter.to_owned(),
+                    }),
+                    adapter_generation: Some(Generation { value: generation }),
+                },
+            ),
+        ),
+    }
+}
+
+fn supervisor_proof(adapter: &str, generation: u64) -> NoExternalEffectProof {
+    NoExternalEffectProof {
+        proof: Some(
+            no_external_effect_proof::Proof::ExactSupervisorPreLaunchFailure(
+                SupervisorPreLaunchFailureProof {
+                    adapter_id: Some(AdapterId {
+                        value: adapter.to_owned(),
+                    }),
+                    adapter_generation: Some(Generation { value: generation }),
+                },
+            ),
+        ),
+    }
 }
 
 #[test]
@@ -351,6 +511,86 @@ fn disposition_table_matches_every_legal_cell() {
 }
 
 #[test]
+fn execution_phase_disposition_table_is_closed_and_complete() {
+    let phases = [
+        SpawnExecutionPhase::Unspecified,
+        SpawnExecutionPhase::AcceptedNotOffered,
+        SpawnExecutionPhase::Offered,
+        SpawnExecutionPhase::QuiescingPrior,
+        SpawnExecutionPhase::PriorTerminated,
+        SpawnExecutionPhase::LaunchAttempted,
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        SpawnExecutionPhase::HandshakeReconciling,
+        SpawnExecutionPhase::SuccessEvidenceReported,
+    ];
+    let dispositions = [
+        ExternalEffectDisposition::Unspecified,
+        ExternalEffectDisposition::ProvedNone,
+        ExternalEffectDisposition::MayExist,
+        ExternalEffectDisposition::Identified,
+    ];
+    let allowed = [
+        (
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::ProvedNone,
+        ),
+        (
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+        ),
+        (
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::MayExist,
+        ),
+        (
+            SpawnExecutionPhase::QuiescingPrior,
+            ExternalEffectDisposition::ProvedNone,
+        ),
+        (
+            SpawnExecutionPhase::QuiescingPrior,
+            ExternalEffectDisposition::MayExist,
+        ),
+        (
+            SpawnExecutionPhase::PriorTerminated,
+            ExternalEffectDisposition::ProvedNone,
+        ),
+        (
+            SpawnExecutionPhase::PriorTerminated,
+            ExternalEffectDisposition::MayExist,
+        ),
+        (
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+        ),
+        (
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::Identified,
+        ),
+        (
+            SpawnExecutionPhase::ExternalIdentityKnown,
+            ExternalEffectDisposition::Identified,
+        ),
+        (
+            SpawnExecutionPhase::HandshakeReconciling,
+            ExternalEffectDisposition::Identified,
+        ),
+        (
+            SpawnExecutionPhase::SuccessEvidenceReported,
+            ExternalEffectDisposition::Identified,
+        ),
+    ];
+    for phase in phases {
+        for disposition in dispositions {
+            assert_eq!(
+                patchbay_core::session::allowed_external_effect_disposition(phase, disposition),
+                allowed.contains(&(phase, disposition)),
+                "unexpected phase/disposition cell {phase:?}/{disposition:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn terminal_command_states_never_release_or_clear_the_fence_kills_release_mutant() {
     for terminal in [
         OperationState::Failed,
@@ -373,17 +613,306 @@ fn terminal_command_states_never_release_or_clear_the_fence_kills_release_mutant
 }
 
 #[test]
-fn lsn_only_mutant_arbitrary_event_cannot_poison_or_clear_fence() {
+fn typed_external_effect_evidence_poison_transition_fires_and_retains_fence() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+            None,
+        ))
+        .unwrap();
+    registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            ambiguity(3),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        registry
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation
+    );
+    assert!(matches!(
+        registry.delivery_fence(&runtime(7)),
+        SpawnDeliveryFence::ReplacementPending { .. }
+    ));
+}
+
+#[test]
+fn delivered_cancellation_expiry_and_unknown_outcome_poison_never_release() {
+    for failure in [
+        FailureCode::Cancelled,
+        FailureCode::Expired,
+        FailureCode::ExecutionOutcomeUnknown,
+    ] {
+        let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+        registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+        registry
+            .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+            .unwrap();
+        registry
+            .observe(&execution_evidence_event(
+                3,
+                claim("spawn-a", Some(7)),
+                SpawnExecutionPhase::Offered,
+                ExternalEffectDisposition::MayExist,
+                SpawnExecutionEvidenceProducer::CurrentAdapter,
+                failure,
+                None,
+                None,
+            ))
+            .unwrap();
+
+        let before = registry.clone();
+        assert!(registry
+            .observe(&disposition_event(
+                4,
+                "spawn-a",
+                SpawnClaimDisposition::Active,
+                SpawnClaimDisposition::ReleasedNoExternalEffect,
+                core_no_effect(3, Some(3)),
+            ))
+            .is_err());
+        assert_eq!(registry, before);
+        registry
+            .observe(&disposition_event(
+                4,
+                "spawn-a",
+                SpawnClaimDisposition::Active,
+                SpawnClaimDisposition::PoisonedPendingReconciliation,
+                ambiguity(3),
+            ))
+            .unwrap();
+        assert_eq!(
+            registry
+                .claim_for_operation(&command("spawn-a"))
+                .unwrap()
+                .disposition,
+            SpawnClaimDisposition::PoisonedPendingReconciliation
+        );
+    }
+}
+
+#[test]
+fn identified_external_runtime_is_bounded_to_original_claim() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    let mut wrong_runtime = runtime(8);
+    wrong_runtime.logical_target_id = Some(LogicalTargetId {
+        value: "another-target".to_owned(),
+    });
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::ExternalIdentityKnown,
+            ExternalEffectDisposition::Identified,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionFailed,
+            None,
+            Some(wrong_runtime),
+        ))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            ambiguity(3),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn promotion_stays_guarded_until_leaf_six() {
     let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
     registry
         .observe(&accepted_event(1, continuation_accepted("spawn-a")))
         .unwrap();
     registry.observe(&sibling(2)).unwrap();
     let before = registry.clone();
-
     assert!(registry
         .observe(&disposition_event(
             3,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::Promoted,
+            promotion(2, 8),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn continuation_release_requires_typed_exact_prior_liveness() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::Cancelled,
+            Some(core_proof()),
+            None,
+        ))
+        .unwrap();
+    registry.observe(&sibling(4)).unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, Some(4)),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn continuation_release_fires_after_exact_post_proof_prior_liveness() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::Cancelled,
+            Some(core_proof()),
+            None,
+        ))
+        .unwrap();
+    registry.observe(&prior_live_event(4)).unwrap();
+    registry
+        .observe(&disposition_event(
+            5,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, Some(4)),
+        ))
+        .unwrap();
+    assert_eq!(
+        registry
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::ReleasedNoExternalEffect
+    );
+    assert_eq!(registry.delivery_fence(&runtime(7)), SpawnDeliveryFence::Open);
+}
+
+#[test]
+fn wrong_event_kind_cannot_release_claim() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+        .unwrap();
+    registry.observe(&sibling(3)).unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, None),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn another_claims_typed_evidence_cannot_poison_claim() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
+        .unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-other", Some(7)),
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+            None,
+        ))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
+            "spawn-a",
+            SpawnClaimDisposition::Active,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            ambiguity(3),
+        ))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn pre_acceptance_typed_evidence_cannot_poison_claim() {
+    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            2,
+            claim("spawn-a", Some(7)),
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+            None,
+        ))
+        .unwrap();
+    registry
+        .observe(&accepted_event(3, continuation_accepted("spawn-a")))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .observe(&disposition_event(
+            4,
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::PoisonedPendingReconciliation,
@@ -391,261 +920,214 @@ fn lsn_only_mutant_arbitrary_event_cannot_poison_or_clear_fence() {
         ))
         .is_err());
     assert_eq!(registry, before);
-    assert!(matches!(
-        registry.delivery_fence(&runtime(7)),
-        SpawnDeliveryFence::ReplacementPending { .. }
-    ));
-    assert!(matches!(
-        registry.classify_claim(&claim("spawn-b", Some(7))),
-        SpawnClaimability::Conflict(_)
-    ));
 }
 
 #[test]
-fn lsn_only_mutant_arbitrary_promotion_evidence_cannot_clear_fence() {
+fn stale_attachment_evidence_cannot_release_claim() {
     let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
     registry
-        .observe(&accepted_event(1, continuation_accepted("spawn-a")))
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
         .unwrap();
-    registry.observe(&sibling(2)).unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("pi", 3)),
+            None,
+        ))
+        .unwrap();
+    registry.observe(&attachment_event(4, "pi", 4)).unwrap();
     let before = registry.clone();
-
     assert!(registry
         .observe(&disposition_event(
-            3,
+            5,
             "spawn-a",
             SpawnClaimDisposition::Active,
-            SpawnClaimDisposition::Promoted,
-            promotion(2, 8),
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+            core_no_effect(3, None),
         ))
         .is_err());
     assert_eq!(registry, before);
-    assert!(matches!(
-        registry.delivery_fence(&runtime(7)),
-        SpawnDeliveryFence::ReplacementPending { .. }
-    ));
 }
 
 #[test]
-fn prior_n_liveness_lsn_only_mutant_cannot_release_or_clear_fence() {
+fn wrong_adapter_proof_cannot_release_claim() {
     let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
     registry
-        .observe(&accepted_event(1, continuation_accepted("spawn-a")))
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
         .unwrap();
-    registry.observe(&sibling(2)).unwrap();
-    registry.observe(&sibling(3)).unwrap();
+    registry
+        .observe(&execution_evidence_event(
+            3,
+            claim("spawn-a", None),
+            SpawnExecutionPhase::Offered,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            Some(refusal_proof("other", 3)),
+            None,
+        ))
+        .unwrap();
     let before = registry.clone();
-
     assert!(registry
         .observe(&disposition_event(
             4,
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::ReleasedNoExternalEffect,
-            core_no_effect(2, Some(3)),
+            core_no_effect(3, None),
         ))
         .is_err());
     assert_eq!(registry, before);
-    assert!(matches!(
-        registry.delivery_fence(&runtime(7)),
-        SpawnDeliveryFence::ReplacementPending { .. }
-    ));
 }
 
 #[test]
-fn wrong_event_kind_lsn_only_mutant_cannot_release_claim() {
+fn silence_without_delivered_ack_is_not_no_effect_proof() {
     let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+    registry.observe(&attachment_event(1, "pi", 3)).unwrap();
     registry
-        .observe(&accepted_event(1, fresh_accepted("spawn-a")))
+        .observe(&accepted_event(2, fresh_accepted("spawn-a")))
         .unwrap();
-    registry.observe(&sibling(2)).unwrap();
+    registry
+        .observe(&terminal_sibling(3, OperationState::Failed))
+        .unwrap();
     let before = registry.clone();
-
     assert!(registry
         .observe(&disposition_event(
-            3,
+            4,
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::ReleasedNoExternalEffect,
-            core_no_effect(2, None),
-        ))
-        .is_err());
-    assert_eq!(registry, before);
-    assert!(matches!(
-        registry.classify_claim(&claim("spawn-b", None)),
-        SpawnClaimability::Conflict(_)
-    ));
-}
-
-#[test]
-fn other_claim_correlation_lsn_only_mutant_cannot_promote_claim() {
-    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
-    registry
-        .observe(&accepted_event(1, continuation_accepted("spawn-a")))
-        .unwrap();
-    let mut other = fresh_accepted("spawn-other");
-    other.claim.as_mut().unwrap().logical_target_id = Some(LogicalTargetId {
-        value: "logical-other".to_owned(),
-    });
-    registry.observe(&accepted_event(2, other)).unwrap();
-    let before = registry.clone();
-
-    assert!(registry
-        .observe(&disposition_event(
-            3,
-            "spawn-a",
-            SpawnClaimDisposition::Active,
-            SpawnClaimDisposition::Promoted,
-            promotion(2, 8),
+            core_no_effect(3, None),
         ))
         .is_err());
     assert_eq!(registry, before);
 }
 
 #[test]
-fn pre_acceptance_lsn_only_mutant_cannot_poison_claim() {
-    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
-    registry.observe(&sibling(1)).unwrap();
-    registry
-        .observe(&accepted_event(2, continuation_accepted("spawn-a")))
-        .unwrap();
-    let before = registry.clone();
-
-    assert!(registry
-        .observe(&disposition_event(
-            3,
-            "spawn-a",
-            SpawnClaimDisposition::Active,
-            SpawnClaimDisposition::PoisonedPendingReconciliation,
-            ambiguity(1),
-        ))
-        .is_err());
-    assert_eq!(registry, before);
-}
-
-#[test]
-fn stale_or_wrong_adapter_lsn_only_mutant_cannot_release_claim() {
-    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
-    registry
-        .observe(&accepted_event(1, fresh_accepted("spawn-a")))
-        .unwrap();
-    registry.observe(&sibling(2)).unwrap();
-    let before = registry.clone();
-    let evidence = spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(
-        SpawnClaimNoEffectRelease {
-            proof: Some(NoExternalEffectProof {
-                proof: Some(
-                    no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(
-                        AdapterRefusalBeforeDeliveryProof {
-                            evidence_event_id: Some(event_id(2)),
-                            adapter_id: Some(AdapterId {
-                                value: "wrong-or-stale-adapter".to_owned(),
-                            }),
-                            adapter_generation: Some(Generation { value: 99 }),
-                        },
-                    ),
-                ),
-            }),
-            exact_prior_liveness: None,
-            prior_liveness_event_id: None,
-        },
-    );
-
-    assert!(registry
-        .observe(&disposition_event(
-            3,
-            "spawn-a",
-            SpawnClaimDisposition::Active,
-            SpawnClaimDisposition::ReleasedNoExternalEffect,
-            evidence,
-        ))
-        .is_err());
-    assert_eq!(registry, before);
-}
-
-#[test]
-fn silence_without_delivered_ack_lsn_only_mutant_is_not_no_effect_proof() {
-    let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
-    registry
-        .observe(&accepted_event(1, fresh_accepted("spawn-a")))
-        .unwrap();
-    registry
-        .observe(&terminal_sibling(2, OperationState::Failed))
-        .unwrap();
-    let before = registry.clone();
-
-    assert!(registry
-        .observe(&disposition_event(
-            3,
-            "spawn-a",
-            SpawnClaimDisposition::Active,
-            SpawnClaimDisposition::ReleasedNoExternalEffect,
-            core_no_effect(2, None),
-        ))
-        .is_err());
-    assert_eq!(registry, before);
-}
-
-#[test]
-fn every_placeholder_no_effect_variant_is_guarded_until_leaf_five() {
-    let proofs = [
-        NoExternalEffectProof {
-            proof: Some(no_external_effect_proof::Proof::CorePreDeliveryTerminal(
-                patchbay_contracts::patchbay::CorePreDeliveryTerminalProof {
-                    decision_event_id: Some(event_id(2)),
-                },
-            )),
-        },
-        NoExternalEffectProof {
-            proof: Some(
-                no_external_effect_proof::Proof::AuthenticatedAdapterRefusalBeforeDelivery(
-                    AdapterRefusalBeforeDeliveryProof {
-                        evidence_event_id: Some(event_id(2)),
-                        adapter_id: Some(AdapterId {
-                            value: "pi".to_owned(),
-                        }),
-                        adapter_generation: Some(Generation { value: 3 }),
-                    },
-                ),
-            ),
-        },
-        NoExternalEffectProof {
-            proof: Some(
-                no_external_effect_proof::Proof::ExactSupervisorPreLaunchFailure(
-                    SupervisorPreLaunchFailureProof {
-                        evidence_event_id: Some(event_id(2)),
-                        adapter_id: Some(AdapterId {
-                            value: "pi".to_owned(),
-                        }),
-                        adapter_generation: Some(Generation { value: 3 }),
-                    },
-                ),
-            ),
-        },
+fn phase_disposition_and_proof_mismatches_are_non_mutating() {
+    let cases = [
+        (
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::ProvedNone,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::Cancelled,
+            Some(core_proof()),
+        ),
+        (
+            SpawnExecutionPhase::AcceptedNotOffered,
+            ExternalEffectDisposition::MayExist,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+        ),
     ];
-    for proof in proofs {
+    for (phase, disposition, producer, failure, proof) in cases {
         let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+        registry.observe(&attachment_event(1, "pi", 3)).unwrap();
         registry
-            .observe(&accepted_event(1, fresh_accepted("spawn-a")))
+            .observe(&accepted_event(2, fresh_accepted("spawn-a")))
             .unwrap();
-        registry.observe(&sibling(2)).unwrap();
+        registry
+            .observe(&execution_evidence_event(
+                3,
+                claim("spawn-a", None),
+                phase,
+                disposition,
+                producer,
+                failure,
+                proof,
+                None,
+            ))
+            .unwrap();
         let before = registry.clone();
         assert!(registry
             .observe(&disposition_event(
-                3,
+                4,
                 "spawn-a",
                 SpawnClaimDisposition::Active,
-                SpawnClaimDisposition::ReleasedNoExternalEffect,
-                spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(
-                    SpawnClaimNoEffectRelease {
-                        proof: Some(proof),
-                        exact_prior_liveness: None,
-                        prior_liveness_event_id: None,
-                    },
-                ),
+                if disposition == ExternalEffectDisposition::ProvedNone {
+                    SpawnClaimDisposition::ReleasedNoExternalEffect
+                } else {
+                    SpawnClaimDisposition::PoisonedPendingReconciliation
+                },
+                if disposition == ExternalEffectDisposition::ProvedNone {
+                    core_no_effect(3, None)
+                } else {
+                    ambiguity(3)
+                },
             ))
             .is_err());
         assert_eq!(registry, before);
+    }
+}
+
+#[test]
+fn all_three_closed_no_effect_proofs_can_release_only_with_typed_evidence() {
+    let cases = [
+        (
+            SpawnExecutionPhase::AcceptedNotOffered,
+            SpawnExecutionEvidenceProducer::Core,
+            FailureCode::Cancelled,
+            core_proof(),
+        ),
+        (
+            SpawnExecutionPhase::Offered,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::DeliveryRejected,
+            refusal_proof("pi", 3),
+        ),
+        (
+            SpawnExecutionPhase::Offered,
+            SpawnExecutionEvidenceProducer::CurrentAdapter,
+            FailureCode::ExecutionFailed,
+            supervisor_proof("pi", 3),
+        ),
+    ];
+    for (phase, producer, failure, proof) in cases {
+        let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
+        registry.observe(&attachment_event(1, "pi", 3)).unwrap();
+        registry
+            .observe(&accepted_event(2, fresh_accepted("spawn-a")))
+            .unwrap();
+        registry
+            .observe(&execution_evidence_event(
+                3,
+                claim("spawn-a", None),
+                phase,
+                ExternalEffectDisposition::ProvedNone,
+                producer,
+                failure,
+                Some(proof),
+                None,
+            ))
+            .unwrap();
+        registry
+            .observe(&disposition_event(
+                4,
+                "spawn-a",
+                SpawnClaimDisposition::Active,
+                SpawnClaimDisposition::ReleasedNoExternalEffect,
+                core_no_effect(3, None),
+            ))
+            .unwrap();
+        assert_eq!(
+            registry
+                .claim_for_operation(&command("spawn-a"))
+                .unwrap()
+                .disposition,
+            SpawnClaimDisposition::ReleasedNoExternalEffect
+        );
+        assert!(matches!(
+            registry.classify_claim(&claim("spawn-b", None)),
+            SpawnClaimability::Available
+        ));
     }
 }
 
