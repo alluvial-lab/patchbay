@@ -5,9 +5,11 @@
 //! session writer without duplicating the generated contract.
 
 use patchbay_contracts::patchbay::{
-    session_state_event, AuthorityDomainId, SessionActivityChanged, SessionConnectivityChanged,
-    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionReportApplied, StoredEventKind, StoredEventPayload,
+    session_state_event, AuthorityDomainId, LogicalTargetCandidateReleased,
+    LogicalTargetCandidateReserved, LogicalTargetCreated, LogicalTargetInitialCurrentAssigned,
+    SessionActivityChanged, SessionConnectivityChanged, SessionGenerationBumped,
+    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReportApplied,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -46,6 +48,54 @@ pub fn report_applied(
     event(
         authority_domain_id,
         session_state_event::Mutation::ReportApplied(mutation),
+    )
+}
+
+/// Construct a stable logical-target creation delta.
+#[must_use]
+pub fn logical_target_created(
+    authority_domain_id: AuthorityDomainId,
+    mutation: LogicalTargetCreated,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::LogicalTargetCreated(mutation),
+    )
+}
+
+/// Construct an initial-current identity assignment delta.
+#[must_use]
+pub fn logical_target_initial_current_assigned(
+    authority_domain_id: AuthorityDomainId,
+    mutation: LogicalTargetInitialCurrentAssigned,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::LogicalTargetInitialCurrentAssigned(mutation),
+    )
+}
+
+/// Construct an exact candidate reservation delta.
+#[must_use]
+pub fn logical_target_candidate_reserved(
+    authority_domain_id: AuthorityDomainId,
+    mutation: LogicalTargetCandidateReserved,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::LogicalTargetCandidateReserved(mutation),
+    )
+}
+
+/// Construct an exact candidate release delta.
+#[must_use]
+pub fn logical_target_candidate_released(
+    authority_domain_id: AuthorityDomainId,
+    mutation: LogicalTargetCandidateReleased,
+) -> SessionStateEvent {
+    event(
+        authority_domain_id,
+        session_state_event::Mutation::LogicalTargetCandidateReleased(mutation),
     )
 }
 

@@ -1126,6 +1126,7 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
             encode_stored_session_checkpoint(&StoredSessionCheckpoint {
                 snapshot: Some(cached_checkpoint.clone()),
                 tombstones: Vec::new(),
+                logical_targets: Vec::new(),
             }),
         )
         .await

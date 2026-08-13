@@ -247,11 +247,12 @@ pub fn decode_compatible_session_checkpoint(
         .ok_or(SessionCheckpointRejection::Semantic)?;
     validate_checkpoint_lockdown(lockdown, expected_domain, stored_lsn.value)?;
     let lockdown_active = lockdown.active;
-    let registry = SessionRegistry::from_checkpoint(
+    let registry = SessionRegistry::from_checkpoint_with_logical_targets(
         expected_domain.clone(),
         stored_lsn.value,
         live_records,
         tombstones,
+        checkpoint.logical_targets,
         lockdown_active,
     )
     .map_err(|_| SessionCheckpointRejection::Semantic)?;
@@ -434,9 +435,11 @@ fn decode_session_checkpoint_envelope(encoded: &[u8]) -> Result<&[u8], SessionCh
 mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
-        AdapterId, EventId, Lsn, ResourceSnapshot, RuntimeSessionId, SecurityLockdownState,
-        Session, SessionReportSourceCursor, SessionState, TargetScope, ViewRevision,
+        AdapterId, EventId, ExternalRuntimeRef, LogicalTargetId, Lsn, ResourceSnapshot,
+        RuntimeSessionId, SecurityLockdownState, Session, SessionReportSourceCursor, SessionState,
+        TargetScope, ViewRevision,
     };
+    use patchbay_core::session::{ExternalRuntimeOwnership, LogicalTargetRegistry};
 
     fn domain(value: &str) -> AuthorityDomainId {
         AuthorityDomainId {
@@ -453,6 +456,7 @@ mod tests {
             payload: encode_stored_session_checkpoint(&StoredSessionCheckpoint {
                 snapshot: Some(snapshot),
                 tombstones: Vec::new(),
+                logical_targets: Vec::new(),
             }),
         }
     }
@@ -477,6 +481,52 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.snapshot, valid_snapshot());
         assert_eq!(decoded.registry.covered_through_lsn(), Some(7));
+    }
+
+    #[test]
+    fn compatible_checkpoint_restores_logical_target_reverse_index() {
+        let logical_target_id = LogicalTargetId {
+            value: "target-a".to_owned(),
+        };
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let external = ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "runtime-a".to_owned(),
+            }),
+            generation: Some(Generation { value: 1 }),
+        };
+        let mut logical_targets = LogicalTargetRegistry::new(domain("main")).unwrap();
+        logical_targets
+            .create(
+                logical_target_id.clone(),
+                adapter_id,
+                "machine-a".to_owned(),
+            )
+            .unwrap();
+        logical_targets
+            .reserve_candidate(&logical_target_id, external.clone())
+            .unwrap();
+        let mut stored = checkpoint(valid_snapshot());
+        stored.payload = encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+            snapshot: Some(valid_snapshot()),
+            tombstones: Vec::new(),
+            logical_targets: logical_targets.checkpoint_records(),
+        });
+
+        let decoded = decode_compatible_session_checkpoint(
+            &stored,
+            &domain("main"),
+            &Generation { value: 11 },
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.registry.logical_targets().owner_of(&external),
+            Some(&logical_target_id)
+        );
     }
 
     #[test]
@@ -535,6 +585,7 @@ mod tests {
                 ..valid_snapshot()
             }),
             tombstones: vec![tombstone],
+            logical_targets: Vec::new(),
         };
         let stored = |candidate: StoredSessionCheckpoint| StoredSnapshot {
             event_id: EventId {

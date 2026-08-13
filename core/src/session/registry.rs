@@ -8,10 +8,13 @@ use std::collections::{BTreeMap, HashMap};
 
 use patchbay_contracts::patchbay::{
     security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
-    RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged, SessionActivityState,
-    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
-    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReportApplied,
-    SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload,
+    LogicalTargetCandidateReleased, LogicalTargetCandidateReserved, LogicalTargetCreated,
+    LogicalTargetInitialCurrentAssigned, LogicalTargetProjectionRecord, LogicalTargetId,
+    RuntimeSessionId, SecurityLockdownEvent,
+    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
+    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
+    SessionRelabeled, SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
+    StoredEventPayload,
 };
 use prost::Message;
 
@@ -20,7 +23,7 @@ use crate::storage::RecordedEvent;
 use super::{
     allowed_activity_transition, allowed_connectivity_transition,
     ingest::{source_cursor_strictly_after, validate_report, validate_source_cursor},
-    SessionError, SessionIdentity, SessionStateEvent,
+    LogicalTargetRegistry, SessionError, SessionIdentity, SessionStateEvent,
 };
 
 /// The current in-memory state of one live session generation.
@@ -56,6 +59,7 @@ pub struct SessionRegistry {
     applied_events: BTreeMap<u64, StoredEventPayload>,
     sessions: HashMap<SessionLiveKey, SessionRecord>,
     tombstones: HashMap<SessionTombstoneKey, SessionTombstone>,
+    logical_targets: LogicalTargetRegistry,
     lockdown_active: bool,
 }
 
@@ -87,12 +91,14 @@ impl SessionRegistry {
         if authority_domain_id.value.is_empty() {
             return Err(SessionError::EmptyAuthorityDomain);
         }
+        let logical_targets = LogicalTargetRegistry::new(authority_domain_id.clone())?;
         Ok(Self {
             authority_domain_id,
             covered_through_lsn: None,
             applied_events: BTreeMap::new(),
             sessions: HashMap::new(),
             tombstones: HashMap::new(),
+            logical_targets,
             lockdown_active: false,
         })
     }
@@ -107,6 +113,25 @@ impl SessionRegistry {
         checkpoint_lsn: u64,
         live_records: Vec<SessionRecord>,
         tombstones: Vec<SessionTombstone>,
+        lockdown_active: bool,
+    ) -> Result<Self, SessionError> {
+        Self::from_checkpoint_with_logical_targets(
+            authority_domain_id,
+            checkpoint_lsn,
+            live_records,
+            tombstones,
+            Vec::new(),
+            lockdown_active,
+        )
+    }
+
+    /// Restore sessions and the complete logical-target/reverse-index state.
+    pub fn from_checkpoint_with_logical_targets(
+        authority_domain_id: AuthorityDomainId,
+        checkpoint_lsn: u64,
+        live_records: Vec<SessionRecord>,
+        tombstones: Vec<SessionTombstone>,
+        logical_targets: Vec<LogicalTargetProjectionRecord>,
         lockdown_active: bool,
     ) -> Result<Self, SessionError> {
         if authority_domain_id.value.is_empty() {
@@ -199,12 +224,19 @@ impl SessionRegistry {
             ));
         }
 
+        let logical_targets = LogicalTargetRegistry::from_checkpoint(
+            authority_domain_id.clone(),
+            checkpoint_lsn,
+            logical_targets,
+        )?;
+
         Ok(Self {
             authority_domain_id,
             covered_through_lsn: Some(checkpoint_lsn),
             applied_events: BTreeMap::new(),
             sessions,
             tombstones: retained,
+            logical_targets,
             lockdown_active,
         })
     }
@@ -337,6 +369,18 @@ impl SessionRegistry {
                 session_state_event::Mutation::ReportApplied(mutation) => {
                     self.observe_report_applied(mutation, event_lsn)?;
                 }
+                session_state_event::Mutation::LogicalTargetCreated(mutation) => {
+                    self.observe_logical_target_created(mutation)?;
+                }
+                session_state_event::Mutation::LogicalTargetInitialCurrentAssigned(mutation) => {
+                    self.observe_logical_target_initial_current_assigned(mutation)?;
+                }
+                session_state_event::Mutation::LogicalTargetCandidateReserved(mutation) => {
+                    self.observe_logical_target_candidate_reserved(mutation)?;
+                }
+                session_state_event::Mutation::LogicalTargetCandidateReleased(mutation) => {
+                    self.observe_logical_target_candidate_released(mutation)?;
+                }
             }
         }
 
@@ -367,6 +411,82 @@ impl SessionRegistry {
             }
         }
         Ok(ReplayDisposition::New)
+    }
+
+    /// Stable logical-target projection, including exact reverse ownership.
+    #[must_use]
+    pub fn logical_targets(&self) -> &LogicalTargetRegistry {
+        &self.logical_targets
+    }
+
+    /// Mutable identity projection for later core-owned lifecycle folds.
+    pub fn logical_targets_mut(&mut self) -> &mut LogicalTargetRegistry {
+        &mut self.logical_targets
+    }
+
+    fn observe_logical_target_created(
+        &mut self,
+        mutation: &LogicalTargetCreated,
+    ) -> Result<(), SessionError> {
+        self.logical_targets.create(
+            required_logical_target_id(mutation.logical_target_id.as_ref(), "creation")?,
+            mutation.adapter_id.clone().ok_or_else(|| {
+                SessionError::CorruptRecord(
+                    "logical-target creation is missing adapter_id".to_owned(),
+                )
+            })?,
+            mutation.deployment_scope.clone(),
+        )?;
+        Ok(())
+    }
+
+    fn observe_logical_target_initial_current_assigned(
+        &mut self,
+        mutation: &LogicalTargetInitialCurrentAssigned,
+    ) -> Result<(), SessionError> {
+        let logical_target_id =
+            required_logical_target_id(mutation.logical_target_id.as_ref(), "initial current")?;
+        let external = mutation.external_runtime_ref.clone().ok_or_else(|| {
+            SessionError::CorruptRecord(
+                "logical-target initial current assignment is missing external_runtime_ref"
+                    .to_owned(),
+            )
+        })?;
+        self.logical_targets
+            .assign_initial_current(&logical_target_id, external)?;
+        Ok(())
+    }
+
+    fn observe_logical_target_candidate_reserved(
+        &mut self,
+        mutation: &LogicalTargetCandidateReserved,
+    ) -> Result<(), SessionError> {
+        let logical_target_id =
+            required_logical_target_id(mutation.logical_target_id.as_ref(), "candidate reserve")?;
+        let external = mutation.external_runtime_ref.clone().ok_or_else(|| {
+            SessionError::CorruptRecord(
+                "logical-target candidate reservation is missing external_runtime_ref".to_owned(),
+            )
+        })?;
+        self.logical_targets
+            .reserve_candidate(&logical_target_id, external)?;
+        Ok(())
+    }
+
+    fn observe_logical_target_candidate_released(
+        &mut self,
+        mutation: &LogicalTargetCandidateReleased,
+    ) -> Result<(), SessionError> {
+        let logical_target_id =
+            required_logical_target_id(mutation.logical_target_id.as_ref(), "candidate release")?;
+        let external = mutation.external_runtime_ref.as_ref().ok_or_else(|| {
+            SessionError::CorruptRecord(
+                "logical-target candidate release is missing external_runtime_ref".to_owned(),
+            )
+        })?;
+        self.logical_targets
+            .release_candidate(&logical_target_id, external)?;
+        Ok(())
     }
 
     /// Whether the replayed security posture currently clamps reports.
@@ -876,6 +996,17 @@ impl SessionRegistry {
         }
         Ok(record)
     }
+}
+
+fn required_logical_target_id(
+    logical_target_id: Option<&LogicalTargetId>,
+    transition: &str,
+) -> Result<LogicalTargetId, SessionError> {
+    logical_target_id.cloned().ok_or_else(|| {
+        SessionError::CorruptRecord(format!(
+            "logical-target {transition} is missing logical_target_id"
+        ))
+    })
 }
 
 fn validate_checkpoint_record(

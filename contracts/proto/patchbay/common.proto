@@ -50,6 +50,26 @@ message RuntimeSessionId {
   string value = 1;
 }
 
+// Stable core identity for one logical target across external runtime replacement.
+message LogicalTargetId {
+  string value = 1;
+}
+
+// Exact adapter-owned external runtime incarnation. Authority-domain scope is
+// supplied by the containing event/projection and is never payload-selected.
+message ExternalRuntimeRef {
+  AdapterId adapter_id = 1;
+  string deployment_scope = 2;
+  RuntimeSessionId runtime_session_id = 3;
+  Generation generation = 4;
+}
+
+// Binds a stable logical target to one exact external runtime incarnation.
+message RuntimeGenerationRef {
+  LogicalTargetId logical_target_id = 1;
+  ExternalRuntimeRef external_runtime_ref = 2;
+}
+
 // Adapter-local resource identifier. Routable identity also includes the
 // owning adapter and adapter-owned resource kind.
 message ResourceId {

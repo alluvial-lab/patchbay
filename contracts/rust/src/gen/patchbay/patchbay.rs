@@ -58,6 +58,33 @@ pub struct RuntimeSessionId {
     #[prost(string, tag="1")]
     pub value: ::prost::alloc::string::String,
 }
+/// Stable core identity for one logical target across external runtime replacement.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetId {
+    #[prost(string, tag="1")]
+    pub value: ::prost::alloc::string::String,
+}
+/// Exact adapter-owned external runtime incarnation. Authority-domain scope is
+/// supplied by the containing event/projection and is never payload-selected.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExternalRuntimeRef {
+    #[prost(message, optional, tag="1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag="2")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub runtime_session_id: ::core::option::Option<RuntimeSessionId>,
+    #[prost(message, optional, tag="4")]
+    pub generation: ::core::option::Option<Generation>,
+}
+/// Binds a stable logical target to one exact external runtime incarnation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationRef {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
+}
 /// Adapter-local resource identifier. Routable identity also includes the
 /// owning adapter and adapter-owned resource kind.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1292,6 +1319,32 @@ pub struct StoredSessionCheckpoint {
     pub snapshot: ::core::option::Option<SessionSnapshot>,
     #[prost(message, repeated, tag="2")]
     pub tombstones: ::prost::alloc::vec::Vec<SessionCheckpointTombstone>,
+    #[prost(message, repeated, tag="3")]
+    pub logical_targets: ::prost::alloc::vec::Vec<LogicalTargetProjectionRecord>,
+}
+/// Private logical-target projection state. Project/cwd/name/model are absent
+/// because mutable presentation metadata is never logical or external identity.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LogicalTargetProjectionRecord {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag="3")]
+    pub deployment_scope: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="4")]
+    pub current: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="5")]
+    pub reserved_candidate: ::core::option::Option<ExternalRuntimeRef>,
+    #[prost(message, repeated, tag="6")]
+    pub tombstones: ::prost::alloc::vec::Vec<LogicalTargetTombstone>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetTombstone {
+    #[prost(message, optional, tag="1")]
+    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
+    #[prost(message, optional, tag="2")]
+    pub superseded_at_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionCheckpointTombstone {
@@ -1320,7 +1373,7 @@ pub struct ViewRevision {
 pub struct SessionStateEvent {
     #[prost(message, optional, tag="1")]
     pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(oneof="session_state_event::Mutation", tags="2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof="session_state_event::Mutation", tags="2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12")]
     pub mutation: ::core::option::Option<session_state_event::Mutation>,
 }
 /// Nested message and enum types in `SessionStateEvent`.
@@ -1341,7 +1394,48 @@ pub mod session_state_event {
         ModelChanged(super::SessionModelChanged),
         #[prost(message, tag="8")]
         ReportApplied(super::SessionReportApplied),
+        #[prost(message, tag="9")]
+        LogicalTargetCreated(super::LogicalTargetCreated),
+        #[prost(message, tag="10")]
+        LogicalTargetInitialCurrentAssigned(super::LogicalTargetInitialCurrentAssigned),
+        #[prost(message, tag="11")]
+        LogicalTargetCandidateReserved(super::LogicalTargetCandidateReserved),
+        #[prost(message, tag="12")]
+        LogicalTargetCandidateReleased(super::LogicalTargetCandidateReleased),
     }
+}
+/// Identity-only logical-target mutations. They carry no Operation, claim,
+/// evidence, or authority payload. Later lifecycle envelopes consume the same
+/// projection methods rather than redefining identity.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetCreated {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(string, tag="3")]
+    pub deployment_scope: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetInitialCurrentAssigned {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetCandidateReserved {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogicalTargetCandidateReleased {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="2")]
+    pub external_runtime_ref: ::core::option::Option<ExternalRuntimeRef>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionRegistered {

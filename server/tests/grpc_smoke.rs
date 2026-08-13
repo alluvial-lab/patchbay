@@ -1818,6 +1818,7 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let stored_checkpoint = encode_stored_session_checkpoint(&StoredSessionCheckpoint {
         snapshot: Some(checkpoint.clone()),
         tombstones: Vec::new(),
+        logical_targets: Vec::new(),
     });
     storage
         .write_snapshot(&domain(), checkpoint_lsn, stored_checkpoint)
@@ -1875,6 +1876,7 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
                 encode_stored_session_checkpoint(&StoredSessionCheckpoint {
                     snapshot: Some(stale),
                     tombstones: Vec::new(),
+                    logical_targets: Vec::new(),
                 }),
             )
             .await,
@@ -1917,6 +1919,7 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
                 encode_stored_session_checkpoint(&StoredSessionCheckpoint {
                     snapshot: Some(incompatible),
                     tombstones: Vec::new(),
+                    logical_targets: Vec::new(),
                 }),
             )
             .await

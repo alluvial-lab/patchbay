@@ -87,6 +87,23 @@ message SessionSnapshot {
 message StoredSessionCheckpoint {
   SessionSnapshot snapshot = 1;
   repeated SessionCheckpointTombstone tombstones = 2;
+  repeated LogicalTargetProjectionRecord logical_targets = 3;
+}
+
+// Private logical-target projection state. Project/cwd/name/model are absent
+// because mutable presentation metadata is never logical or external identity.
+message LogicalTargetProjectionRecord {
+  LogicalTargetId logical_target_id = 1;
+  AdapterId adapter_id = 2;
+  string deployment_scope = 3;
+  RuntimeGenerationRef current = 4;
+  ExternalRuntimeRef reserved_candidate = 5;
+  repeated LogicalTargetTombstone tombstones = 6;
+}
+
+message LogicalTargetTombstone {
+  ExternalRuntimeRef external_runtime_ref = 1;
+  Lsn superseded_at_lsn = 2;
 }
 
 message SessionCheckpointTombstone {
@@ -115,7 +132,35 @@ message SessionStateEvent {
     SessionRelabeled relabeled = 6;
     SessionModelChanged model_changed = 7;
     SessionReportApplied report_applied = 8;
+    LogicalTargetCreated logical_target_created = 9;
+    LogicalTargetInitialCurrentAssigned logical_target_initial_current_assigned = 10;
+    LogicalTargetCandidateReserved logical_target_candidate_reserved = 11;
+    LogicalTargetCandidateReleased logical_target_candidate_released = 12;
   }
+}
+
+// Identity-only logical-target mutations. They carry no Operation, claim,
+// evidence, or authority payload. Later lifecycle envelopes consume the same
+// projection methods rather than redefining identity.
+message LogicalTargetCreated {
+  LogicalTargetId logical_target_id = 1;
+  AdapterId adapter_id = 2;
+  string deployment_scope = 3;
+}
+
+message LogicalTargetInitialCurrentAssigned {
+  LogicalTargetId logical_target_id = 1;
+  ExternalRuntimeRef external_runtime_ref = 2;
+}
+
+message LogicalTargetCandidateReserved {
+  LogicalTargetId logical_target_id = 1;
+  ExternalRuntimeRef external_runtime_ref = 2;
+}
+
+message LogicalTargetCandidateReleased {
+  LogicalTargetId logical_target_id = 1;
+  ExternalRuntimeRef external_runtime_ref = 2;
 }
 
 message SessionRegistered {

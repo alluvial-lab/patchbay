@@ -881,6 +881,7 @@ mod tests {
                 &patchbay_contracts::patchbay::StoredSessionCheckpoint {
                     snapshot: Some(zero_generation),
                     tombstones: Vec::new(),
+                    logical_targets: Vec::new(),
                 },
             ),
         };
@@ -983,6 +984,10 @@ mod tests {
                                 }
                             })
                             .collect(),
+                        logical_targets: compatible
+                            .registry
+                            .logical_targets()
+                            .checkpoint_records(),
                     },
                 ),
             )

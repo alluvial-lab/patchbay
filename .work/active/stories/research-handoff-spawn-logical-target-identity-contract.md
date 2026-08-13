@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-logical-target-identity-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification]
 parent: research-handoff-spawn
 depends_on: []
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
 # Logical-target and external-runtime identity contract
@@ -49,13 +49,25 @@ V1 rejects cross-adapter/deployment migration for one logical target. Pre-provis
 
 ## Acceptance evidence
 
-- [ ] Generated Rust/TypeScript contracts preserve distinct logical and external-runtime id spaces.
-- [ ] Generation `0`, empty ids, malformed scopes, cross-domain/cross-adapter target mutation, and runtime-ref mismatch reject before projection mutation.
-- [ ] One exact external runtime cannot be owned or staged by two logical targets; `duplicate-native-reference` survives replay and checkpoint recovery.
-- [ ] Current/reserved-candidate/tombstone identity slots are mutually constrained and replay-identical; this leaf imports no downstream claim/evidence type.
-- [ ] Project/cwd/name/model changes cannot alter the identity tuple.
-- [ ] Mutation removing any reverse-index dimension (adapter, deployment, runtime id, generation, domain) fails.
+- [x] Generated Rust/TypeScript contracts preserve distinct logical and external-runtime id spaces.
+- [x] Generation `0`, empty ids, malformed scopes, cross-domain/cross-adapter target mutation, and runtime-ref mismatch reject before projection mutation.
+- [x] One exact external runtime cannot be owned or staged by two logical targets; `duplicate-native-reference` survives replay and checkpoint recovery.
+- [x] Current/reserved-candidate/tombstone identity slots are mutually constrained and replay-identical; this leaf imports no downstream claim/evidence type.
+- [x] Project/cwd/name/model changes cannot alter the identity tuple.
+- [x] Mutation removing any reverse-index dimension (adapter, deployment, runtime id, generation, domain) fails.
 
 ## Ordering constraint
 
 First contract leaf. Continuation, claims, cursor scope, target resolution, staging, and promotion consume this identity; none may define a competing shape.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected highest tier for the security-critical identity/authority spine).
+- Review weight: `thorough` (caller override; implementation stops at `stage: review` for independent orchestration).
+- Files changed: `contracts/proto/patchbay/{common,sessions}.proto`; generated Rust/TypeScript bindings; `core/src/session/{logical_target,events,mod,registry}.rs`; `server/src/{adapter_service,checkpoint,snapshot,state}.rs`; checkpoint fixture updates; logical-target integration/property tests.
+- Tests added: `core/tests/logical_target_identity.rs` covers validation atomicity, slot transitions, tombstone ownership retention, hot/restart replay, and checkpoint recovery; `core/tests/logical_target_proptest.rs` covers positive generation, one-owner recovery, and independent omission mutants for every reverse-index dimension; `server/src/snapshot.rs` covers typed checkpoint reverse-index restoration.
+- Simplification: kept replacement/tombstone transitions as pure identity methods for the later atomic promotion envelope; this leaf durably records only target creation, explicit initial-current assignment, candidate reservation, and candidate release, avoiding a competing standalone promotion path.
+- Design rationale: the ordered tombstone map uses a validated scalar `ExternalRuntimeKey` because generated protobuf messages do not implement `Ord`; the key still contains the exact domain/adapter/deployment/runtime/generation tuple.
+- Discrepancies from design: none; the generated checkpoint record is private and omits project/cwd/name/model by construction.
+- Adjacent issues parked: none.
+- Verification: contract generation, vectors/models, workspace build/tests, and clippy were green; generated-drift preflight is run after this commit because the repository check intentionally refuses uncommitted generated changes.

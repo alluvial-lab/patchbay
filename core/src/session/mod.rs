@@ -9,6 +9,7 @@ use patchbay_contracts::patchbay::{Generation, SessionReportSourceCursor};
 
 pub mod events;
 pub mod ingest;
+pub mod logical_target;
 pub mod registry;
 pub mod replay;
 pub mod resolver;
@@ -18,6 +19,10 @@ pub use events::SessionStateEvent;
 pub use ingest::{
     adapter_stale_events, ingest_session_report, mark_adapter_sessions_stale, IngestResult,
     SessionLookup, SessionProjection,
+};
+pub use logical_target::{
+    external_runtime_key, ExternalRuntimeKey, ExternalRuntimeOwnership, LogicalTargetError,
+    LogicalTargetRecord, LogicalTargetRegistry, LogicalTargetTombstone,
 };
 pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
@@ -66,6 +71,10 @@ pub enum SessionError {
         live: SessionReportSourceCursor,
         reported: SessionReportSourceCursor,
     },
+
+    /// Logical-target identity or external-runtime ownership is invalid.
+    #[error(transparent)]
+    LogicalTarget(#[from] LogicalTargetError),
 
     /// The durable storage boundary failed.
     #[error(transparent)]

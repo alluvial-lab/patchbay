@@ -438,6 +438,7 @@ impl ProjectionState {
                     }),
                 })
                 .collect(),
+            logical_targets: registry.sessions().logical_targets().checkpoint_records(),
         }
     }
 
