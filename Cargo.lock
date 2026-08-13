@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "patchbay-contracts"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "prost",
  "prost-types",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "patchbay-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "patchbay-core-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "patchbay-contracts",
@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "patchbay-test-support"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ctor",
 ]
