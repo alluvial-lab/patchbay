@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-logical-target-identity-contract
 kind: story
-stage: review
+stage: done
 tags: [protocol, verification]
 parent: research-handoff-spawn
 depends_on: []
