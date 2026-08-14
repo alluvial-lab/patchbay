@@ -1526,6 +1526,7 @@ fn audit_kind_for_state(state: OperationState) -> Result<AuditEventKind, Storage
     }
 }
 
+#[allow(clippy::too_many_arguments)] // private prefix validator: each arg is one independently-asserted audit field
 fn validate_canonical_audit(
     events: &[RecordedEvent],
     index: usize,
