@@ -9,7 +9,7 @@ Autopilot the **spawn stride** in the Patchbay `.work/` substrate. Load + follow
 ## Scope — exactly these two features + their children (the v1-must)
 - `.work/active/features/research-handoff-spawn.md` (16 children) — Patchbay's `spawn` OperationKind + restart-as-continuation (the herdr-replacement).
 - `.work/active/features/research-handoff-pi-adapter-capability.md` (6 children) — the Pi adapter's spawn/restart/reload surface + minimum manifest.
-- Do NOT touch the other active items (ppc public-compatibility/publication-governance, verification-discipline-checks) — those are out of scope. **EXCEPTION — `capability-manifest-durability-and-reconciliation-depth`:** see "⚠️ Pi/durability blocker" below; the operator must decide before the Pi half can complete.
+- Do NOT touch the other active items (ppc public-compatibility/publication-governance, verification-discipline-checks) — those are out of scope. **EXCEPTION — `capability-manifest-durability-and-reconciliation-depth` is IN SCOPE** (operator lifted the flag 2026-08-13; see "Pi/durability — RESOLVED" below).
 
 ## The designs are GATE-COMPLETE — implement, don't redesign
 Passed research-grounding → feature-design → 5-reviewer adversarial review (10 BLOCKERs) → redesign (all resolved). The review is at `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md`. **Implement against the resolved designs; do not re-litigate resolved BLOCKERs.** Key resolved decisions are in the two feature bodies (compound continuation authority; atomic `SpawnPromotionCommitted`; ambiguous-failure poisons the claim; `ClaimedSuccessor` fence; `QuarantinedRuntimeEvidence`; contract-leaves-first; completion-driver owner; Pi `patchbay-control` cwd handshake; `memory_only|materialized|invalid` JSONL; cursor replacement epoch).
@@ -63,4 +63,4 @@ NEXT → fix Leaf 6's 6 review BLOCKERs (integration into production paths; see
 ## Acceptance
 Drive the spawn stride to `done`: all ~22 child stories done (implemented + reviewed), both features done. Push; confirm CI green. Do not cut a release (separate release-deploy stride).
 
-Begin: read `.work/CONVENTIONS.md` + `AGENTS.md` + the two feature bodies + the review, confirm progress above, then resume at **runtime-evidence-promotion-contract (Leaf 6)**.
+Begin: read `.work/CONVENTIONS.md` + `AGENTS.md` + the two feature bodies + **`.work/active/reviews/leaf6-runtime-evidence-promotion-review-2026-08-13.md`** (Leaf 6's 6 BLOCKERs + fix scope), then resume by **fixing Leaf 6's 6 review BLOCKERs** (integration into production paths — do NOT re-implement the leaf).
