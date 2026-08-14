@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: review
+stage: implementing
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
