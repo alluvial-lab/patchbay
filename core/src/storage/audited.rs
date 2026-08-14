@@ -10,8 +10,8 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
     Observation, ObservationKind, OperationKind, OperatorRecord, QuarantinedRuntimeEvidence,
-    Revocation, SecurityLockdownEvent, SpawnPromotionCommitted, StoredEventKind,
-    StoredEventPayload,
+    Revocation, SecurityLockdownEvent, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -360,6 +360,7 @@ fn reject_generic_special(payload: &StoredEventPayload) -> Result<(), StorageErr
         kind,
         StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::QuarantinedRuntimeEvidence
     ) {
@@ -403,6 +404,7 @@ where
             kind,
             StoredEventKind::Grant
                 | StoredEventKind::DescendantGrant
+                | StoredEventKind::SpawnSuccessorEvidenceStaged
                 | StoredEventKind::SpawnPromotionCommitted
                 | StoredEventKind::QuarantinedRuntimeEvidence
         ) {
@@ -570,6 +572,16 @@ where
             .append_audited(authority_domain_id, source, audit)
             .await
             .map(|result| result.source_event_id)
+    }
+
+    async fn append_spawn_successor_staged_idempotent(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        staged: SpawnSuccessorEvidenceStaged,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner
+            .append_spawn_successor_staged_idempotent(authority_domain_id, staged)
+            .await
     }
 
     async fn append_spawn_promotion_audited(

@@ -1852,13 +1852,27 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
                 authority_domain_id: Some(domain.clone()),
-                observation: Some(observation_request::Observation::SessionReport(report)),
+                observation: Some(observation_request::Observation::SessionReport(
+                    report.clone(),
+                )),
             },
             &attachment_token,
         ))
         .await
         .expect("exact managed report stages")
         .into_inner();
+    let retry = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(report)),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("authenticated exact managed-report retry reconciles")
+        .into_inner();
+    assert_eq!(retry.event_id, result.event_id);
     let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     let staged = events
         .iter()
@@ -1867,6 +1881,16 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
     assert_eq!(
         staged.payload.kind,
         StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+            })
+            .count(),
+        1,
+        "the exact retry must reuse the original durable staged event"
     );
     assert_eq!(
         events
@@ -1882,6 +1906,9 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
         .sessions()
         .next()
         .is_none());
+    patchbay_core::session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("the authenticated retry prefix remains replayable after restart");
 }
 
 #[tokio::test]

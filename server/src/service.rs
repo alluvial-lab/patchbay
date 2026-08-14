@@ -2515,6 +2515,12 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         } => Status::failed_precondition(format!(
             "grant identity {grant_id} conflicts with source LSN {existing_lsn}"
         )),
+        StorageError::StagedSuccessorConflict {
+            command_id,
+            existing_lsn,
+        } => Status::failed_precondition(format!(
+            "staged successor for claim {command_id} conflicts with source LSN {existing_lsn}"
+        )),
         StorageError::CorruptRecord(message) => Status::internal(message),
         StorageError::WriteFailed { message, .. } | StorageError::ReadFailed { message, .. } => {
             Status::internal(message)

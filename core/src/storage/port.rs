@@ -23,7 +23,7 @@
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, QuarantinedRuntimeEvidence,
-    SpawnPromotionCommitted, StoredEventPayload, TargetScope,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -370,6 +370,17 @@ pub enum StorageError {
     #[error("grant identity {grant_id} conflicts with existing source LSN {existing_lsn}")]
     GrantIdentityConflict { grant_id: String, existing_lsn: u64 },
 
+    /// One claim or external runtime already has different staged-successor
+    /// evidence. The conflict is discovered before another staged event is
+    /// appended, so retry disagreement cannot poison the replay prefix.
+    #[error(
+        "staged successor for claim {command_id} conflicts with existing source LSN {existing_lsn}"
+    )]
+    StagedSuccessorConflict {
+        command_id: String,
+        existing_lsn: u64,
+    },
+
     /// The requested snapshot LSN does not correspond to a committed event.
     /// A snapshot must materialize at a real committed LSN.
     #[error("snapshot LSN {0} does not correspond to a committed event")]
@@ -632,6 +643,19 @@ pub trait Storage: Send + Sync {
             self.append_dedup_audited(authority_domain_id, key, target, source, audit)
                 .await
         }
+    }
+
+    /// Atomically reserve one staged-successor identity or reconcile an exact
+    /// retry to its original event id. The durable identity is scoped by the
+    /// authority domain and binds the claim operation to the exact external
+    /// runtime. A later changed report for that claim/runtime is a conflict;
+    /// no generic append path may write this event kind.
+    fn append_spawn_successor_staged_idempotent(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _staged: SpawnSuccessorEvidenceStaged,
+    ) -> impl std::future::Future<Output = Result<EventId, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
     }
 
     /// Atomically assign and stamp the promotion source id, its immediate

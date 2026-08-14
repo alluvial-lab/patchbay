@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -97,6 +97,22 @@ Final invariant contract leaf. Target resolution waits on this leaf and the para
 - The promoted `session-report-source-ordering` vector and its independent expectation checker now specify outer quarantine for delayed, old-producer, and old-runtime reports while retaining the unchanged hot/replay session snapshot.
 - Injected mutations killed: ordinary managed-origin admission; omitted-origin active-claim escape; raw append before transition validation; coordinated removal of Result-time producer qualification and all consuming order gates; weakened disposition-only quarantine validation; an authority↔session source-order swap (non-compiling without the private witness) plus coordinated authority-witness omission; and exact nested-Observation redispatch through the command fold. Each mutation was reverted before completion and the restored tree remained clean.
 - No protobuf or generated contract artifacts changed in the round-2 pass.
+
+### Leaf 6 round-3 BLOCKER convergence — 2026-08-14
+
+- Execution capability: `openai-codex/gpt-5.6-sol` — caller-selected strongest worker for the security-critical promotion/quarantine/authority boundary. Review weight remains caller-selected `thorough`; this pass advances only to `review` for the independent pass-4 deep re-review.
+- BLOCKER 1 — idempotent staged successor: `Storage::append_spawn_successor_staged_idempotent` is now the sole production/storage append for `SpawnSuccessorEvidenceStaged`. The SQLite writer transaction validates the complete durable prefix, binds one authority-domain/claim-operation/external-runtime identity, returns the original event id for a byte-exact envelope retry, rejects a changed report or competing claim/runtime with `StagedSuccessorConflict` before durability, and preflights a first append through canonical claim/classification/session replay. Generic append, dedup, audited, decision-audited, and batch routes reject the staged kind. Authenticated ingress uses this method while holding the shared decision gate and also reconciles an exact retry after poisoning or promotion to the original staged event.
+- BLOCKER 2 — idempotent deferred success: `next_spawn_promotion` retains the earliest qualifying successful Result plus its exact source Observation. Byte-exact successful Result retries before or after staging are deterministic no-ops for promotion evidence; a changed successful Result for the same claim position remains a fail-closed conflict. The existing command projection continues to collapse repeated qualifying success for redelivery suppression.
+- Files changed: `core/src/session/runtime_evidence.rs`; `core/src/storage/{port,audited,rusqlite}.rs`; `core/tests/runtime_evidence_promotion.rs`; `server/src/{adapter_service,service,state}.rs`; `server/src/adapter_service/tests.rs`; `server/tests/spawn_completion.rs`.
+- Tests added/extended: `staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_durability` covers dedicated identity, all generic-route rejection, exact event-id reuse, changed-report pre-append conflict, single staged source, and restart replay; `promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of_staging` covers same-Result retry before staging, after staging, earliest-event selection, and changed-evidence conflict; the authenticated managed-report server test now retries the exact report and proves hot/replay state; `managed_evidence_retries_complete_once_and_restart_as_a_replayable_prefix` exercises three successful Result deliveries on both sides of staging, an exact SessionReport retry before and after promotion, completion-driver bootstrap, one promotion/audit/grant/terminal outcome, aggregate projection restart, and completion-driver restart.
+- Mutation kills: forcing an exact staged retry to append a second source made the storage oracle fail on returned LSN `10` versus original LSN `9`; restoring the old duplicate-Result fence made the producer oracle fail on the retry before staging; removing Result conflict equality made the changed-evidence oracle fail; weakening staged conflict equality made the changed-report pre-append oracle fail. Every mutant failed its focused test and was reverted with `git restore`; the restored tree was clean before bookkeeping.
+- Simplification: reused the existing single-writer transaction and durable-prefix reconstruction rather than adding a side table or protobuf identity field. Result retry handling stays in the promotion producer because the admitted Result records remain useful durable evidence and `CommandIndex` already supplies idempotent redelivery suppression.
+- Discrepancies from design/review: none. This implements the review's preferred dedicated atomic staged append and its permitted earliest-exact-Result producer rule without changing wire contracts. No protobuf or generated artifact changed. Already-corrupt pre-fix duplicate-staged histories remain fail-closed rather than receiving a compatibility repair; this contract leaf is not released and has no verified external durable-data consumer.
+- Adjacent issues parked: none.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS** after correcting one pre-final `clone_on_copy` lint; the quoted command then passed in full.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted, 22 implementation checks, 38 mutation witnesses, generated bindings clean.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 9/9 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 29/29 tests including the real core/adapter restart e2e.
 
 ## Verification evidence
 

@@ -33,7 +33,7 @@ use patchbay_contracts::patchbay::{
     runtime_generation_disposition, AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId,
     DescendantGrant, EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn,
     QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason, SpawnPromotionCommitted,
-    StoredEventKind, StoredEventPayload,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -733,6 +733,11 @@ enum WriterCommand {
         audits: Vec<AuditRecordDraft>,
         reply: oneshot::Sender<Result<AuditedDecisionAppend, StorageError>>,
     },
+    AppendSpawnSuccessorStagedIdempotent {
+        authority_domain_id: String,
+        staged: Box<SpawnSuccessorEvidenceStaged>,
+        reply: oneshot::Sender<Result<EventId, StorageError>>,
+    },
     AppendSpawnPromotionAudited {
         authority_domain_id: String,
         promotion: Box<SpawnPromotionCommitted>,
@@ -953,6 +958,18 @@ async fn writer_actor(
             } => {
                 let result =
                     do_append_decision_audited_many(&mut db, &authority_domain_id, source, audits);
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnSuccessorStagedIdempotent {
+                authority_domain_id,
+                staged,
+                reply,
+            } => {
+                let result = do_append_spawn_successor_staged_idempotent(
+                    &mut db,
+                    &authority_domain_id,
+                    *staged,
+                );
                 let _ = reply.send(result);
             }
             WriterCommand::AppendSpawnPromotionAudited {
@@ -1798,6 +1815,155 @@ fn do_append_quarantined_runtime_evidence_audited(
     })
 }
 
+fn do_append_spawn_successor_staged_idempotent(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    staged: SpawnSuccessorEvidenceStaged,
+) -> Result<EventId, StorageError> {
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    if staged.authority_domain_id.as_ref() != Some(&domain) {
+        return Err(StorageError::CorruptRecord(
+            "staged-successor domain does not match append domain".to_owned(),
+        ));
+    }
+    crate::session::validate_staged_successor(&staged)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let command_id = staged
+        .exact_claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .expect("staged successor validated")
+        .clone();
+    let external = staged
+        .external_runtime_reservation
+        .as_ref()
+        .expect("staged successor validated")
+        .clone();
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let mut existing_exact = None;
+    for event in &events {
+        if event.payload.kind != StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
+            continue;
+        }
+        let existing = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+            .map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode durable staged successor: {error}"
+                ))
+            })?;
+        crate::session::validate_staged_successor(&existing)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        let existing_command = existing
+            .exact_claim
+            .as_ref()
+            .and_then(|claim| claim.claim_operation_id.as_ref())
+            .expect("durable staged successor validated");
+        let existing_external = existing
+            .external_runtime_reservation
+            .as_ref()
+            .expect("durable staged successor validated");
+        if existing_command == &command_id || existing_external == &external {
+            let existing_lsn = event
+                .event_id
+                .lsn
+                .as_ref()
+                .expect("recorded event has an LSN")
+                .value;
+            if existing == staged {
+                if existing_exact.is_some() {
+                    return Err(StorageError::CorruptRecord(format!(
+                        "durable prefix contains duplicate exact staged successor for claim {}",
+                        command_id.value
+                    )));
+                }
+                existing_exact = Some(event.event_id.clone());
+            } else {
+                return Err(StorageError::StagedSuccessorConflict {
+                    command_id: command_id.value.clone(),
+                    existing_lsn,
+                });
+            }
+        }
+    }
+
+    let mut adapters = crate::adapter::AdapterRegistry::new();
+    let mut sessions = crate::session::SessionRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut claims = crate::session::SpawnClaimRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut previous_lsn = 0;
+    for event in &events {
+        let validated = crate::storage::validate_next_replay_event(&domain, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        adapters
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        sessions
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        claims
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        previous_lsn = validated.lsn;
+    }
+    if let Some(event_id) = existing_exact {
+        tx.commit().map_err(map_write_err)?;
+        return Ok(event_id);
+    }
+
+    let claim = crate::session::SpawnClaimQuery::claim_for_operation(&claims, &command_id)
+        .ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "staged successor does not reference a durable spawn claim".to_owned(),
+            )
+        })?;
+    if staged.exact_claim.as_ref() != Some(&claim.claim) {
+        return Err(StorageError::CorruptRecord(
+            "staged successor exact claim disagrees with the durable claim".to_owned(),
+        ));
+    }
+    let report = staged.report.as_ref().expect("staged successor validated");
+    let source = staged
+        .source_attachment
+        .as_ref()
+        .expect("staged successor validated");
+    let actual_disposition = crate::session::classify_session_report(
+        &domain, report, source, &adapters, &claims, &sessions,
+    );
+    if staged.disposition.as_ref() != Some(&actual_disposition)
+        || !matches!(
+            actual_disposition.disposition,
+            Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
+        )
+    {
+        return Err(StorageError::CorruptRecord(
+            "staged successor classification disagrees with the durable prefix".to_owned(),
+        ));
+    }
+
+    let source = crate::session::encode_staged_successor(&staged);
+    let candidate = RecordedEvent {
+        event_id: event_id(domain.clone(), previous_lsn.saturating_add(1)),
+        payload: source.clone(),
+    };
+    sessions
+        .observe(&candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    if source_lsn as u64 != previous_lsn.saturating_add(1) {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned staged-successor LSN {source_lsn}, expected {}",
+            previous_lsn.saturating_add(1)
+        )));
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(candidate.event_id)
+}
+
 fn do_append_spawn_promotion_audited(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -2451,7 +2617,9 @@ fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), 
     if matches!(
         StoredEventKind::try_from(payload.kind).ok(),
         Some(
-            StoredEventKind::SpawnPromotionCommitted | StoredEventKind::QuarantinedRuntimeEvidence
+            StoredEventKind::SpawnSuccessorEvidenceStaged
+                | StoredEventKind::SpawnPromotionCommitted
+                | StoredEventKind::QuarantinedRuntimeEvidence
         )
     ) {
         Err(StorageError::UnsupportedOperation)
@@ -2690,6 +2858,25 @@ impl Storage for RusqliteStorage {
                 authority_domain_id: authority_domain_id.value.clone(),
                 sources,
                 audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_successor_staged_idempotent(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        staged: SpawnSuccessorEvidenceStaged,
+    ) -> Result<EventId, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnSuccessorStagedIdempotent {
+                authority_domain_id: authority_domain_id.value.clone(),
+                staged: Box::new(staged),
                 reply: reply_tx,
             })
             .await

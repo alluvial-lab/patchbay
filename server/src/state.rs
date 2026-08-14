@@ -1565,10 +1565,18 @@ mod tests {
         ];
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         for (index, payload) in prefix.into_iter().enumerate() {
-            assert_eq!(
-                storage.append(&domain, payload).await.unwrap(),
-                event_id(index as u64 + 1)
-            );
+            let appended = if payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
+                storage
+                    .append_spawn_successor_staged_idempotent(
+                        &domain,
+                        SpawnSuccessorEvidenceStaged::decode(payload.payload.as_slice()).unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            } else {
+                storage.append(&domain, payload).await.unwrap()
+            };
+            assert_eq!(appended, event_id(index as u64 + 1));
         }
         let live = ProjectionState::rebuild(&storage, &domain).await.unwrap();
         assert_eq!(live.current_lsn().await, 9);

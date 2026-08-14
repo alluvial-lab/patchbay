@@ -27,8 +27,8 @@ use patchbay_core::{
     resource::ResourceRegistry,
     session::{
         classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_claim_event,
-        encode_staged_successor, fold_spawn_promotion_ordered, SessionRegistry, SpawnClaimQuery,
-        SpawnClaimRegistry,
+        encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
+        SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
     },
     storage::{
         AuditRecordDraft, AuditedStorage, RecordedEvent, RusqliteStorage, Storage, StorageError,
@@ -497,6 +497,239 @@ fn valid_prefix() -> Vec<RecordedEvent> {
         ),
         recorded(9, encode_staged_successor(&staged())),
     ]
+}
+
+async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
+    for event in prefix {
+        let appended = if event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+        {
+            let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+                .expect("staged fixture decodes");
+            storage
+                .append_spawn_successor_staged_idempotent(&domain(), staged)
+                .await
+                .expect("staged fixture appends through its dedicated boundary")
+        } else {
+            storage
+                .append(&domain(), event.payload)
+                .await
+                .expect("prefix fixture appends")
+        };
+        assert_eq!(appended, event.event_id);
+    }
+}
+
+#[test]
+fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of_staging() {
+    let mut retry_before_staging = valid_prefix();
+    let stage = retry_before_staging.pop().expect("stage fixture");
+    retry_before_staging.push(recorded(
+        9,
+        StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: successful_result().encode_to_vec(),
+        },
+    ));
+    retry_before_staging.push(recorded(10, stage.payload));
+
+    let promotion = next_spawn_promotion(
+        &domain(),
+        &retry_before_staging,
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+    )
+    .expect("exact Result retry before staging remains replayable")
+    .expect("complete evidence promotes");
+    assert_eq!(
+        promotion
+            .successful_result
+            .as_ref()
+            .and_then(|result| result.event_id.as_ref()),
+        Some(&event_id(8)),
+        "the earliest exact Result is the deterministic promotion evidence"
+    );
+    assert_eq!(
+        promotion
+            .staged_successor
+            .as_ref()
+            .and_then(|stage| stage.event_id.as_ref()),
+        Some(&event_id(10))
+    );
+
+    let mut retry_after_staging = valid_prefix();
+    retry_after_staging.push(recorded(
+        10,
+        StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: successful_result().encode_to_vec(),
+        },
+    ));
+    let promotion = next_spawn_promotion(
+        &domain(),
+        &retry_after_staging,
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+    )
+    .expect("exact Result retry after staging remains replayable")
+    .expect("complete evidence promotes");
+    assert_eq!(
+        promotion
+            .successful_result
+            .as_ref()
+            .and_then(|result| result.event_id.as_ref()),
+        Some(&event_id(8))
+    );
+    assert_eq!(
+        promotion
+            .staged_successor
+            .as_ref()
+            .and_then(|stage| stage.event_id.as_ref()),
+        Some(&event_id(9))
+    );
+
+    let mut conflicting = valid_prefix();
+    let mut changed_result = successful_result();
+    changed_result.observed_at = Some(Timestamp {
+        seconds: 11,
+        nanos: 0,
+    });
+    conflicting.push(recorded(
+        10,
+        StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: changed_result.encode_to_vec(),
+        },
+    ));
+    let error = next_spawn_promotion(
+        &domain(),
+        &conflicting,
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+    )
+    .expect_err("changed successful evidence is not an exact retry");
+    assert!(error
+        .to_string()
+        .contains("conflicting successful Result evidence"));
+}
+
+#[tokio::test]
+async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_durability() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut prefix = valid_prefix();
+    prefix.pop();
+    append_prefix(&storage, prefix).await;
+
+    let generic = encode_staged_successor(&staged());
+    assert!(matches!(
+        storage.append(&domain(), generic.clone()).await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        AuditedStorage::new(storage.clone())
+            .append(&domain(), generic.clone())
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    let mut generic_audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    generic_audit.command_id = Some(command());
+    generic_audit.reason_code = "spawn_completion_deferred".to_owned();
+    assert!(matches!(
+        storage
+            .append_audited(&domain(), generic.clone(), generic_audit.clone())
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_batch_audited(
+                &domain(),
+                vec![generic.clone()],
+                generic_audit.clone(),
+            )
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_decision_audited_many(
+                &domain(),
+                generic.clone(),
+                vec![generic_audit],
+            )
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    assert!(matches!(
+        storage
+            .append_dedup(
+                &domain(),
+                &IdempotencyKey {
+                    value: "staged-bypass".to_owned(),
+                },
+                &TargetKey::new("staged-target".to_owned()).unwrap(),
+                generic,
+            )
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+
+    let first = storage
+        .append_spawn_successor_staged_idempotent(&domain(), staged())
+        .await
+        .expect("first staged successor commits");
+    let retry = storage
+        .append_spawn_successor_staged_idempotent(&domain(), staged())
+        .await
+        .expect("exact staged successor retry reconciles");
+    assert_eq!(first, event_id(9));
+    assert_eq!(retry, first);
+
+    let mut changed = staged();
+    changed.report.as_mut().unwrap().name = "changed-retry".to_owned();
+    assert!(matches!(
+        storage
+            .append_spawn_successor_staged_idempotent(&domain(), changed)
+            .await,
+        Err(StorageError::StagedSuccessorConflict {
+            existing_lsn: 9,
+            ..
+        })
+    ));
+    let events = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+            })
+            .count(),
+        1
+    );
+    let replayed = patchbay_core::session::rebuild_from_log(&storage, &domain())
+        .await
+        .expect("the exact-retry prefix remains restart-replayable");
+    assert_eq!(
+        replayed
+            .logical_targets()
+            .get(&claim().logical_target_id.unwrap())
+            .and_then(|target| target.reserved_candidate.as_ref()),
+        Some(&external(1))
+    );
 }
 
 fn stamped_promotion(lsn: u64) -> SpawnPromotionCommitted {
@@ -1921,12 +2154,7 @@ async fn promotion_rejects_result_before_delivered_or_later_running_evidence() {
         };
         prefix.extend(ordered_tail);
         prefix.push(recorded(9, encode_staged_successor(&staged())));
-        for event in &prefix {
-            storage
-                .append(&domain(), event.payload.clone())
-                .await
-                .unwrap();
-        }
+        append_prefix(&storage, prefix).await;
 
         let mut promotion = unstamped_promotion();
         promotion.lifecycle[0].event_id = Some(event_id(if result_position == "before-delivery" {
@@ -1975,9 +2203,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
     let path = directory.path().join("promotion-rollback.sqlite");
     let path_string = path.to_string_lossy().into_owned();
     let storage = RusqliteStorage::open(&path_string).unwrap();
-    for event in valid_prefix() {
-        storage.append(&domain(), event.payload).await.unwrap();
-    }
+    append_prefix(&storage, valid_prefix()).await;
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
         .execute_batch(&format!(
@@ -2026,10 +2252,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
 #[tokio::test]
 async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    for event in valid_prefix() {
-        let appended = storage.append(&domain(), event.payload).await.unwrap();
-        assert_eq!(appended, event.event_id);
-    }
+    append_prefix(&storage, valid_prefix()).await;
     let mut audit = AuditRecordDraft::new(
         Timestamp {
             seconds: 10,

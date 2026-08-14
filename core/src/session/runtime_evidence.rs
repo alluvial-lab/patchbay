@@ -65,6 +65,7 @@ struct PromotionFacts {
     accepted: SpawnClaimAccepted,
     lifecycle: Vec<SpawnPromotionLifecycleEvidence>,
     successful_result: Option<SpawnPromotionResultEvidence>,
+    successful_result_source: Option<Observation>,
     staged_successor: Option<SpawnPromotionStagedEvidence>,
     promoted: bool,
 }
@@ -110,6 +111,7 @@ pub fn next_spawn_promotion(
                                 accepted,
                                 lifecycle: Vec::new(),
                                 successful_result: None,
+                                successful_result_source: None,
                                 staged_successor: None,
                                 promoted: false,
                             },
@@ -174,18 +176,23 @@ pub fn next_spawn_promotion(
                             });
                         if qualified_at_result_lsn {
                             if let Some(progress) = facts.get_mut(&command_id) {
-                                if progress.successful_result.is_some() {
-                                    return Err(fence(
-                                        "promotion producer observed duplicate successful Result",
-                                    ));
+                                if let Some(existing) = progress.successful_result_source.as_ref() {
+                                    if existing != &observation {
+                                        return Err(fence(
+                                            "promotion producer observed conflicting successful Result evidence",
+                                        ));
+                                    }
+                                } else {
+                                    progress.successful_result =
+                                        Some(SpawnPromotionResultEvidence {
+                                            event_id: Some(event_id),
+                                            command_id: Some(command_id),
+                                            target_scope: observation.target_scope.clone(),
+                                            failure_code: observation.failure_code,
+                                            observed_at: observation.observed_at,
+                                        });
+                                    progress.successful_result_source = Some(observation);
                                 }
-                                progress.successful_result = Some(SpawnPromotionResultEvidence {
-                                    event_id: Some(event_id),
-                                    command_id: Some(command_id),
-                                    target_scope: observation.target_scope,
-                                    failure_code: observation.failure_code,
-                                    observed_at: observation.observed_at,
-                                });
                             }
                         }
                     }

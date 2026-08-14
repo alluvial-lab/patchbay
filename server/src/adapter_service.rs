@@ -12,8 +12,10 @@ use patchbay_contracts::patchbay::{
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
     AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
     ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
-    RuntimeEvidenceSourceAttachment, RuntimeGenerationRef, SpawnEvidenceAttachment,
-    SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
+    RuntimeEvidenceSourceAttachment, RuntimeGenerationClaimedSuccessor,
+    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimDisposition,
+    SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged,
+    StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex, OperationStateExt},
@@ -413,6 +415,63 @@ async fn append_quarantined_session_report<S: Storage>(
         .await
         .map(|committed| committed.source_event_id)
         .map_err(map_storage_error_to_status)
+}
+
+fn staged_successor_for_claim(
+    domain: &AuthorityDomainId,
+    report: patchbay_contracts::patchbay::SessionReport,
+    source_attachment: RuntimeEvidenceSourceAttachment,
+    claim_record: &session::SpawnClaimRecord,
+) -> Result<SpawnSuccessorEvidenceStaged, Status> {
+    let claim = claim_record.claim.clone();
+    let command_id = claim
+        .claim_operation_id
+        .clone()
+        .ok_or_else(|| Status::internal("spawn claim has no operation id"))?;
+    let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
+        adapter_id: report.adapter_id.clone(),
+        deployment_scope: report.deployment_scope.clone(),
+        runtime_session_id: report.runtime_session_id.clone(),
+        generation: report.session_generation,
+    };
+    let staged = SpawnSuccessorEvidenceStaged {
+        authority_domain_id: Some(domain.clone()),
+        exact_claim: Some(claim.clone()),
+        report: Some(report),
+        classified_target: Some(RuntimeGenerationRef {
+            logical_target_id: claim.logical_target_id.clone(),
+            external_runtime: Some(external.clone()),
+        }),
+        disposition: Some(RuntimeGenerationDisposition {
+            disposition: Some(
+                runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                    RuntimeGenerationClaimedSuccessor {
+                        claim_operation_id: Some(command_id),
+                        expected_prior: claim.expected_prior,
+                        claimed_generation: claim.claimed_generation,
+                    },
+                ),
+            ),
+        }),
+        source_attachment: Some(source_attachment),
+        external_runtime_reservation: Some(external),
+    };
+    session::validate_staged_successor(&staged)
+        .map_err(|error| Status::failed_precondition(error.to_string()))?;
+    Ok(staged)
+}
+
+fn session_report_claim_operation(
+    report: &patchbay_contracts::patchbay::SessionReport,
+) -> Option<&patchbay_contracts::patchbay::CommandId> {
+    match report.spawn_origin.as_ref()?.r#ref.as_ref()? {
+        patchbay_contracts::patchbay::typed_correlation::Ref::CommandId(command_id)
+            if !command_id.value.is_empty() =>
+        {
+            Some(command_id)
+        }
+        _ => None,
+    }
 }
 
 fn session_report_has_stale_source_order(
@@ -1056,51 +1115,49 @@ where
                     }));
                 }
 
-                match disposition.disposition.as_ref() {
-                    Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(
-                        claimed,
-                    )) => {
-                        let command_id = claimed.claim_operation_id.as_ref().ok_or_else(|| {
-                            Status::internal("claimed successor has no operation id")
-                        })?;
-                        let claim_record =
-                            session::SpawnClaimQuery::claim_for_operation(&claims, command_id)
-                                .ok_or_else(|| {
-                                    Status::internal("claimed successor lost its claim")
-                                })?;
-                        let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
-                            adapter_id: report.adapter_id.clone(),
-                            deployment_scope: report.deployment_scope.clone(),
-                            runtime_session_id: report.runtime_session_id.clone(),
-                            generation: report.session_generation,
-                        };
-                        let staged = SpawnSuccessorEvidenceStaged {
-                            authority_domain_id: Some(domain.clone()),
-                            exact_claim: Some(claim_record.claim.clone()),
-                            report: Some(report),
-                            classified_target: Some(RuntimeGenerationRef {
-                                logical_target_id: claim_record.claim.logical_target_id.clone(),
-                                external_runtime: Some(external.clone()),
-                            }),
-                            disposition: Some(disposition),
-                            source_attachment: Some(source_attachment),
-                            external_runtime_reservation: Some(external),
-                        };
-                        session::validate_staged_successor(&staged)
-                            .map_err(|error| Status::failed_precondition(error.to_string()))?;
-                        let event_id = self
-                            .storage
-                            .append(&domain, session::encode_staged_successor(&staged))
+                let correlated_claim =
+                    session_report_claim_operation(&report).and_then(|command_id| {
+                        session::SpawnClaimQuery::claim_for_operation(&claims, command_id)
+                    });
+                let claimed_successor = matches!(
+                    disposition.disposition.as_ref(),
+                    Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
+                );
+                let retrying_existing_stage = correlated_claim.is_some_and(|record| {
+                    matches!(
+                        record.disposition,
+                        SpawnClaimDisposition::PoisonedPendingReconciliation
+                            | SpawnClaimDisposition::Promoted
+                    )
+                });
+                if claimed_successor || retrying_existing_stage {
+                    let claim_record = correlated_claim.ok_or_else(|| {
+                        Status::internal("managed successor report lost its durable claim")
+                    })?;
+                    let staged = staged_successor_for_claim(
+                        &domain,
+                        report,
+                        source_attachment,
+                        claim_record,
+                    )?;
+                    let event_id = self
+                        .storage
+                        .append_spawn_successor_staged_idempotent(&domain, staged)
+                        .await
+                        .map_err(map_storage_error_to_status)?;
+                    *self.sessions.lock().await =
+                        recover_session_registry(&self.storage, &domain, &self.core_generation)
                             .await
-                            .map_err(map_storage_error_to_status)?;
-                        *self.sessions.lock().await =
-                            recover_session_registry(&self.storage, &domain, &self.core_generation)
-                                .await
-                                .map_err(map_session_error)?
-                                .registry;
-                        return Ok(Response::new(ObservationResult {
-                            event_id: Some(event_id),
-                        }));
+                            .map_err(map_session_error)?
+                            .registry;
+                    return Ok(Response::new(ObservationResult {
+                        event_id: Some(event_id),
+                    }));
+                }
+
+                match disposition.disposition.as_ref() {
+                    Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_)) => {
+                        unreachable!("claimed successor was handled by idempotent staging")
                     }
                     Some(runtime_generation_disposition::Disposition::Current(_)) => {}
                     Some(runtime_generation_disposition::Disposition::Unknown(_))

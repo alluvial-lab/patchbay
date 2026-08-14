@@ -55,6 +55,7 @@ use patchbay_core_server::{
     },
     service::ControlServiceImpl,
     spawn_completion::{SpawnCompletionDriver, SpawnCompletionError},
+    state::ProjectionState,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -513,7 +514,8 @@ async fn report_session<S>(
     token: &str,
     generation: u64,
     spawn_origin: Option<TypedCorrelation>,
-) where
+) -> EventId
+where
     S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
     service
@@ -549,7 +551,10 @@ async fn report_session<S>(
             token,
         ))
         .await
-        .unwrap();
+        .unwrap()
+        .into_inner()
+        .event_id
+        .expect("session report has a durable event id")
 }
 
 async fn seed_spawn_claim<S: Storage>(storage: &S) {
@@ -1279,6 +1284,99 @@ async fn run_live_adapter_case(
     assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
     let authority = rebuild_from_log(&storage, &domain()).await.unwrap();
     (storage, authority)
+}
+
+#[tokio::test]
+async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_prefix() {
+    let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    seed_parent_grant(&storage).await;
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&service).await;
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(&storage).await;
+    }
+
+    let earliest_result = report_successful_spawn(&service, &token).await;
+    let result_retry_before_staging = report_successful_spawn(&service, &token).await;
+    assert_ne!(
+        result_retry_before_staging, earliest_result,
+        "Result retries remain durable evidence records"
+    );
+    let staged = report_session(&service, &token, 1, Some(correlation())).await;
+    let staged_retry = report_session(&service, &token, 1, Some(correlation())).await;
+    assert_eq!(
+        staged_retry, staged,
+        "SessionReport retries reuse the one staged-successor record"
+    );
+    let result_retry_after_staging = report_successful_spawn(&service, &token).await;
+    assert_ne!(result_retry_after_staging, earliest_result);
+
+    let before_completion = all_events(&storage).await;
+    assert_eq!(
+        before_completion
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        before_completion
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::Observation as i32
+                    && Observation::decode(event.payload.payload.as_slice())
+                        .ok()
+                        .is_some_and(|observation| {
+                            observation.kind == ObservationKind::Result as i32
+                                && observation.correlations == vec![correlation(), correlation()]
+                        })
+            })
+            .count(),
+        3
+    );
+
+    let driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        gate,
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("completion driver accepts exact durable retries");
+    drop(driver);
+    assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
+
+    let post_promotion_retry = report_session(&service, &token, 1, Some(correlation())).await;
+    assert_eq!(
+        post_promotion_retry, staged,
+        "a late transport retry still reconciles to the original staged fact"
+    );
+    ProjectionState::rebuild(&storage, &domain())
+        .await
+        .expect("all projections restart from the retry-bearing prefix");
+    let restarted = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("completion driver restart remains quiescent");
+    drop(restarted);
+    assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
 }
 
 #[tokio::test]
