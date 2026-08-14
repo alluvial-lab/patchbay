@@ -3,12 +3,16 @@
   "version": "0.2.1",
   "private": true,
   "type": "module",
-  "main": "./dist/src/token-commune.js",
-  "types": "./dist/src/token-commune.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/token-commune.d.ts",
-      "import": "./dist/src/token-commune.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./reconciliation/external-cursor": {
+      "types": "./dist/src/reconciliation/external_cursor.d.ts",
+      "import": "./dist/src/reconciliation/external_cursor.js"
     }
   },
   "scripts": {

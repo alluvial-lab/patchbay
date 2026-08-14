@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-cursor-authoritative-replacement-contract
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-14
 ---
 
 # External cursor authoritative-replacement contract
@@ -46,13 +46,44 @@ The following Pi redesign defines `externalContinuityId` from verified Pi sessio
 
 ## Acceptance evidence
 
-- [ ] Cursor scope survives Patchbay generation replacement when verified external continuity remains the same.
-- [ ] Known-cursor suffix applies idempotently without replacing unrelated state.
-- [ ] Unknown cursor keeps the old projection stale while a replacement is staged.
-- [ ] Atomic replacement removes entries absent from the authoritative exact set/tree and installs cursor/leaf/epoch together.
-- [ ] Crash before commit preserves old stale state/cursor; crash after commit exposes only the complete replacement.
-- [ ] Upsert-only, clear-before-fetch, cursor-before-projection, and generation-keyed-continuity mutations fail.
+- [x] Cursor scope survives Patchbay generation replacement when verified external continuity remains the same.
+- [x] Known-cursor suffix applies idempotently without replacing unrelated state.
+- [x] Unknown cursor keeps the old projection stale while a replacement is staged.
+- [x] Atomic replacement removes entries absent from the authoritative exact set/tree and installs cursor/leaf/epoch together.
+- [x] Crash before commit preserves old stale state/cursor; crash after commit exposes only the complete replacement.
+- [x] Upsert-only, clear-before-fetch, cursor-before-projection, and generation-keyed-continuity mutations fail.
 
 ## Ordering constraint
 
 Independent early leaf after logical identity. Every spawn reconnect operation and the Pi cursor redesign consume it; this story owns no Pi implementation.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected strongest worker for the security-critical cursor/authority contract).
+- Review weight: `thorough` (caller override; implementation stops at `stage: review` for the independent completeness → adversarial deep lane).
+- Dispatch rationale: direct-read only. The story, both binding feature designs, foundation docs, generated-contract seam, and the bounded existing operator-domain package made the integration points explicit; this delegated worker did not attempt a prohibited recursive spawn.
+- Files changed:
+  - `operator-domain/src/reconciliation/external_cursor.ts` — generated-`AdapterId`-consuming `ExternalCursorScope`, required `AuthoritativeCursorReplacement` interface, length-framed continuity key, injected atomic CAS storage port, known-suffix transition, staged stale replacement epoch, exact-set validation, and all-fields-at-once commit.
+  - `operator-domain/tests/external-cursor.test.ts` — acceptance and crash-prefix contract tests plus mutation-sensitive oracles.
+  - `operator-domain/src/index.ts` and `operator-domain/package.json` — root and explicit reconciliation-subpath exports for downstream adapter consumers.
+- Mechanism: current projection state keeps `{exactEntries, leaf, cursor, replacementEpoch}` in one record. Unknown-cursor recovery first atomically marks that record stale while retaining it, then executes an injected complete-fetch callback and stores the validated candidate only as `fetching`/`staged` pending state. Commit performs one store CAS from the stale staged record to the exact replacement, so omissions disappear and no leaf/cursor/epoch can lead projection membership. Store failures injected before and after CAS model both crash prefixes without filesystem or clock dependencies.
+- Acceptance tests:
+  - `cursor continuity scope ignores Patchbay generation replacement` proves N/N+1 decorations resolve the same verified external-continuity key while a different continuity id does not.
+  - `known cursor suffix is idempotent and preserves unrelated projection members` proves stable-id response-loss replay is inert and preserves members absent from the suffix.
+  - `unknown cursor marks and retains the old projection stale before complete fetch` proves no clear/current exposure during fetch or staging.
+  - `atomic authoritative replacement removes omissions and installs projection leaf cursor and epoch together` proves omitted stale membership disappears in the sole commit record.
+  - `injected crashes expose either the old stale record or the complete replacement` proves before-CAS and after-CAS outcomes and idempotent post-commit retry.
+  - Focused conflict tests reject duplicate exact identities and conflicting same-id suffix content without promoting partial state; the required interface shape is compile/runtime exercised.
+- Mutation evidence (each mutation was injected into production code, the named focused test failed, and `git restore` returned the staged baseline; no mutant was committed):
+  - upsert-only merge at replacement commit → omission/atomic-replacement test failed because `stale` survived;
+  - clear-before-fetch → staging test failed because the old exact entries became empty during fetch;
+  - cursor/leaf/epoch install with the old projection → crash-prefix test failed because the after-commit state exposed the new cursor over old membership;
+  - generation appended to the continuity key → scope test failed because N and N+1 produced different keys.
+- Simplification: no Protobuf fields were added. The cursor state machine is adapter-local/domain behavior, existing generated `AdapterId` supplies the only shared boundary scalar, and the downstream Pi story already owns its genuine Pi replacement wire envelopes. This avoids importing Pi paths, `get_entries`, JSONL, or a premature generic wire DTO into core ontology.
+- Discrepancies from design: `contracts/proto/patchbay/adapter.proto` remains unchanged because no generic wire carriage is required at this leaf; this follows the story's wire-only-when-genuine rule. The design's required TypeScript interface is unchanged and is backed by a reusable transition owner plus injected storage port.
+- Adjacent issues parked: none.
+- Verification (all required groups passed):
+  1. PASS — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`.
+  2. PASS — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (54 vectors read, 17 promoted, 38 registered mutation witnesses killed; generated artifacts clean).
+  3. PASS — `cd operator-domain && npm run build && npm test` (16 tests passed, including 7 cursor-contract tests).
+  4. PASS — `cd pi-adapter && npm test` (29 tests passed).
