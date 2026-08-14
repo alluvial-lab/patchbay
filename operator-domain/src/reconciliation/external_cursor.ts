@@ -17,27 +17,43 @@ export interface ProjectionReplacement<Entry, Cursor, Leaf> {
   readonly leaf: Leaf;
 }
 
-/** Adapter-owned external reconciliation boundary shared by adapter profiles. */
-export interface AuthoritativeCursorReplacement<Scope, Entry, Cursor, Leaf> {
-  reconcileKnown(scope: Scope, cursor: Cursor): Promise<readonly Entry[]>;
-  stageReplacement(scope: Scope): Promise<{ entries: readonly Entry[]; leaf: Leaf }>;
-  commitReplacement(
-    scope: Scope,
-    replacement: ProjectionReplacement<Entry, Cursor, Leaf>,
-  ): Promise<void>;
+/** The binding method returns the staged epoch as well as its exact fetched evidence. */
+export interface StagedCursorReplacement<Entry, Leaf> {
+  readonly replacementEpoch: bigint;
+  readonly entries: readonly Entry[];
+  readonly leaf: Leaf;
 }
 
-export interface KnownCursorSuffix<Entry, Cursor, Leaf> {
-  readonly baseCursor: Cursor;
+export interface KnownCursorFetch<Entry, Cursor, Leaf> {
   readonly entries: readonly Entry[];
   readonly cursor: Cursor;
   readonly leaf: Leaf;
 }
 
-export interface StagedProjectionReplacement<Entry, Leaf> {
-  readonly replacementEpoch: bigint;
-  readonly exactEntries: readonly Entry[];
-  readonly leaf: Leaf;
+export interface KnownCursorSuffix<Entry, Cursor, Leaf>
+  extends KnownCursorFetch<Entry, Cursor, Leaf> {
+  readonly baseCursor: Cursor;
+}
+
+/** Adapter-specific external reads are confined to this narrow domain-owned port. */
+export interface ExternalCursorFetchPort<Scope, Entry, Cursor, Leaf> {
+  fetchKnown(scope: Scope, cursor: Cursor): Promise<KnownCursorFetch<Entry, Cursor, Leaf>>;
+  fetchComplete(scope: Scope): Promise<{ readonly entries: readonly Entry[]; readonly leaf: Leaf }>;
+}
+
+/**
+ * Publication is acknowledged before the local cursor record advances. Adapters
+ * implement this port with their generated suffix/replacement envelopes.
+ */
+export interface ExternalCursorPublishPort<Scope, Entry, Cursor, Leaf> {
+  publishKnownSuffix(
+    scope: Scope,
+    suffix: KnownCursorSuffix<Entry, Cursor, Leaf>,
+  ): Promise<void>;
+  publishReplacement(
+    scope: Scope,
+    replacement: ProjectionReplacement<Entry, Cursor, Leaf>,
+  ): Promise<void>;
 }
 
 export type PendingProjectionReplacement<Entry, Leaf> =
@@ -45,7 +61,12 @@ export type PendingProjectionReplacement<Entry, Leaf> =
       readonly kind: "fetching";
       readonly replacementEpoch: bigint;
     }
-  | ({ readonly kind: "staged" } & StagedProjectionReplacement<Entry, Leaf>);
+  | {
+      readonly kind: "staged";
+      readonly replacementEpoch: bigint;
+      readonly exactEntries: readonly Entry[];
+      readonly leaf: Leaf;
+    };
 
 export interface ExternalCursorProjectionRecord<Entry, Cursor, Leaf> {
   /** Store-owned compare-and-swap version, separate from the external epoch. */
@@ -107,11 +128,11 @@ export function externalCursorScopeKey(scope: ExternalCursorScope): string {
 }
 
 /**
- * Adapter-neutral transition owner for one external cursor projection. Fetches
- * and durable writes are injected so tests and adapters can model crash points
- * without filesystem behavior entering the domain.
+ * The exported adapter-facing contract is the concrete transition owner. Adapter
+ * profiles inject only external fetch/publication, value, and atomic-store ports;
+ * they do not independently reimplement the authority state machine.
  */
-export class ExternalCursorProjectionMachine<
+export class AuthoritativeCursorReplacement<
   Scope extends ExternalCursorScope,
   Entry,
   Cursor,
@@ -119,6 +140,8 @@ export class ExternalCursorProjectionMachine<
 > {
   constructor(
     private readonly store: AtomicExternalCursorProjectionStore<Scope, Entry, Cursor, Leaf>,
+    private readonly fetch: ExternalCursorFetchPort<Scope, Entry, Cursor, Leaf>,
+    private readonly publish: ExternalCursorPublishPort<Scope, Entry, Cursor, Leaf>,
     private readonly values: ExternalCursorValueContract<Entry, Cursor, Leaf>,
   ) {}
 
@@ -132,11 +155,8 @@ export class ExternalCursorProjectionMachine<
     return copyRecord(record);
   }
 
-  /** Apply a known-cursor suffix without deleting any pre-existing member. */
-  async applyKnownSuffix(
-    scope: Scope,
-    suffix: KnownCursorSuffix<Entry, Cursor, Leaf>,
-  ): Promise<void> {
+  /** Fetch, publish, and atomically apply a known-cursor suffix. */
+  async reconcileKnown(scope: Scope, cursor: Cursor): Promise<readonly Entry[]> {
     const current = await this.loadRequired(scope);
     if (current.freshness !== "current" || current.pendingReplacement) {
       throw new ExternalCursorInvariantError(
@@ -144,11 +164,18 @@ export class ExternalCursorProjectionMachine<
       );
     }
 
+    const fetched = await this.fetch.fetchKnown(scope, cursor);
+    const suffix: KnownCursorSuffix<Entry, Cursor, Leaf> = {
+      baseCursor: cursor,
+      entries: this.validateExactEntries(fetched.entries),
+      cursor: fetched.cursor,
+      leaf: fetched.leaf,
+    };
     const merged = this.mergeSuffix(current.projection.exactEntries, suffix.entries);
     const isCommittedRetry = this.values.cursorsEqual(current.projection.cursor, suffix.cursor)
       && this.values.leavesEqual(current.projection.leaf, suffix.leaf)
       && this.entrySequencesEqual(current.projection.exactEntries, merged);
-    if (isCommittedRetry) return;
+    if (isCommittedRetry) return [...suffix.entries];
 
     if (!this.values.cursorsEqual(current.projection.cursor, suffix.baseCursor)) {
       throw new ExternalCursorInvariantError("known-cursor suffix base does not match current cursor");
@@ -164,21 +191,20 @@ export class ExternalCursorProjectionMachine<
         leaf: suffix.leaf,
       },
     };
+    await this.publish.publishKnownSuffix(scope, copyKnownSuffix(suffix));
     await this.store.compareAndSwap(scope, current.recordVersion, next);
+    return [...suffix.entries];
   }
 
   /**
-   * Mark the old projection stale before fetching, then persist the validated
-   * complete candidate without making its leaf or cursor current.
+   * Mark the old projection stale, fetch the complete candidate, and stage it
+   * without making the fetched leaf or any future cursor current.
    */
-  async stageAuthoritativeReplacement(
-    scope: Scope,
-    fetchComplete: () => Promise<{ entries: readonly Entry[]; leaf: Leaf }>,
-  ): Promise<StagedProjectionReplacement<Entry, Leaf>> {
+  async stageReplacement(scope: Scope): Promise<StagedCursorReplacement<Entry, Leaf>> {
     let current = await this.loadRequired(scope);
 
     if (current.pendingReplacement?.kind === "staged") {
-      return copyStage(current.pendingReplacement);
+      return copyPublicStage(current.pendingReplacement);
     }
 
     if (!current.pendingReplacement) {
@@ -197,7 +223,7 @@ export class ExternalCursorProjectionMachine<
       throw new ExternalCursorInvariantError("a fetching replacement requires a stale projection");
     }
 
-    const fetched = await fetchComplete();
+    const fetched = await this.fetch.fetchComplete(scope);
     const exactEntries = this.validateExactEntries(fetched.entries);
     const latest = await this.loadRequired(scope);
     const epoch = current.pendingReplacement!.replacementEpoch;
@@ -208,7 +234,7 @@ export class ExternalCursorProjectionMachine<
         && this.entrySequencesEqual(latest.pendingReplacement.exactEntries, exactEntries)
         && this.values.leavesEqual(latest.pendingReplacement.leaf, fetched.leaf)
       ) {
-        return copyStage(latest.pendingReplacement);
+        return copyPublicStage(latest.pendingReplacement);
       }
       throw new ExternalCursorInvariantError("replacement epoch already has conflicting staged content");
     }
@@ -220,7 +246,11 @@ export class ExternalCursorProjectionMachine<
       throw new ExternalCursorInvariantError("replacement staging lost its expected epoch");
     }
 
-    const staged: StagedProjectionReplacement<Entry, Leaf> = {
+    const staged: Extract<
+      PendingProjectionReplacement<Entry, Leaf>,
+      { readonly kind: "staged" }
+    > = {
+      kind: "staged",
       replacementEpoch: epoch,
       exactEntries,
       leaf: fetched.leaf,
@@ -229,13 +259,13 @@ export class ExternalCursorProjectionMachine<
       recordVersion: latest.recordVersion + 1n,
       freshness: "stale",
       projection: copyProjection(latest.projection),
-      pendingReplacement: { kind: "staged", ...staged },
+      pendingReplacement: staged,
     };
     await this.store.compareAndSwap(scope, latest.recordVersion, next);
-    return copyStage(staged);
+    return copyPublicStage(staged);
   }
 
-  /** Install exact projection membership, leaf, cursor, and epoch together. */
+  /** Publish and install exact projection membership, leaf, cursor, and epoch together. */
   async commitReplacement(
     scope: Scope,
     replacement: ProjectionReplacement<Entry, Cursor, Leaf>,
@@ -274,6 +304,7 @@ export class ExternalCursorProjectionMachine<
       freshness: "current",
       projection: exactReplacement,
     };
+    await this.publish.publishReplacement(scope, copyProjection(exactReplacement));
     await this.store.compareAndSwap(scope, current.recordVersion, committed);
   }
 
@@ -368,6 +399,135 @@ export class ExternalCursorProjectionMachine<
   }
 }
 
+export interface AtomicExternalCursorProjectionStoreConformanceOptions<
+  Scope,
+  Entry,
+  Cursor,
+  Leaf,
+> {
+  /** Return a fresh concrete store seeded with initialRecord at scope. */
+  createStore():
+    | AtomicExternalCursorProjectionStore<Scope, Entry, Cursor, Leaf>
+    | Promise<AtomicExternalCursorProjectionStore<Scope, Entry, Cursor, Leaf>>;
+  readonly scope: Scope;
+  readonly initialRecord: ExternalCursorProjectionRecord<Entry, Cursor, Leaf>;
+  readonly firstNextRecord: ExternalCursorProjectionRecord<Entry, Cursor, Leaf>;
+  readonly secondNextRecord: ExternalCursorProjectionRecord<Entry, Cursor, Leaf>;
+  assertSnapshot(
+    actual: ExternalCursorProjectionRecord<Entry, Cursor, Leaf> | undefined,
+    expected: ExternalCursorProjectionRecord<Entry, Cursor, Leaf>,
+    context: string,
+  ): void;
+}
+
+/**
+ * Framework-neutral reusable CAS-store suite. Every concrete store must execute
+ * it from that store's own tests; it checks stale-version rejection, complete
+ * snapshot installation, ambiguous post-commit retry, and racing writers.
+ */
+export async function assertAtomicExternalCursorProjectionStoreConformance<
+  Scope,
+  Entry,
+  Cursor,
+  Leaf,
+>(
+  options: AtomicExternalCursorProjectionStoreConformanceOptions<Scope, Entry, Cursor, Leaf>,
+): Promise<readonly string[]> {
+  const expectedNextVersion = options.initialRecord.recordVersion + 1n;
+  if (
+    options.initialRecord.recordVersion === 0n
+    || options.firstNextRecord.recordVersion !== expectedNextVersion
+    || options.secondNextRecord.recordVersion !== expectedNextVersion
+  ) {
+    throw new ExternalCursorInvariantError(
+      "store conformance requires a positive initial recordVersion and next records that advance it exactly once",
+    );
+  }
+
+  const staleStore = await options.createStore();
+  await expectRejection(
+    staleStore.compareAndSwap(
+      options.scope,
+      options.initialRecord.recordVersion - 1n,
+      options.firstNextRecord,
+    ),
+    "stale expected recordVersion must reject",
+  );
+  options.assertSnapshot(
+    await staleStore.load(options.scope),
+    options.initialRecord,
+    "stale expected version installs nothing",
+  );
+
+  const snapshotStore = await options.createStore();
+  await snapshotStore.compareAndSwap(
+    options.scope,
+    options.initialRecord.recordVersion,
+    options.firstNextRecord,
+  );
+  options.assertSnapshot(
+    await snapshotStore.load(options.scope),
+    options.firstNextRecord,
+    "successful CAS installs the complete next snapshot",
+  );
+
+  const ambiguousStore = await options.createStore();
+  await ambiguousStore.compareAndSwap(
+    options.scope,
+    options.initialRecord.recordVersion,
+    options.firstNextRecord,
+  );
+  await expectRejection(
+    ambiguousStore.compareAndSwap(
+      options.scope,
+      options.initialRecord.recordVersion,
+      options.firstNextRecord,
+    ),
+    "a retry after an unobserved committed response must reject its stale expected version",
+  );
+  options.assertSnapshot(
+    await ambiguousStore.load(options.scope),
+    options.firstNextRecord,
+    "ambiguous post-commit retry preserves the complete committed snapshot",
+  );
+
+  const racingStore = await options.createStore();
+  const start = deferred();
+  const attempts = [options.firstNextRecord, options.secondNextRecord].map(async (next) => {
+    await start.promise;
+    await racingStore.compareAndSwap(
+      options.scope,
+      options.initialRecord.recordVersion,
+      next,
+    );
+  });
+  start.resolve();
+  const settled = await Promise.allSettled(attempts);
+  const winners = settled
+    .map((result, index) => result.status === "fulfilled" ? index : -1)
+    .filter((index) => index >= 0);
+  if (winners.length !== 1) {
+    throw new ExternalCursorInvariantError(
+      `racing CAS writers must have exactly one winner, observed ${winners.length}`,
+    );
+  }
+  const winningRecord = winners[0] === 0
+    ? options.firstNextRecord
+    : options.secondNextRecord;
+  options.assertSnapshot(
+    await racingStore.load(options.scope),
+    winningRecord,
+    "racing CAS preserves the winner's complete snapshot without a lost overwrite",
+  );
+
+  return [
+    "stale-expected-version rejection",
+    "all-or-nothing snapshots",
+    "ambiguous post-commit retry",
+    "racing-writer behavior",
+  ];
+}
+
 function boundedIdentity(value: string, field: string, max: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > max) {
     throw new ExternalCursorInvariantError(`${field} must be a bounded non-empty string`);
@@ -387,10 +547,20 @@ function copyProjection<Entry, Cursor, Leaf>(
   return { ...projection, exactEntries: [...projection.exactEntries] };
 }
 
-function copyStage<Entry, Leaf>(
-  stage: StagedProjectionReplacement<Entry, Leaf>,
-): StagedProjectionReplacement<Entry, Leaf> {
-  return { ...stage, exactEntries: [...stage.exactEntries] };
+function copyKnownSuffix<Entry, Cursor, Leaf>(
+  suffix: KnownCursorSuffix<Entry, Cursor, Leaf>,
+): KnownCursorSuffix<Entry, Cursor, Leaf> {
+  return { ...suffix, entries: [...suffix.entries] };
+}
+
+function copyPublicStage<Entry, Leaf>(
+  stage: Extract<PendingProjectionReplacement<Entry, Leaf>, { readonly kind: "staged" }>,
+): StagedCursorReplacement<Entry, Leaf> {
+  return {
+    replacementEpoch: stage.replacementEpoch,
+    entries: [...stage.exactEntries],
+    leaf: stage.leaf,
+  };
 }
 
 function copyRecord<Entry, Cursor, Leaf>(
@@ -405,8 +575,25 @@ function copyRecord<Entry, Cursor, Leaf>(
       ? {
           pendingReplacement: pending.kind === "fetching"
             ? { ...pending }
-            : { kind: "staged" as const, ...copyStage(pending) },
+            : { ...pending, exactEntries: [...pending.exactEntries] },
         }
       : {}),
   };
+}
+
+async function expectRejection(attempt: Promise<void>, context: string): Promise<void> {
+  try {
+    await attempt;
+  } catch {
+    return;
+  }
+  throw new ExternalCursorInvariantError(context);
+}
+
+function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
 }

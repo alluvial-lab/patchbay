@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-cursor-authoritative-replacement-contract
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract]
@@ -87,3 +87,32 @@ Independent early leaf after logical identity. Every spawn reconnect operation a
   2. PASS — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (54 vectors read, 17 promoted, 38 registered mutation witnesses killed; generated artifacts clean).
   3. PASS — `cd operator-domain && npm run build && npm test` (16 tests passed, including 7 cursor-contract tests).
   4. PASS — `cd pi-adapter && npm test` (29 tests passed).
+
+### Fix round — exported state-machine binding and CAS/epoch oracles
+
+- Trigger: the 2026-08-14 thorough review accepted all six original acceptance rows but returned two MATERIAL gaps: a no-op could satisfy the disconnected exported interface, and the same-epoch correlation/CAS-version mutants survived.
+- Finding 1 — concrete exported consumer contract:
+  - Replaced the structurally implementable `AuthoritativeCursorReplacement` interface plus separately exported `ExternalCursorProjectionMachine` with one exported concrete `AuthoritativeCursorReplacement` transition owner. Private constructor dependencies make its consumer type nominal enough that the former no-op object literal no longer satisfies it.
+  - Its public methods now match the binding surface: `reconcileKnown(scope, cursor)`, `stageReplacement(scope)`, and `commitReplacement(scope, replacement)`. The staged result additionally carries its required epoch so a consumer can construct the correlated commit without inventing state.
+  - Adapter profiles may inject only `ExternalCursorFetchPort`, `ExternalCursorPublishPort`, `ExternalCursorValueContract`, and `AtomicExternalCursorProjectionStore`. Fetch and publication behavior remain adapter-owned; stale/current, epoch correlation, exact replacement, retry, and CAS transitions cannot be reimplemented downstream.
+  - Every cursor acceptance/crash test now drives the exported concrete object. The former surface-only test and blessed empty `commitReplacement()` implementation were deleted.
+- Finding 2 — committed conflict/race/store oracles:
+  - Added explicit staged same-epoch different-entry and different-leaf commit attempts, then different-cursor and different-content attempts after a successful commit. Every attempt asserts rejection, no publication, and exact preservation of the complete authoritative pre-attempt record.
+  - Added barrier-controlled races for two known suffixes, known suffix versus replacement staging, and two complete replacement fetches. Each race asserts exactly one CAS success, one stale-version rejection, and a final complete snapshot equal to the winner rather than a last-writer overwrite or hybrid record.
+  - Added exported, framework-neutral `assertAtomicExternalCursorProjectionStoreConformance`. Every concrete CAS store must run it from its own tests; the suite checks stale-expected-version rejection, all-or-nothing complete snapshots, ambiguous post-commit retry, and racing-writer behavior. The committed `MemoryStore` executes all four cases.
+- Files changed:
+  - `operator-domain/src/reconciliation/external_cursor.ts` — concrete composed consumer object, narrow fetch/publish/value/storage ports, binding-aligned methods, and reusable CAS-store conformance suite.
+  - `operator-domain/tests/external-cursor.test.ts` — exported-object behavioral acceptance suite, same-epoch/post-commit preservation oracles, three controlled race families, and the first concrete-store conformance execution.
+- Mutation evidence (mutants were applied only to the worktree over the staged fixed baseline and then reverted with `git restore`; neither mutant was committed):
+  - Removed the staged epoch/exact-entry/leaf correlation guard in `commitReplacement` → `same-epoch and post-commit conflicts preserve the authoritative pre-attempt record` failed with `Missing expected rejection` (19/20 operator-domain tests passed, 1 failed). **KILLED.**
+  - Removed `expectedRecordVersion` enforcement from `MemoryStore.compareAndSwap` → both-winner assertions failed for the suffix and replacement-fetch races, the known-vs-stage stale-version oracle failed, and the reusable suite failed `stale expected recordVersion must reject` (16/20 passed, 4 failed). **KILLED.**
+- Discrepancies/rationale:
+  - The binding feature's illustrative TypeScript uses an interface. This fix deliberately preserves its three-method surface as a concrete class instead, because continuing to permit independent implementations would recreate the reviewed no-op seam and require a larger implementation-conformance program. The class is still adapter-neutral and package-private to this repository's unpublished boundary.
+  - `stageReplacement` returns the binding's `{ entries, leaf }` plus `replacementEpoch`; the epoch was already mandatory in `ProjectionReplacement` and exposing the state-machine-owned value removes caller invention.
+  - No Protobuf or foundation-doc change was required. Publication remains an injected adapter-owned acknowledgement port; this leaf implements no adapter-specific envelope or Pi behavior.
+- Full clean verification after both mutation restores:
+  1. **PASS** — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`.
+  2. **PASS** — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (54 vectors, 17 promoted vectors, 22 implementation checks, 38 mutation witnesses; generated bindings clean).
+  3. **PASS** — `cd operator-domain && npm run build && npm test` (20/20 tests; 11 cursor-contract/store-conformance tests).
+  4. **PASS** — `cd pi-adapter && npm test` (29/29 tests).
+- Residual handoff: downstream concrete CAS stores must execute the exported store-conformance suite, and the Pi story must supply only the four narrow ports. This leaf intentionally does not implement or claim Pi publication/storage conformance.
