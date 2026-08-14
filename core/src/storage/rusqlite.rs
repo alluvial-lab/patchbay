@@ -30,9 +30,10 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, DescendantGrant, EventId,
-    FailureCode, Generation, Grant, IdempotencyKey, Lsn, SpawnPromotionCommitted, StoredEventKind,
-    StoredEventPayload,
+    runtime_generation_disposition, AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId,
+    DescendantGrant, EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn,
+    QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason, SpawnPromotionCommitted,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -353,17 +354,20 @@ fn decoded_grant_boundary(
             )
         }
         StoredEventKind::SpawnPromotionCommitted => {
-            let promotion = SpawnPromotionCommitted::decode(payload.payload.as_slice()).map_err(|error| {
-                StorageError::CorruptRecord(format!(
-                    "cannot decode promotion descendant grant identity: {error}"
-                ))
-            })?;
+            let promotion =
+                SpawnPromotionCommitted::decode(payload.payload.as_slice()).map_err(|error| {
+                    StorageError::CorruptRecord(format!(
+                        "cannot decode promotion descendant grant identity: {error}"
+                    ))
+                })?;
             let grant = promotion
                 .authority
                 .and_then(|authority| authority.descendant_grant)
-                .ok_or_else(|| StorageError::CorruptRecord(
-                    "promotion identity source has no descendant grant".to_owned(),
-                ))?;
+                .ok_or_else(|| {
+                    StorageError::CorruptRecord(
+                        "promotion identity source has no descendant grant".to_owned(),
+                    )
+                })?;
             (
                 grant.grant_id,
                 grant.authority_domain_id,
@@ -378,10 +382,18 @@ fn decoded_grant_boundary(
     };
     let grant_id = grant_id
         .filter(|identity| !identity.value.is_empty())
-        .ok_or_else(|| StorageError::CorruptRecord("grant identity source has no non-empty grant_id".to_owned()))?;
+        .ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "grant identity source has no non-empty grant_id".to_owned(),
+            )
+        })?;
     let authority_domain_id = authority_domain_id
         .filter(|identity| !identity.value.is_empty())
-        .ok_or_else(|| StorageError::CorruptRecord("grant identity source has no non-empty authority_domain_id".to_owned()))?;
+        .ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "grant identity source has no non-empty authority_domain_id".to_owned(),
+            )
+        })?;
     Ok((grant_id.value, authority_domain_id.value, reason_code))
 }
 
@@ -435,8 +447,7 @@ fn authoritative_grant_identities(
                 "grant source kind disagrees at LSN {source_lsn}"
             )));
         }
-        let (grant_id, embedded_domain, _) =
-            decoded_grant_boundary(&envelope, envelope_kind)?;
+        let (grant_id, embedded_domain, _) = decoded_grant_boundary(&envelope, envelope_kind)?;
         if embedded_domain != row_domain {
             return Err(StorageError::CorruptRecord(format!(
                 "grant {grant_id} at LSN {source_lsn} embeds authority domain {embedded_domain}, row belongs to {row_domain}"
@@ -506,9 +517,7 @@ fn validate_grant_identity_index(db: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn backfill_grant_identity_index(
-    tx: &rusqlite::Transaction<'_>,
-) -> Result<(), StorageError> {
+fn backfill_grant_identity_index(tx: &rusqlite::Transaction<'_>) -> Result<(), StorageError> {
     for ((authority_domain_id, grant_id), source) in authoritative_grant_identities(tx)? {
         tx.execute(
             "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn)
@@ -538,9 +547,27 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         .into_iter()
         .any(|exists| exists);
     if (version == 0 && any_base) || version >= 1 {
-        validate_columns(db, "events", &["lsn", "authority_domain_id", "kind", "payload"])?;
-        validate_columns(db, "idempotency_keys", &["authority_domain_id", "key", "target", "lsn", "payload_bytes"])?;
-        validate_columns(db, "snapshots", &["authority_domain_id", "snapshot_lsn", "payload"])?;
+        validate_columns(
+            db,
+            "events",
+            &["lsn", "authority_domain_id", "kind", "payload"],
+        )?;
+        validate_columns(
+            db,
+            "idempotency_keys",
+            &[
+                "authority_domain_id",
+                "key",
+                "target",
+                "lsn",
+                "payload_bytes",
+            ],
+        )?;
+        validate_columns(
+            db,
+            "snapshots",
+            &["authority_domain_id", "snapshot_lsn", "payload"],
+        )?;
     }
     let audit_exists = table_exists(db, "audit_records")?;
     if version >= 2 || audit_exists {
@@ -585,12 +612,15 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         validate_grant_identity_index(db)?;
     }
 
-    db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
-        .map_err(map_write_err)?;
+    db.execute_batch(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
+    )
+    .map_err(map_write_err)?;
     if version == 0 {
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_1).map_err(map_write_err)?;
-        tx.execute_batch("PRAGMA user_version = 1").map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 1")
+            .map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
     let version: u32 = db
@@ -599,21 +629,28 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     if version < 2 {
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_2).map_err(map_write_err)?;
-        tx.execute_batch("PRAGMA user_version = 2").map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 2")
+            .map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(map_write_err)?;
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(map_write_err)?;
     if version < 3 {
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_3).map_err(map_write_err)?;
-        tx.execute_batch("PRAGMA user_version = 3").map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 3")
+            .map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(map_write_err)?;
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(map_write_err)?;
     if version < 4 {
         let tx = db.transaction().map_err(map_write_err)?;
         tx.execute_batch(MIGRATION_4).map_err(map_write_err)?;
-        tx.execute_batch("PRAGMA user_version = 4").map_err(map_write_err)?;
+        tx.execute_batch("PRAGMA user_version = 4")
+            .map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
     let version: u32 = db
@@ -702,6 +739,12 @@ enum WriterCommand {
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<SpawnPromotionAppend, StorageError>>,
     },
+    AppendQuarantinedRuntimeEvidenceAudited {
+        authority_domain_id: String,
+        quarantined: Box<QuarantinedRuntimeEvidence>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<AuditedAppend, StorageError>>,
+    },
 }
 
 /// rusqlite-backed storage. Cloneable — the actor handle and read connection
@@ -740,7 +783,9 @@ impl RusqliteStorage {
         // Apply WAL + synchronous to the read connection too (WAL is persistent
         // on the DB file, but synchronous is per-connection).
         read_db
-            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;")
+            .execute_batch(
+                "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
+            )
             .map_err(|e| StorageError::ReadFailed {
                 message: e.to_string(),
                 retryable: false,
@@ -798,11 +843,8 @@ async fn writer_actor(
                 candidate,
                 reply,
             } => {
-                let result = do_load_or_create_core_generation(
-                    &mut db,
-                    &authority_domain_id,
-                    candidate,
-                );
+                let result =
+                    do_load_or_create_core_generation(&mut db, &authority_domain_id, candidate);
                 let _ = reply.send(result);
             }
             WriterCommand::Append {
@@ -822,7 +864,12 @@ async fn writer_actor(
                 reply,
             } => {
                 let result = do_append_dedup(
-                    &mut db, &authority_domain_id, &key, &target, &payload, &logical_payload,
+                    &mut db,
+                    &authority_domain_id,
+                    &key,
+                    &target,
+                    &payload,
+                    &logical_payload,
                 );
                 let _ = reply.send(result);
             }
@@ -904,7 +951,8 @@ async fn writer_actor(
                 audits,
                 reply,
             } => {
-                let result = do_append_decision_audited_many(&mut db, &authority_domain_id, source, audits);
+                let result =
+                    do_append_decision_audited_many(&mut db, &authority_domain_id, source, audits);
                 let _ = reply.send(result);
             }
             WriterCommand::AppendSpawnPromotionAudited {
@@ -917,6 +965,20 @@ async fn writer_actor(
                     &mut db,
                     &authority_domain_id,
                     *promotion,
+                    audit,
+                );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendQuarantinedRuntimeEvidenceAudited {
+                authority_domain_id,
+                quarantined,
+                audit,
+                reply,
+            } => {
+                let result = do_append_quarantined_runtime_evidence_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    *quarantined,
                     audit,
                 );
                 let _ = reply.send(result);
@@ -965,15 +1027,15 @@ fn do_load_or_create_core_generation(
         )));
     }
     tx.commit().map_err(map_write_err)?;
-    Ok(Generation { value: stored as u64 })
+    Ok(Generation {
+        value: stored as u64,
+    })
 }
 
 /// Validate an append candidate before it reaches the writer transaction.
 /// `try_from` succeeds for `Unspecified`, so append validation rejects it
 /// explicitly alongside unknown numeric values.
-fn validate_append_kind(
-    payload: &StoredEventPayload,
-) -> Result<StoredEventKind, StorageError> {
+fn validate_append_kind(payload: &StoredEventPayload) -> Result<StoredEventKind, StorageError> {
     let kind =
         StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
     if kind == StoredEventKind::Unspecified {
@@ -1022,6 +1084,7 @@ fn do_append(
     authority_domain_id: &str,
     payload: &StoredEventPayload,
 ) -> Result<EventId, StorageError> {
+    reject_generic_unaudited_special(payload)?;
     let kind = validate_append_kind(payload)?;
     let encoded = encode_payload(payload)?;
     let tx = db.transaction().map_err(map_write_err)?;
@@ -1050,7 +1113,9 @@ fn encode_hex(bytes: &[u8]) -> String {
     result
 }
 
-fn target_key_for_scope(scope: Option<&patchbay_contracts::patchbay::TargetScope>) -> Option<String> {
+fn target_key_for_scope(
+    scope: Option<&patchbay_contracts::patchbay::TargetScope>,
+) -> Option<String> {
     scope.map(|scope| encode_hex(&scope.encode_to_vec()))
 }
 
@@ -1090,7 +1155,10 @@ fn audit_record_from_draft(
         command_id: draft.command_id,
         grant_id: draft.grant_id,
         target_scope: draft.target_scope,
-        failure_code: draft.failure_code.map(|code| code as i32).unwrap_or(FailureCode::Unspecified as i32),
+        failure_code: draft
+            .failure_code
+            .map(|code| code as i32)
+            .unwrap_or(FailureCode::Unspecified as i32),
         reason_code: draft.reason_code,
         correlation_id: draft.correlation_id,
         source_event_id: draft.source_event_id,
@@ -1130,8 +1198,20 @@ fn insert_audit_index(
         rusqlite::params![
             authority_domain_id,
             audit_lsn,
-            record.occurred_at.as_ref().map(|time| time.seconds).ok_or_else(|| StorageError::InvalidAuditRecord("audit record has no timestamp".to_owned()))?,
-            record.occurred_at.as_ref().map(|time| time.nanos).ok_or_else(|| StorageError::InvalidAuditRecord("audit record has no timestamp".to_owned()))?,
+            record
+                .occurred_at
+                .as_ref()
+                .map(|time| time.seconds)
+                .ok_or_else(|| StorageError::InvalidAuditRecord(
+                    "audit record has no timestamp".to_owned()
+                ))?,
+            record
+                .occurred_at
+                .as_ref()
+                .map(|time| time.nanos)
+                .ok_or_else(|| StorageError::InvalidAuditRecord(
+                    "audit record has no timestamp".to_owned()
+                ))?,
             record.kind,
             actor_id,
             endpoint_id,
@@ -1153,7 +1233,9 @@ fn append_audit_in_transaction(
     audit: AuditRecordDraft,
 ) -> Result<EventId, StorageError> {
     let audit_lsn = tx
-        .query_row("SELECT COALESCE(MAX(lsn), 0) + 1 FROM events", [], |row| row.get::<_, i64>(0))
+        .query_row("SELECT COALESCE(MAX(lsn), 0) + 1 FROM events", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map_err(map_write_err)?;
     let record = audit_record_from_draft(authority_domain_id, audit_lsn, audit)?;
     let payload = StoredEventPayload {
@@ -1192,19 +1274,27 @@ fn do_append_audited(
     source: StoredEventPayload,
     mut audit: AuditRecordDraft,
 ) -> Result<AuditedAppend, StorageError> {
+    reject_generic_unaudited_special(&source)?;
     validate_append_kind(&source)?;
     audit.source_event_id = None;
-    audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
     let tx = db.transaction().map_err(map_write_err)?;
     let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
     let source_event_id = event_id(
-        AuthorityDomainId { value: authority_domain_id.to_owned() },
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
         source_lsn as u64,
     );
     audit.source_event_id = Some(source_event_id.clone());
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
     tx.commit().map_err(map_write_err)?;
-    Ok(AuditedAppend { source_event_id, audit_event_id })
+    Ok(AuditedAppend {
+        source_event_id,
+        audit_event_id,
+    })
 }
 
 fn do_append_grant_audited(
@@ -1219,6 +1309,7 @@ fn do_append_grant_audited(
             "grant identity append requires a non-empty domain and identity".to_owned(),
         ));
     }
+    reject_generic_unaudited_special(&source)?;
     let source_kind = validate_append_kind(&source)?;
     let (embedded_identity, embedded_domain, expected_reason) =
         decoded_grant_boundary(&source, source_kind)?;
@@ -1237,7 +1328,12 @@ fn do_append_grant_audited(
             "grant identity append requires GrantCreated/{expected_reason} audit framing"
         )));
     }
-    if audit.grant_id.as_ref().map(|grant_id| grant_id.value.as_str()) != Some(identity) {
+    if audit
+        .grant_id
+        .as_ref()
+        .map(|grant_id| grant_id.value.as_str())
+        != Some(identity)
+    {
         return Err(StorageError::InvalidAuditRecord(
             "grant creation audit grant_id must match the immutable identity".to_owned(),
         ));
@@ -1351,20 +1447,30 @@ fn do_append_batch_audited(
         ));
     }
     audit.source_event_id = None;
-    audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
+    for source in &sources {
+        reject_generic_unaudited_special(source)?;
+    }
     let tx = db.transaction().map_err(map_write_err)?;
     let mut source_event_ids = Vec::with_capacity(sources.len());
     for source in sources {
         let (lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
         source_event_ids.push(event_id(
-            AuthorityDomainId { value: authority_domain_id.to_owned() },
+            AuthorityDomainId {
+                value: authority_domain_id.to_owned(),
+            },
             lsn as u64,
         ));
     }
     audit.source_event_id = source_event_ids.last().cloned();
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
     tx.commit().map_err(map_write_err)?;
-    Ok(AuditedBatchAppend { source_event_ids, audit_event_id })
+    Ok(AuditedBatchAppend {
+        source_event_ids,
+        audit_event_id,
+    })
 }
 
 fn do_append_decision_audited_many(
@@ -1374,18 +1480,297 @@ fn do_append_decision_audited_many(
     mut audits: Vec<AuditRecordDraft>,
 ) -> Result<AuditedDecisionAppend, StorageError> {
     if audits.is_empty() {
-        return Err(StorageError::InvalidAuditRecord("decision must have at least one audit".to_owned()));
+        return Err(StorageError::InvalidAuditRecord(
+            "decision must have at least one audit".to_owned(),
+        ));
     }
+    reject_generic_unaudited_special(&source)?;
     let tx = db.transaction().map_err(map_write_err)?;
     let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
-    let source_event_id = event_id(AuthorityDomainId { value: authority_domain_id.to_owned() }, source_lsn as u64);
+    let source_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        source_lsn as u64,
+    );
     let mut audit_event_ids = Vec::with_capacity(audits.len());
     for audit in &mut audits {
         audit.source_event_id = Some(source_event_id.clone());
-        audit_event_ids.push(append_audit_in_transaction(&tx, authority_domain_id, audit.clone())?);
+        audit_event_ids.push(append_audit_in_transaction(
+            &tx,
+            authority_domain_id,
+            audit.clone(),
+        )?);
     }
     tx.commit().map_err(map_write_err)?;
-    Ok(AuditedDecisionAppend { source_event_id, audit_event_ids })
+    Ok(AuditedDecisionAppend {
+        source_event_id,
+        audit_event_ids,
+    })
+}
+
+fn recorded_events_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    authority_domain_id: &str,
+) -> Result<Vec<RecordedEvent>, StorageError> {
+    let mut statement = tx
+        .prepare(
+            "SELECT lsn, kind, payload FROM events WHERE authority_domain_id = ?1 ORDER BY lsn",
+        )
+        .map_err(map_write_err)?;
+    let rows = statement
+        .query_map([authority_domain_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .map_err(map_write_err)?;
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    let mut events = Vec::new();
+    for row in rows {
+        let (lsn, sql_kind, bytes) = row.map_err(map_write_err)?;
+        if lsn <= 0 {
+            return Err(StorageError::CorruptRecord(format!(
+                "durable prefix contains non-positive LSN {lsn}"
+            )));
+        }
+        let payload = decode_payload(&bytes)?;
+        if payload.kind != sql_kind {
+            return Err(StorageError::CorruptRecord(format!(
+                "durable prefix kind mismatch at LSN {lsn}"
+            )));
+        }
+        events.push(RecordedEvent {
+            event_id: event_id(domain.clone(), lsn as u64),
+            payload,
+        });
+    }
+    Ok(events)
+}
+
+fn validate_promotion_replayable(
+    tx: &rusqlite::Transaction<'_>,
+    authority_domain_id: &str,
+    candidate: &RecordedEvent,
+) -> Result<(), StorageError> {
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    let events = recorded_events_in_transaction(tx, authority_domain_id)?;
+    let mut authority = crate::authority::AuthorityRegistry::new();
+    let sessions = crate::session::SessionRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut targets = crate::target::TargetRegistry::with_adapters(
+        sessions,
+        crate::resource::ResourceRegistry::new(),
+        crate::adapter::AdapterRegistry::new(),
+    );
+    let mut claims = crate::session::SpawnClaimRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut commands = crate::acceptance::CommandIndex::new();
+    let mut previous_lsn = 0;
+    for event in &events {
+        let validated = crate::storage::validate_next_replay_event(&domain, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        if validated.kind == StoredEventKind::SpawnPromotionCommitted {
+            crate::session::fold_spawn_promotion_ordered(
+                &mut authority,
+                &mut targets,
+                &mut claims,
+                &mut commands,
+                event,
+            )
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        } else {
+            authority
+                .observe(event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            targets
+                .observe_event(event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            claims
+                .observe(event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            commands
+                .apply(event)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        }
+        previous_lsn = validated.lsn;
+    }
+    let candidate_lsn = candidate.event_id.lsn.as_ref().map_or(0, |lsn| lsn.value);
+    if candidate_lsn != previous_lsn.saturating_add(1) {
+        return Err(StorageError::CorruptRecord(
+            "promotion candidate does not immediately follow its validated prefix".to_owned(),
+        ));
+    }
+    crate::session::fold_spawn_promotion_ordered(
+        &mut authority,
+        &mut targets,
+        &mut claims,
+        &mut commands,
+        candidate,
+    )
+    .map_err(|error| {
+        StorageError::CorruptRecord(format!(
+        "promotion is not replayable by the aggregate authority/session/claim/command fold: {error}"
+    ))
+    })
+}
+
+fn do_append_quarantined_runtime_evidence_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    quarantined: QuarantinedRuntimeEvidence,
+    mut audit: AuditRecordDraft,
+) -> Result<AuditedAppend, StorageError> {
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    if quarantined.authority_domain_id.as_ref() != Some(&domain) {
+        return Err(StorageError::CorruptRecord(
+            "quarantine envelope domain does not match append domain".to_owned(),
+        ));
+    }
+    crate::session::validate_quarantined_runtime_evidence(&quarantined)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let reason = RuntimeEvidenceQuarantineReason::try_from(quarantined.reason)
+        .map_err(|_| StorageError::CorruptRecord("quarantine reason is unknown".to_owned()))?;
+    let target = crate::session::quarantined_candidate_scope(&quarantined)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    if audit.kind != AuditEventKind::StaleEventIgnored
+        || audit.failure_code != Some(FailureCode::StaleEvent)
+        || audit.reason_code != crate::session::quarantine_reason_code(reason)
+        || audit.target_scope.as_ref() != Some(&target)
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "quarantine requires canonical StaleEventIgnored/stale_event reason and exact runtime target framing"
+                .to_owned(),
+        ));
+    }
+    audit.source_event_id = None;
+    audit.validate(&domain)?;
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let source = quarantined
+        .source_attachment
+        .as_ref()
+        .expect("quarantine syntactically validated source");
+    let attachment_id = source
+        .attachment_event_id
+        .as_ref()
+        .expect("quarantine syntactically validated attachment id");
+    let attachment_event = events
+        .iter()
+        .find(|event| &event.event_id == attachment_id)
+        .ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "quarantine attachment_event_id does not reference the durable prefix".to_owned(),
+            )
+        })?;
+    let mut referenced_attachment = crate::adapter::AdapterRegistry::new();
+    referenced_attachment
+        .observe(attachment_event)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let adapter_id = source
+        .adapter_id
+        .as_ref()
+        .expect("source syntactically validated");
+    let referenced = referenced_attachment.get(adapter_id).ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "quarantine attachment_event_id is not a canonical registration for its adapter"
+                .to_owned(),
+        )
+    })?;
+    if referenced.registration.adapter_generation != source.adapter_generation
+        || referenced.attach_event_id != *attachment_id
+    {
+        return Err(StorageError::CorruptRecord(
+            "quarantine source generation disagrees with its durable attachment".to_owned(),
+        ));
+    }
+
+    let mut adapters = crate::adapter::AdapterRegistry::new();
+    let mut sessions = crate::session::SessionRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut claims = crate::session::SpawnClaimRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut previous_lsn = 0;
+    for event in &events {
+        let validated = crate::storage::validate_next_replay_event(&domain, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        adapters
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        sessions
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        claims
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        previous_lsn = validated.lsn;
+    }
+    let source_is_current =
+        crate::session::source_matches_current_attachment(&domain, source, &adapters);
+    if (reason == RuntimeEvidenceQuarantineReason::StaleAttachment && source_is_current)
+        || (reason != RuntimeEvidenceQuarantineReason::StaleAttachment && !source_is_current)
+    {
+        return Err(StorageError::CorruptRecord(
+            "quarantine stale/current attachment classification disagrees with the durable prefix"
+                .to_owned(),
+        ));
+    }
+    let actual_disposition = match quarantined.candidate.as_ref().expect("candidate validated") {
+        patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::SessionReport(
+            report,
+        ) => crate::session::classify_session_report(
+            &domain,
+            report,
+            source,
+            &adapters,
+            &claims,
+            sessions.logical_targets(),
+        ),
+        _ => crate::session::classify_runtime_target(
+            &domain,
+            &crate::session::quarantined_candidate_target(&quarantined)
+                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?,
+            source,
+            &adapters,
+            &sessions,
+        ),
+    };
+    let framed_disposition = quarantined
+        .classification
+        .as_ref()
+        .and_then(|context| context.disposition.as_ref())
+        .expect("quarantine disposition validated");
+    if &actual_disposition != framed_disposition
+        || matches!(
+            actual_disposition.disposition,
+            Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
+        )
+    {
+        return Err(StorageError::CorruptRecord(
+            "quarantine classification does not match the durable runtime/claim prefix".to_owned(),
+        ));
+    }
+
+    let source_payload = crate::session::encode_quarantined_runtime_evidence(&quarantined)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source_payload)?;
+    let source_event_id = event_id(domain, source_lsn as u64);
+    audit.source_event_id = Some(source_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(AuditedAppend {
+        source_event_id,
+        audit_event_id,
+    })
 }
 
 fn do_append_spawn_promotion_audited(
@@ -1406,7 +1791,9 @@ fn do_append_spawn_promotion_audited(
         .authority
         .as_mut()
         .and_then(|authority| authority.descendant_grant.as_mut())
-        .ok_or_else(|| StorageError::CorruptRecord("promotion has no descendant grant".to_owned()))?;
+        .ok_or_else(|| {
+            StorageError::CorruptRecord("promotion has no descendant grant".to_owned())
+        })?;
     if descendant.audit_id.is_some() {
         return Err(StorageError::CorruptRecord(
             "promotion descendant audit id must be assigned by storage".to_owned(),
@@ -1416,7 +1803,9 @@ fn do_append_spawn_promotion_audited(
         .grant_id
         .as_ref()
         .filter(|grant_id| !grant_id.value.is_empty())
-        .ok_or_else(|| StorageError::CorruptRecord("promotion descendant has no grant id".to_owned()))?
+        .ok_or_else(|| {
+            StorageError::CorruptRecord("promotion descendant has no grant id".to_owned())
+        })?
         .value
         .clone();
     let command_id = promotion
@@ -1425,11 +1814,14 @@ fn do_append_spawn_promotion_audited(
         .and_then(|accepted| accepted.claim.as_ref())
         .and_then(|claim| claim.claim_operation_id.as_ref())
         .filter(|command_id| !command_id.value.is_empty())
-        .ok_or_else(|| StorageError::CorruptRecord("promotion has no claim operation id".to_owned()))?
+        .ok_or_else(|| {
+            StorageError::CorruptRecord("promotion has no claim operation id".to_owned())
+        })?
         .clone();
     if audit.kind != AuditEventKind::CommandCompleted
         || audit.reason_code != "spawn_completion"
         || audit.command_id.as_ref() != Some(&command_id)
+        || promotion.committed_at.as_ref() != Some(&audit.occurred_at)
     {
         return Err(StorageError::InvalidAuditRecord(
             "promotion requires CommandCompleted/spawn_completion audit for the exact operation"
@@ -1500,6 +1892,11 @@ fn do_append_spawn_promotion_audited(
         kind: StoredEventKind::SpawnPromotionCommitted as i32,
         payload: promotion.encode_to_vec(),
     };
+    let candidate = RecordedEvent {
+        event_id: source_event_id.clone(),
+        payload: source.clone(),
+    };
+    validate_promotion_replayable(&tx, authority_domain_id, &candidate)?;
     let (actual_source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
     if actual_source_lsn != source_lsn {
         return Err(StorageError::CorruptRecord(format!(
@@ -1535,9 +1932,12 @@ fn do_append_dedup_audited(
     mut audit: AuditRecordDraft,
     logical_payload: Vec<u8>,
 ) -> Result<AuditedDedupOutcome, StorageError> {
+    reject_generic_unaudited_special(&source)?;
     validate_append_kind(&source)?;
     audit.source_event_id = None;
-    audit.validate(&AuthorityDomainId { value: authority_domain_id.to_owned() })?;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
     let canonical = logical_payload;
     let tx = db.transaction().map_err(map_write_err)?;
     let existing: Option<(i64, Vec<u8>)> = match tx.query_row(
@@ -1563,18 +1963,39 @@ fn do_append_dedup_audited(
                 rusqlite::params![authority_domain_id, key, target, lsn, canonical],
             ).map_err(map_write_err)?;
             let _ = encoded;
-            let source_event_id = event_id(AuthorityDomainId { value: authority_domain_id.to_owned() }, lsn as u64);
+            let source_event_id = event_id(
+                AuthorityDomainId {
+                    value: authority_domain_id.to_owned(),
+                },
+                lsn as u64,
+            );
             audit.source_event_id = Some(source_event_id);
             let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
             tx.commit().map_err(map_write_err)?;
-            return Ok(AuditedDedupOutcome::Appended(AuditedAppend { source_event_id: event_id(AuthorityDomainId { value: authority_domain_id.to_owned() }, lsn as u64), audit_event_id }));
+            return Ok(AuditedDedupOutcome::Appended(AuditedAppend {
+                source_event_id: event_id(
+                    AuthorityDomainId {
+                        value: authority_domain_id.to_owned(),
+                    },
+                    lsn as u64,
+                ),
+                audit_event_id,
+            }));
         }
     };
-    let source_event_id = event_id(AuthorityDomainId { value: authority_domain_id.to_owned() }, source_lsn as u64);
+    let source_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        source_lsn as u64,
+    );
     audit.source_event_id = Some(source_event_id.clone());
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
     tx.commit().map_err(map_write_err)?;
-    Ok(AuditedDedupOutcome::Duplicate { source_event_id, audit_event_id })
+    Ok(AuditedDedupOutcome::Duplicate {
+        source_event_id,
+        audit_event_id,
+    })
 }
 
 fn do_append_dedup(
@@ -1585,6 +2006,7 @@ fn do_append_dedup(
     payload: &StoredEventPayload,
     logical_payload: &[u8],
 ) -> Result<DedupOutcome, StorageError> {
+    reject_generic_unaudited_special(payload)?;
     let kind = validate_append_kind(payload)?;
     let encoded = encode_payload(payload)?;
     let canonical = logical_payload.to_vec();
@@ -1697,12 +2119,16 @@ fn validate_audit_spec(spec: &AuditPageSpec) -> Result<(), StorageError> {
     }
     for kind in &spec.kinds {
         if *kind == AuditEventKind::Unspecified || AuditEventKind::try_from(*kind as i32).is_err() {
-            return Err(StorageError::InvalidAuditRecord("audit filter contains an unknown kind".to_owned()));
+            return Err(StorageError::InvalidAuditRecord(
+                "audit filter contains an unknown kind".to_owned(),
+            ));
         }
     }
     for code in &spec.failure_codes {
         if *code == FailureCode::Unspecified || FailureCode::try_from(*code as i32).is_err() {
-            return Err(StorageError::InvalidAuditRecord("audit filter contains an unknown failure code".to_owned()));
+            return Err(StorageError::InvalidAuditRecord(
+                "audit filter contains an unknown failure code".to_owned(),
+            ));
         }
     }
     for reason in &spec.reason_codes {
@@ -1716,7 +2142,9 @@ fn validate_audit_spec(spec: &AuditPageSpec) -> Result<(), StorageError> {
     }
     if let (Some(from), Some(before)) = (&spec.occurred_from, &spec.occurred_before) {
         if (from.seconds, from.nanos) >= (before.seconds, before.nanos) {
-            return Err(StorageError::InvalidAuditRecord("audit time interval is empty or reversed".to_owned()));
+            return Err(StorageError::InvalidAuditRecord(
+                "audit time interval is empty or reversed".to_owned(),
+            ));
         }
     }
     Ok(())
@@ -1739,13 +2167,19 @@ fn query_audit_sync(
     if let Some(as_of_lsn) = as_of_lsn {
         let as_of_lsn = lsn_to_i64(as_of_lsn)?;
         if as_of_lsn > max_lsn {
-            return Err(StorageError::InvalidAuditCursor(format!("prefix LSN {as_of_lsn} is beyond current LSN {max_lsn}")));
+            return Err(StorageError::InvalidAuditCursor(format!(
+                "prefix LSN {as_of_lsn} is beyond current LSN {max_lsn}"
+            )));
         }
     }
     if let Some(before_lsn) = spec.before_lsn {
-        let before_lsn = lsn_to_i64(before_lsn).map_err(|_| StorageError::InvalidAuditCursor("cursor exceeds SQLite range".to_owned()))?;
+        let before_lsn = lsn_to_i64(before_lsn).map_err(|_| {
+            StorageError::InvalidAuditCursor("cursor exceeds SQLite range".to_owned())
+        })?;
         if before_lsn > max_lsn {
-            return Err(StorageError::InvalidAuditCursor(format!("cursor {before_lsn} is beyond current LSN {max_lsn}")));
+            return Err(StorageError::InvalidAuditCursor(format!(
+                "cursor {before_lsn} is beyond current LSN {max_lsn}"
+            )));
         }
     }
 
@@ -1760,7 +2194,10 @@ fn query_audit_sync(
         values.push(Value::Integer(lsn_to_i64(before_lsn)?));
     }
     if !spec.kinds.is_empty() {
-        clauses.push(format!("a.kind IN ({})", vec!["?"; spec.kinds.len()].join(",")));
+        clauses.push(format!(
+            "a.kind IN ({})",
+            vec!["?"; spec.kinds.len()].join(",")
+        ));
         values.extend(spec.kinds.iter().map(|kind| Value::Integer(*kind as i64)));
     }
     if let Some(actor_id) = spec.actor_id {
@@ -1784,11 +2221,21 @@ fn query_audit_sync(
         values.push(Value::Text(target.as_str().to_owned()));
     }
     if !spec.failure_codes.is_empty() {
-        clauses.push(format!("a.failure_code IN ({})", vec!["?"; spec.failure_codes.len()].join(",")));
-        values.extend(spec.failure_codes.iter().map(|code| Value::Integer(*code as i64)));
+        clauses.push(format!(
+            "a.failure_code IN ({})",
+            vec!["?"; spec.failure_codes.len()].join(",")
+        ));
+        values.extend(
+            spec.failure_codes
+                .iter()
+                .map(|code| Value::Integer(*code as i64)),
+        );
     }
     if !spec.reason_codes.is_empty() {
-        clauses.push(format!("a.reason_code IN ({})", vec!["?"; spec.reason_codes.len()].join(",")));
+        clauses.push(format!(
+            "a.reason_code IN ({})",
+            vec!["?"; spec.reason_codes.len()].join(",")
+        ));
         values.extend(spec.reason_codes.iter().cloned().map(Value::Text));
     }
     if let Some(from) = spec.occurred_from {
@@ -1836,29 +2283,76 @@ fn query_audit_sync(
         .map_err(map_read_err)?;
     let mut records = Vec::new();
     for row in rows {
-        let (lsn, seconds, nanos, kind, actor_id, endpoint_id, command_id, grant_id, target_key, failure_code, reason_code, source_lsn, event_kind, payload_bytes) = row.map_err(map_read_err)?;
+        let (
+            lsn,
+            seconds,
+            nanos,
+            kind,
+            actor_id,
+            endpoint_id,
+            command_id,
+            grant_id,
+            target_key,
+            failure_code,
+            reason_code,
+            source_lsn,
+            event_kind,
+            payload_bytes,
+        ) = row.map_err(map_read_err)?;
         if event_kind != StoredEventKind::AuditRecord as i32 {
-            return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} points to event kind {event_kind}")));
+            return Err(StorageError::CorruptRecord(format!(
+                "audit index LSN {lsn} points to event kind {event_kind}"
+            )));
         }
         let envelope = decode_payload(&payload_bytes)?;
         if decode_stored_kind(&envelope, lsn)? != StoredEventKind::AuditRecord {
-            return Err(StorageError::CorruptRecord(format!("audit index LSN {lsn} has a non-audit envelope")));
+            return Err(StorageError::CorruptRecord(format!(
+                "audit index LSN {lsn} has a non-audit envelope"
+            )));
         }
-        let record = AuditRecord::decode(envelope.payload.as_slice()).map_err(|error| StorageError::CorruptRecord(format!("cannot decode audit record at LSN {lsn}: {error}")))?;
-        validate_audit_index_row(authority_domain_id, lsn, seconds, nanos, kind, actor_id.as_deref(), endpoint_id.as_deref(), command_id.as_deref(), grant_id.as_deref(), target_key.as_deref(), failure_code, &reason_code, source_lsn, &record)?;
+        let record = AuditRecord::decode(envelope.payload.as_slice()).map_err(|error| {
+            StorageError::CorruptRecord(format!("cannot decode audit record at LSN {lsn}: {error}"))
+        })?;
+        validate_audit_index_row(
+            authority_domain_id,
+            lsn,
+            seconds,
+            nanos,
+            kind,
+            actor_id.as_deref(),
+            endpoint_id.as_deref(),
+            command_id.as_deref(),
+            grant_id.as_deref(),
+            target_key.as_deref(),
+            failure_code,
+            &reason_code,
+            source_lsn,
+            &record,
+        )?;
         records.push(record);
     }
     let has_more = records.len() > usize::from(spec.limit);
     if has_more {
         records.truncate(usize::from(spec.limit));
     }
-    let next_before_event_id = has_more.then(|| {
-        records.last().and_then(|record| record.audit_event_id.clone())
-    }).flatten();
-    Ok(AuditPage { records, next_before_event_id, has_more })
+    let next_before_event_id = has_more
+        .then(|| {
+            records
+                .last()
+                .and_then(|record| record.audit_event_id.clone())
+        })
+        .flatten();
+    Ok(AuditPage {
+        records,
+        next_before_event_id,
+        has_more,
+    })
 }
 
-#[allow(clippy::too_many_arguments, reason = "the SQL index tuple is validated field-by-field against its canonical protobuf payload")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the SQL index tuple is validated field-by-field against its canonical protobuf payload"
+)]
 fn validate_audit_index_row(
     authority_domain_id: &AuthorityDomainId,
     lsn: i64,
@@ -1877,7 +2371,11 @@ fn validate_audit_index_row(
 ) -> Result<(), StorageError> {
     let expected_event_id = event_id(authority_domain_id.clone(), lsn as u64);
     if record.audit_event_id.as_ref() != Some(&expected_event_id)
-        || record.occurred_at.as_ref().map(|time| (time.seconds, time.nanos)) != Some((seconds, nanos))
+        || record
+            .occurred_at
+            .as_ref()
+            .map(|time| (time.seconds, time.nanos))
+            != Some((seconds, nanos))
         || record.kind != kind
         || record.actor_id.as_ref().map(|id| id.value.as_str()) != actor_id
         || record.endpoint_id.as_ref().map(|id| id.value.as_str()) != endpoint_id
@@ -1886,9 +2384,16 @@ fn validate_audit_index_row(
         || target_key_for_scope(record.target_scope.as_ref()).as_deref() != target_key
         || record.failure_code != failure_code.unwrap_or(FailureCode::Unspecified as i32)
         || record.reason_code != reason_code
-        || record.source_event_id.as_ref().and_then(|id| id.lsn.as_ref()).map(|lsn| lsn.value as i64) != source_lsn
+        || record
+            .source_event_id
+            .as_ref()
+            .and_then(|id| id.lsn.as_ref())
+            .map(|lsn| lsn.value as i64)
+            != source_lsn
     {
-        return Err(StorageError::CorruptRecord(format!("audit index disagrees with log payload at LSN {lsn}")));
+        return Err(StorageError::CorruptRecord(format!(
+            "audit index disagrees with log payload at LSN {lsn}"
+        )));
     }
     Ok(())
 }
@@ -1921,8 +2426,7 @@ fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), 
     if matches!(
         StoredEventKind::try_from(payload.kind).ok(),
         Some(
-            StoredEventKind::SpawnPromotionCommitted
-                | StoredEventKind::QuarantinedRuntimeEvidence
+            StoredEventKind::SpawnPromotionCommitted | StoredEventKind::QuarantinedRuntimeEvidence
         )
     ) {
         Err(StorageError::UnsupportedOperation)
@@ -1959,7 +2463,14 @@ impl Storage for RusqliteStorage {
         target: &TargetKey,
         payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
-        self.append_dedup_with_payload(authority_domain_id, key, target, payload.clone(), payload.encode_to_vec()).await
+        self.append_dedup_with_payload(
+            authority_domain_id,
+            key,
+            target,
+            payload.clone(),
+            payload.encode_to_vec(),
+        )
+        .await
     }
 
     async fn append_dedup_with_payload(
@@ -2002,7 +2513,8 @@ impl Storage for RusqliteStorage {
         cursor: Lsn,
         as_of_lsn: Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
-        self.read_events(authority_domain_id, cursor, Some(as_of_lsn)).await
+        self.read_events(authority_domain_id, cursor, Some(as_of_lsn))
+            .await
     }
 
     async fn write_snapshot(
@@ -2173,6 +2685,27 @@ impl Storage for RusqliteStorage {
             .send(WriterCommand::AppendSpawnPromotionAudited {
                 authority_domain_id: authority_domain_id.value.clone(),
                 promotion: Box::new(promotion),
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_quarantined_runtime_evidence_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        quarantined: QuarantinedRuntimeEvidence,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendQuarantinedRuntimeEvidenceAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                quarantined: Box::new(quarantined),
                 audit,
                 reply: reply_tx,
             })

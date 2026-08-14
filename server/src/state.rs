@@ -1,18 +1,18 @@
 use std::{sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ElicitationId, EventId,
-    ControlSurfaceRevocation, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
+    ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ControlSurfaceRevocation,
+    ElicitationId, EventId, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
     OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision, Session,
     SessionCheckpointTombstone, SessionSnapshot, StoredEventKind, StoredSessionCheckpoint,
     TargetScope, TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
     acceptance::{
-        ActiveElicitation, Authorized, CommandIndex, CommandRecord, CommandSnapshot, CommandStateLookup,
-        ElicitationContractLookup, ElicitationSlotLayer, GrantCheck, GrantDenied, OperationPosture,
-        OperationPostureDenied, TargetBinding,
-        TargetNotFound, TargetResolver,
+        ActiveElicitation, Authorized, CommandIndex, CommandRecord, CommandSnapshot,
+        CommandStateLookup, ElicitationContractLookup, ElicitationSlotLayer, GrantCheck,
+        GrantDenied, OperationPosture, OperationPostureDenied, TargetBinding, TargetNotFound,
+        TargetResolver,
     },
     adapter::AdapterRegistry,
     authority::{
@@ -23,11 +23,10 @@ use patchbay_core::{
         IssuerContext, OperatorError, OperatorRegistry, RevocationIngestResult,
     },
     diagnostics::DiagnosticsProjection,
-    security::SecurityPostureProjection,
     resource::ResourceRegistry,
-    storage::{
-        validate_next_replay_event, CoreGenerationStore, Storage, StorageError,
-    },
+    security::SecurityPostureProjection,
+    session::{fold_spawn_promotion_ordered, SessionRegistry, SpawnClaimRegistry},
+    storage::{validate_next_replay_event, CoreGenerationStore, Storage, StorageError},
     target::TargetRegistry,
 };
 use tokio::sync::{Mutex, MutexGuard};
@@ -43,8 +42,8 @@ use crate::{
 ///
 /// Ordinary port calls keep projection locks short-lived. Aggregate catch-up is
 /// the deliberate exception: after staging, publication holds the cursor and
-/// acquires operators -> authority -> targets -> security -> commands ->
-/// Elicitations -> diagnostics before its first live mutation. Those relative
+/// acquires operators -> authority -> targets -> spawn claims -> security ->
+/// commands -> Elicitations -> diagnostics before its first live mutation. Those relative
 /// orders preserve the existing operators -> authority and cursor -> targets ->
 /// security reader paths. `submit_guard` serializes submission plus projection
 /// catch-up, and is backed by the composition-root `CoreDecisionGate` shared
@@ -55,6 +54,7 @@ pub struct ProjectionState {
     grant_check: LockedGrantCheck,
     target_resolver: LockedTargetResolver,
     state_lookup: LockedCommandStateLookup,
+    spawn_claims: Arc<Mutex<SpawnClaimRegistry>>,
     elicitation_slots: LockedElicitationContractLookup,
     diagnostics: Arc<Mutex<DiagnosticsProjection>>,
     security_posture: LockedSecurityPosture,
@@ -106,25 +106,30 @@ impl ProjectionState {
             .await
             .map_err(|error| error.to_string())?;
 
-        let recovered_sessions = recover_session_registry(
-            storage,
-            authority_domain_id,
-            &core_generation,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+        let recovered_sessions =
+            recover_session_registry(storage, authority_domain_id, &core_generation)
+                .await
+                .map_err(|error| error.to_string())?;
         let session_recovery_checkpoint_lsn = recovered_sessions.checkpoint_lsn;
         let session_replayed_event_count = recovered_sessions.replayed_event_count;
-        let session_recovered_through_lsn = recovered_sessions.recovered_through_lsn;
         let session_checkpoint_was_rejected = recovered_sessions.checkpoint_rejected;
 
         let mut authority = AuthorityRegistry::new();
-        let mut sessions = recovered_sessions.registry;
-        let mut resources = ResourceRegistry::new();
-        let mut adapters = AdapterRegistry::new();
+        // Promotion is a cross-projection replay unit, so the authoritative
+        // aggregate rebuild folds sessions from the same full prefix as
+        // authority/claim/command. The separately recovered checkpoint remains
+        // available to diagnostics and checkpoint-health evidence only.
+        let sessions =
+            SessionRegistry::new(authority_domain_id.clone()).map_err(|error| error.to_string())?;
+        let resources = ResourceRegistry::new();
+        let adapters = AdapterRegistry::new();
+        let mut targets = TargetRegistry::with_adapters(sessions, resources, adapters);
+        let mut claims = SpawnClaimRegistry::new(authority_domain_id.clone())
+            .map_err(|error| error.to_string())?;
         let mut commands = CommandIndex::new();
         let mut elicitation_slots = ElicitationSlotLayer::new();
-        let mut diagnostics = DiagnosticsProjection::with_session_registry(sessions.clone());
+        let mut diagnostics =
+            DiagnosticsProjection::with_session_registry(recovered_sessions.registry);
         let mut security_posture = SecurityPostureProjection::new();
         let mut operators = OperatorRegistry::new();
         let operator_sessions = OperatorSessionRegistry::new(operator_session_ttl)?;
@@ -133,15 +138,25 @@ impl ProjectionState {
             let validated =
                 validate_next_replay_event(authority_domain_id, last_applied_lsn, event)
                     .map_err(|error| error.to_string())?;
-            authority
-                .observe(event)
+            if validated.kind == StoredEventKind::SpawnPromotionCommitted {
+                fold_spawn_promotion_ordered(
+                    &mut authority,
+                    &mut targets,
+                    &mut claims,
+                    &mut commands,
+                    event,
+                )
                 .map_err(|error| error.to_string())?;
-            if validated.lsn > session_recovered_through_lsn {
-                sessions.observe(event).map_err(|error| error.to_string())?;
+            } else {
+                authority
+                    .observe(event)
+                    .map_err(|error| error.to_string())?;
+                targets
+                    .observe_event(event)
+                    .map_err(|error| error.to_string())?;
+                claims.observe(event).map_err(|error| error.to_string())?;
+                commands.apply(event).map_err(|error| error.to_string())?;
             }
-            resources.observe(event).map_err(|error| error.to_string())?;
-            adapters.observe(event).map_err(|error| error.to_string())?;
-            commands.apply(event).map_err(|error| error.to_string())?;
             elicitation_slots
                 .observe(event)
                 .map_err(|error| error.to_string())?;
@@ -164,10 +179,9 @@ impl ProjectionState {
 
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
-            target_resolver: LockedTargetResolver::new(TargetRegistry::with_adapters(
-                sessions, resources, adapters,
-            )),
+            target_resolver: LockedTargetResolver::new(targets),
             state_lookup: LockedCommandStateLookup::new(commands),
+            spawn_claims: Arc::new(Mutex::new(claims)),
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
             security_posture: LockedSecurityPosture::new(security_posture),
@@ -226,9 +240,19 @@ impl ProjectionState {
         authority_domain_id: &AuthorityDomainId,
         as_of_lsn: u64,
     ) -> Result<DiagnosticsProjection, StorageError> {
-        let live_adapters: Vec<_> = self.diagnostics.lock().await.live_adapter_ids().cloned().collect();
+        let live_adapters: Vec<_> = self
+            .diagnostics
+            .lock()
+            .await
+            .live_adapter_ids()
+            .cloned()
+            .collect();
         let events = storage
-            .read_through(authority_domain_id, Lsn { value: 0 }, Lsn { value: as_of_lsn })
+            .read_through(
+                authority_domain_id,
+                Lsn { value: 0 },
+                Lsn { value: as_of_lsn },
+            )
             .await?;
         let mut projection = DiagnosticsProjection::new(authority_domain_id.clone())
             .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
@@ -268,7 +292,11 @@ impl ProjectionState {
                     as_of_lsn,
                 )
                 .ok()
-                .and_then(|page| page.adapters.into_iter().find(|status| status.adapter_id.as_ref() == Some(&adapter_id)))
+                .and_then(|page| {
+                    page.adapters
+                        .into_iter()
+                        .find(|status| status.adapter_id.as_ref() == Some(&adapter_id))
+                })
                 .and_then(|status| status.attach_event_id)
                 .and_then(|event_id| event_id.lsn)
                 .map(|lsn| lsn.value);
@@ -283,7 +311,10 @@ impl ProjectionState {
         &self,
         query: &patchbay_contracts::patchbay::AdapterStatusQuery,
         as_of: u64,
-    ) -> Result<patchbay_contracts::patchbay::AdapterStatusPage, patchbay_core::diagnostics::DiagnosticsError> {
+    ) -> Result<
+        patchbay_contracts::patchbay::AdapterStatusPage,
+        patchbay_core::diagnostics::DiagnosticsError,
+    > {
         self.diagnostics.lock().await.adapter_page(query, as_of)
     }
 
@@ -312,12 +343,23 @@ impl ProjectionState {
     }
 
     pub async fn current_runtime_session_count(&self) -> u32 {
-        self.target_resolver.inner.lock().await.sessions().sessions().count() as u32
+        self.target_resolver
+            .inner
+            .lock()
+            .await
+            .sessions()
+            .sessions()
+            .count() as u32
     }
 
     #[cfg(test)]
     pub async fn conformance_session_registry(&self) -> patchbay_core::session::SessionRegistry {
         self.target_resolver.inner.lock().await.sessions().clone()
+    }
+
+    #[cfg(test)]
+    pub async fn conformance_spawn_claim_registry(&self) -> SpawnClaimRegistry {
+        self.spawn_claims.lock().await.clone()
     }
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
@@ -475,23 +517,21 @@ impl ProjectionState {
             .map(|record| {
                 let tombstoned = record.tombstoned();
                 Resource {
-                authority_domain_id: Some(authority_domain_id.clone()),
-                identity: record.identity.to_scope().resource,
-                resource_payload: record.resource_payload,
-                projection_payload: record.projection_payload,
-                freshness: record.freshness as i32,
-                source_adapter_generation: Some(record.source_adapter_generation),
-                revision_lsn: Some(Lsn {
-                    value: record.revision_lsn,
-                }),
-                observed_at: Some(record.observed_at),
-                tombstoned,
-                tombstoned_at_lsn: record
-                    .tombstoned_at_lsn
-                    .map(|value| Lsn { value }),
-                replaced_by: record
-                    .replaced_by
-                    .map(|identity| identity.to_scope().resource.expect("canonical resource")),
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                    identity: record.identity.to_scope().resource,
+                    resource_payload: record.resource_payload,
+                    projection_payload: record.projection_payload,
+                    freshness: record.freshness as i32,
+                    source_adapter_generation: Some(record.source_adapter_generation),
+                    revision_lsn: Some(Lsn {
+                        value: record.revision_lsn,
+                    }),
+                    observed_at: Some(record.observed_at),
+                    tombstoned,
+                    tombstoned_at_lsn: record.tombstoned_at_lsn.map(|value| Lsn { value }),
+                    replaced_by: record
+                        .replaced_by
+                        .map(|identity| identity.to_scope().resource.expect("canonical resource")),
                 }
             })
             .collect();
@@ -534,13 +574,15 @@ impl ProjectionState {
             let operators = self.operators.lock().await;
             let control_surfaces = operators
                 .principals()
-                .map(|principal| patchbay_contracts::patchbay::ControlSurfaceSummary {
-                    principal_id: principal.principal_id.clone(),
-                    endpoint_id: principal.endpoint_id.clone(),
-                    device_id: principal.device_id.clone(),
-                    endpoint_generation: principal.endpoint_generation,
-                    revoked: operators.is_principal_revoked(&principal.principal_id),
-                })
+                .map(
+                    |principal| patchbay_contracts::patchbay::ControlSurfaceSummary {
+                        principal_id: principal.principal_id.clone(),
+                        endpoint_id: principal.endpoint_id.clone(),
+                        device_id: principal.device_id.clone(),
+                        endpoint_generation: principal.endpoint_generation,
+                        revoked: operators.is_principal_revoked(&principal.principal_id),
+                    },
+                )
                 .collect();
             let grants = self
                 .grant_check
@@ -566,7 +608,9 @@ impl ProjectionState {
         };
         patchbay_contracts::patchbay::SecuritySnapshot {
             authority_domain_id: Some(authority_domain_id),
-            snapshot_lsn: Some(Lsn { value: snapshot_lsn }),
+            snapshot_lsn: Some(Lsn {
+                value: snapshot_lsn,
+            }),
             lockdown: Some(lockdown),
             operator_sessions,
             control_surfaces,
@@ -580,12 +624,8 @@ impl ProjectionState {
         storage: &S,
         authority_domain_id: &AuthorityDomainId,
     ) -> Result<(), StorageError> {
-        self.catch_up_with_before_publish(
-            storage,
-            authority_domain_id,
-            std::future::ready(()),
-        )
-        .await
+        self.catch_up_with_before_publish(storage, authority_domain_id, std::future::ready(()))
+            .await
     }
 
     async fn catch_up_with_before_publish<S: Storage, F: std::future::Future<Output = ()>>(
@@ -607,6 +647,7 @@ impl ProjectionState {
         // install all views and the cursor only after the final event succeeds.
         let mut staged_authority = self.grant_check.inner.lock().await.clone();
         let mut staged_targets = self.target_resolver.inner.lock().await.clone();
+        let mut staged_claims = self.spawn_claims.lock().await.clone();
         let mut staged_commands = self.state_lookup.inner.lock().await.clone();
         let mut staged_elicitations = self.elicitation_slots.inner.lock().await.clone();
         let mut staged_diagnostics = self.diagnostics.lock().await.clone();
@@ -617,21 +658,31 @@ impl ProjectionState {
         let mut staged_cursor = *cursor;
 
         for event in &events {
-            let validated = validate_next_replay_event(
-                authority_domain_id,
-                staged_cursor,
-                event,
-            )
-            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            staged_authority
-                .observe(event)
+            let validated = validate_next_replay_event(authority_domain_id, staged_cursor, event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            staged_targets
-                .observe_event(event)
+            if validated.kind == StoredEventKind::SpawnPromotionCommitted {
+                fold_spawn_promotion_ordered(
+                    &mut staged_authority,
+                    &mut staged_targets,
+                    &mut staged_claims,
+                    &mut staged_commands,
+                    event,
+                )
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-            staged_commands
-                .apply(event)
-                .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            } else {
+                staged_authority
+                    .observe(event)
+                    .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                staged_targets
+                    .observe_event(event)
+                    .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                staged_claims
+                    .observe(event)
+                    .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                staged_commands
+                    .apply(event)
+                    .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+            }
             staged_elicitations
                 .observe(event)
                 .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
@@ -665,12 +716,8 @@ impl ProjectionState {
                 } else {
                     None
                 };
-                revoke_operator_sessions_for_target(
-                    &staged_operator_sessions,
-                    &target,
-                    principal,
-                )
-                .await;
+                revoke_operator_sessions_for_target(&staged_operator_sessions, &target, principal)
+                    .await;
             }
             staged_operator_sessions
                 .observe(event)
@@ -688,6 +735,7 @@ impl ProjectionState {
         let mut live_operators = self.operators.lock().await;
         let mut live_authority = self.grant_check.inner.lock().await;
         let mut live_targets = self.target_resolver.inner.lock().await;
+        let mut live_claims = self.spawn_claims.lock().await;
         let mut live_security = self.security_posture.inner.lock().await;
         let mut live_commands = self.state_lookup.inner.lock().await;
         let mut live_elicitations = self.elicitation_slots.inner.lock().await;
@@ -698,6 +746,7 @@ impl ProjectionState {
         *live_operators = staged_operators;
         *live_authority = staged_authority;
         *live_targets = staged_targets;
+        *live_claims = staged_claims;
         *live_security = staged_security;
         *live_commands = staged_commands;
         *live_elicitations = staged_elicitations;
@@ -721,7 +770,10 @@ impl ProjectionState {
             .cloned()
     }
 
-    pub async fn has_endpoint(&self, endpoint_id: &patchbay_contracts::patchbay::EndpointId) -> bool {
+    pub async fn has_endpoint(
+        &self,
+        endpoint_id: &patchbay_contracts::patchbay::EndpointId,
+    ) -> bool {
         self.operators.lock().await.has_endpoint(endpoint_id)
     }
 
@@ -778,7 +830,9 @@ impl ProjectionState {
         session_id: &patchbay_contracts::patchbay::OperatorSessionId,
         binding: &crate::operator_session::OperatorSessionBinding,
     ) -> bool {
-        self.operator_sessions.revoke_current(session_id, binding).await
+        self.operator_sessions
+            .revoke_current(session_id, binding)
+            .await
     }
 
     pub async fn current_operator_session_generation(&self, actor_id: &ActorId) -> Generation {
@@ -790,13 +844,12 @@ impl ProjectionState {
         actor_id: &ActorId,
         through: &Generation,
     ) -> u32 {
-        self.operator_sessions.revoke_all_for_actor(actor_id, through).await
+        self.operator_sessions
+            .revoke_all_for_actor(actor_id, through)
+            .await
     }
 
-    pub async fn revoke_sessions_for_target(
-        &self,
-        target: &ControlSurfaceRevocationTarget,
-    ) -> u32 {
+    pub async fn revoke_sessions_for_target(&self, target: &ControlSurfaceRevocationTarget) -> u32 {
         let principal = if let ControlSurfaceRevocationTarget::Principal(principal_id) = target {
             self.operators
                 .lock()
@@ -806,12 +859,8 @@ impl ProjectionState {
         } else {
             None
         };
-        revoke_operator_sessions_for_target(
-            &self.operator_sessions,
-            target,
-            principal.as_ref(),
-        )
-        .await
+        revoke_operator_sessions_for_target(&self.operator_sessions, target, principal.as_ref())
+            .await
     }
 
     pub async fn ingest_operator_session_revocation<S: Storage>(
@@ -820,13 +869,12 @@ impl ProjectionState {
         authority_domain_id: &AuthorityDomainId,
         revocation: OperatorSessionRevocation,
     ) -> Result<(RevocationIngestResult, u32), OperatorError> {
-        let actor = revocation
-            .operator_actor_id
-            .clone()
-            .ok_or_else(|| OperatorError::InvalidRecord("session revocation has no actor".to_owned()))?;
-        let generation = revocation
-            .invalidated_through_generation
-            .ok_or_else(|| OperatorError::InvalidRecord("session revocation has no generation".to_owned()))?;
+        let actor = revocation.operator_actor_id.clone().ok_or_else(|| {
+            OperatorError::InvalidRecord("session revocation has no actor".to_owned())
+        })?;
+        let generation = revocation.invalidated_through_generation.ok_or_else(|| {
+            OperatorError::InvalidRecord("session revocation has no generation".to_owned())
+        })?;
         let result = ingest_operator_session_revocation(
             storage,
             &mut *self.operators.lock().await,
@@ -858,7 +906,10 @@ impl ProjectionState {
         Ok((result.0, result.1, revoked_session_count))
     }
 
-    pub async fn commands_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {
+    pub async fn commands_for_grant(
+        &self,
+        grant_id: &patchbay_contracts::patchbay::GrantId,
+    ) -> Vec<CommandRecord> {
         self.state_lookup.records_for_grant(grant_id).await
     }
 
@@ -880,9 +931,7 @@ impl ProjectionState {
             .lock()
             .await
             .grants()
-            .filter(|grant| {
-                grant.is_live_at(now) && grant.is_recovery_capable_authority_domain()
-            })
+            .filter(|grant| grant.is_live_at(now) && grant.is_recovery_capable_authority_domain())
             .count()
     }
 
@@ -912,7 +961,8 @@ impl ProjectionState {
             &mut *self.grant_check.inner.lock().await,
             authority_domain_id,
             revocation,
-        ).await
+        )
+        .await
     }
 
     pub async fn ingest_operator<S: Storage>(
@@ -1027,7 +1077,14 @@ impl GrantCheck for LockedGrantCheck {
         target_scope: &TargetScope,
     ) -> Result<Authorized, GrantDenied> {
         let registry = self.inner.lock().await;
-        GrantCheck::check(&*registry, authority_domain_id, issuer, operation_kind, target_scope).await
+        GrantCheck::check(
+            &*registry,
+            authority_domain_id,
+            issuer,
+            operation_kind,
+            target_scope,
+        )
+        .await
     }
 
     async fn check_at(
@@ -1039,7 +1096,15 @@ impl GrantCheck for LockedGrantCheck {
         evaluated_at: &prost_types::Timestamp,
     ) -> Result<Authorized, GrantDenied> {
         let registry = self.inner.lock().await;
-        GrantCheck::check_at(&*registry, authority_domain_id, issuer, operation_kind, target_scope, evaluated_at).await
+        GrantCheck::check_at(
+            &*registry,
+            authority_domain_id,
+            issuer,
+            operation_kind,
+            target_scope,
+            evaluated_at,
+        )
+        .await
     }
 }
 
@@ -1118,8 +1183,17 @@ impl LockedCommandStateLookup {
 }
 
 impl LockedCommandStateLookup {
-    pub async fn records_for_grant(&self, grant_id: &patchbay_contracts::patchbay::GrantId) -> Vec<CommandRecord> {
-        self.inner.lock().await.records().filter(|record| record.grant_id.as_ref() == Some(grant_id)).cloned().collect()
+    pub async fn records_for_grant(
+        &self,
+        grant_id: &patchbay_contracts::patchbay::GrantId,
+    ) -> Vec<CommandRecord> {
+        self.inner
+            .lock()
+            .await
+            .records()
+            .filter(|record| record.grant_id.as_ref() == Some(grant_id))
+            .cloned()
+            .collect()
     }
 }
 
@@ -1143,10 +1217,15 @@ mod tests {
 
     #[tokio::test]
     async fn session_and_resource_snapshots_share_the_persisted_anchor() {
-        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         let state = ProjectionState::rebuild(&storage, &domain).await.unwrap();
-        let materialized_at = prost_types::Timestamp { seconds: 1, nanos: 0 };
+        let materialized_at = prost_types::Timestamp {
+            seconds: 1,
+            nanos: 0,
+        };
 
         let session = state
             .materialize_session_snapshot(domain.clone(), materialized_at)
@@ -1159,9 +1238,14 @@ mod tests {
         assert_eq!(resource.authority_domain_id.as_ref(), Some(&domain));
         assert_eq!(session.snapshot_lsn, Some(Lsn { value: 0 }));
         assert_eq!(resource.snapshot_lsn, Some(Lsn { value: 0 }));
-        assert_eq!(session.core_generation.as_ref(), Some(state.core_generation()));
+        assert_eq!(
+            session.core_generation.as_ref(),
+            Some(state.core_generation())
+        );
         assert_eq!(resource.core_generation, session.core_generation);
-        assert!(resource.core_generation.is_some_and(|generation| generation.value > 0));
+        assert!(resource
+            .core_generation
+            .is_some_and(|generation| generation.value > 0));
     }
 
     #[tokio::test]
@@ -1171,7 +1255,9 @@ mod tests {
             SessionConnectivityState, SessionRegistered, SessionReportSourceCursor, SessionState,
         };
 
-        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         let cursor = SessionReportSourceCursor {
             adapter_generation: Some(Generation { value: 2 }),
@@ -1182,7 +1268,9 @@ mod tests {
             SessionRegistered {
                 adapter_id: Some(AdapterId { value: "pi".into() }),
                 deployment_scope: "machine-a".into(),
-                runtime_session_id: Some(RuntimeSessionId { value: "runtime-1".into() }),
+                runtime_session_id: Some(RuntimeSessionId {
+                    value: "runtime-1".into(),
+                }),
                 session_generation: Some(Generation { value: 1 }),
                 initial_state: Some(SessionState {
                     connectivity: SessionConnectivityState::Live as i32,
@@ -1197,7 +1285,10 @@ mod tests {
             },
         );
         storage
-            .append(&domain, patchbay_core::session::events::encode(&registration))
+            .append(
+                &domain,
+                patchbay_core::session::events::encode(&registration),
+            )
             .await
             .unwrap();
 
@@ -1205,11 +1296,435 @@ mod tests {
         let snapshot = state
             .materialize_session_snapshot(
                 domain,
-                prost_types::Timestamp { seconds: 1, nanos: 0 },
+                prost_types::Timestamp {
+                    seconds: 1,
+                    nanos: 0,
+                },
             )
             .await;
         assert_eq!(snapshot.sessions.len(), 1);
         assert_eq!(snapshot.sessions[0].last_source_cursor, Some(cursor));
+    }
+
+    #[tokio::test]
+    async fn spawn_promotion_catch_up_and_restart_publish_one_complete_aggregate() {
+        use patchbay_contracts::patchbay::{
+            runtime_generation_disposition, spawn_claim_event, typed_correlation,
+            AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterId, AdapterRegistration,
+            AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, CommandTransition,
+            DescendantGrant, DescendantGrantProvenance, EndpointId, ExternalRuntimeRef,
+            FailureCode, Grant, GrantId, GrantProvenance, GrantRevocationPolicy,
+            LogicalTargetCreated, LogicalTargetId, Observation, ObservationKind, Operation,
+            OperationState, PayloadContentType, PayloadEnvelope, RuntimeEvidenceSourceAttachment,
+            RuntimeGenerationClaimedSuccessor, RuntimeGenerationDisposition, RuntimeGenerationRef,
+            RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionReport,
+            SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent,
+            SpawnGenerationClaim, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
+            SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
+            SpawnPromotionStagedEvidence, SpawnSuccessorEvidenceStaged, TargetScope,
+            TypedCorrelation,
+        };
+        use patchbay_core::{
+            authority::DESCENDANT_GRANT_ALLOWED_KINDS,
+            session::{encode_spawn_claim_event, encode_staged_successor, SpawnClaimQuery},
+            storage::AuditRecordDraft,
+        };
+        use prost_types::Timestamp;
+
+        let domain = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let adapter = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let command = CommandId {
+            value: "spawn-a".to_owned(),
+        };
+        let logical = LogicalTargetId {
+            value: "logical-a".to_owned(),
+        };
+        let external = ExternalRuntimeRef {
+            adapter_id: Some(adapter.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "runtime-a".to_owned(),
+            }),
+            generation: Some(Generation { value: 1 }),
+        };
+        let event_id = |lsn| EventId {
+            authority_domain_id: Some(domain.clone()),
+            lsn: Some(Lsn { value: lsn }),
+        };
+        let operation = Operation {
+            command_id: Some(command.clone()),
+            authority_domain_id: Some(domain.clone()),
+            sender: Some(ActorEndpointRef {
+                actor_id: Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                endpoint_id: Some(EndpointId {
+                    value: "web".to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            }),
+            kind: OperationKind::Spawn as i32,
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::Adapter as i32,
+                adapter_id: Some(adapter.clone()),
+                ..TargetScope::default()
+            }),
+            idempotency_key: "spawn-key".to_owned(),
+            ..Operation::default()
+        };
+        let accepted_operation = AcceptedOperation {
+            operation: Some(operation.clone()),
+            authorizing_grant_id: Some(GrantId {
+                value: "spawn-grant".to_owned(),
+            }),
+        };
+        let claim = SpawnGenerationClaim {
+            authority_domain_id: Some(domain.clone()),
+            claim_operation_id: Some(command.clone()),
+            logical_target_id: Some(logical.clone()),
+            expected_prior: None,
+            claimed_generation: Some(Generation { value: 1 }),
+        };
+        let accepted_claim = SpawnClaimAccepted {
+            accepted_operation: Some(accepted_operation.clone()),
+            claim: Some(claim.clone()),
+            ..SpawnClaimAccepted::default()
+        };
+        let attachment_registration = AdapterRegistration {
+            adapter_id: Some(adapter.clone()),
+            endpoint_id: Some(EndpointId {
+                value: "pi-endpoint".to_owned(),
+            }),
+            authority_domain_id: Some(domain.clone()),
+            adapter_generation: Some(Generation { value: 3 }),
+            capability: Some(AdapterCapability {
+                session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                ..AdapterCapability::default()
+            }),
+            ..AdapterRegistration::default()
+        };
+        let attachment = Observation {
+            authority_domain_id: Some(domain.clone()),
+            sender: Some(ActorEndpointRef {
+                actor_id: Some(ActorId {
+                    value: "pi".to_owned(),
+                }),
+                endpoint_id: Some(EndpointId {
+                    value: "pi-endpoint".to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            }),
+            kind: ObservationKind::Event as i32,
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::Adapter as i32,
+                adapter_id: Some(adapter.clone()),
+                ..TargetScope::default()
+            }),
+            payload: Some(PayloadEnvelope {
+                payload: attachment_registration.encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "patchbay.AdapterRegistration".to_owned(),
+            }),
+            ..Observation::default()
+        };
+        let report = SessionReport {
+            adapter_id: Some(adapter.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: external.runtime_session_id.clone(),
+            session_generation: external.generation,
+            connectivity: SessionConnectivityState::Live as i32,
+            activity: SessionActivityState::Idle as i32,
+            spawn_origin: Some(TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(command.clone())),
+            }),
+            source_cursor: Some(SessionReportSourceCursor {
+                adapter_generation: Some(Generation { value: 3 }),
+                revision: 1,
+            }),
+            ..SessionReport::default()
+        };
+        let promoted = RuntimeGenerationRef {
+            logical_target_id: Some(logical.clone()),
+            external_runtime: Some(external.clone()),
+        };
+        let staged = SpawnSuccessorEvidenceStaged {
+            authority_domain_id: Some(domain.clone()),
+            exact_claim: Some(claim.clone()),
+            report: Some(report),
+            classified_target: Some(promoted.clone()),
+            disposition: Some(RuntimeGenerationDisposition {
+                disposition: Some(
+                    runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                        RuntimeGenerationClaimedSuccessor {
+                            claim_operation_id: Some(command.clone()),
+                            expected_prior: None,
+                            claimed_generation: Some(Generation { value: 1 }),
+                        },
+                    ),
+                ),
+            }),
+            source_attachment: Some(RuntimeEvidenceSourceAttachment {
+                adapter_id: Some(adapter.clone()),
+                adapter_generation: Some(Generation { value: 3 }),
+                attachment_event_id: Some(event_id(1)),
+            }),
+            external_runtime_reservation: Some(external.clone()),
+        };
+        let transition = |from, to| CommandTransition {
+            command_id: Some(command.clone()),
+            from_state: from as i32,
+            to_state: to as i32,
+            failure_code: FailureCode::Unspecified as i32,
+            ..CommandTransition::default()
+        };
+        let result = Observation {
+            authority_domain_id: Some(domain.clone()),
+            kind: ObservationKind::Result as i32,
+            correlations: vec![TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(command.clone())),
+            }],
+            target_scope: operation.target_scope.clone(),
+            failure_code: FailureCode::Unspecified as i32,
+            observed_at: Some(Timestamp {
+                seconds: 10,
+                nanos: 0,
+            }),
+            ..Observation::default()
+        };
+        let prefix = vec![
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: attachment.encode_to_vec(),
+            },
+            StoredEventPayload {
+                kind: StoredEventKind::Grant as i32,
+                payload: Grant {
+                    grant_id: accepted_operation.authorizing_grant_id.clone(),
+                    authority_domain_id: Some(domain.clone()),
+                    subject_actor_id: Some(ActorId {
+                        value: "operator".to_owned(),
+                    }),
+                    subject_endpoint_id: Some(EndpointId {
+                        value: "web".to_owned(),
+                    }),
+                    target_scope: operation.target_scope.clone(),
+                    allowed_operation_kinds: vec![OperationKind::Spawn as i32],
+                    created_at: Some(Timestamp {
+                        seconds: 1,
+                        nanos: 0,
+                    }),
+                    provenance: Some(GrantProvenance {
+                        reason: "server promotion fixture".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                }
+                .encode_to_vec(),
+            },
+            patchbay_core::session::events::encode(
+                &patchbay_core::session::events::logical_target_created(
+                    domain.clone(),
+                    LogicalTargetCreated {
+                        logical_target_id: Some(logical.clone()),
+                        adapter_id: Some(adapter.clone()),
+                        deployment_scope: "machine-a".to_owned(),
+                    },
+                ),
+            ),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation.encode_to_vec(),
+            },
+            encode_spawn_claim_event(&SpawnClaimEvent {
+                authority_domain_id: Some(domain.clone()),
+                mutation: Some(spawn_claim_event::Mutation::Accepted(
+                    accepted_claim.clone(),
+                )),
+            }),
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: transition(OperationState::Accepted, OperationState::Delivered)
+                    .encode_to_vec(),
+            },
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: transition(OperationState::Delivered, OperationState::Running)
+                    .encode_to_vec(),
+            },
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: result.encode_to_vec(),
+            },
+            encode_staged_successor(&staged),
+        ];
+        let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
+        for (index, payload) in prefix.into_iter().enumerate() {
+            assert_eq!(
+                storage.append(&domain, payload).await.unwrap(),
+                event_id(index as u64 + 1)
+            );
+        }
+        let live = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        assert_eq!(live.current_lsn().await, 9);
+        assert_eq!(live.current_runtime_session_count().await, 0);
+
+        let timestamp = Timestamp {
+            seconds: 10,
+            nanos: 0,
+        };
+        let promotion = SpawnPromotionCommitted {
+            authority_domain_id: Some(domain.clone()),
+            accepted_claim_event_id: Some(event_id(5)),
+            accepted_claim: Some(accepted_claim),
+            lifecycle: vec![
+                SpawnPromotionLifecycleEvidence {
+                    event_id: Some(event_id(6)),
+                    transition: Some(transition(
+                        OperationState::Accepted,
+                        OperationState::Delivered,
+                    )),
+                },
+                SpawnPromotionLifecycleEvidence {
+                    event_id: Some(event_id(7)),
+                    transition: Some(transition(
+                        OperationState::Delivered,
+                        OperationState::Running,
+                    )),
+                },
+            ],
+            successful_result: Some(SpawnPromotionResultEvidence {
+                event_id: Some(event_id(8)),
+                command_id: Some(command.clone()),
+                target_scope: operation.target_scope,
+                failure_code: FailureCode::Unspecified as i32,
+                observed_at: Some(timestamp),
+            }),
+            staged_successor: Some(SpawnPromotionStagedEvidence {
+                event_id: Some(event_id(9)),
+                staged: Some(staged),
+            }),
+            promoted_runtime: Some(promoted),
+            external_runtime_reservation: Some(external.clone()),
+            authority: Some(SpawnPromotionAuthorityEvidence {
+                spawning_grant_id: Some(GrantId {
+                    value: "spawn-grant".to_owned(),
+                }),
+                continuation_authority: None,
+                descendant_grant: Some(DescendantGrant {
+                    grant_id: Some(GrantId {
+                        value: "desc:authority-main:spawn-a".to_owned(),
+                    }),
+                    authority_domain_id: Some(domain.clone()),
+                    subject_actor_id: Some(ActorId {
+                        value: "operator".to_owned(),
+                    }),
+                    subject_endpoint_id: Some(EndpointId {
+                        value: "web".to_owned(),
+                    }),
+                    target_scope: Some(TargetScope {
+                        kind: TargetScopeKind::RuntimeSession as i32,
+                        adapter_id: external.adapter_id,
+                        deployment_scope: external.deployment_scope,
+                        runtime_session_id: external.runtime_session_id,
+                        session_generation: external.generation,
+                        ..TargetScope::default()
+                    }),
+                    allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
+                        .iter()
+                        .map(|kind| *kind as i32)
+                        .collect(),
+                    provenance: Some(DescendantGrantProvenance {
+                        spawn_operation_id: Some(command.clone()),
+                        spawning_grant_id: Some(GrantId {
+                            value: "spawn-grant".to_owned(),
+                        }),
+                        continuation_authority: None,
+                    }),
+                    created_at: Some(timestamp),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..DescendantGrant::default()
+                }),
+            }),
+            committed_at: Some(timestamp),
+            ..SpawnPromotionCommitted::default()
+        };
+        let mut audit = AuditRecordDraft::new(timestamp, AuditEventKind::CommandCompleted);
+        audit.command_id = Some(command.clone());
+        audit.reason_code = "spawn_completion".to_owned();
+        storage
+            .append_spawn_promotion_audited(&domain, promotion, audit)
+            .await
+            .unwrap();
+
+        live.catch_up(&storage, &domain).await.unwrap();
+        assert_eq!(live.current_lsn().await, 11);
+        assert_eq!(live.current_runtime_session_count().await, 1);
+        assert!(live
+            .grant_check
+            .inner
+            .lock()
+            .await
+            .get_grant(&GrantId {
+                value: "desc:authority-main:spawn-a".to_owned(),
+            })
+            .is_some());
+        assert_eq!(
+            live.conformance_spawn_claim_registry()
+                .await
+                .claim_for_operation(&command)
+                .unwrap()
+                .disposition,
+            SpawnClaimDisposition::Promoted
+        );
+        assert_eq!(
+            live.state_lookup
+                .inner
+                .lock()
+                .await
+                .get_command(&command)
+                .unwrap()
+                .state,
+            OperationState::Completed
+        );
+
+        let restarted = ProjectionState::rebuild(&storage, &domain).await.unwrap();
+        assert_eq!(restarted.current_lsn().await, 11);
+        assert_eq!(restarted.current_runtime_session_count().await, 1);
+        assert!(restarted
+            .grant_check
+            .inner
+            .lock()
+            .await
+            .get_grant(&GrantId {
+                value: "desc:authority-main:spawn-a".to_owned(),
+            })
+            .is_some());
+        assert_eq!(
+            restarted
+                .conformance_spawn_claim_registry()
+                .await
+                .claim_for_operation(&command)
+                .unwrap()
+                .disposition,
+            SpawnClaimDisposition::Promoted
+        );
+        assert_eq!(
+            restarted
+                .state_lookup
+                .inner
+                .lock()
+                .await
+                .get_command(&command)
+                .unwrap()
+                .state,
+            OperationState::Completed
+        );
     }
 
     #[tokio::test]
@@ -1223,39 +1738,54 @@ mod tests {
         };
         use prost_types::Timestamp;
 
-        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         let identity = |id: &str| WireResourceIdentity {
-            adapter_id: Some(AdapterId { value: "adapter-a".into() }),
-            resource_kind: Some(ResourceKind { value: "pool".into() }),
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".into(),
+            }),
+            resource_kind: Some(ResourceKind {
+                value: "pool".into(),
+            }),
             resource_id: Some(ResourceId { value: id.into() }),
         };
         let upsert = |id: &str, from: Option<u64>| ResourceStateMutation {
             identity: Some(identity(id)),
             from_revision_lsn: from.map(|value| Lsn { value }),
-            mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
-                resource_payload: Some(PayloadEnvelope {
-                    payload: vec![1],
-                    content_type: PayloadContentType::Protobuf as i32,
-                    schema_ref: "pool.payload.v1".into(),
-                }),
-                projection_payload: Some(PayloadEnvelope {
-                    payload: vec![2],
-                    content_type: PayloadContentType::Json as i32,
-                    schema_ref: "pool.projection.v1".into(),
-                }),
-            })),
+            mutation: Some(resource_state_mutation::Mutation::Upsert(
+                ResourceStateUpsert {
+                    resource_payload: Some(PayloadEnvelope {
+                        payload: vec![1],
+                        content_type: PayloadContentType::Protobuf as i32,
+                        schema_ref: "pool.payload.v1".into(),
+                    }),
+                    projection_payload: Some(PayloadEnvelope {
+                        payload: vec![2],
+                        content_type: PayloadContentType::Json as i32,
+                        schema_ref: "pool.projection.v1".into(),
+                    }),
+                },
+            )),
         };
         let event = |mutations| ResourceStateEvent {
             authority_domain_id: Some(domain.clone()),
-            source_adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            source_adapter_id: Some(AdapterId {
+                value: "adapter-a".into(),
+            }),
             source_adapter_generation: Some(Generation { value: 2 }),
             views: vec![ResourceViewStateUpdate {
-                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                resource_kind: Some(ResourceKind {
+                    value: "pool".into(),
+                }),
                 completeness: AdapterSnapshotSupport::Authoritative as i32,
             }],
             mutations,
-            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 100,
+                nanos: 0,
+            }),
         };
         storage
             .append(
@@ -1290,32 +1820,70 @@ mod tests {
         let snapshot = first
             .materialize_resource_snapshot(
                 domain.clone(),
-                Timestamp { seconds: 200, nanos: 0 },
+                Timestamp {
+                    seconds: 200,
+                    nanos: 0,
+                },
             )
             .await;
         let ids: Vec<_> = snapshot
             .resources
             .iter()
-            .map(|resource| resource.identity.as_ref().unwrap().resource_id.as_ref().unwrap().value.as_str())
+            .map(|resource| {
+                resource
+                    .identity
+                    .as_ref()
+                    .unwrap()
+                    .resource_id
+                    .as_ref()
+                    .unwrap()
+                    .value
+                    .as_str()
+            })
             .collect();
         assert_eq!(ids, ["a", "m", "z"]);
-        let retired = snapshot.resources.iter().find(|resource| {
-            resource.identity.as_ref().unwrap().resource_id.as_ref().unwrap().value == "z"
-        }).unwrap();
+        let retired = snapshot
+            .resources
+            .iter()
+            .find(|resource| {
+                resource
+                    .identity
+                    .as_ref()
+                    .unwrap()
+                    .resource_id
+                    .as_ref()
+                    .unwrap()
+                    .value
+                    == "z"
+            })
+            .unwrap();
         assert!(retired.tombstoned);
         assert_eq!(retired.tombstoned_at_lsn, Some(Lsn { value: 2 }));
         assert_eq!(
-            retired.replaced_by.as_ref().unwrap().resource_id.as_ref().unwrap().value,
+            retired
+                .replaced_by
+                .as_ref()
+                .unwrap()
+                .resource_id
+                .as_ref()
+                .unwrap()
+                .value,
             "m"
         );
         assert_eq!(snapshot.snapshot_lsn, Some(Lsn { value: 2 }));
-        assert_eq!(snapshot.view_revisions[0].revision_lsn, Some(Lsn { value: 2 }));
+        assert_eq!(
+            snapshot.view_revisions[0].revision_lsn,
+            Some(Lsn { value: 2 })
+        );
 
         let restarted = ProjectionState::rebuild(&storage, &domain).await.unwrap();
         let after_restart = restarted
             .materialize_resource_snapshot(
                 domain,
-                Timestamp { seconds: 201, nanos: 0 },
+                Timestamp {
+                    seconds: 201,
+                    nanos: 0,
+                },
             )
             .await;
         assert_eq!(snapshot.resources, after_restart.resources);
@@ -1333,23 +1901,38 @@ mod tests {
         };
         use prost_types::Timestamp;
 
-        let domain = AuthorityDomainId { value: "authority-main".into() };
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         let identity = WireResourceIdentity {
-            adapter_id: Some(AdapterId { value: "adapter-a".into() }),
-            resource_kind: Some(ResourceKind { value: "pool".into() }),
-            resource_id: Some(ResourceId { value: "unknown-pool".into() }),
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".into(),
+            }),
+            resource_kind: Some(ResourceKind {
+                value: "pool".into(),
+            }),
+            resource_id: Some(ResourceId {
+                value: "unknown-pool".into(),
+            }),
         };
         let event = |mutation| ResourceStateEvent {
             authority_domain_id: Some(domain.clone()),
-            source_adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+            source_adapter_id: Some(AdapterId {
+                value: "adapter-a".into(),
+            }),
             source_adapter_generation: Some(Generation { value: 1 }),
             views: vec![ResourceViewStateUpdate {
-                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                resource_kind: Some(ResourceKind {
+                    value: "pool".into(),
+                }),
                 completeness: AdapterSnapshotSupport::Authoritative as i32,
             }],
             mutations: vec![mutation],
-            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 100,
+                nanos: 0,
+            }),
         };
         storage
             .append(
@@ -1382,10 +1965,16 @@ mod tests {
         let snapshot = state
             .materialize_resource_snapshot(
                 domain,
-                Timestamp { seconds: 200, nanos: 0 },
+                Timestamp {
+                    seconds: 200,
+                    nanos: 0,
+                },
             )
             .await;
-        let resource = snapshot.resources.first().expect("unknown resource snapshot");
+        let resource = snapshot
+            .resources
+            .first()
+            .expect("unknown resource snapshot");
         assert!(resource.tombstoned);
         assert_eq!(resource.freshness, ResourceFreshnessState::Unknown as i32);
         assert!(resource.resource_payload.is_none());
@@ -1522,9 +2111,7 @@ mod tests {
         cursor: u64,
     }
 
-    async fn aggregate_projection_snapshot(
-        state: &ProjectionState,
-    ) -> AggregateProjectionSnapshot {
+    async fn aggregate_projection_snapshot(state: &ProjectionState) -> AggregateProjectionSnapshot {
         AggregateProjectionSnapshot {
             authority: state.grant_check.inner.lock().await.clone(),
             targets: state.target_resolver.inner.lock().await.clone(),
@@ -1637,8 +2224,8 @@ mod tests {
                                 }),
                                 from_state: OperationState::Accepted as i32,
                                 to_state: OperationState::Cancelled as i32,
-                                failure_code:
-                                    patchbay_contracts::patchbay::FailureCode::Cancelled as i32,
+                                failure_code: patchbay_contracts::patchbay::FailureCode::Cancelled
+                                    as i32,
                             },
                             GrantRevocationEffect {
                                 command_id: Some(CommandId {
@@ -1646,8 +2233,8 @@ mod tests {
                                 }),
                                 from_state: OperationState::Accepted as i32,
                                 to_state: OperationState::Cancelled as i32,
-                                failure_code:
-                                    patchbay_contracts::patchbay::FailureCode::Cancelled as i32,
+                                failure_code: patchbay_contracts::patchbay::FailureCode::Cancelled
+                                    as i32,
                             },
                         ],
                         ..Revocation::default()
@@ -1662,10 +2249,12 @@ mod tests {
             .await
             .expect_err("a later invalid effect rejects the aggregate event");
         assert_eq!(aggregate_projection_snapshot(&state).await, before);
-        assert!(state
-            .operator_sessions
-            .equivalent_to(&operator_sessions_before)
-            .await);
+        assert!(
+            state
+                .operator_sessions
+                .equivalent_to(&operator_sessions_before)
+                .await
+        );
     }
 
     #[tokio::test]
@@ -1732,7 +2321,9 @@ mod tests {
         // suspended here; abort left that grant visible while the cursor stayed
         // at zero. The corrected path holds authority without mutating it.
         let blocked_target = state.target_resolver.inner.lock().await;
-        publish_tx.send(()).expect("catch-up still waits to publish");
+        publish_tx
+            .send(())
+            .expect("catch-up still waits to publish");
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 match state.grant_check.inner.try_lock() {
@@ -1759,10 +2350,12 @@ mod tests {
         drop(blocked_target);
 
         assert_eq!(aggregate_projection_snapshot(&state).await, before);
-        assert!(state
-            .operator_sessions
-            .equivalent_to(&operator_sessions_before)
-            .await);
+        assert!(
+            state
+                .operator_sessions
+                .equivalent_to(&operator_sessions_before)
+                .await
+        );
     }
 
     #[derive(Clone, Default)]
@@ -1963,10 +2556,12 @@ mod tests {
                 .await
                 .expect_err("corrupt catch-up must fail closed");
             assert_eq!(aggregate_projection_snapshot(&state).await, before);
-            assert!(state
-                .operator_sessions
-                .equivalent_to(&operator_sessions_before)
-                .await);
+            assert!(
+                state
+                    .operator_sessions
+                    .equivalent_to(&operator_sessions_before)
+                    .await
+            );
         }
 
         // A distinct append-only fixture proves valid catch-up without ever
@@ -2032,10 +2627,8 @@ mod tests {
             .await
             .is_err());
 
-        let truncated = ScriptedReplayStorage::new(vec![harmless_observation(
-            &authority_domain_id,
-            1,
-        )]);
+        let truncated =
+            ScriptedReplayStorage::new(vec![harmless_observation(&authority_domain_id, 1)]);
         let truncated_state = ProjectionState::rebuild(&truncated, &authority_domain_id)
             .await
             .unwrap();

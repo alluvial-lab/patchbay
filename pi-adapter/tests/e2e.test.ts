@@ -43,6 +43,7 @@ import {
   FreshSpawnSchema,
   PrincipalEnrollmentSchema,
   QueryDiagnosticsRequestSchema,
+  QuarantinedRuntimeEvidenceSchema,
   SpawnRequestSchema,
   SpawnTargetSpecSchema,
   RuntimeSessionIdSchema,
@@ -435,18 +436,19 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
       auth.grantId,
     );
-    await waitForCommandState(control, "command-old-generation", OperationState.REJECTED);
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const staleDeliveryEvents = await readAfter(control, 0n);
-    const staleFailure = observationsFor(
-      staleDeliveryEvents,
-      "command-old-generation",
-    ).find((observation) => observation.kind === ObservationKind.RESULT);
-    assert.equal(staleFailure?.failureCode, FailureCode.DELIVERY_REJECTED);
+    assert.deepEqual(
+      commandStates(staleDeliveryEvents, "command-old-generation"),
+      [],
+      "the server does not deliver an operation for a tombstoned generation",
+    );
     assert.equal(
       observationsFor(staleDeliveryEvents, "command-old-generation").some(
         (observation) => observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1",
       ),
       false,
+      "the adapter never executes in the replacement Pi context",
     );
 
     const spawn = await control.submit(
@@ -521,15 +523,12 @@ test("core → adapter → real AgentSession → observation loop, generation bu
 
     const reconnectEvents = await readAfter(control, 0n);
     assert.ok(
-      reconnectEvents
-        .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
-        .map((payload) => fromBinary(ObservationSchema, payload.payload))
-        .some(
-          (observation) =>
-            observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
-            new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry"),
-        ),
-      "reconnect explicitly replays Pi persisted entries projected as transcript events",
+      quarantinedObservationsFromDatabase(databasePath).some(
+        (observation) =>
+          observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
+          new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry"),
+      ),
+      "reconnect persists pre-registration snapshot evidence only inside quarantine",
     );
     assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
     const attachCountBeforeRestart = reconnectEvents.filter(isAdapterRegistration).length;
@@ -1005,6 +1004,25 @@ function observationsFor(
     );
 }
 
+function quarantinedObservationsFromDatabase(databasePath: string) {
+  const database = new DatabaseSync(databasePath);
+  try {
+    const rows = database
+      .prepare("SELECT payload FROM events WHERE authority_domain_id = ? AND kind = ?")
+      .all(domainId, StoredEventKind.QUARANTINED_RUNTIME_EVIDENCE) as { payload: Uint8Array }[];
+    return rows
+      .map((row) => fromBinary(StoredEventPayloadSchema, row.payload))
+      .map((payload) => fromBinary(QuarantinedRuntimeEvidenceSchema, payload.payload))
+      .flatMap((quarantined) =>
+        quarantined.candidate.case === "observation"
+          ? [quarantined.candidate.value]
+          : [],
+      );
+  } finally {
+    database.close();
+  }
+}
+
 function appendAcceptedOperation(
   databasePath: string,
   acceptedOperation: ReturnType<typeof operation>,
@@ -1012,6 +1030,7 @@ function appendAcceptedOperation(
 ): void {
   const database = new DatabaseSync(databasePath);
   try {
+    database.exec("PRAGMA busy_timeout = 5000");
     database
       .prepare("INSERT INTO events(authority_domain_id, kind, payload) VALUES (?, ?, ?)")
       .run(

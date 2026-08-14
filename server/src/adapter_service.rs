@@ -7,14 +7,16 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterDiagnosticReport, AdapterDiagnosticReportResult, AdapterId,
-    AdapterSnapshotSupport, AttachRequest, AttachResult, AuthorityDomainId, Delivery, FailureCode,
-    Generation, Observation, ObservationRequest, ObservationResult, OperationState, ReceiveRequest,
-    SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer, StoredEventKind,
+    observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
+    AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
+    AuthorityDomainId, Delivery, FailureCode, Generation, Observation, ObservationRequest,
+    ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
+    RuntimeEvidenceSourceAttachment, RuntimeGenerationRef, SpawnEvidenceAttachment,
+    SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
-    acceptance::{self, CommandIndex},
+    acceptance::{self, CommandIndex, OperationStateExt},
     adapter::{self, AdapterRegistry},
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::hash_principal_credential,
@@ -43,8 +45,8 @@ use crate::{
     decision_gate::CoreDecisionGate,
     identity::{random_core_generation, random_token},
     rpc::adapter_control_service_server::AdapterControlService,
-    snapshot::recover_session_registry,
     service::{map_acceptance_error_to_status, map_storage_error_to_status},
+    snapshot::recover_session_registry,
 };
 
 pub const ADAPTER_ID_HEADER: &str = "x-patchbay-adapter-id";
@@ -855,16 +857,26 @@ where
                             "session report source_cursor is missing adapter_generation",
                         )
                     })?;
-                let current_adapter_generation = {
+                let (current_adapter_generation, source_attachment, adapter_projection) = {
                     let adapters = self.adapters.lock().await;
-                    adapters
-                        .get(&authenticated_adapter)
-                        .and_then(|record| record.registration.adapter_generation)
-                        .ok_or_else(|| {
-                            Status::unauthenticated(
-                                "adapter attachment is not current; reattach required",
-                            )
-                        })?
+                    let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                        Status::unauthenticated(
+                            "adapter attachment is not current; reattach required",
+                        )
+                    })?;
+                    let generation = record
+                        .registration
+                        .adapter_generation
+                        .ok_or_else(|| Status::internal("attached adapter has no generation"))?;
+                    (
+                        generation,
+                        RuntimeEvidenceSourceAttachment {
+                            adapter_id: Some(authenticated_adapter.clone()),
+                            adapter_generation: Some(generation),
+                            attachment_event_id: Some(record.attach_event_id.clone()),
+                        },
+                        adapters.clone(),
+                    )
                 };
                 if reported_adapter_generation != current_adapter_generation {
                     record_adapter_audit(
@@ -888,14 +900,11 @@ where
                 // delta; otherwise a lockdown (or any core-side append) can
                 // leave this writer with a stale pre-event view and produce a
                 // live registration/transition that replay correctly rejects.
-                let rebuilt = recover_session_registry(
-                    &self.storage,
-                    &domain,
-                    &self.core_generation,
-                )
-                .await
-                .map_err(map_session_error)?
-                .registry;
+                let rebuilt =
+                    recover_session_registry(&self.storage, &domain, &self.core_generation)
+                        .await
+                        .map_err(map_session_error)?
+                        .registry;
                 #[cfg(feature = "conformance-fault-injection")]
                 if self.conformance_fault
                     == AdapterServiceConformanceFault::AcceptNonIncreasingSessionRevision
@@ -938,6 +947,111 @@ where
                             .revision = revision;
                     }
                 }
+                if report.spawn_origin.is_some() {
+                    let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
+                        .await
+                        .map_err(map_spawn_claim_error)?;
+                    let disposition = session::classify_session_report(
+                        &domain,
+                        &report,
+                        &source_attachment,
+                        &adapter_projection,
+                        &claims,
+                        rebuilt.logical_targets(),
+                    );
+                    match disposition.disposition.as_ref() {
+                        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                            claimed,
+                        )) => {
+                            let command_id =
+                                claimed.claim_operation_id.as_ref().ok_or_else(|| {
+                                    Status::internal("claimed successor has no operation id")
+                                })?;
+                            let claim_record =
+                                session::SpawnClaimQuery::claim_for_operation(&claims, command_id)
+                                    .ok_or_else(|| {
+                                        Status::internal("claimed successor lost its claim")
+                                    })?;
+                            let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
+                                adapter_id: report.adapter_id.clone(),
+                                deployment_scope: report.deployment_scope.clone(),
+                                runtime_session_id: report.runtime_session_id.clone(),
+                                generation: report.session_generation,
+                            };
+                            let staged = SpawnSuccessorEvidenceStaged {
+                                authority_domain_id: Some(domain.clone()),
+                                exact_claim: Some(claim_record.claim.clone()),
+                                report: Some(report),
+                                classified_target: Some(RuntimeGenerationRef {
+                                    logical_target_id: claim_record.claim.logical_target_id.clone(),
+                                    external_runtime: Some(external.clone()),
+                                }),
+                                disposition: Some(disposition),
+                                source_attachment: Some(source_attachment),
+                                external_runtime_reservation: Some(external),
+                            };
+                            session::validate_staged_successor(&staged)
+                                .map_err(|error| Status::failed_precondition(error.to_string()))?;
+                            let event_id = self
+                                .storage
+                                .append(&domain, session::encode_staged_successor(&staged))
+                                .await
+                                .map_err(map_storage_error_to_status)?;
+                            *self.sessions.lock().await = recover_session_registry(
+                                &self.storage,
+                                &domain,
+                                &self.core_generation,
+                            )
+                            .await
+                            .map_err(map_session_error)?
+                            .registry;
+                            return Ok(Response::new(ObservationResult {
+                                event_id: Some(event_id),
+                            }));
+                        }
+                        Some(runtime_generation_disposition::Disposition::Current(_)) => {
+                            return Err(Status::failed_precondition(
+                                "managed spawn report names an already-current runtime; omit spawn_origin for ordinary current reports",
+                            ));
+                        }
+                        _ => {
+                            let reason = session::quarantine_reason_for(&disposition);
+                            let quarantined = session::quarantined_session_report(
+                                &domain,
+                                report,
+                                disposition,
+                                reason,
+                                source_attachment,
+                                &rebuilt,
+                                &claims,
+                            )
+                            .map_err(|error| Status::failed_precondition(error.to_string()))?;
+                            let mut audit = AuditRecordDraft::new(
+                                crate::identity::now_timestamp()
+                                    .map_err(|error| Status::internal(error.to_string()))?,
+                                patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+                            );
+                            audit.failure_code = Some(FailureCode::StaleEvent);
+                            audit.reason_code = session::quarantine_reason_code(reason).to_owned();
+                            audit.target_scope =
+                                Some(session::quarantined_candidate_scope(&quarantined).map_err(
+                                    |error| Status::failed_precondition(error.to_string()),
+                                )?);
+                            let committed = self
+                                .storage
+                                .append_quarantined_runtime_evidence_audited(
+                                    &domain,
+                                    quarantined,
+                                    audit,
+                                )
+                                .await
+                                .map_err(map_storage_error_to_status)?;
+                            return Ok(Response::new(ObservationResult {
+                                event_id: Some(committed.source_event_id),
+                            }));
+                        }
+                    }
+                }
                 let mut sessions = self.sessions.lock().await;
                 *sessions = rebuilt;
                 let result = match session::ingest_session_report(
@@ -978,14 +1092,11 @@ where
                         return Err(map_session_error(error));
                     }
                 };
-                let rebuilt = recover_session_registry(
-                    &self.storage,
-                    &domain,
-                    &self.core_generation,
-                )
-                .await
-                .map_err(map_session_error)?
-                .registry;
+                let rebuilt =
+                    recover_session_registry(&self.storage, &domain, &self.core_generation)
+                        .await
+                        .map_err(map_session_error)?
+                        .registry;
                 *sessions = rebuilt;
                 session_result_event_id(result)
             }
@@ -1135,25 +1246,34 @@ where
                         .and_then(target_adapter_id),
                     &authenticated_adapter,
                 )?;
-                let canonical_sender = {
+                let (canonical_sender, source_attachment, adapter_projection) = {
                     let adapters = self.adapters.lock().await;
-                    let registration = &adapters
-                        .get(&authenticated_adapter)
-                        .ok_or_else(|| {
-                            Status::unauthenticated(
-                                "adapter attachment is not current; reattach required",
-                            )
-                        })?
-                        .registration;
-                    ActorEndpointRef {
-                        actor_id: Some(ActorId {
-                            value: authenticated_adapter.value.clone(),
-                        }),
-                        endpoint_id: Some(registration.endpoint_id.clone().ok_or_else(|| {
-                            Status::internal("attached adapter has no registered endpoint")
-                        })?),
-                        ..ActorEndpointRef::default()
-                    }
+                    let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                        Status::unauthenticated(
+                            "adapter attachment is not current; reattach required",
+                        )
+                    })?;
+                    let registration = &record.registration;
+                    let generation = registration
+                        .adapter_generation
+                        .ok_or_else(|| Status::internal("attached adapter has no generation"))?;
+                    (
+                        ActorEndpointRef {
+                            actor_id: Some(ActorId {
+                                value: authenticated_adapter.value.clone(),
+                            }),
+                            endpoint_id: Some(registration.endpoint_id.clone().ok_or_else(
+                                || Status::internal("attached adapter has no registered endpoint"),
+                            )?),
+                            ..ActorEndpointRef::default()
+                        },
+                        RuntimeEvidenceSourceAttachment {
+                            adapter_id: Some(authenticated_adapter.clone()),
+                            adapter_generation: Some(generation),
+                            attachment_event_id: Some(record.attach_event_id.clone()),
+                        },
+                        adapters.clone(),
+                    )
                 };
                 canonicalize_observation_sender(&mut observation, canonical_sender)?;
                 if adapter::is_adapter_registration(&observation) {
@@ -1165,6 +1285,93 @@ where
                 catch_up_command_projection(&self.storage, &domain, &mut commands)
                     .await
                     .map_err(map_acceptance_error_to_status)?;
+
+                let runtime_target = observation.target_scope.as_ref().and_then(|scope| {
+                    (TargetScopeKind::try_from(scope.kind).ok()
+                        == Some(TargetScopeKind::RuntimeSession))
+                    .then(|| patchbay_contracts::patchbay::ExternalRuntimeRef {
+                        adapter_id: scope.adapter_id.clone(),
+                        deployment_scope: scope.deployment_scope.clone(),
+                        runtime_session_id: scope.runtime_session_id.clone(),
+                        generation: scope.session_generation,
+                    })
+                });
+                if let Some(runtime_target) = runtime_target {
+                    let sessions =
+                        recover_session_registry(&self.storage, &domain, &self.core_generation)
+                            .await
+                            .map_err(map_session_error)?
+                            .registry;
+                    let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
+                        .await
+                        .map_err(map_spawn_claim_error)?;
+                    let disposition = session::classify_runtime_target(
+                        &domain,
+                        &runtime_target,
+                        &source_attachment,
+                        &adapter_projection,
+                        &sessions,
+                    );
+                    let late_terminal =
+                        acceptance::exact_command_correlation(&observation.correlations)
+                            .and_then(|command_id| commands.index.get_command(&command_id))
+                            .is_some_and(|record| record.state.is_terminal());
+                    let is_current = matches!(
+                        disposition.disposition.as_ref(),
+                        Some(runtime_generation_disposition::Disposition::Current(_))
+                    );
+                    if !is_current || late_terminal {
+                        let reason = if late_terminal && is_current {
+                            RuntimeEvidenceQuarantineReason::StaleSourceOrder
+                        } else {
+                            session::quarantine_reason_for(&disposition)
+                        };
+                        let quarantined = session::quarantined_observation(
+                            &domain,
+                            observation,
+                            disposition,
+                            reason,
+                            source_attachment,
+                            &sessions,
+                            &claims,
+                        )
+                        .map_err(|error| Status::failed_precondition(error.to_string()))?;
+                        let mut audit = AuditRecordDraft::new(
+                            crate::identity::now_timestamp()
+                                .map_err(|error| Status::internal(error.to_string()))?,
+                            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+                        );
+                        audit.failure_code = Some(FailureCode::StaleEvent);
+                        audit.reason_code = session::quarantine_reason_code(reason).to_owned();
+                        audit.target_scope = Some(
+                            session::quarantined_candidate_scope(&quarantined)
+                                .map_err(|error| Status::failed_precondition(error.to_string()))?,
+                        );
+                        audit.command_id = match quarantined.candidate.as_ref() {
+                            Some(
+                                patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::Observation(
+                                    nested,
+                                ),
+                            ) => acceptance::exact_command_correlation(&nested.correlations),
+                            _ => None,
+                        };
+                        let committed = self
+                            .storage
+                            .append_quarantined_runtime_evidence_audited(
+                                &domain,
+                                quarantined,
+                                audit,
+                            )
+                            .await
+                            .map_err(map_storage_error_to_status)?;
+                        catch_up_command_projection(&self.storage, &domain, &mut commands)
+                            .await
+                            .map_err(map_acceptance_error_to_status)?;
+                        return Ok(Response::new(ObservationResult {
+                            event_id: Some(committed.source_event_id),
+                        }));
+                    }
+                }
                 let event_id = if adapter::is_delivery_acknowledgement(&observation) {
                     adapter::ingest_delivery_acknowledgement(
                         &self.storage,
@@ -1254,7 +1461,8 @@ where
         let decision_gate = self.decision_gate.clone();
         let stale_domain = domain.clone();
         let stale_adapter = authenticated_adapter.clone();
-        let core_generation = self.core_generation;        #[cfg(feature = "conformance-fault-injection")]
+        let core_generation = self.core_generation;
+        #[cfg(feature = "conformance-fault-injection")]
         let conformance_fault = self.conformance_fault;
         let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
@@ -1296,14 +1504,11 @@ where
                 };
 
                 let state_result: Result<(), String> = async {
-                    let rebuilt_sessions = recover_session_registry(
-                        &storage,
-                        &stale_domain,
-                        &core_generation,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .registry;
+                    let rebuilt_sessions =
+                        recover_session_registry(&storage, &stale_domain, &core_generation)
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .registry;
                     let rebuilt_resources = resource::rebuild_from_log(&storage, &stale_domain)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -1356,14 +1561,11 @@ where
                             .await
                             .map_err(|error| error.to_string())?;
                     }
-                    *sessions.lock().await = recover_session_registry(
-                        &storage,
-                        &stale_domain,
-                        &core_generation,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .registry;
+                    *sessions.lock().await =
+                        recover_session_registry(&storage, &stale_domain, &core_generation)
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .registry;
                     *resources.lock().await = resource::rebuild_from_log(&storage, &stale_domain)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -1520,10 +1722,7 @@ fn canonicalize_observation_sender(
         claim_conflicts(&claimed.actor_id, &canonical.actor_id)
             || claim_conflicts(&claimed.endpoint_id, &canonical.endpoint_id)
             || claim_conflicts(&claimed.device_id, &canonical.device_id)
-            || claim_conflicts(
-                &claimed.endpoint_generation,
-                &canonical.endpoint_generation,
-            )
+            || claim_conflicts(&claimed.endpoint_generation, &canonical.endpoint_generation)
     }) {
         return Err(Status::permission_denied(
             "observation sender does not match authenticated adapter attachment",

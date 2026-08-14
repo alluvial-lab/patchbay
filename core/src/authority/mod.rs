@@ -26,6 +26,7 @@ pub use operator::{
 pub use projection::{GrantLookup, GrantProjection};
 pub use registry::AuthorityRegistry;
 pub use replay::rebuild_from_log;
+pub(crate) use spawn_tail::descendant_grant_id;
 pub use spawn_tail::{
     DescendantGrantIssuance, SpawnCompletionAction, SpawnCompletionAudit, SpawnCompletionCommit,
     SpawnDescendantTail,

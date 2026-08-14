@@ -67,6 +67,17 @@ impl TargetRegistry {
         self.adapters.observe(event)?;
         Ok(())
     }
+
+    /// Fold the non-session children after the ordered promotion fold has
+    /// already validated and staged SessionRegistry publication.
+    pub fn observe_promotion_siblings(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), TargetRegistryError> {
+        self.resources.observe(event)?;
+        self.adapters.observe(event)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

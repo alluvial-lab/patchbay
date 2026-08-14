@@ -4,20 +4,19 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, typed_correlation,
-    AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId,
-    CommandId, CommandTransition, EndpointId, FailureCode, Generation, IdempotencyKey, Lsn,
-    Observation, ObservationKind, Operation, OperationKind,
-    PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
-    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
+    observation_request, resource_report, resource_report_mutation, spawn_claim_event,
+    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability,
+    AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, EndpointId, FailureCode,
+    Generation, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
+    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
     ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
-    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
-    RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
-    SessionConnectivityState, SessionReportSourceCursor, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeSessionId,
+    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+    SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -43,7 +42,9 @@ const EVIDENCE: &str = "adapter-test-secret";
 fn accepted_operation_bytes(operation: &Operation) -> Vec<u8> {
     AcceptedOperation {
         operation: Some(operation.clone()),
-        authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "test-grant".to_owned() }),
+        authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId {
+            value: "test-grant".to_owned(),
+        }),
     }
     .encode_to_vec()
 }
@@ -283,33 +284,55 @@ fn resource_source_oracle_kills_channel_and_owner_mutants() {
         current_token: bool,
         exact_owner: bool,
     }
-    let oracle = |attempt: Attempt| attempt.authenticated && attempt.current_token && attempt.exact_owner;
+    let oracle =
+        |attempt: Attempt| attempt.authenticated && attempt.current_token && attempt.exact_owner;
     let trust_payload_source = |_attempt: Attempt| true;
     let skip_current_token = |attempt: Attempt| attempt.authenticated && attempt.exact_owner;
     let skip_owner = |attempt: Attempt| attempt.authenticated && attempt.current_token;
 
-    let missing = Attempt { authenticated: false, current_token: false, exact_owner: true };
-    let stale = Attempt { authenticated: true, current_token: false, exact_owner: true };
-    let cross_owner = Attempt { authenticated: true, current_token: true, exact_owner: false };
+    let missing = Attempt {
+        authenticated: false,
+        current_token: false,
+        exact_owner: true,
+    };
+    let stale = Attempt {
+        authenticated: true,
+        current_token: false,
+        exact_owner: true,
+    };
+    let cross_owner = Attempt {
+        authenticated: true,
+        current_token: true,
+        exact_owner: false,
+    };
     assert!(!oracle(missing));
     assert!(!oracle(stale));
     assert!(!oracle(cross_owner));
-    assert!(trust_payload_source(missing), "payload-source mutant accepts unauthenticated evidence");
-    assert!(skip_current_token(stale), "token-fence mutant accepts stale attachment");
-    assert!(skip_owner(cross_owner), "owner-binding mutant accepts cross-adapter target");
+    assert!(
+        trust_payload_source(missing),
+        "payload-source mutant accepts unauthenticated evidence"
+    );
+    assert!(
+        skip_current_token(stale),
+        "token-fence mutant accepts stale attachment"
+    );
+    assert!(
+        skip_owner(cross_owner),
+        "owner-binding mutant accepts cross-adapter target"
+    );
 }
 
 #[tokio::test]
-async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_registration_append() {
-    let domain = AuthorityDomainId { value: "authority-main".into() };
+async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_without_registration_append(
+) {
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut valid = registration(domain.clone());
     valid.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -346,9 +369,13 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
     .await
     .expect("service initializes");
     let mut okf = registration(domain.clone());
-    let mut declaration = resource_declaration("knowledge_bundle", AdapterSnapshotSupport::Authoritative);
-    declaration.projection_contract.as_mut().expect("projection").target_category =
-        AdapterTargetCategory::KnowledgeBundle as i32;
+    let mut declaration =
+        resource_declaration("knowledge_bundle", AdapterSnapshotSupport::Authoritative);
+    declaration
+        .projection_contract
+        .as_mut()
+        .expect("projection")
+        .target_category = AdapterTargetCategory::KnowledgeBundle as i32;
     declaration
         .projection_contract
         .as_mut()
@@ -389,14 +416,13 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
 #[tokio::test]
 async fn authenticated_resource_report_uses_manifest_admission_and_durable_projection() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut registration = registration(domain.clone());
     registration.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -416,15 +442,21 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
     let token = attachment_token(&attached);
     let identity = ResourceIdentity {
         adapter_id: Some(adapter_id()),
-        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
-        resource_id: Some(ResourceId { value: "pool-1".into() }),
+        resource_kind: Some(ResourceKind {
+            value: "provider_pool".into(),
+        }),
+        resource_id: Some(ResourceId {
+            value: "pool-1".into(),
+        }),
     };
     let report = ResourceReport {
         adapter_id: Some(adapter_id()),
         adapter_generation: Some(Generation { value: 1 }),
         report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
             views: vec![ResourceViewReport {
-                resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                resource_kind: Some(ResourceKind {
+                    value: "provider_pool".into(),
+                }),
                 completeness: AdapterSnapshotSupport::Partial as i32,
                 mutations: vec![ResourceReportMutation {
                     identity: Some(identity.clone()),
@@ -445,7 +477,10 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
                 }],
             }],
         })),
-        observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        observed_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
     };
     let mut overclaimed = report.clone();
     let Some(resource_report::Report::Snapshot(snapshot)) = overclaimed.report.as_mut() else {
@@ -487,9 +522,9 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
             .ingest_observation(authenticated_with_attachment_token(
                 ObservationRequest {
                     authority_domain_id: Some(domain.clone()),
-                    observation: Some(observation_request::Observation::ResourceReport(
-                        mismatched,
-                    )),
+                    observation: Some(
+                        observation_request::Observation::ResourceReport(mismatched,)
+                    ),
                 },
                 &token,
             ))
@@ -539,13 +574,9 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             let replayed = resource::rebuild_from_log(&storage, &domain).await.unwrap();
-            if replayed
-                .get(&projected)
-                .is_some_and(|record| {
-                    record.freshness
-                        == patchbay_contracts::patchbay::ResourceFreshnessState::Stale
-                })
-            {
+            if replayed.get(&projected).is_some_and(|record| {
+                record.freshness == patchbay_contracts::patchbay::ResourceFreshnessState::Stale
+            }) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -558,14 +589,13 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
 #[tokio::test]
 async fn authenticated_resource_status_records_one_observation_and_fences_invalid_targets() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut resource_registration = registration(domain.clone());
     resource_registration.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -602,7 +632,9 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
     let status = Observation {
         authority_domain_id: Some(domain.clone()),
         sender: Some(ActorEndpointRef {
-            actor_id: Some(ActorId { value: adapter_id().value.clone() }),
+            actor_id: Some(ActorId {
+                value: adapter_id().value.clone(),
+            }),
             ..ActorEndpointRef::default()
         }),
         kind: ObservationKind::Status as i32,
@@ -634,8 +666,15 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
         .await
         .expect("events read");
     let appended = &after_status[before..];
-    assert_eq!(appended.len(), 1, "status appends exactly one durable event");
-    assert_eq!(appended[0].payload.kind, StoredEventKind::Observation as i32);
+    assert_eq!(
+        appended.len(),
+        1,
+        "status appends exactly one durable event"
+    );
+    assert_eq!(
+        appended[0].payload.kind,
+        StoredEventKind::Observation as i32
+    );
     assert!(appended
         .iter()
         .all(|event| event.payload.kind != StoredEventKind::CommandTransition as i32));
@@ -668,7 +707,9 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
         .target_scope
         .as_mut()
         .expect("target scope")
-        .runtime_session_id = Some(RuntimeSessionId { value: "session-1".into() });
+        .runtime_session_id = Some(RuntimeSessionId {
+        value: "session-1".into(),
+    });
     assert_eq!(
         service
             .ingest_observation(authenticated_with_attachment_token(
@@ -823,14 +864,13 @@ async fn generic_registration_schema_ingress_cannot_register_an_embedded_adapter
 #[tokio::test]
 async fn same_generation_manifest_redeclaration_atomically_degrades_affected_resources() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let initial_kinds = ["removed_pool", "down_tiered_pool", "schema_changed_pool"];
     let mut initial = registration(domain.clone());
     initial.capability = Some(AdapterCapability {
@@ -868,10 +908,8 @@ async fn same_generation_manifest_redeclaration_atomically_degrades_affected_res
         .await
         .expect("initial authoritative resource report succeeds");
 
-    let mut schema_changed = resource_declaration(
-        "schema_changed_pool",
-        AdapterSnapshotSupport::Authoritative,
-    );
+    let mut schema_changed =
+        resource_declaration("schema_changed_pool", AdapterSnapshotSupport::Authoritative);
     schema_changed
         .projection_contract
         .as_mut()
@@ -966,13 +1004,10 @@ async fn committed_registration_with_failed_projection_fences_prior_attachment()
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut initial = registration(domain.clone());
     initial.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -1071,14 +1106,13 @@ async fn committed_registration_with_failed_projection_fences_prior_attachment()
 #[tokio::test]
 async fn newer_generation_attachment_degrades_cached_resources_without_a_report() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut initial = registration(domain.clone());
     initial.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -1131,9 +1165,10 @@ async fn newer_generation_attachment_degrades_cached_resources_without_a_report(
         .expect("newer attachment succeeds without a resource report");
 
     let replayed = resource::rebuild_from_log(&storage, &domain).await.unwrap();
-    let identity = patchbay_core::resource::ResourceIdentity::try_from_wire(
-        &resource_identity("provider_pool", "resource-1"),
-    )
+    let identity = patchbay_core::resource::ResourceIdentity::try_from_wire(&resource_identity(
+        "provider_pool",
+        "resource-1",
+    ))
     .unwrap();
     let record = replayed.get(&identity).unwrap();
     assert_eq!(record.freshness, ResourceFreshnessState::Stale);
@@ -1146,14 +1181,13 @@ async fn newer_generation_attachment_degrades_cached_resources_without_a_report(
 #[tokio::test]
 async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let mut registration = registration(domain.clone());
     registration.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
@@ -1181,13 +1215,19 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
         adapter_generation: Some(Generation { value: 1 }),
         report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
             views: vec![ResourceViewReport {
-                resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                resource_kind: Some(ResourceKind {
+                    value: "provider_pool".into(),
+                }),
                 completeness: AdapterSnapshotSupport::Authoritative as i32,
                 mutations: vec![ResourceReportMutation {
                     identity: Some(ResourceIdentity {
                         adapter_id: Some(adapter_id()),
-                        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
-                        resource_id: Some(ResourceId { value: "unknown-pool".into() }),
+                        resource_kind: Some(ResourceKind {
+                            value: "provider_pool".into(),
+                        }),
+                        resource_id: Some(ResourceId {
+                            value: "unknown-pool".into(),
+                        }),
                     }),
                     mutation: Some(resource_report_mutation::Mutation::Unknown(
                         ResourceStateUnknown {},
@@ -1195,7 +1235,10 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
                 }],
             }],
         })),
-        observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        observed_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
     };
 
     let error = service
@@ -1210,7 +1253,11 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
         .expect_err("authoritative unknown must reject");
     assert_eq!(error.code(), tonic::Code::InvalidArgument);
     assert_eq!(
-        storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len(),
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
         events_before,
         "rejection must happen before durable append"
     );
@@ -1288,14 +1335,13 @@ fn resource_declaration(kind: &str, tier: AdapterSnapshotSupport) -> ResourceCap
 #[tokio::test]
 async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let attachment_token = attach_generation(&service, domain.clone(), 1).await;
     let response = service
         .report_diagnostics(authenticated_with_attachment_token(
@@ -1306,7 +1352,10 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
                     adapter_id: Some(adapter_id()),
                     ..Default::default()
                 }),
-                observed_at: Some(prost_types::Timestamp { seconds: 2, nanos: 0 }),
+                observed_at: Some(prost_types::Timestamp {
+                    seconds: 2,
+                    nanos: 0,
+                }),
                 payload: Some(PayloadEnvelope {
                     payload: AdapterDiagnosticPayload {
                         code: "pi_adapter_started".into(),
@@ -1327,12 +1376,26 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
         .expect("report succeeds")
         .into_inner();
     assert!(response.accepted);
-    let events = storage.read_after(&domain, Lsn { value: 0 }).await.expect("events read");
-    assert_eq!(events.iter().filter(|event| event.payload.kind == StoredEventKind::Observation as i32).count(), 2, "registration plus diagnostic source");
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::Observation as i32)
+            .count(),
+        2,
+        "registration plus diagnostic source"
+    );
     let diagnostic_source = response.observation_event_id.expect("source id");
     let audit_id = response.audit_event_id.expect("audit id");
-    let audit = events.iter().find(|event| event.event_id == audit_id).expect("audit event");
-    let audit = patchbay_contracts::patchbay::AuditRecord::decode(audit.payload.payload.as_slice()).expect("audit decodes");
+    let audit = events
+        .iter()
+        .find(|event| event.event_id == audit_id)
+        .expect("audit event");
+    let audit = patchbay_contracts::patchbay::AuditRecord::decode(audit.payload.payload.as_slice())
+        .expect("audit decodes");
     assert_eq!(audit.kind, AuditEventKind::AdapterDiagnosticReported as i32);
     assert_eq!(audit.source_event_id, Some(diagnostic_source));
     assert_eq!(audit.reason_code, "pi_adapter_started");
@@ -1342,9 +1405,13 @@ async fn authenticated_diagnostic_report_appends_source_and_audit_atomically() {
 #[tokio::test]
 async fn command_projection_catch_up_is_atomic_on_late_fold_failure() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
     let operation = |command: &str| Operation {
-        command_id: Some(CommandId { value: command.into() }),
+        command_id: Some(CommandId {
+            value: command.into(),
+        }),
         authority_domain_id: Some(domain.clone()),
         kind: OperationKind::Instruct as i32,
         target_scope: Some(TargetScope {
@@ -1385,7 +1452,9 @@ async fn command_projection_catch_up_is_atomic_on_late_fold_failure() {
             StoredEventPayload {
                 kind: StoredEventKind::CommandTransition as i32,
                 payload: CommandTransition {
-                    command_id: Some(CommandId { value: "missing-command".into() }),
+                    command_id: Some(CommandId {
+                        value: "missing-command".into(),
+                    }),
                     from_state: OperationState::Accepted as i32,
                     to_state: OperationState::Delivered as i32,
                     failure_code: FailureCode::Unspecified as i32,
@@ -1405,17 +1474,27 @@ async fn command_projection_catch_up_is_atomic_on_late_fold_failure() {
 
 #[test]
 fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
-    let domain = AuthorityDomainId { value: "authority-main".into() };
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
     let operation = Operation {
-        command_id: Some(CommandId { value: "resource-command".into() }),
+        command_id: Some(CommandId {
+            value: "resource-command".into(),
+        }),
         authority_domain_id: Some(domain.clone()),
         kind: OperationKind::Query as i32,
         target_scope: Some(TargetScope {
             kind: TargetScopeKind::Resource as i32,
             resource: Some(ResourceIdentity {
-                adapter_id: Some(AdapterId { value: "adapter-a".into() }),
-                resource_id: Some(ResourceId { value: "shared".into() }),
-                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                adapter_id: Some(AdapterId {
+                    value: "adapter-a".into(),
+                }),
+                resource_id: Some(ResourceId {
+                    value: "shared".into(),
+                }),
+                resource_kind: Some(ResourceKind {
+                    value: "pool".into(),
+                }),
             }),
             ..TargetScope::default()
         }),
@@ -1435,13 +1514,29 @@ fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
     let mut commands = CommandIndex::new();
     commands.apply(&event).expect("accepted operation projects");
 
-    let adapter_a = AdapterId { value: "adapter-a".into() };
-    let adapter_b = AdapterId { value: "adapter-b".into() };
-    assert_eq!(deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_a, 0).len(), 1);
-    assert!(deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_b, 0).is_empty());
+    let adapter_a = AdapterId {
+        value: "adapter-a".into(),
+    };
+    let adapter_b = AdapterId {
+        value: "adapter-b".into(),
+    };
+    assert_eq!(
+        deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_a, 0).len(),
+        1
+    );
+    assert!(
+        deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_b, 0).is_empty()
+    );
 
     let mut malformed = operation;
-    malformed.target_scope.as_mut().unwrap().resource.as_mut().unwrap().resource_kind = None;
+    malformed
+        .target_scope
+        .as_mut()
+        .unwrap()
+        .resource
+        .as_mut()
+        .unwrap()
+        .resource_kind = None;
     let malformed_event = RecordedEvent {
         payload: StoredEventPayload {
             kind: StoredEventKind::Operation as i32,
@@ -1455,25 +1550,30 @@ fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
 #[tokio::test]
 async fn authenticated_resource_result_cannot_cross_kind_or_id_within_one_adapter() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let attachment_token = attach_generation(&service, domain.clone(), 1).await;
     let operation = Operation {
-        command_id: Some(CommandId { value: "resource-observation-command".into() }),
+        command_id: Some(CommandId {
+            value: "resource-observation-command".into(),
+        }),
         authority_domain_id: Some(domain.clone()),
         kind: OperationKind::Query as i32,
         target_scope: Some(TargetScope {
             kind: TargetScopeKind::Resource as i32,
             resource: Some(ResourceIdentity {
                 adapter_id: Some(adapter_id()),
-                resource_id: Some(ResourceId { value: "expected".into() }),
-                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                resource_id: Some(ResourceId {
+                    value: "expected".into(),
+                }),
+                resource_kind: Some(ResourceKind {
+                    value: "pool".into(),
+                }),
             }),
             ..TargetScope::default()
         }),
@@ -1499,7 +1599,11 @@ async fn authenticated_resource_result_cannot_cross_kind_or_id_within_one_adapte
         .expect("exact delivery acknowledgement succeeds");
 
     for (kind, id) in [("window", "expected"), ("pool", "other")] {
-        let before = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len();
+        let before = storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len();
         let mismatched = ObservationRequest {
             authority_domain_id: Some(domain.clone()),
             observation: Some(observation_request::Observation::Event(Observation {
@@ -1530,7 +1634,14 @@ async fn authenticated_resource_result_cannot_cross_kind_or_id_within_one_adapte
             .await
             .expect_err("same-adapter tuple mismatch must reject");
         assert!(error.message().contains("target does not match"));
-        assert_eq!(storage.read_after(&domain, Lsn { value: 0 }).await.unwrap().len(), before);
+        assert_eq!(
+            storage
+                .read_after(&domain, Lsn { value: 0 })
+                .await
+                .unwrap()
+                .len(),
+            before
+        );
     }
 }
 
@@ -1543,13 +1654,10 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
 
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1634,16 +1742,126 @@ async fn adapter_attaches_reports_session_and_receives_targeted_operation() {
 }
 
 #[tokio::test]
+async fn managed_spawn_report_stages_exclusively_and_never_registers_current_session() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let logical_target_id = LogicalTargetId {
+        value: "logical-spawn".to_owned(),
+    };
+    storage
+        .append(
+            &domain,
+            patchbay_core::session::events::encode(
+                &patchbay_core::session::events::logical_target_created(
+                    domain.clone(),
+                    LogicalTargetCreated {
+                        logical_target_id: Some(logical_target_id.clone()),
+                        adapter_id: Some(adapter_id()),
+                        deployment_scope: "machine-a".to_owned(),
+                    },
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    let mut operation = targeted_operation(domain.clone(), "managed-spawn");
+    operation.kind = OperationKind::Spawn as i32;
+    operation.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_id()),
+        ..TargetScope::default()
+    });
+    let accepted = AcceptedOperation {
+        operation: Some(operation.clone()),
+        authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId {
+            value: "test-grant".to_owned(),
+        }),
+    };
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted.encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    storage
+        .append(
+            &domain,
+            patchbay_core::session::encode_spawn_claim_event(&SpawnClaimEvent {
+                authority_domain_id: Some(domain.clone()),
+                mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
+                    accepted_operation: Some(accepted),
+                    claim: Some(SpawnGenerationClaim {
+                        authority_domain_id: Some(domain.clone()),
+                        claim_operation_id: operation.command_id.clone(),
+                        logical_target_id: Some(logical_target_id),
+                        expected_prior: None,
+                        claimed_generation: Some(Generation { value: 1 }),
+                    }),
+                    ..SpawnClaimAccepted::default()
+                })),
+            }),
+        )
+        .await
+        .unwrap();
+    let mut report = session_report(SessionConnectivityState::Live);
+    report.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(
+            operation.command_id.clone().unwrap(),
+        )),
+    });
+    let result = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(report)),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("exact managed report stages")
+        .into_inner();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let staged = events
+        .iter()
+        .find(|event| event.event_id == result.event_id.clone().unwrap())
+        .unwrap();
+    assert_eq!(
+        staged.payload.kind,
+        StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
+            .count(),
+        1,
+        "the only SessionState is logical-target creation; no registration/bump bypass exists"
+    );
+    assert!(service
+        .conformance_session_registry()
+        .await
+        .sessions()
+        .next()
+        .is_none());
+}
+
+#[tokio::test]
 async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_derivation() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let attachment_token = attach_generation(&service, domain.clone(), 1).await;
     service
         .ingest_observation(authenticated_with_attachment_token(
@@ -1664,9 +1882,14 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
         domain.clone(),
         SecurityLockdownEntered {
             reason_code: "test_lockdown".into(),
-            occurred_at: Some(prost_types::Timestamp { seconds: 2, nanos: 0 }),
+            occurred_at: Some(prost_types::Timestamp {
+                seconds: 2,
+                nanos: 0,
+            }),
             entered_by: Some(ActorEndpointRef {
-                actor_id: Some(ActorId { value: "operator".into() }),
+                actor_id: Some(ActorId {
+                    value: "operator".into(),
+                }),
                 ..Default::default()
             }),
             invalidated_through_operator_session_generation: Some(Generation { value: 1 }),
@@ -1681,7 +1904,11 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
     // The report is still live adapter evidence, but the catch-up fold must
     // make the stale clamp visible before ingest derives its transition.
     let mut post_lockdown_report = session_report(SessionConnectivityState::Live);
-    post_lockdown_report.source_cursor.as_mut().unwrap().revision = 2;
+    post_lockdown_report
+        .source_cursor
+        .as_mut()
+        .unwrap()
+        .revision = 2;
     service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -1701,7 +1928,10 @@ async fn lockdown_entry_then_live_report_catches_up_adapter_projection_before_de
     let current = replayed
         .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
         .expect("session remains present");
-    assert_eq!(current.state.connectivity(), SessionConnectivityState::Stale);
+    assert_eq!(
+        current.state.connectivity(),
+        SessionConnectivityState::Stale
+    );
 }
 
 #[tokio::test]
@@ -1710,13 +1940,10 @@ async fn concurrent_increasing_model_reports_leave_a_replayable_log() {
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let attachment_token = attach_generation(&service, domain.clone(), 1).await;
 
     let mut initial = session_report(SessionConnectivityState::Live);
@@ -1799,13 +2026,10 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
     let attachment_token = attach_generation(&service, domain.clone(), 1).await;
 
     for (revision, model) in [(1, "provider/model-a"), (3, "provider/model-b")] {
@@ -1856,10 +2080,7 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     }
 
-    let events = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
     assert_eq!(
         events
             .iter()
@@ -1971,7 +2192,9 @@ async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
         .ingest_observation(authenticated_as_with_attachment_token(
             ObservationRequest {
                 authority_domain_id: Some(domain.clone()),
-                observation: Some(observation_request::Observation::SessionReport(victim_report)),
+                observation: Some(observation_request::Observation::SessionReport(
+                    victim_report,
+                )),
             },
             &victim_id,
             EVIDENCE,
@@ -1994,7 +2217,10 @@ async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
                     adapter_id: Some(victim_id.clone()),
                     ..Default::default()
                 }),
-                observed_at: Some(Timestamp { seconds: 2, nanos: 0 }),
+                observed_at: Some(Timestamp {
+                    seconds: 2,
+                    nanos: 0,
+                }),
                 payload: Some(PayloadEnvelope {
                     payload: AdapterDiagnosticPayload {
                         code: "token_commune_started".into(),
@@ -2090,13 +2316,9 @@ async fn newer_attachment_fences_stale_adapter_process() {
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage,
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+        .await
+        .expect("service initializes");
 
     let stale_token = attach_generation(&service, domain.clone(), 1).await;
     let current_token = attach_generation(&service, domain, 2).await;
@@ -2129,14 +2351,12 @@ async fn newer_attachment_fences_stale_adapter_process() {
 #[tokio::test]
 async fn stale_attachment_is_rejected_before_observation_or_diagnostic_decision() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-    let domain = AuthorityDomainId { value: "authority-main".into() };
-    let service = AdapterControlServiceImpl::new(
-        storage,
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+        .await
+        .expect("service initializes");
     let stale_token = attach_generation(&service, domain.clone(), 1).await;
     let _current_token = attach_generation(&service, domain.clone(), 2).await;
 
@@ -2192,13 +2412,10 @@ async fn rebuilt_core_forgets_attachment_tokens_until_adapter_reattaches() {
     let (before_restart, stale_token) = attached_service(storage.clone(), domain.clone()).await;
     drop(before_restart);
 
-    let after_restart = AdapterControlServiceImpl::new(
-        storage,
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service rebuilds");
+    let after_restart =
+        AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+            .await
+            .expect("service rebuilds");
     let status = after_restart
         .receive_deliveries(authenticated_with_attachment_token(
             ReceiveRequest {
@@ -2232,6 +2449,14 @@ async fn delivered_command_is_redelivered_and_reacknowledged_without_double_tran
         value: "authority-main".into(),
     };
     let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        1,
+        &attachment_token,
+    )
+    .await;
     let operation = targeted_operation(domain.clone(), "command-redelivery");
     storage
         .append(
@@ -2355,13 +2580,9 @@ async fn deferred_spawn_success_suppresses_redelivery_after_restart_and_reattach
     drop(first_tail);
     drop(service);
 
-    let restarted = AdapterControlServiceImpl::new(
-        storage,
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("adapter service rebuilds from the durable result");
+    let restarted = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+        .await
+        .expect("adapter service rebuilds from the durable result");
     let restarted_token = attach_generation(&restarted, domain, 2).await;
     let mut restarted_tail = receive_from_start(&restarted, &restarted_token).await;
     assert!(
@@ -2507,6 +2728,14 @@ async fn stream_loss_fails_running_once_and_leaves_delivered_redeliverable() {
         value: "authority-main".into(),
     };
     let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        1,
+        &attachment_token,
+    )
+    .await;
     let running = targeted_operation(domain.clone(), "command-running");
     let resource_running = resource_targeted_operation(domain.clone(), "resource-command-running");
     let delivered = targeted_operation(domain.clone(), "command-delivered");
@@ -2691,13 +2920,9 @@ async fn attached_service(
     storage: RusqliteStorage,
     domain: AuthorityDomainId,
 ) -> (AdapterControlServiceImpl<RusqliteStorage>, String) {
-    let service = AdapterControlServiceImpl::new(
-        storage,
-        domain.clone(),
-        evidence_verifier(),
-    )
-    .await
-    .expect("service initializes");
+    let service = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+        .await
+        .expect("service initializes");
     let attachment_token = attach_generation(&service, domain, 1).await;
     (service, attachment_token)
 }
@@ -2786,15 +3011,21 @@ fn targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
 
 fn resource_targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
     Operation {
-        command_id: Some(CommandId { value: command.into() }),
+        command_id: Some(CommandId {
+            value: command.into(),
+        }),
         authority_domain_id: Some(domain),
         kind: OperationKind::Query as i32,
         target_scope: Some(TargetScope {
             kind: TargetScopeKind::Resource as i32,
             resource: Some(ResourceIdentity {
                 adapter_id: Some(adapter_id()),
-                resource_id: Some(ResourceId { value: "shared".into() }),
-                resource_kind: Some(ResourceKind { value: "pool".into() }),
+                resource_id: Some(ResourceId {
+                    value: "shared".into(),
+                }),
+                resource_kind: Some(ResourceKind {
+                    value: "pool".into(),
+                }),
             }),
             ..TargetScope::default()
         }),
@@ -2950,9 +3181,8 @@ fn authenticated_as<T>(message: T, adapter_id: &AdapterId, evidence: &str) -> Re
         ADAPTER_ID_HEADER,
         adapter_id.value.parse().expect("metadata"),
     );
-    request.metadata_mut().insert(
-        ADAPTER_EVIDENCE_HEADER,
-        evidence.parse().expect("metadata"),
-    );
+    request
+        .metadata_mut()
+        .insert(ADAPTER_EVIDENCE_HEADER, evidence.parse().expect("metadata"));
     request
 }

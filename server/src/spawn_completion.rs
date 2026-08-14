@@ -11,6 +11,7 @@ use patchbay_core::{
         ingest_descendant_grant, AuthorityError, AuthorityRegistry, SpawnCompletionAction,
         SpawnDescendantTail,
     },
+    session::next_spawn_promotion,
     storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
@@ -73,6 +74,7 @@ pub struct SpawnCompletionDriver<S> {
     clock: Arc<dyn Clock>,
     tail: SpawnDescendantTail,
     authority: AuthorityRegistry,
+    history: Vec<RecordedEvent>,
     cursor: u64,
     scan_interval: Duration,
 }
@@ -103,6 +105,7 @@ where
             clock,
             tail: SpawnDescendantTail::new(),
             authority: AuthorityRegistry::new(),
+            history: Vec::new(),
             cursor: 0,
             scan_interval: DEFAULT_SCAN_INTERVAL,
         };
@@ -142,10 +145,20 @@ where
                 self.fold_event(&event)?;
             }
 
+            if let Some(promotion) =
+                next_spawn_promotion(&self.authority_domain_id, &self.history, self.clock.now())
+                    .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?
+            {
+                self.execute_promotion(promotion).await?;
+                // Never mutate a projection optimistically. Read the atomic
+                // promotion+audit pair through the same durable fold next.
+                continue;
+            }
+            // Compatibility repair for durable pre-promotion histories only.
+            // Current managed-spawn ingress never emits the SessionState fact
+            // required by this leaf; it stages exact successor evidence above.
             if let Some(action) = self.tail.next_action()? {
                 self.execute(action).await?;
-                // Never mutate the tail optimistically. Read the committed
-                // result back through the same fold on the next iteration.
                 continue;
             }
             if empty_read {
@@ -158,9 +171,84 @@ where
         let validated = validate_next_replay_event(&self.authority_domain_id, self.cursor, event)
             .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?;
 
-        self.tail.observe(event)?;
+        let modern_spawn_history = self
+            .history
+            .iter()
+            .any(|record| record.payload.kind == StoredEventKind::SpawnClaim as i32)
+            || event.payload.kind == StoredEventKind::SpawnClaim as i32;
+        if !modern_spawn_history {
+            self.tail.observe(event)?;
+        }
         self.authority.observe(event)?;
+        self.history.push(event.clone());
         self.cursor = validated.lsn;
+        Ok(())
+    }
+
+    async fn execute_promotion(
+        &mut self,
+        promotion: patchbay_contracts::patchbay::SpawnPromotionCommitted,
+    ) -> Result<(), SpawnCompletionError> {
+        let accepted = promotion
+            .accepted_claim
+            .as_ref()
+            .and_then(|accepted| accepted.accepted_operation.as_ref())
+            .ok_or_else(|| {
+                SpawnCompletionError::CorruptLog(
+                    "promotion producer returned no accepted operation".to_owned(),
+                )
+            })?;
+        let operation = accepted.operation.as_ref().ok_or_else(|| {
+            SpawnCompletionError::CorruptLog(
+                "promotion producer returned no spawning operation".to_owned(),
+            )
+        })?;
+        let command_id = operation.command_id.clone().ok_or_else(|| {
+            SpawnCompletionError::CorruptLog(
+                "promotion producer returned no spawning command id".to_owned(),
+            )
+        })?;
+        let sender = operation.sender.as_ref().ok_or_else(|| {
+            SpawnCompletionError::CorruptLog(
+                "promotion producer returned no spawning sender".to_owned(),
+            )
+        })?;
+        let descendant_target = promotion
+            .authority
+            .as_ref()
+            .and_then(|authority| authority.descendant_grant.as_ref())
+            .and_then(|grant| grant.target_scope.clone())
+            .ok_or_else(|| {
+                SpawnCompletionError::CorruptLog(
+                    "promotion producer returned no descendant target".to_owned(),
+                )
+            })?;
+        let occurred_at = promotion.committed_at.ok_or_else(|| {
+            SpawnCompletionError::CorruptLog(
+                "promotion producer returned no committed_at".to_owned(),
+            )
+        })?;
+        let mut audit = AuditRecordDraft::new(
+            occurred_at,
+            patchbay_contracts::patchbay::AuditEventKind::CommandCompleted,
+        );
+        audit.actor_id = sender.actor_id.clone();
+        audit.endpoint_id = sender.endpoint_id.clone();
+        audit.device_id = sender.device_id.clone();
+        audit.command_id = Some(command_id.clone());
+        audit.grant_id = accepted.authorizing_grant_id.clone();
+        audit.target_scope = Some(descendant_target);
+        audit.reason_code = "spawn_completion".to_owned();
+        let committed = self
+            .storage
+            .append_spawn_promotion_audited(&self.authority_domain_id, promotion, audit)
+            .await?;
+        validate_written_event_id(&committed.source_event_id, &self.authority_domain_id)?;
+        validate_written_event_id(&committed.audit_event_id, &self.authority_domain_id)?;
+        eprintln!(
+            "patchbay-core-server: spawn promotion committed authority_domain_id={} command_id={}",
+            self.authority_domain_id.value, command_id.value
+        );
         Ok(())
     }
 

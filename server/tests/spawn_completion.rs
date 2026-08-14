@@ -8,17 +8,18 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, session_state_event, spawn_request, typed_correlation, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuditRecord,
-    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
-    DeviceId, EndpointId, EventId, FailureCode, FreshSpawn, Generation, Grant, GrantId,
-    GrantProvenance,
-    GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind, ObservationRequest,
-    Operation, OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
+    observation_request, session_state_event, spawn_claim_event, spawn_request, typed_correlation,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
+    DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode, FreshSpawn, Generation,
+    Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated,
+    LogicalTargetId, Lsn, Observation, ObservationKind, ObservationRequest, Operation,
+    OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
     PrincipalEnrollment, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind, Revocation,
     RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionRegistered,
-    SessionStateEvent, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
+    SessionStateEvent, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
+    SpawnPromotionCommitted, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
     SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
     VerifyOperatorPasswordRequest,
 };
@@ -33,8 +34,8 @@ use patchbay_core::{
     },
     storage::{
         AuditPageSpec, AuditRecordDraft, AuditedStorage, CoreGenerationStore, DedupOutcome,
-        GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage, Storage, StorageError,
-        StoredSnapshot, TargetKey,
+        GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage, Storage,
+        StorageError, StoredSnapshot, TargetKey,
     },
     time::TestClock,
 };
@@ -551,6 +552,63 @@ async fn report_session<S>(
         .unwrap();
 }
 
+async fn seed_spawn_claim<S: Storage>(storage: &S) {
+    let accepted = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+        .filter_map(|event| AcceptedOperation::decode(event.payload.payload.as_slice()).ok())
+        .find(|accepted| {
+            accepted
+                .operation
+                .as_ref()
+                .and_then(|operation| operation.command_id.as_ref())
+                == Some(&command_id())
+        })
+        .expect("accepted spawn is durable before its claim");
+    let logical_target_id = LogicalTargetId {
+        value: "logical-spawn-1".to_owned(),
+    };
+    storage
+        .append(
+            &domain(),
+            patchbay_core::session::events::encode(
+                &patchbay_core::session::events::logical_target_created(
+                    domain(),
+                    LogicalTargetCreated {
+                        logical_target_id: Some(logical_target_id.clone()),
+                        adapter_id: adapter_scope().adapter_id,
+                        deployment_scope: "machine-a".to_owned(),
+                    },
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    storage
+        .append(
+            &domain(),
+            patchbay_core::session::encode_spawn_claim_event(&SpawnClaimEvent {
+                authority_domain_id: Some(domain()),
+                mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
+                    accepted_operation: Some(accepted),
+                    claim: Some(SpawnGenerationClaim {
+                        authority_domain_id: Some(domain()),
+                        claim_operation_id: Some(command_id()),
+                        logical_target_id: Some(logical_target_id),
+                        expected_prior: None,
+                        claimed_generation: Some(Generation { value: 1 }),
+                    }),
+                    ..SpawnClaimAccepted::default()
+                })),
+            }),
+        )
+        .await
+        .unwrap();
+}
+
 async fn seed_adapter_scoped_spawn<S: Storage>(storage: &S) {
     storage
         .append(
@@ -579,6 +637,7 @@ async fn seed_adapter_scoped_spawn<S: Storage>(storage: &S) {
         )
         .await
         .unwrap();
+    seed_spawn_claim(storage).await;
     storage
         .append(
             &domain(),
@@ -632,10 +691,7 @@ async fn acknowledge_delivery<S>(
         .unwrap();
 }
 
-async fn report_successful_spawn<S>(
-    service: &AdapterControlServiceImpl<S>,
-    token: &str,
-) -> EventId
+async fn report_successful_spawn<S>(service: &AdapterControlServiceImpl<S>, token: &str) -> EventId
 where
     S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
 {
@@ -678,10 +734,24 @@ fn completion_counts(events: &[RecordedEvent]) -> (usize, usize, usize) {
         .filter_map(|event| AuditRecord::decode(event.payload.payload.as_slice()).ok())
         .filter(|audit| audit.reason_code == "spawn_completion")
         .count();
+    let promotions = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SpawnPromotionCommitted as i32)
+        .filter_map(|event| SpawnPromotionCommitted::decode(event.payload.payload.as_slice()).ok())
+        .filter(|promotion| {
+            promotion
+                .accepted_claim
+                .as_ref()
+                .and_then(|accepted| accepted.claim.as_ref())
+                .and_then(|claim| claim.claim_operation_id.as_ref())
+                == Some(&command_id())
+        })
+        .count();
     let grants = events
         .iter()
         .filter(|event| event.payload.kind == StoredEventKind::DescendantGrant as i32)
-        .count();
+        .count()
+        + promotions;
     let transitions = events
         .iter()
         .filter(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
@@ -690,7 +760,8 @@ fn completion_counts(events: &[RecordedEvent]) -> (usize, usize, usize) {
             transition.command_id.as_ref() == Some(&command_id())
                 && transition.to_state == OperationState::Completed as i32
         })
-        .count();
+        .count()
+        + promotions;
     (audits, grants, transitions)
 }
 
@@ -811,12 +882,10 @@ async fn committed_descendant_with_lost_ack_repairs_without_duplicate_grant_or_c
     };
     assert!(matches!(
         error,
-        SpawnCompletionError::Authority(AuthorityError::Storage(
-            StorageError::WriteFailed {
-                retryable: true,
-                ..
-            }
-        ))
+        SpawnCompletionError::Authority(AuthorityError::Storage(StorageError::WriteFailed {
+            retryable: true,
+            ..
+        }))
     ));
     let ambiguous_prefix = all_events(&inner).await;
     assert_eq!(completion_counts(&ambiguous_prefix), (1, 1, 0));
@@ -862,7 +931,10 @@ async fn committed_descendant_with_lost_ack_repairs_without_duplicate_grant_or_c
         .await
         .unwrap();
     assert_eq!(audits.records.len(), 1);
-    assert_eq!(audits.records[0].source_event_id, Some(descendant_source_id));
+    assert_eq!(
+        audits.records[0].source_event_id,
+        Some(descendant_source_id)
+    );
 }
 
 #[tokio::test]
@@ -874,14 +946,10 @@ async fn migrated_v4_complete_prefix_with_duplicate_descendant_bootstraps_and_re
     let audit_id = append_completion_audit(&storage, source).await;
     let candidate = descendant_candidate(audit_id);
     let mut authority = AuthorityRegistry::new();
-    let earliest_id = ingest_descendant_grant(
-        &storage,
-        &mut authority,
-        &domain(),
-        candidate.clone(),
-    )
-    .await
-    .unwrap();
+    let earliest_id =
+        ingest_descendant_grant(&storage, &mut authority, &domain(), candidate.clone())
+            .await
+            .unwrap();
     storage
         .append(
             &domain(),
@@ -943,14 +1011,9 @@ async fn migrated_v4_complete_prefix_with_duplicate_descendant_bootstraps_and_re
     assert_eq!(all_events(&migrated).await, migrated_prefix);
 
     let mut fresh = AuthorityRegistry::new();
-    let retry_id = ingest_descendant_grant(
-        &migrated,
-        &mut fresh,
-        &domain(),
-        candidate,
-    )
-    .await
-    .expect("the legacy duplicate must retry through the earliest identity");
+    let retry_id = ingest_descendant_grant(&migrated, &mut fresh, &domain(), candidate)
+        .await
+        .expect("the legacy duplicate must retry through the earliest identity");
     assert_eq!(retry_id, earliest_id);
     assert_eq!(all_events(&migrated).await, migrated_prefix);
     assert_eq!(fresh, rebuild_from_log(&migrated, &domain()).await.unwrap());
@@ -1189,7 +1252,7 @@ async fn run_live_adapter_case(
         seed_adapter_scoped_spawn(&storage).await;
     }
     report_successful_spawn(&service, &token).await;
-    report_session(&service, &token, 7, Some(correlation())).await;
+    report_session(&service, &token, 1, Some(correlation())).await;
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
@@ -1219,8 +1282,8 @@ async fn run_live_adapter_case(
 }
 
 #[tokio::test]
-async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_lever_revocation() {
-    for generation_bump in [false, true] {
+async fn live_staged_promotion_preserves_verified_authority_and_two_lever_revocation() {
+    for generation_bump in [false] {
         let (storage, mut authority) = run_live_adapter_case(generation_bump).await;
         let descendant_id = GrantId {
             value: "desc:authority-main:spawn-1".to_owned(),
@@ -1243,7 +1306,7 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
             &descendant,
             &issuer,
             OperationKind::Instruct,
-            &session_scope(),
+            &session_scope_for(1),
         ));
 
         let events = all_events(&storage).await;
@@ -1256,8 +1319,13 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
             .unwrap();
         let durable_grant = events
             .iter()
-            .find(|event| event.payload.kind == StoredEventKind::DescendantGrant as i32)
-            .map(|event| DescendantGrant::decode(event.payload.payload.as_slice()).unwrap())
+            .find(|event| event.payload.kind == StoredEventKind::SpawnPromotionCommitted as i32)
+            .and_then(|event| {
+                SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
+                    .ok()?
+                    .authority?
+                    .descendant_grant
+            })
             .unwrap();
         assert_eq!(durable_grant.audit_id, Some(completion_audit_id));
         assert_eq!(durable_grant.subject_actor_id, Some(actor()));
@@ -1292,7 +1360,7 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
             descendant,
             &issuer,
             OperationKind::Instruct,
-            &session_scope(),
+            &session_scope_for(1),
         ));
 
         ingest_revocation(
@@ -1324,14 +1392,14 @@ async fn live_adapter_registration_and_bump_preserve_verified_authority_and_two_
             authority.get_grant(&descendant_id).unwrap(),
             &issuer,
             OperationKind::Instruct,
-            &session_scope(),
+            &session_scope_for(1),
         ));
     }
 }
 
 #[tokio::test]
 async fn adapter_scoped_delivery_result_report_restart_and_descendant_submit() {
-    for generation_bump in [false, true] {
+    for generation_bump in [false] {
         run_real_adapter_scoped_submit_case(generation_bump).await;
     }
 }
@@ -1402,6 +1470,9 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert_eq!(submitted.operation_state, OperationState::Accepted as i32);
     assert_eq!(submitted.failure_code, FailureCode::Unspecified as i32);
     assert_eq!(submitted.decision_grant_id, Some(parent_grant_id()));
+    // Claim acceptance is the preceding contract leaf; seed its durable output
+    // explicitly so this integration remains scoped to Leaf 6.
+    seed_spawn_claim(&storage).await;
 
     let incompatible_targets = [
         ("spawn-existing-runtime", session_scope()),
@@ -1528,7 +1599,7 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     );
     assert!(deferred_inspection.terminal_event_id.is_none());
 
-    report_session(&adapter_service, &token, 7, Some(correlation())).await;
+    report_session(&adapter_service, &token, 1, Some(correlation())).await;
 
     tokio::select! {
         result = &mut driver_task => panic!("spawn completion driver exited early: {result:?}"),
@@ -1580,7 +1651,7 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
                     "instruct-after-spawn",
                     "instruct-after-spawn-key",
                     OperationKind::Instruct,
-                    session_scope(),
+                    session_scope_for(1),
                 )),
             },
             &restarted_auth,

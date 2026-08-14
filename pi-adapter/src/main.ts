@@ -189,7 +189,8 @@ export class AdapterProcess {
     }
 
     // Reconcile Pi's persisted getEntries() snapshot before claiming a current
-    // activity state. Pi persisted entries are projected as transcript events.
+    // activity state. Unknown-runtime evidence is durably quarantined by the
+    // core until the following authenticated report establishes the session.
     try {
       for (const event of session.snapshotTranscript()) {
         await this.#core.ingestTranscript(this.#identity(entry), event);
@@ -451,10 +452,20 @@ export class AdapterProcess {
           toGeneration: entry.session.generation,
         });
       }
-      if (outcome.sessionGenerationChanged || operation.kind === OperationKind.INSTRUCT) {
+      if (outcome.sessionGenerationChanged) {
+        // This Result is bound to the accepted target (generation N). Commit
+        // it before the ordinary N+1 report; otherwise the core correctly
+        // quarantines the now-stale Result instead of completing the command.
+        await this.#core.reportResult(operation, outcome.value);
         await this.#queueSessionReport(entry, SessionActivityState.IDLE);
+      } else {
+        // For in-generation work, await the serialized observation tail before
+        // terminal Result so command-correlated transcript cannot arrive late.
+        if (operation.kind === OperationKind.INSTRUCT) {
+          await this.#queueSessionReport(entry, SessionActivityState.IDLE);
+        }
+        await this.#core.reportResult(operation, outcome.value);
       }
-      await this.#core.reportResult(operation, outcome.value);
       this.#record({
         event: "delivery.completed",
         level: "info",

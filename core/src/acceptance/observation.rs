@@ -132,10 +132,9 @@ where
     let snapshot = match state_lookup.current_state(&candidate.command_id).await {
         Some(snapshot) => snapshot,
         None => {
-            // Preserve the evidence before reporting a corrupt correlation.
-            storage
-                .append(authority_domain_id, observation_payload)
-                .await?;
+            // Unknown runtime-targeted evidence is quarantined by authenticated
+            // adapter ingress. This lower boundary has no source attachment and
+            // therefore rejects without creating a raw replayable Observation.
             return Err(AcceptanceError::CorruptRecord(format!(
                 "observation references unknown command {:?}",
                 candidate.command_id
@@ -149,19 +148,15 @@ where
         )));
     }
     if snapshot.state.is_terminal() {
-        let mut audit = crate::storage::AuditRecordDraft::new(
-            crate::acceptance::SystemClock.now(),
-            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
-        );
-        audit.command_id = Some(candidate.command_id.clone());
-        audit.failure_code = Some(FailureCode::StaleEvent);
-        audit.reason_code = "late_terminal_observation".to_owned();
-        let observation_event_id = storage
-            .append_decision(authority_domain_id, observation_payload, audit)
-            .await?;
-        return Ok(IngestResult::StaleCandidate {
-            observation_event_id,
-        });
+        // This boundary does not possess authenticated attachment/generation
+        // context, so it cannot truthfully construct QuarantinedRuntimeEvidence.
+        // The production adapter ingress classifies runtime-targeted candidates
+        // first and uses the dedicated typed quarantine append. Fail closed here
+        // rather than persisting the forbidden raw-Observation replay shape.
+        return Err(AcceptanceError::CorruptRecord(format!(
+            "late terminal observation for command {:?} requires authenticated runtime quarantine",
+            candidate.command_id
+        )));
     }
 
     if snapshot.operation_kind == OperationKind::Spawn

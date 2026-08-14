@@ -21,8 +21,9 @@ use crate::{
 };
 
 use super::{
+    grant_authorizes_at,
     spawn_tail::{descendant_grant_id, validate_descendant_audit_link},
-    AuthorityError, GrantLiveness, GrantProvenanceKind, GrantRecord,
+    AuthorityError, GrantLiveness, GrantProvenanceKind, GrantRecord, IssuerRef,
     DESCENDANT_GRANT_ALLOWED_KINDS,
 };
 
@@ -309,25 +310,29 @@ impl AuthorityRegistry {
                 "spawn promotion at LSN {event_lsn} references unknown spawning grant"
             ))
         })?;
-        if spawning_grant.authority_domain_id != *event_domain
-            || spawning_grant.subject_actor_id
-                != operation
-                    .sender
-                    .as_ref()
-                    .and_then(|sender| sender.actor_id.clone())
-                    .ok_or_else(|| {
-                        AuthorityError::InvalidGrant(
-                            "promotion operation has no sender actor".to_owned(),
-                        )
-                    })?
-            || spawning_grant.subject_endpoint_id
-                != operation
-                    .sender
-                    .as_ref()
-                    .and_then(|sender| sender.endpoint_id.clone())
-        {
+        let sender = operation.sender.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant("promotion operation has no sender".to_owned())
+        })?;
+        let sender_actor = sender.actor_id.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant("promotion operation has no sender actor".to_owned())
+        })?;
+        let accepted_target = operation.target_scope.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant("promotion operation has no adapter target".to_owned())
+        })?;
+        let issuer = IssuerRef {
+            actor: sender_actor,
+            endpoint: sender.endpoint_id.as_ref(),
+            authority_domain_id: event_domain,
+        };
+        if !grant_authorizes_at(
+            spawning_grant,
+            &issuer,
+            OperationKind::Spawn,
+            accepted_target,
+            committed_at,
+        ) {
             return Err(AuthorityError::InvalidGrant(format!(
-                "spawn promotion at LSN {event_lsn} spawning grant is not live for the accepted issuer"
+                "spawn promotion at LSN {event_lsn} spawning grant is not live or does not authorize the exact accepted spawn"
             )));
         }
         if let Some(continuation) = accepted.compound_authority.as_ref() {
@@ -340,18 +345,6 @@ impl AuthorityRegistry {
                     "spawn promotion at LSN {event_lsn} references unknown replacement grant"
                 ))
             })?;
-            if !replacement.is_live_at(committed_at)
-                || replacement.authority_domain_id != *event_domain
-                || replacement.subject_actor_id != spawning_grant.subject_actor_id
-                || replacement.subject_endpoint_id != spawning_grant.subject_endpoint_id
-                || !replacement
-                    .allowed_operation_kinds
-                    .contains(&OperationKind::SessionManagement)
-            {
-                return Err(AuthorityError::InvalidGrant(format!(
-                    "spawn promotion at LSN {event_lsn} exact-prior replacement authority is not live"
-                )));
-            }
             let prior = continuation
                 .exact_prior
                 .as_ref()
@@ -360,15 +353,24 @@ impl AuthorityRegistry {
                 .external_runtime
                 .as_ref()
                 .expect("promotion validated continuation");
-            let scope = &replacement.target_scope;
-            if TargetScopeKind::try_from(scope.kind).ok() != Some(TargetScopeKind::RuntimeSession)
-                || scope.adapter_id != external.adapter_id
-                || scope.deployment_scope != external.deployment_scope
-                || scope.runtime_session_id != external.runtime_session_id
-                || scope.session_generation != external.generation
+            let prior_scope = TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                adapter_id: external.adapter_id.clone(),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: external.runtime_session_id.clone(),
+                session_generation: external.generation,
+                ..TargetScope::default()
+            };
+            if !grant_authorizes_at(
+                replacement,
+                &issuer,
+                OperationKind::SessionManagement,
+                &prior_scope,
+                committed_at,
+            ) || replacement.target_scope != prior_scope
             {
                 return Err(AuthorityError::InvalidGrant(format!(
-                    "spawn promotion at LSN {event_lsn} replacement grant is not exact-prior scoped"
+                    "spawn promotion at LSN {event_lsn} exact-prior replacement authority is not live or exact-prior scoped"
                 )));
             }
         }
@@ -388,7 +390,10 @@ impl AuthorityRegistry {
         let target = descendant.target_scope.as_ref().ok_or_else(|| {
             AuthorityError::InvalidGrant("promotion descendant has no target".to_owned())
         })?;
-        if TargetScopeKind::try_from(target.kind).ok() != Some(TargetScopeKind::RuntimeSession)
+        if descendant.subject_actor_id.as_ref() != Some(sender_actor)
+            || descendant.subject_endpoint_id != sender.endpoint_id
+            || !descendant.subject_endpoint_class.is_empty()
+            || TargetScopeKind::try_from(target.kind).ok() != Some(TargetScopeKind::RuntimeSession)
             || target.adapter_id != external.adapter_id
             || target.deployment_scope != external.deployment_scope
             || target.runtime_session_id != external.runtime_session_id

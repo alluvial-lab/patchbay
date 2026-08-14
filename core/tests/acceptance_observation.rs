@@ -560,25 +560,22 @@ async fn repeated_running_status_records_without_duplicate_transition() {
 }
 
 #[tokio::test]
-async fn late_terminal_candidate_is_audit_only() {
+async fn late_terminal_candidate_cannot_persist_as_a_raw_observation() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let states = TestCommandStates::with(command_id(), OperationState::Completed);
 
-    let result = ingest_observation(
+    let error = ingest_observation(
         &storage,
         &states,
         observation(ObservationKind::Result, FailureCode::ExecutionFailed),
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
-    assert!(matches!(result, IngestResult::StaleCandidate { .. }));
-    let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(
-        StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
-        StoredEventKind::Observation
+    assert!(
+        matches!(error, AcceptanceError::CorruptRecord(message) if message.contains("runtime quarantine"))
     );
+    assert!(events(&storage).await.is_empty());
 }
 
 #[tokio::test]
@@ -616,7 +613,7 @@ async fn missing_authority_domain_fails_before_recording() {
 }
 
 #[tokio::test]
-async fn transition_for_unknown_command_fails_after_recording_evidence() {
+async fn transition_for_unknown_command_fails_without_raw_evidence() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let states = TestCommandStates::default();
 
@@ -629,12 +626,7 @@ async fn transition_for_unknown_command_fails_after_recording_evidence() {
     .unwrap_err();
 
     assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
-    let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(
-        StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
-        StoredEventKind::Observation
-    );
+    assert!(events(&storage).await.is_empty());
 }
 
 #[tokio::test]

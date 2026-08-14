@@ -5,21 +5,34 @@
 //! one `SpawnPromotionCommitted` is the first event that can publish the new
 //! runtime, descendant authority, claim consumption, and command completion.
 
+use std::collections::{HashMap, HashSet};
+
 use patchbay_contracts::patchbay::{
-    runtime_generation_disposition, typed_correlation, AuthorityDomainId, CommandId, EventId,
-    ExternalRuntimeRef, FailureCode, OperationState, QuarantinedRuntimeEvidence,
+    quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event,
+    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
+    DescendantGrantProvenance, EventId, ExternalRuntimeRef, FailureCode, GrantRevocationPolicy,
+    LogicalTargetTombstone, Observation, ObservationKind, OperationKind, OperationState,
+    QuarantinedRuntimeEvidence, RuntimeEvidenceClassificationContext,
     RuntimeEvidenceQuarantineReason, RuntimeEvidenceSourceAttachment,
     RuntimeGenerationClaimedSuccessor, RuntimeGenerationCurrent, RuntimeGenerationDisposition,
-    RuntimeGenerationIdentityMismatch, RuntimeGenerationTombstoned, RuntimeGenerationUnknown,
-    SessionReport, SpawnClaimDisposition, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, StoredEventPayload,
+    RuntimeGenerationIdentityMismatch, RuntimeGenerationRef, RuntimeGenerationTombstoned,
+    RuntimeGenerationUnknown, SessionReport, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
+    SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind,
 };
 use prost::Message;
+use prost_types::Timestamp;
 
 use crate::{
-    acceptance::{AcceptanceError, CommandIndex},
-    authority::{AuthorityError, AuthorityRegistry},
+    acceptance::{exact_command_correlation, AcceptanceError, CommandIndex},
+    adapter::AdapterRegistry,
+    authority::{
+        descendant_grant_id, AuthorityError, AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
+    },
     storage::RecordedEvent,
+    target::TargetRegistry,
 };
 
 use super::{ExternalRuntimeOwnership, LogicalTargetRegistry, SpawnClaimQuery, SpawnClaimRegistry};
@@ -42,6 +55,296 @@ pub enum SpawnPromotionFoldError {
     Claim(#[from] super::SpawnClaimError),
     #[error(transparent)]
     Command(#[from] AcceptanceError),
+    #[error(transparent)]
+    Target(#[from] crate::target::TargetRegistryError),
+}
+
+#[derive(Debug, Clone)]
+struct PromotionFacts {
+    accepted_event_id: EventId,
+    accepted: SpawnClaimAccepted,
+    lifecycle: Vec<SpawnPromotionLifecycleEvidence>,
+    successful_result: Option<SpawnPromotionResultEvidence>,
+    staged_successor: Option<SpawnPromotionStagedEvidence>,
+    promoted: bool,
+}
+
+/// Derive the next unstamped promotion from an exact durable prefix.
+///
+/// This is the production producer paired with the dedicated atomic storage
+/// append. It never infers a successor from ordinary session registration: the
+/// exact accepted claim, delivered/running lifecycle, successful Result, and
+/// typed staged-successor envelope must all already be durable.
+pub fn next_spawn_promotion(
+    authority_domain_id: &AuthorityDomainId,
+    events: &[RecordedEvent],
+    committed_at: Timestamp,
+) -> Result<Option<SpawnPromotionCommitted>, RuntimeEvidenceError> {
+    let mut commands = CommandIndex::new();
+    let mut facts: HashMap<CommandId, PromotionFacts> = HashMap::new();
+
+    for event in events {
+        if event.event_id.authority_domain_id.as_ref() != Some(authority_domain_id) {
+            return Err(fence("promotion producer observed a cross-domain event"));
+        }
+        let event_id = event.event_id.clone();
+        let kind = StoredEventKind::try_from(event.payload.kind)
+            .map_err(|_| malformed("promotion producer observed an unknown event kind"))?;
+        match kind {
+            StoredEventKind::SpawnClaim => {
+                let envelope = SpawnClaimEvent::decode(event.payload.payload.as_slice())
+                    .map_err(|error| malformed(format!("cannot decode spawn claim: {error}")))?;
+                if let Some(spawn_claim_event::Mutation::Accepted(accepted)) = envelope.mutation {
+                    let command_id = accepted
+                        .claim
+                        .as_ref()
+                        .and_then(|claim| claim.claim_operation_id.as_ref())
+                        .filter(|id| !id.value.is_empty())
+                        .ok_or_else(|| malformed("accepted spawn claim has no operation id"))?
+                        .clone();
+                    if facts
+                        .insert(
+                            command_id,
+                            PromotionFacts {
+                                accepted_event_id: event_id,
+                                accepted,
+                                lifecycle: Vec::new(),
+                                successful_result: None,
+                                staged_successor: None,
+                                promoted: false,
+                            },
+                        )
+                        .is_some()
+                    {
+                        return Err(fence(
+                            "promotion producer observed duplicate accepted claim",
+                        ));
+                    }
+                }
+            }
+            StoredEventKind::CommandTransition => {
+                let transition = CommandTransition::decode(event.payload.payload.as_slice())
+                    .map_err(|error| {
+                        malformed(format!("cannot decode promotion lifecycle: {error}"))
+                    })?;
+                if let Some(progress) = transition
+                    .command_id
+                    .as_ref()
+                    .and_then(|command_id| facts.get_mut(command_id))
+                {
+                    let edge = (
+                        OperationState::try_from(transition.from_state).ok(),
+                        OperationState::try_from(transition.to_state).ok(),
+                    );
+                    if matches!(
+                        edge,
+                        (
+                            Some(OperationState::Accepted),
+                            Some(OperationState::Delivered)
+                        ) | (
+                            Some(OperationState::Delivered),
+                            Some(OperationState::Running)
+                        )
+                    ) {
+                        progress.lifecycle.push(SpawnPromotionLifecycleEvidence {
+                            event_id: Some(event_id),
+                            transition: Some(transition),
+                        });
+                    }
+                }
+            }
+            StoredEventKind::Observation => {
+                let observation =
+                    Observation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                        malformed(format!("cannot decode promotion Result: {error}"))
+                    })?;
+                if ObservationKind::try_from(observation.kind).ok() == Some(ObservationKind::Result)
+                    && FailureCode::try_from(observation.failure_code).ok()
+                        == Some(FailureCode::Unspecified)
+                {
+                    if let Some(command_id) = exact_command_correlation(&observation.correlations) {
+                        if let Some(progress) = facts.get_mut(&command_id) {
+                            if progress.successful_result.is_some() {
+                                return Err(fence(
+                                    "promotion producer observed duplicate successful Result",
+                                ));
+                            }
+                            progress.successful_result = Some(SpawnPromotionResultEvidence {
+                                event_id: Some(event_id),
+                                command_id: Some(command_id),
+                                target_scope: observation.target_scope,
+                                failure_code: observation.failure_code,
+                                observed_at: observation.observed_at,
+                            });
+                        }
+                    }
+                }
+            }
+            StoredEventKind::SpawnSuccessorEvidenceStaged => {
+                let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+                    .map_err(|error| {
+                        malformed(format!("cannot decode staged successor: {error}"))
+                    })?;
+                validate_staged_successor(&staged)?;
+                let command_id = staged
+                    .exact_claim
+                    .as_ref()
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                    .ok_or_else(|| malformed("staged successor has no claim operation id"))?;
+                if let Some(progress) = facts.get_mut(command_id) {
+                    if progress.staged_successor.is_some() {
+                        return Err(fence(
+                            "promotion producer observed duplicate staged successor",
+                        ));
+                    }
+                    progress.staged_successor = Some(SpawnPromotionStagedEvidence {
+                        event_id: Some(event_id),
+                        staged: Some(staged),
+                    });
+                }
+            }
+            StoredEventKind::SpawnPromotionCommitted => {
+                let promotion = SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
+                    .map_err(|error| {
+                    malformed(format!("cannot decode committed promotion: {error}"))
+                })?;
+                let command_id = promotion
+                    .accepted_claim
+                    .as_ref()
+                    .and_then(|accepted| accepted.claim.as_ref())
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                    .ok_or_else(|| malformed("committed promotion has no operation id"))?;
+                if let Some(progress) = facts.get_mut(command_id) {
+                    progress.promoted = true;
+                }
+            }
+            _ => {}
+        }
+        commands
+            .apply(event)
+            .map_err(|error| fence(format!("promotion producer command fold failed: {error}")))?;
+    }
+
+    let mut ready = Vec::new();
+    for (command_id, progress) in facts {
+        if progress.promoted {
+            continue;
+        }
+        let Some(record) = commands.get_command(&command_id) else {
+            return Err(fence("accepted spawn claim has no command projection"));
+        };
+        if !matches!(
+            record.state,
+            OperationState::Delivered | OperationState::Running
+        ) {
+            continue;
+        }
+        let Some(result) = progress.successful_result else {
+            continue;
+        };
+        let Some(staged_ref) = progress.staged_successor else {
+            continue;
+        };
+        let accepted_operation = progress
+            .accepted
+            .accepted_operation
+            .as_ref()
+            .ok_or_else(|| malformed("accepted claim has no accepted Operation"))?;
+        let operation = accepted_operation
+            .operation
+            .as_ref()
+            .ok_or_else(|| malformed("accepted claim has no Operation"))?;
+        let sender = operation
+            .sender
+            .as_ref()
+            .ok_or_else(|| malformed("accepted spawn has no sender"))?;
+        let claim = progress
+            .accepted
+            .claim
+            .as_ref()
+            .ok_or_else(|| malformed("accepted claim has no generation claim"))?;
+        let continuation_authority = progress.accepted.compound_authority.clone();
+        let staged = staged_ref
+            .staged
+            .as_ref()
+            .ok_or_else(|| malformed("staged reference has no envelope"))?;
+        if staged.exact_claim.as_ref() != Some(claim)
+            || result.target_scope != operation.target_scope
+        {
+            return Err(fence(
+                "promotion producer facts do not bind the exact accepted claim/target",
+            ));
+        }
+        let promoted_runtime = staged
+            .classified_target
+            .clone()
+            .ok_or_else(|| malformed("staged successor has no classified target"))?;
+        let external = promoted_runtime
+            .external_runtime
+            .clone()
+            .ok_or_else(|| malformed("staged successor has no external runtime"))?;
+        let descendant_target = TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: external.adapter_id.clone(),
+            deployment_scope: external.deployment_scope.clone(),
+            runtime_session_id: external.runtime_session_id.clone(),
+            session_generation: external.generation,
+            ..TargetScope::default()
+        };
+        let spawning_grant_id = accepted_operation
+            .authorizing_grant_id
+            .clone()
+            .ok_or_else(|| malformed("accepted spawn has no authorizing grant"))?;
+        let descendant = DescendantGrant {
+            grant_id: Some(descendant_grant_id(authority_domain_id, &command_id)),
+            authority_domain_id: Some(authority_domain_id.clone()),
+            subject_actor_id: sender.actor_id.clone(),
+            subject_endpoint_id: sender.endpoint_id.clone(),
+            subject_endpoint_class: String::new(),
+            target_scope: Some(descendant_target),
+            allowed_operation_kinds: DESCENDANT_GRANT_ALLOWED_KINDS
+                .iter()
+                .map(|kind| *kind as i32)
+                .collect(),
+            provenance: Some(DescendantGrantProvenance {
+                spawn_operation_id: Some(command_id.clone()),
+                spawning_grant_id: Some(spawning_grant_id.clone()),
+                continuation_authority: progress.accepted.compound_authority.clone(),
+            }),
+            created_at: Some(committed_at),
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..DescendantGrant::default()
+        };
+        let staged_lsn = event_lsn(
+            staged_ref
+                .event_id
+                .as_ref()
+                .ok_or_else(|| malformed("staged reference has no event id"))?,
+        )?;
+        ready.push((
+            staged_lsn,
+            command_id.value.clone(),
+            SpawnPromotionCommitted {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                accepted_claim_event_id: Some(progress.accepted_event_id),
+                accepted_claim: Some(progress.accepted),
+                lifecycle: progress.lifecycle,
+                successful_result: Some(result),
+                staged_successor: Some(staged_ref),
+                promoted_runtime: Some(promoted_runtime),
+                external_runtime_reservation: Some(external),
+                authority: Some(SpawnPromotionAuthorityEvidence {
+                    spawning_grant_id: Some(spawning_grant_id),
+                    continuation_authority,
+                    descendant_grant: Some(descendant),
+                }),
+                committed_at: Some(committed_at),
+                ..SpawnPromotionCommitted::default()
+            },
+        ));
+    }
+    ready.sort_by(|left, right| (left.0, left.1.as_bytes()).cmp(&(right.0, right.1.as_bytes())));
+    Ok(ready.into_iter().next().map(|(_, _, promotion)| promotion))
 }
 
 /// Apply one committed promotion under the decision gate in its mandatory
@@ -50,7 +353,7 @@ pub enum SpawnPromotionFoldError {
 /// succeeds.
 pub fn fold_spawn_promotion_ordered(
     authority: &mut AuthorityRegistry,
-    sessions: &mut super::SessionRegistry,
+    targets: &mut TargetRegistry,
     claims: &mut SpawnClaimRegistry,
     commands: &mut CommandIndex,
     event: &RecordedEvent,
@@ -64,16 +367,121 @@ pub fn fold_spawn_promotion_ordered(
             ),
         ));
     }
+    let promotion =
+        SpawnPromotionCommitted::decode(event.payload.payload.as_slice()).map_err(|error| {
+            SpawnPromotionFoldError::Command(AcceptanceError::CorruptRecord(format!(
+                "cannot decode ordered promotion: {error}"
+            )))
+        })?;
+    let accepted_claim = promotion
+        .accepted_claim
+        .as_ref()
+        .and_then(|accepted| accepted.claim.as_ref())
+        .ok_or_else(|| {
+            SpawnPromotionFoldError::Command(AcceptanceError::CorruptRecord(
+                "ordered promotion has no exact claim".to_owned(),
+            ))
+        })?;
+    let command_id = accepted_claim.claim_operation_id.as_ref().ok_or_else(|| {
+        SpawnPromotionFoldError::Command(AcceptanceError::CorruptRecord(
+            "ordered promotion has no command id".to_owned(),
+        ))
+    })?;
+    let descendant_id = promotion
+        .authority
+        .as_ref()
+        .and_then(|authority| authority.descendant_grant.as_ref())
+        .and_then(|grant| grant.grant_id.as_ref())
+        .ok_or_else(|| {
+            SpawnPromotionFoldError::Command(AcceptanceError::CorruptRecord(
+                "ordered promotion has no descendant grant id".to_owned(),
+            ))
+        })?;
+    let promoted_external = promotion
+        .promoted_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.external_runtime.as_ref())
+        .ok_or_else(|| {
+            SpawnPromotionFoldError::Command(AcceptanceError::CorruptRecord(
+                "ordered promotion has no promoted runtime".to_owned(),
+            ))
+        })?;
+
     let mut next_authority = authority.clone();
-    let mut next_sessions = sessions.clone();
+    let mut next_targets = targets.clone();
     let mut next_claims = claims.clone();
     let mut next_commands = commands.clone();
+
+    // This order is the publication invariant. TargetRegistry folds the
+    // SessionRegistry first; its resource/adapter children treat promotion as
+    // a sibling no-op (while resource still advances its aggregate cursor).
     next_authority.observe(event)?;
-    next_sessions.observe(event)?;
+    if next_authority.get_grant(descendant_id).is_none() {
+        return Err(SpawnPromotionFoldError::Authority(
+            AuthorityError::CorruptLog(
+                "ordered promotion did not install descendant authority first".to_owned(),
+            ),
+        ));
+    }
+    next_targets
+        .sessions_mut()
+        .observe(event)
+        .map_err(SpawnPromotionFoldError::Session)?;
+    let adapter_id = promoted_external
+        .adapter_id
+        .as_ref()
+        .expect("promotion validated");
+    let runtime_id = promoted_external
+        .runtime_session_id
+        .as_ref()
+        .expect("promotion validated");
+    let generation = promoted_external
+        .generation
+        .as_ref()
+        .expect("promotion validated");
+    if next_targets
+        .sessions()
+        .get_session(&super::SessionIdentity {
+            adapter_id: adapter_id.clone(),
+            deployment_scope: promoted_external.deployment_scope.clone(),
+            runtime_session_id: runtime_id.clone(),
+            session_generation: *generation,
+        })
+        .is_none()
+    {
+        return Err(SpawnPromotionFoldError::Session(
+            super::SessionError::CorruptLog(
+                "ordered promotion did not publish the exact session after authority".to_owned(),
+            ),
+        ));
+    }
     next_claims.observe(event)?;
+    if next_claims
+        .claim_for_operation(command_id)
+        .is_none_or(|record| record.disposition != SpawnClaimDisposition::Promoted)
+    {
+        return Err(SpawnPromotionFoldError::Claim(
+            super::SpawnClaimError::CorruptLog(
+                "ordered promotion did not consume the exact claim after session publication"
+                    .to_owned(),
+            ),
+        ));
+    }
     next_commands.apply(event)?;
+    if next_commands
+        .get_command(command_id)
+        .is_none_or(|record| record.state != OperationState::Completed)
+    {
+        return Err(SpawnPromotionFoldError::Command(
+            AcceptanceError::CorruptLog(
+                "ordered promotion did not complete the command after claim consumption".to_owned(),
+            ),
+        ));
+    }
+    next_targets.observe_promotion_siblings(event)?;
+
     *authority = next_authority;
-    *sessions = next_sessions;
+    *targets = next_targets;
     *claims = next_claims;
     *commands = next_commands;
     Ok(())
@@ -86,6 +494,7 @@ pub fn classify_session_report(
     authority_domain_id: &AuthorityDomainId,
     report: &SessionReport,
     source: &RuntimeEvidenceSourceAttachment,
+    adapters: &AdapterRegistry,
     claims: &SpawnClaimRegistry,
     targets: &LogicalTargetRegistry,
 ) -> RuntimeGenerationDisposition {
@@ -93,14 +502,12 @@ pub fn classify_session_report(
         return identity_mismatch();
     };
     let source_matches = source.adapter_id.as_ref() == report.adapter_id.as_ref()
-        && source
-            .adapter_generation
-            .is_some_and(|generation| generation.value > 0)
         && report
             .source_cursor
             .as_ref()
             .and_then(|cursor| cursor.adapter_generation)
-            == source.adapter_generation;
+            == source.adapter_generation
+        && source_matches_current_attachment(authority_domain_id, source, adapters);
 
     if source_matches {
         if let Some(command_id) = report_claim_operation(report) {
@@ -139,33 +546,35 @@ pub fn classify_session_report(
         }
     }
 
-    if let Some(owner) = targets.owner_of(&candidate) {
-        if let Some(target) = targets.get(owner) {
-            if target
-                .current
-                .as_ref()
-                .is_some_and(|current| current.external_runtime.as_ref() == Some(&candidate))
-            {
-                return RuntimeGenerationDisposition {
-                    disposition: Some(runtime_generation_disposition::Disposition::Current(
-                        RuntimeGenerationCurrent {},
-                    )),
-                };
-            }
-            if let Some(tombstone) = target
-                .tombstones
-                .values()
-                .find(|tombstone| tombstone.external_runtime_ref == candidate)
-            {
-                return RuntimeGenerationDisposition {
-                    disposition: Some(runtime_generation_disposition::Disposition::Tombstoned(
-                        RuntimeGenerationTombstoned {
-                            superseded_at_lsn: Some(patchbay_contracts::patchbay::Lsn {
-                                value: tombstone.superseded_at_lsn,
-                            }),
-                        },
-                    )),
-                };
+    if source_matches {
+        if let Some(owner) = targets.owner_of(&candidate) {
+            if let Some(target) = targets.get(owner) {
+                if target
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.external_runtime.as_ref() == Some(&candidate))
+                {
+                    return RuntimeGenerationDisposition {
+                        disposition: Some(runtime_generation_disposition::Disposition::Current(
+                            RuntimeGenerationCurrent {},
+                        )),
+                    };
+                }
+                if let Some(tombstone) = target
+                    .tombstones
+                    .values()
+                    .find(|tombstone| tombstone.external_runtime_ref == candidate)
+                {
+                    return RuntimeGenerationDisposition {
+                        disposition: Some(runtime_generation_disposition::Disposition::Tombstoned(
+                            RuntimeGenerationTombstoned {
+                                superseded_at_lsn: Some(patchbay_contracts::patchbay::Lsn {
+                                    value: tombstone.superseded_at_lsn,
+                                }),
+                            },
+                        )),
+                    };
+                }
             }
         }
     }
@@ -191,6 +600,218 @@ pub fn classify_session_report(
             disposition: Some(runtime_generation_disposition::Disposition::Unknown(
                 RuntimeGenerationUnknown {},
             )),
+        }
+    }
+}
+
+/// Classify an authenticated exact runtime target for non-report evidence.
+/// Claimed successor output is deliberately not admitted here: only the exact
+/// SessionReport shape may stage a successor.
+pub fn classify_runtime_target(
+    authority_domain_id: &AuthorityDomainId,
+    external: &ExternalRuntimeRef,
+    source: &RuntimeEvidenceSourceAttachment,
+    adapters: &AdapterRegistry,
+    sessions: &super::SessionRegistry,
+) -> RuntimeGenerationDisposition {
+    if validate_external_runtime(external, "runtime evidence target").is_err()
+        || source.adapter_id.as_ref() != external.adapter_id.as_ref()
+        || !source_matches_current_attachment(authority_domain_id, source, adapters)
+    {
+        return identity_mismatch();
+    }
+    let adapter_id = external.adapter_id.as_ref().expect("external validated");
+    let runtime_id = external
+        .runtime_session_id
+        .as_ref()
+        .expect("external validated");
+    let generation = external.generation.as_ref().expect("external validated");
+    if sessions
+        .get_session(&super::SessionIdentity {
+            adapter_id: adapter_id.clone(),
+            deployment_scope: external.deployment_scope.clone(),
+            runtime_session_id: runtime_id.clone(),
+            session_generation: *generation,
+        })
+        .is_some()
+    {
+        return RuntimeGenerationDisposition {
+            disposition: Some(runtime_generation_disposition::Disposition::Current(
+                RuntimeGenerationCurrent {},
+            )),
+        };
+    }
+    if let Some(tombstone) = sessions.get_tombstone(
+        adapter_id,
+        &external.deployment_scope,
+        runtime_id,
+        generation,
+    ) {
+        return RuntimeGenerationDisposition {
+            disposition: Some(runtime_generation_disposition::Disposition::Tombstoned(
+                RuntimeGenerationTombstoned {
+                    superseded_at_lsn: Some(patchbay_contracts::patchbay::Lsn {
+                        value: tombstone.superseded_at_lsn,
+                    }),
+                },
+            )),
+        };
+    }
+    let same_lineage = sessions.sessions().any(|record| {
+        record.identity.adapter_id == *adapter_id
+            && record.identity.deployment_scope == external.deployment_scope
+            && record.identity.runtime_session_id == *runtime_id
+    }) || sessions.tombstones().any(|tombstone| {
+        tombstone.adapter_id == *adapter_id
+            && tombstone.deployment_scope == external.deployment_scope
+            && tombstone.runtime_session_id == *runtime_id
+    });
+    if same_lineage {
+        identity_mismatch()
+    } else {
+        RuntimeGenerationDisposition {
+            disposition: Some(runtime_generation_disposition::Disposition::Unknown(
+                RuntimeGenerationUnknown {},
+            )),
+        }
+    }
+}
+
+pub fn quarantined_observation(
+    authority_domain_id: &AuthorityDomainId,
+    observation: Observation,
+    disposition: RuntimeGenerationDisposition,
+    reason: RuntimeEvidenceQuarantineReason,
+    source: RuntimeEvidenceSourceAttachment,
+    sessions: &super::SessionRegistry,
+    claims: &SpawnClaimRegistry,
+) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
+    let external =
+        external_from_scope(observation.target_scope.as_ref(), "quarantined Observation")?;
+    quarantine_envelope(
+        authority_domain_id,
+        quarantined_runtime_evidence::Candidate::Observation(observation),
+        external,
+        disposition,
+        reason,
+        source,
+        (sessions, claims),
+    )
+}
+
+pub fn quarantined_session_report(
+    authority_domain_id: &AuthorityDomainId,
+    report: SessionReport,
+    disposition: RuntimeGenerationDisposition,
+    reason: RuntimeEvidenceQuarantineReason,
+    source: RuntimeEvidenceSourceAttachment,
+    sessions: &super::SessionRegistry,
+    claims: &SpawnClaimRegistry,
+) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
+    let external = report_external(&report)
+        .ok_or_else(|| malformed("quarantined SessionReport has malformed runtime identity"))?;
+    quarantine_envelope(
+        authority_domain_id,
+        quarantined_runtime_evidence::Candidate::SessionReport(report),
+        external,
+        disposition,
+        reason,
+        source,
+        (sessions, claims),
+    )
+}
+
+fn quarantine_envelope(
+    authority_domain_id: &AuthorityDomainId,
+    candidate: quarantined_runtime_evidence::Candidate,
+    external: ExternalRuntimeRef,
+    disposition: RuntimeGenerationDisposition,
+    reason: RuntimeEvidenceQuarantineReason,
+    source: RuntimeEvidenceSourceAttachment,
+    projections: (&super::SessionRegistry, &SpawnClaimRegistry),
+) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
+    let (sessions, claims) = projections;
+    let logical_target_id = sessions.logical_targets().owner_of(&external).cloned();
+    let classified_target = RuntimeGenerationRef {
+        logical_target_id: logical_target_id.clone(),
+        external_runtime: Some(external.clone()),
+    };
+    let current = logical_target_id
+        .as_ref()
+        .and_then(|id| sessions.logical_targets().get(id))
+        .and_then(|target| target.current.clone())
+        .or_else(|| {
+            let adapter = external.adapter_id.as_ref()?;
+            let runtime = external.runtime_session_id.as_ref()?;
+            let live = sessions.get_live_session(adapter, &external.deployment_scope, runtime)?;
+            Some(RuntimeGenerationRef {
+                logical_target_id: logical_target_id.clone(),
+                external_runtime: Some(ExternalRuntimeRef {
+                    adapter_id: Some(live.identity.adapter_id.clone()),
+                    deployment_scope: live.identity.deployment_scope.clone(),
+                    runtime_session_id: Some(live.identity.runtime_session_id.clone()),
+                    generation: Some(live.identity.session_generation),
+                }),
+            })
+        });
+    let tombstone = match disposition.disposition.as_ref() {
+        Some(runtime_generation_disposition::Disposition::Tombstoned(value)) => {
+            Some(LogicalTargetTombstone {
+                external_runtime_ref: Some(external.clone()),
+                superseded_at_lsn: value.superseded_at_lsn,
+            })
+        }
+        _ => None,
+    };
+    let command_id = match &candidate {
+        quarantined_runtime_evidence::Candidate::Observation(observation) => {
+            crate::acceptance::exact_command_correlation(&observation.correlations)
+        }
+        quarantined_runtime_evidence::Candidate::SessionReport(report) => {
+            report_claim_operation(report).cloned()
+        }
+        _ => None,
+    };
+    let active_claim = command_id
+        .as_ref()
+        .and_then(|id| claims.claim_for_operation(id))
+        .map(|record| record.claim.clone());
+    let envelope = QuarantinedRuntimeEvidence {
+        authority_domain_id: Some(authority_domain_id.clone()),
+        candidate: Some(candidate),
+        classification: Some(RuntimeEvidenceClassificationContext {
+            disposition: Some(disposition),
+            classified_target: Some(classified_target),
+            current,
+            tombstone,
+            active_claim,
+        }),
+        reason: reason as i32,
+        source_attachment: Some(source),
+    };
+    validate_quarantined_runtime_evidence(&envelope)?;
+    Ok(envelope)
+}
+
+#[must_use]
+pub fn quarantine_reason_for(
+    disposition: &RuntimeGenerationDisposition,
+) -> RuntimeEvidenceQuarantineReason {
+    match disposition.disposition.as_ref() {
+        Some(runtime_generation_disposition::Disposition::Tombstoned(_)) => {
+            RuntimeEvidenceQuarantineReason::Tombstoned
+        }
+        Some(runtime_generation_disposition::Disposition::Unknown(_)) => {
+            RuntimeEvidenceQuarantineReason::UnknownTarget
+        }
+        Some(runtime_generation_disposition::Disposition::IdentityMismatch(_)) => {
+            RuntimeEvidenceQuarantineReason::IdentityMismatch
+        }
+        Some(runtime_generation_disposition::Disposition::Current(_)) => {
+            RuntimeEvidenceQuarantineReason::StaleSourceOrder
+        }
+        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_)) | None => {
+            RuntimeEvidenceQuarantineReason::ClaimMismatch
         }
     }
 }
@@ -256,22 +877,70 @@ pub fn validate_staged_successor(
 pub fn validate_quarantined_runtime_evidence(
     quarantined: &QuarantinedRuntimeEvidence,
 ) -> Result<(), RuntimeEvidenceError> {
-    nonempty_domain(quarantined.authority_domain_id.as_ref())?;
-    if quarantined.candidate.is_none() {
-        return Err(malformed(
-            "quarantine has no admitted generated candidate family",
-        ));
-    }
-    let classification = quarantined
+    let domain = nonempty_domain(quarantined.authority_domain_id.as_ref())?;
+    let candidate = quarantined_candidate_target(quarantined)?;
+    let context = quarantined
         .classification
         .as_ref()
-        .and_then(|value| value.disposition.as_ref())
+        .ok_or_else(|| malformed("quarantine has no classification context"))?;
+    let classified_target = context
+        .classified_target
+        .as_ref()
+        .ok_or_else(|| malformed("quarantine has no classified target"))?;
+    validate_runtime_generation_ref(classified_target, "quarantine classified target")?;
+    if classified_target.external_runtime.as_ref() != Some(&candidate) {
+        return Err(fence(
+            "quarantine candidate does not match its classified runtime target",
+        ));
+    }
+    let classification = context
+        .disposition
+        .as_ref()
         .and_then(|value| value.disposition.as_ref())
         .ok_or_else(|| malformed("quarantine has no runtime classification"))?;
     let reason = RuntimeEvidenceQuarantineReason::try_from(quarantined.reason)
         .map_err(|_| malformed("quarantine reason is unknown"))?;
-    if reason == RuntimeEvidenceQuarantineReason::Unspecified {
-        return Err(malformed("quarantine reason is unspecified"));
+    let reason_matches = match (classification, reason) {
+        (
+            runtime_generation_disposition::Disposition::Current(_),
+            RuntimeEvidenceQuarantineReason::StaleSourceOrder,
+        ) => context.current.as_ref() == Some(classified_target),
+        (
+            runtime_generation_disposition::Disposition::Tombstoned(disposition),
+            RuntimeEvidenceQuarantineReason::Tombstoned,
+        ) => context.tombstone.as_ref().is_some_and(|tombstone| {
+            tombstone.external_runtime_ref.as_ref() == Some(&candidate)
+                && tombstone.superseded_at_lsn == disposition.superseded_at_lsn
+                && tombstone.superseded_at_lsn.is_some_and(|lsn| lsn.value > 0)
+        }),
+        (
+            runtime_generation_disposition::Disposition::Unknown(_),
+            RuntimeEvidenceQuarantineReason::UnknownTarget,
+        ) => true,
+        (
+            runtime_generation_disposition::Disposition::IdentityMismatch(_),
+            RuntimeEvidenceQuarantineReason::IdentityMismatch,
+        ) => true,
+        (
+            runtime_generation_disposition::Disposition::IdentityMismatch(_),
+            RuntimeEvidenceQuarantineReason::ClaimMismatch,
+        ) => context.active_claim.as_ref().is_some_and(|claim| {
+            claim.authority_domain_id.as_ref() == Some(domain)
+                && claim
+                    .claim_operation_id
+                    .as_ref()
+                    .is_some_and(|id| !id.value.is_empty())
+        }),
+        (
+            runtime_generation_disposition::Disposition::IdentityMismatch(_),
+            RuntimeEvidenceQuarantineReason::StaleAttachment,
+        ) => true,
+        _ => false,
+    };
+    if !reason_matches {
+        return Err(fence(
+            "quarantine reason, disposition, candidate, and target context disagree",
+        ));
     }
     if matches!(
         classification,
@@ -281,31 +950,132 @@ pub fn validate_quarantined_runtime_evidence(
             "an exact claimed successor must stage, not quarantine",
         ));
     }
-    if matches!(
-        classification,
-        runtime_generation_disposition::Disposition::Current(_)
-    ) && reason != RuntimeEvidenceQuarantineReason::StaleSourceOrder
-    {
-        return Err(fence(
-            "current evidence may quarantine only for stale source order",
-        ));
-    }
     let source = quarantined
         .source_attachment
         .as_ref()
         .ok_or_else(|| malformed("quarantine has no source attachment"))?;
-    if source
-        .adapter_id
-        .as_ref()
-        .is_none_or(|id| id.value.is_empty())
+    if source.adapter_id.as_ref() != candidate.adapter_id.as_ref()
+        || source
+            .adapter_id
+            .as_ref()
+            .is_none_or(|id| id.value.is_empty())
         || source
             .adapter_generation
             .is_none_or(|generation| generation.value == 0)
-        || source.attachment_event_id.is_none()
+        || source.attachment_event_id.as_ref().is_none_or(|event_id| {
+            event_id.authority_domain_id.as_ref() != Some(domain)
+                || event_id.lsn.is_none_or(|lsn| lsn.value == 0)
+        })
     {
-        return Err(malformed("quarantine source attachment is incomplete"));
+        return Err(malformed(
+            "quarantine source attachment is incomplete or targets another runtime adapter",
+        ));
     }
     Ok(())
+}
+
+/// Return the exact runtime target nested inside an admitted quarantine family.
+pub fn quarantined_candidate_target(
+    quarantined: &QuarantinedRuntimeEvidence,
+) -> Result<ExternalRuntimeRef, RuntimeEvidenceError> {
+    let domain = nonempty_domain(quarantined.authority_domain_id.as_ref())?;
+    let candidate = quarantined
+        .candidate
+        .as_ref()
+        .ok_or_else(|| malformed("quarantine has no admitted generated candidate family"))?;
+    let external = match candidate {
+        quarantined_runtime_evidence::Candidate::Observation(observation) => {
+            if observation.authority_domain_id.as_ref() != Some(domain) {
+                return Err(fence("quarantined Observation belongs to another domain"));
+            }
+            external_from_scope(observation.target_scope.as_ref(), "quarantined Observation")?
+        }
+        quarantined_runtime_evidence::Candidate::SessionReport(report) => report_external(report)
+            .ok_or_else(|| {
+            malformed("quarantined SessionReport has malformed runtime identity")
+        })?,
+        quarantined_runtime_evidence::Candidate::DeliveryAcknowledgement(acknowledgement) => {
+            if acknowledgement
+                .command_id
+                .as_ref()
+                .is_none_or(|id| id.value.is_empty())
+            {
+                return Err(malformed(
+                    "quarantined delivery acknowledgement has no command id",
+                ));
+            }
+            let target = acknowledgement.target.as_ref().ok_or_else(|| {
+                malformed("quarantined delivery acknowledgement has no runtime target")
+            })?;
+            validate_runtime_generation_ref(target, "quarantined delivery acknowledgement")?;
+            target.external_runtime.clone().expect("validated runtime")
+        }
+        quarantined_runtime_evidence::Candidate::TranscriptStatus(status) => {
+            let observation = status.observation.as_ref().ok_or_else(|| {
+                malformed("quarantined transcript/status evidence has no Observation")
+            })?;
+            if observation.authority_domain_id.as_ref() != Some(domain) {
+                return Err(fence(
+                    "quarantined transcript/status Observation belongs to another domain",
+                ));
+            }
+            external_from_scope(
+                observation.target_scope.as_ref(),
+                "quarantined transcript/status Observation",
+            )?
+        }
+        quarantined_runtime_evidence::Candidate::ElicitationMutation(mutation) => {
+            let elicitation = mutation
+                .elicitation
+                .as_ref()
+                .ok_or_else(|| malformed("quarantined Elicitation mutation has no Elicitation"))?;
+            if elicitation.authority_domain_id.as_ref() != Some(domain)
+                || mutation.from_state == mutation.to_state
+                || patchbay_contracts::patchbay::ElicitationState::try_from(mutation.from_state)
+                    .is_err()
+                || patchbay_contracts::patchbay::ElicitationState::try_from(mutation.to_state)
+                    .is_err()
+            {
+                return Err(fence(
+                    "quarantined Elicitation mutation has invalid domain or transition framing",
+                ));
+            }
+            external_from_scope(
+                elicitation.target_context.as_ref(),
+                "quarantined Elicitation mutation",
+            )?
+        }
+    };
+    validate_external_runtime(&external, "quarantined candidate")?;
+    Ok(external)
+}
+
+/// Canonical runtime-session audit target for the nested candidate.
+pub fn quarantined_candidate_scope(
+    quarantined: &QuarantinedRuntimeEvidence,
+) -> Result<TargetScope, RuntimeEvidenceError> {
+    let external = quarantined_candidate_target(quarantined)?;
+    Ok(TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: external.adapter_id,
+        deployment_scope: external.deployment_scope,
+        runtime_session_id: external.runtime_session_id,
+        session_generation: external.generation,
+        ..TargetScope::default()
+    })
+}
+
+#[must_use]
+pub fn quarantine_reason_code(reason: RuntimeEvidenceQuarantineReason) -> &'static str {
+    match reason {
+        RuntimeEvidenceQuarantineReason::Tombstoned => "runtime_evidence_tombstoned",
+        RuntimeEvidenceQuarantineReason::UnknownTarget => "runtime_evidence_unknown_target",
+        RuntimeEvidenceQuarantineReason::IdentityMismatch => "runtime_evidence_identity_mismatch",
+        RuntimeEvidenceQuarantineReason::ClaimMismatch => "runtime_evidence_claim_mismatch",
+        RuntimeEvidenceQuarantineReason::StaleAttachment => "runtime_evidence_stale_attachment",
+        RuntimeEvidenceQuarantineReason::StaleSourceOrder => "runtime_evidence_stale_source_order",
+        RuntimeEvidenceQuarantineReason::Unspecified => "runtime_evidence_unspecified",
+    }
 }
 
 pub fn validate_spawn_promotion_envelope(
@@ -424,6 +1194,53 @@ pub fn validate_spawn_promotion_envelope(
         .accepted_operation
         .as_ref()
         .ok_or_else(|| malformed("accepted claim has no accepted operation"))?;
+    let operation = accepted_operation
+        .operation
+        .as_ref()
+        .ok_or_else(|| malformed("accepted claim has no Operation"))?;
+    let sender = operation
+        .sender
+        .as_ref()
+        .ok_or_else(|| malformed("accepted spawn Operation has no sender"))?;
+    let sender_actor = sender
+        .actor_id
+        .as_ref()
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| malformed("accepted spawn Operation has no sender actor"))?;
+    if operation.authority_domain_id.as_ref() != Some(domain)
+        || operation.command_id.as_ref() != Some(command_id)
+        || OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Spawn)
+        || accepted_operation
+            .authorizing_grant_id
+            .as_ref()
+            .is_none_or(|id| id.value.is_empty())
+    {
+        return Err(fence(
+            "promotion is not bound to the exact accepted spawn Operation",
+        ));
+    }
+    let accepted_target = operation
+        .target_scope
+        .as_ref()
+        .ok_or_else(|| malformed("accepted spawn Operation has no target"))?;
+    let promoted_external = promoted
+        .external_runtime
+        .as_ref()
+        .expect("promoted runtime validated");
+    if TargetScopeKind::try_from(accepted_target.kind).ok() != Some(TargetScopeKind::Adapter)
+        || accepted_target.adapter_id != promoted_external.adapter_id
+        || accepted_target.actor_id.is_some()
+        || accepted_target.runtime_session_id.is_some()
+        || accepted_target.session_generation.is_some()
+        || !accepted_target.deployment_scope.is_empty()
+        || !accepted_target.project_or_group.is_empty()
+        || !accepted_target.legacy_audit_resource_id.is_empty()
+        || accepted_target.resource.is_some()
+    {
+        return Err(fence(
+            "promotion target is not the exact canonical accepted adapter target",
+        ));
+    }
     if authority.spawning_grant_id != accepted_operation.authorizing_grant_id
         || authority.continuation_authority != accepted.compound_authority
     {
@@ -435,8 +1252,27 @@ pub fn validate_spawn_promotion_envelope(
         .descendant_grant
         .as_ref()
         .ok_or_else(|| malformed("promotion has no descendant grant"))?;
+    let committed_at = promotion
+        .committed_at
+        .as_ref()
+        .ok_or_else(|| malformed("promotion has no committed_at"))?;
+    let actual_kinds: HashSet<_> = descendant.allowed_operation_kinds.iter().copied().collect();
+    let expected_kinds: HashSet<_> = DESCENDANT_GRANT_ALLOWED_KINDS
+        .iter()
+        .map(|kind| *kind as i32)
+        .collect();
     if descendant.audit_id.as_ref() != Some(audit_id)
         || descendant.authority_domain_id.as_ref() != Some(domain)
+        || descendant.grant_id.as_ref() != Some(&descendant_grant_id(domain, command_id))
+        || descendant.subject_actor_id.as_ref() != Some(sender_actor)
+        || descendant.subject_endpoint_id != sender.endpoint_id
+        || !descendant.subject_endpoint_class.is_empty()
+        || descendant.allowed_operation_kinds.len() != DESCENDANT_GRANT_ALLOWED_KINDS.len()
+        || actual_kinds != expected_kinds
+        || descendant.created_at.as_ref() != Some(committed_at)
+        || descendant.expires_at.is_some()
+        || descendant.revocation_generation.is_some()
+        || descendant.revoked_at.is_some()
         || descendant.provenance.as_ref().is_none_or(|provenance| {
             provenance.spawn_operation_id.as_ref() != Some(command_id)
                 || provenance.spawning_grant_id != authority.spawning_grant_id
@@ -444,11 +1280,23 @@ pub fn validate_spawn_promotion_envelope(
         })
     {
         return Err(fence(
-            "promotion descendant does not preserve operation/grant/audit provenance",
+            "promotion descendant is not exactly derived from the accepted Operation",
         ));
     }
-    if promotion.committed_at.is_none() {
-        return Err(malformed("promotion has no committed_at"));
+    let descendant_target = descendant
+        .target_scope
+        .as_ref()
+        .ok_or_else(|| malformed("promotion descendant has no target"))?;
+    if TargetScopeKind::try_from(descendant_target.kind).ok()
+        != Some(TargetScopeKind::RuntimeSession)
+        || descendant_target.adapter_id != promoted_external.adapter_id
+        || descendant_target.deployment_scope != promoted_external.deployment_scope
+        || descendant_target.runtime_session_id != promoted_external.runtime_session_id
+        || descendant_target.session_generation != promoted_external.generation
+    {
+        return Err(fence(
+            "promotion descendant target differs from the promoted runtime",
+        ));
     }
     Ok(())
 }
@@ -557,6 +1405,24 @@ fn validate_exact_generation_transition(
     }
 }
 
+#[must_use]
+pub fn source_matches_current_attachment(
+    authority_domain_id: &AuthorityDomainId,
+    source: &RuntimeEvidenceSourceAttachment,
+    adapters: &AdapterRegistry,
+) -> bool {
+    let Some(adapter_id) = source.adapter_id.as_ref() else {
+        return false;
+    };
+    let Some(record) = adapters.get(adapter_id) else {
+        return false;
+    };
+    record.registration.authority_domain_id.as_ref() == Some(authority_domain_id)
+        && record.registration.adapter_id.as_ref() == Some(adapter_id)
+        && record.registration.adapter_generation == source.adapter_generation
+        && source.attachment_event_id.as_ref() == Some(&record.attach_event_id)
+}
+
 fn validate_source(
     source: &RuntimeEvidenceSourceAttachment,
     report: &SessionReport,
@@ -581,6 +1447,77 @@ fn validate_source(
         ));
     }
     Ok(())
+}
+
+fn validate_runtime_generation_ref(
+    target: &RuntimeGenerationRef,
+    context: &str,
+) -> Result<(), RuntimeEvidenceError> {
+    if target
+        .logical_target_id
+        .as_ref()
+        .is_some_and(|id| id.value.is_empty())
+    {
+        return Err(malformed(format!(
+            "{context} has an empty logical target id"
+        )));
+    }
+    validate_external_runtime(
+        target
+            .external_runtime
+            .as_ref()
+            .ok_or_else(|| malformed(format!("{context} has no external runtime")))?,
+        context,
+    )
+}
+
+fn validate_external_runtime(
+    external: &ExternalRuntimeRef,
+    context: &str,
+) -> Result<(), RuntimeEvidenceError> {
+    if external
+        .adapter_id
+        .as_ref()
+        .is_none_or(|id| id.value.is_empty())
+        || external.deployment_scope.is_empty()
+        || external
+            .runtime_session_id
+            .as_ref()
+            .is_none_or(|id| id.value.is_empty())
+        || external
+            .generation
+            .is_none_or(|generation| generation.value == 0)
+    {
+        return Err(malformed(format!(
+            "{context} has malformed external runtime identity"
+        )));
+    }
+    Ok(())
+}
+
+fn external_from_scope(
+    scope: Option<&TargetScope>,
+    context: &str,
+) -> Result<ExternalRuntimeRef, RuntimeEvidenceError> {
+    let scope = scope.ok_or_else(|| malformed(format!("{context} has no target scope")))?;
+    if TargetScopeKind::try_from(scope.kind).ok() != Some(TargetScopeKind::RuntimeSession)
+        || scope.actor_id.is_some()
+        || !scope.project_or_group.is_empty()
+        || !scope.legacy_audit_resource_id.is_empty()
+        || scope.resource.is_some()
+    {
+        return Err(fence(format!(
+            "{context} does not carry one canonical runtime-session target"
+        )));
+    }
+    let external = ExternalRuntimeRef {
+        adapter_id: scope.adapter_id.clone(),
+        deployment_scope: scope.deployment_scope.clone(),
+        runtime_session_id: scope.runtime_session_id.clone(),
+        generation: scope.session_generation,
+    };
+    validate_external_runtime(&external, context)?;
+    Ok(external)
 }
 
 fn report_external(report: &SessionReport) -> Option<ExternalRuntimeRef> {

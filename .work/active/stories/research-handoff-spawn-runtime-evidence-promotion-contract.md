@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-14
 ---
 
 # Runtime evidence quarantine and atomic promotion contract
@@ -75,11 +75,22 @@ Final invariant contract leaf. Target resolution waits on this leaf and the para
 - Discrepancies from design: none. The implementation keeps the operation driver and target-selection work downstream; this leaf supplies envelopes, validation/folds, and storage atomicity only.
 - Adjacent issues parked: none.
 
+### Leaf 6 BLOCKER convergence — 2026-08-14
+
+- BLOCKER 1: runtime classification now authenticates adapter id, adapter generation, and exact current attachment event for both `Current` and `ClaimedSuccessor`. Production managed reports route only to typed staging or quarantine; they never reach ordinary registration/generation-bump ingestion.
+- BLOCKER 2: runtime-targeted stale, terminal, unknown, and mismatched Observations no longer persist as raw `Observation` events. The Pi e2e path now also proves pre-registration snapshot evidence is present only in durable quarantine.
+- BLOCKER 3: quarantine has one typed audited append. All generic storage routes reject the special kind; the dedicated route validates the generated candidate, classification/reason/target framing, canonical stale audit, exact durable attachment, and recomputed disposition before committing.
+- BLOCKER 4: promotion binds the deterministic descendant Grant to the exact accepted spawn sender, adapter target, promoted runtime, canonical eight-kind set, timestamp, and parent/continuation provenance. Promotion-time parent and replacement Grant kind/scope/liveness are revalidated.
+- BLOCKER 5: `SpawnPromotionCommitted` is rejected from append, dedup, audited, decision-audited, and batch routes. Its dedicated SQLite transaction reconstructs and validates authority, session/target, claim, and command projections before inserting the atomic promotion+audit pair and grant-identity reservation.
+- BLOCKER 6: `ProjectionState` now owns `SpawnClaimRegistry`; rebuild and catch-up route promotion through one staged authority → session → claim → command fold and publish all views together. The production completion driver derives an unstamped promotion only from exact durable claim/lifecycle/result/staged facts and calls the dedicated append. Pre-promotion durable histories retain an explicitly isolated compatibility-repair tail; histories containing `SpawnClaim` cannot enter it.
+- Mutation-strength coverage now kills missing descendant authority, nested quarantine redispatch across all admitted families/projections, source/audit split rollback, aggregate fold omission/partial publication, attachment/claim/prior/deployment/generation mutations, authority laundering one dimension at a time, and every generic promotion/quarantine storage bypass.
+- Added a fully authority-valid promotion fixture, continuation with both live Grants plus revocation/expiry and N→N+1 tombstoning cases, malformed-wire and non-durable-attachment quarantine cases, a real server catch-up/restart aggregate test, and a production managed-report staging test.
+- Pi adapter integration orders a generation-changing Result before the ordinary N+1 report so the accepted generation-N result cannot become stale, while in-generation transcript/report tails remain ordered before terminal Result. The e2e stale-generation assertions now match the quarantine/tombstone contract.
+- No protobuf or generated contract files changed in the BLOCKER convergence pass.
+
 ## Verification evidence
 
-- `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`
-- `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`
-- `cd operator-domain && npm run build && npm test`
-- `cd pi-adapter && npm test`
-
-All commands passed on 2026-08-13.
+- `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed 2026-08-14.
+- `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` — passed; 54 vectors, 38 mutation witnesses killed, generated bindings clean.
+- `cd operator-domain && npm run build && npm test` — passed; 9/9 tests.
+- `cd pi-adapter && npm test` — passed; 29/29 tests including real core/adapter restart e2e.

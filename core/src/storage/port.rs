@@ -22,8 +22,8 @@
 
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
-    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, SpawnPromotionCommitted,
-    StoredEventPayload, TargetScope,
+    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, QuarantinedRuntimeEvidence,
+    SpawnPromotionCommitted, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -165,16 +165,24 @@ impl AuditRecordDraft {
         }
         validate_bounded_code("reason_code", &self.reason_code)?;
         if self.correlation_id.len() > 128
-            || !self.correlation_id.chars().all(|c| c.is_ascii_graphic() && c != '=')
+            || !self
+                .correlation_id
+                .chars()
+                .all(|c| c.is_ascii_graphic() && c != '=')
         {
             return Err(StorageError::InvalidAuditRecord(
                 "correlation_id must contain at most 128 safe characters".to_owned(),
             ));
         }
         if !self.source_network.is_empty() {
-            let parsed = self.source_network.parse::<std::net::IpAddr>().map_err(|_| {
-                StorageError::InvalidAuditRecord("source_network must be a normalized IP".to_owned())
-            })?;
+            let parsed = self
+                .source_network
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| {
+                    StorageError::InvalidAuditRecord(
+                        "source_network must be a normalized IP".to_owned(),
+                    )
+                })?;
             if parsed.to_string() != self.source_network {
                 return Err(StorageError::InvalidAuditRecord(
                     "source_network must be normalized".to_owned(),
@@ -211,7 +219,11 @@ fn validate_bounded_code(name: &str, value: &str) -> Result<(), StorageError> {
     if value.is_empty() {
         return Ok(());
     }
-    if value.len() > 64 || !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+    if value.len() > 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
         return Err(StorageError::InvalidAuditRecord(format!(
             "{name} must match [a-z0-9_]{{1,64}}"
         )));
@@ -356,10 +368,7 @@ pub enum StorageError {
     /// source content. The conflict is discovered before another source or
     /// audit append.
     #[error("grant identity {grant_id} conflicts with existing source LSN {existing_lsn}")]
-    GrantIdentityConflict {
-        grant_id: String,
-        existing_lsn: u64,
-    },
+    GrantIdentityConflict { grant_id: String, existing_lsn: u64 },
 
     /// The requested snapshot LSN does not correspond to a committed event.
     /// A snapshot must materialize at a real committed LSN.
@@ -487,7 +496,10 @@ pub trait Storage: Send + Sync {
         payload: StoredEventPayload,
         _logical_payload: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<DedupOutcome, StorageError>> + Send {
-        async move { self.append_dedup(authority_domain_id, key, target, payload).await }
+        async move {
+            self.append_dedup(authority_domain_id, key, target, payload)
+                .await
+        }
     }
 
     /// Read the complete authority-domain suffix with `LSN > cursor`.
@@ -616,7 +628,10 @@ pub trait Storage: Send + Sync {
         audit: AuditRecordDraft,
         _logical_payload: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<AuditedDedupOutcome, StorageError>> + Send {
-        async move { self.append_dedup_audited(authority_domain_id, key, target, source, audit).await }
+        async move {
+            self.append_dedup_audited(authority_domain_id, key, target, source, audit)
+                .await
+        }
     }
 
     /// Atomically assign and stamp the promotion source id, its immediate
@@ -630,6 +645,19 @@ pub trait Storage: Send + Sync {
         _promotion: SpawnPromotionCommitted,
         _audit: AuditRecordDraft,
     ) -> impl std::future::Future<Output = Result<SpawnPromotionAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append one typed quarantine envelope and its canonical stale
+    /// audit. Generic source routes reject this kind so malformed wire bytes
+    /// cannot acquire quarantine semantics without decoding and durable
+    /// attachment validation.
+    fn append_quarantined_runtime_evidence_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _quarantined: QuarantinedRuntimeEvidence,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
     }
 
